@@ -1,8 +1,88 @@
+import "/enum_string_conversions.u"
+import "/file.u"
 import "/main_wrapper.u"
+import "/scoped_array.u"
 import "/stdout.u"
+import "/string_conversions.u"
 
 pretty_main
 {
-	ust::stdout_print( "Archive extractor!\n" );
-	return 0;
+	if( args.size() <= 1s )
+	{
+		ust::stderr_print( "Not enough arguments!\n" );
+		return -1;
+	}
+	var ust::string_view8 archive_file_path= args[1s];
+
+	ust::stdout_print( ust::concat( "Reading archive file \"", archive_file_path, "\"\n" ) );
+
+	result_match( ust::file_readable::open( archive_file_path ) )
+	{
+		Ok( mut f ) -> { return ( ProcessArchiveFile( move(f) ) ? 0 : -1 ); },
+		Err(e) ->
+		{
+			ust::stderr_print( ust::concat( "Error opening archive file: ", ust::enum_to_string( e ), "\n" ) );
+			return -1;
+		}
+	}
+}
+
+fn nodiscard ProcessArchiveFile( ust::file_readable mut f ) : bool
+{
+	var u64 mut size(0);
+	result_match( f.get_metatada() )
+	{
+		Ok(m) ->
+		{
+			size= m.size;
+			ust::stdout_print( ust::concat( "Has size ", ust::to_string8(size), " bytes\n" ) );
+		},
+		Err(e) ->
+		{
+			ust::stderr_print( ust::concat( "Error getting archive file size: ", ust::enum_to_string( e ), "\n" ) );
+			return false;
+		}
+	}
+
+	var size_type num_file_entries(2170);
+
+	scoped_array ArchiveFileHeader mut archive_headers[num_file_entries]( ArchiveFileHeader{ .some= zero_init, .name= zero_init } );
+
+
+	result_match(
+		f.read_exact(
+			unsafe( ust::array_view_mut</byte8/>(
+				ust::ptr_cast_to_byte8( archive_headers.data() ),
+				archive_headers.size() * typeinfo</ArchiveFileHeader/>.size_of ) ) ) )
+	{
+		Ok(v) ->
+		{
+			ust::ignore_unused(v);
+		},
+		Err(e) ->
+		{
+			ust::stderr_print( ust::concat( "Error reading archive file headers: ", ust::enum_to_string( e ), "\n" ) );
+			return false;
+		}
+	}
+
+	foreach( &header : archive_headers )
+	{
+		var ust::string_view8 mut name= header.name;
+		while( !name.empty() && name.back() == '\0' )
+		{
+			name.drop_back();
+		}
+		ust::stdout_print(  ust::concat( "File \"", name, "\"\n" ) );
+	}
+
+	ust::ignore_unused(archive_headers.front().some);
+
+	return true;
+}
+
+struct ArchiveFileHeader ordered
+{
+	[ u32, 4 ] some;
+	[ char8, 16 ] name;
 }
