@@ -1,24 +1,45 @@
 import "/enum_string_conversions.u"
 import "/file.u"
+import "/filesystem.u"
 import "/main_wrapper.u"
+import "/path_utils.u"
 import "/scoped_array.u"
 import "/stdout.u"
 import "/string_conversions.u"
 
 pretty_main
 {
-	if( args.size() <= 1s )
+	if( args.size() <= 2s )
 	{
 		ust::stderr_print( "Not enough arguments!\n" );
 		return -1;
 	}
 	var ust::string_view8 archive_file_path= args[1s];
+	var ust::string_view8 out_directory= args[2s];
 
 	ust::stdout_print( ust::concat( "Reading archive file \"", archive_file_path, "\"\n" ) );
+	ust::stdout_print( ust::concat( "Extracting files into directory \"", out_directory, "\"\n" ) );
+
+	result_match( ust::get_metadata_for_path( out_directory ) )
+	{
+		Ok(m) ->
+		{
+			if( m.kind != ust::file_kind::directory )
+			{
+				ust::stderr_print( ust::concat( "Path \"", out_directory, "\" is not a directory!\n" ) );
+				return -1;
+			}
+		},
+		Err(e) ->
+		{
+			ust::stderr_print( ust::concat( "Can't get metadata for directory \"", out_directory, "\"! Error: ", ust::enum_to_string(e), ", \n" ) );
+			return -1;
+		}
+	}
 
 	result_match( ust::file_readable::open( archive_file_path ) )
 	{
-		Ok( mut f ) -> { return ( ProcessArchiveFile( move(f) ) ? 0 : -1 ); },
+		Ok( mut f ) -> { return ( ProcessArchiveFile( move(f), out_directory ) ? 0 : -1 ); },
 		Err(e) ->
 		{
 			ust::stderr_print( ust::concat( "Error opening archive file: ", ust::enum_to_string( e ), "\n" ) );
@@ -27,7 +48,7 @@ pretty_main
 	}
 }
 
-fn nodiscard ProcessArchiveFile( ust::file_readable mut f ) : bool
+fn nodiscard ProcessArchiveFile( ust::file_readable mut f, ust::filesystem_path_view out_directory ) : bool
 {
 	var u64 mut file_size(0);
 	result_match( f.get_metatada() )
@@ -96,6 +117,8 @@ fn nodiscard ProcessArchiveFile( ust::file_readable mut f ) : bool
 		}
 	}
 
+	var [ byte8, 65536 ] mut buff= zero_init;
+
 	foreach( &header : archive_headers )
 	{
 		var ust::string_view8 mut name= header.name;
@@ -103,12 +126,67 @@ fn nodiscard ProcessArchiveFile( ust::file_readable mut f ) : bool
 		{
 			name.drop_back();
 		}
-		ust::stdout_print( ust::concat( "File \"", name, "\" with size ", ust::to_string8(header.size), " at offset ", ust::to_string8(header.offset), "\n" ) );
 
 		if( u64( header.offset ) + u64( header.size ) > file_size )
 		{
 			ust::stderr_print( ust::concat( "File \"", name, "\" is out of bounds!\n" ) );
 			continue;
+		}
+
+		ust::stdout_print( ust::concat( "Extracting file \"", name, "\" with size ", ust::to_string8(header.size), " at offset ", ust::to_string8(header.offset), "\n" ) );
+
+		var ust::filesystem_path out_file_path= ust::path::join( out_directory, name );
+
+		result_match( ust::file_writeable::create( out_file_path ) )
+		{
+			Ok( mut out_file ) ->
+			{
+				result_match( f.seek( u64( header.offset ) ) )
+				{
+					Ok(v) -> { ust::ignore_unused(v); },
+					Err(e) ->
+					{
+						ust::stderr_print( ust::concat( "Failed to seek! Error: ", ust::enum_to_string(e), ", \n" ) );
+						continue;
+					},
+				}
+
+				for( auto mut offset= 0u32; offset < header.size; )
+				{
+					result_match( f.read( buff ) )
+					{
+						Ok(s) ->
+						{
+							if( s == 0s )
+							{
+								ust::stderr_print( "Read size is zero!\n" );
+								continue;
+							}
+
+							result_match( out_file.write_all( ust::array_view_imut</byte8/>( buff ).subrange_end(s) ) )
+							{
+								Ok(v) -> { ust::ignore_unused(v); },
+								Err(e) ->
+								{
+									ust::stderr_print( ust::concat( "Failed to write! Error: ", ust::enum_to_string(e), ", \n" ) );
+									continue;
+								},
+							}
+							offset+= u32(s);
+						},
+						Err(e) ->
+						{
+							ust::stderr_print( ust::concat( "Failed to read! Error: ", ust::enum_to_string(e), ", \n" ) );
+							continue;
+						}
+					}
+				}
+			},
+			Err(e) ->
+			{
+				ust::stderr_print( ust::concat( "Failed to create file \"", out_file_path, "\"! Error: ", ust::enum_to_string(e), ", \n" ) );
+				continue;
+			}
 		}
 	}
 
