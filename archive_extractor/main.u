@@ -29,14 +29,10 @@ pretty_main
 
 fn nodiscard ProcessArchiveFile( ust::file_readable mut f ) : bool
 {
-	var u64 mut size(0);
+	var u64 mut file_size(0);
 	result_match( f.get_metatada() )
 	{
-		Ok(m) ->
-		{
-			size= m.size;
-			ust::stdout_print( ust::concat( "Has size ", ust::to_string8(size), " bytes\n" ) );
-		},
+		Ok(m) -> { file_size= m.size; },
 		Err(e) ->
 		{
 			ust::stderr_print( ust::concat( "Error getting archive file size: ", ust::enum_to_string( e ), "\n" ) );
@@ -44,10 +40,44 @@ fn nodiscard ProcessArchiveFile( ust::file_readable mut f ) : bool
 		}
 	}
 
-	var size_type num_file_entries(2170);
+	ust::stdout_print( ust::concat( "Has size ", ust::to_string8(file_size), " bytes\n" ) );
 
-	scoped_array ArchiveFileHeader mut archive_headers[num_file_entries]( ArchiveFileHeader{ .some= zero_init, .name= zero_init } );
+	var ArchiveHeader mut archive_header= zero_init;
 
+	result_match(
+		f.read_exact(
+			unsafe( ust::array_view_mut</byte8/>(
+				ust::ptr_cast_to_byte8( $<(archive_header) ),
+				typeinfo</ArchiveHeader/>.size_of ) ) ) )
+	{
+		Ok(v) ->
+		{
+			ust::ignore_unused(v);
+		},
+		Err(e) ->
+		{
+			ust::stderr_print( ust::concat( "Error reading archive header: ", ust::enum_to_string( e ), "\n" ) );
+			return false;
+		}
+	}
+
+	if( archive_header.id != c_expected_id )
+	{
+		ust::stderr_print( ust::concat( "Unexpected file ID, expected ", ust::to_string8(c_expected_id), ",got ", ust::to_string8(archive_header.id), "!\n" ) );
+		return false;
+	}
+
+	ust::ignore_unused( archive_header.some );
+
+	ust::stdout_print( ust::concat( "Has archive with ", ust::to_string8( archive_header.num_files ), " files\n" ) );
+
+	if( u64( typeinfo</ArchiveHeader/>.size_of ) + u64(archive_header.num_files) * u64( typeinfo</ArchiveFileHeader/>.size_of ) > file_size )
+	{
+		ust::stderr_print( "Entry table size is bigger than file size!\n" );
+		return false;
+	}
+
+	scoped_array ArchiveFileHeader mut archive_headers[ size_type(archive_header.num_files) ]( ArchiveFileHeader{ .some= zero_init, .name= zero_init, .size= zero_init, .offset= zero_init } );
 
 	result_match(
 		f.read_exact(
@@ -73,7 +103,13 @@ fn nodiscard ProcessArchiveFile( ust::file_readable mut f ) : bool
 		{
 			name.drop_back();
 		}
-		ust::stdout_print(  ust::concat( "File \"", name, "\"\n" ) );
+		ust::stdout_print( ust::concat( "File \"", name, "\" with size ", ust::to_string8(header.size), " at offset ", ust::to_string8(header.offset), "\n" ) );
+
+		if( u64( header.offset ) + u64( header.size ) > file_size )
+		{
+			ust::stderr_print( ust::concat( "File \"", name, "\" is out of bounds!\n" ) );
+			continue;
+		}
 	}
 
 	ust::ignore_unused(archive_headers.front().some);
@@ -81,8 +117,19 @@ fn nodiscard ProcessArchiveFile( ust::file_readable mut f ) : bool
 	return true;
 }
 
+var u32 c_expected_id= 0x4B555041u;
+
+struct ArchiveHeader ordered
+{
+	u32 id;
+	u32 num_files;
+	[ u32, 6 ] some;
+}
+
 struct ArchiveFileHeader ordered
 {
-	[ u32, 4 ] some;
+	u32 size;
+	u32 offset;
+	[ u32, 2 ] some;
 	[ char8, 16 ] name;
 }
