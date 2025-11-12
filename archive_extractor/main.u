@@ -117,9 +117,10 @@ fn nodiscard ProcessArchiveFile( ust::file_readable mut f, ust::filesystem_path_
 		}
 	}
 
-	var [ byte8, 65536 ] mut buff= zero_init;
+	var size_type buff_size= 65536s;
+	var [ byte8, buff_size ] mut buff= zero_init;
 
-	foreach( &header : archive_headers )
+	foreach( &header : archive_headers ) label files_extracting
 	{
 		var ust::string_view8 mut name= header.name;
 		while( !name.empty() && name.back() == '\0' )
@@ -153,31 +154,34 @@ fn nodiscard ProcessArchiveFile( ust::file_readable mut f, ust::filesystem_path_
 
 				for( auto mut offset= 0u32; offset < header.size; )
 				{
-					result_match( f.read( buff ) )
+					var size_type num_bytes_to_read= ust::min( buff_size, size_type( header.size - offset ) );
+
+					result_match( f.read( ust::array_view_mut</byte8/>( buff ).subrange_end( num_bytes_to_read ) ) )
 					{
-						Ok(s) ->
+						Ok( bytes_read ) ->
 						{
-							if( s == 0s )
+							if( bytes_read == 0s )
 							{
 								ust::stderr_print( "Read size is zero!\n" );
-								continue;
+								continue label files_extracting;
 							}
 
-							result_match( out_file.write_all( ust::array_view_imut</byte8/>( buff ).subrange_end(s) ) )
+							result_match( out_file.write_all( ust::array_view_imut</byte8/>( buff ).subrange_end( bytes_read ) ) )
 							{
 								Ok(v) -> { ust::ignore_unused(v); },
 								Err(e) ->
 								{
 									ust::stderr_print( ust::concat( "Failed to write! Error: ", ust::enum_to_string(e), ", \n" ) );
-									continue;
+									continue label files_extracting;
 								},
 							}
-							offset+= u32(s);
+
+							offset+= u32(bytes_read);
 						},
 						Err(e) ->
 						{
 							ust::stderr_print( ust::concat( "Failed to read! Error: ", ust::enum_to_string(e), ", \n" ) );
-							continue;
+							continue label files_extracting;
 						}
 					}
 				}
