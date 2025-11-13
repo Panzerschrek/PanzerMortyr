@@ -1,8 +1,28 @@
+import "/enum_string_conversions.u"
+import "/file.u"
 import "/main_wrapper.u"
+import "/path.u"
+import "/stdout.u"
+import "/string_conversions.u"
+import "/vector.u"
+
 import "/raylib_wrapper/raylib.uh"
 
 pretty_main
 {
+	if( args.size() < 2s )
+	{
+		ust::stderr_print( "Not enough arguments!\n" );
+		return -1;
+	}
+	var ust::string_view8 map_file_path= args[1s];
+
+	auto map_opt= LoadMap( map_file_path );
+	if( map_file_path.empty() )
+	{
+		return -1;
+	}
+
 	var i32 screen_width = 1024;
 	var i32 screen_height = 768;
 
@@ -42,12 +62,14 @@ pretty_main
 				unsafe( DrawCube( Vector3{ .x(0), .y(1), .z(0) }, 0.2f, 2.0f, 0.2f, Color{ .r(0), .g(255), .b(0), .a(255) } ) );
 				unsafe( DrawCube( Vector3{ .x(0), .y(0), .z(1) }, 0.2f, 0.2f, 2.0f, Color{ .r(0), .g(0), .b(255), .a(255) } ) );
 
-				for( var u32 mut x= 0u; x < 64u; ++x )
+				var f32 scale= 1.0f / 4.0f;
+				foreach( &s : map_opt.try_deref().structs )
 				{
-					for( var u32 mut y= 0u; y < 64u; ++y )
-					{
-						unsafe( DrawCube( Vector3{ .x(x), .y(y), .z(0) }, 0.2f, 0.2f, 0.2f, Color{ .r(255), .g(0), .b(255), .a(255) } ) );
-					}
+					var Vector3 mut pos{ .x(i16(s.data[0])), .y(i16(s.data[1])), .z(i16(s.data[2])) };
+					pos.x*= scale;
+					pos.y*= scale;
+					pos.z*= scale;
+					unsafe( DrawCube( pos, 0.2f, 0.2f, 0.2f, Color{ .r(255), .g(0), .b(255), .a(255) } ) );
 				}
 			}
 			unsafe( EndMode3D() );
@@ -58,4 +80,65 @@ pretty_main
 	unsafe( CloseWindow() );
 
 	return 0;
+}
+
+struct MapData
+{
+	ust::vector</MapStruct/> structs;
+}
+
+struct MapStruct
+{
+	[ byte16, 24 ] data;
+}
+
+fn LoadMap( ust::filesystem_path_view file_path ) : ust::optional</MapData/>
+{
+	result_match( ust::file_readable::open( file_path ) )
+	{
+		Ok( mut f ) -> { return LoadMap( move(f) ); },
+		Err(e) ->
+		{
+			ust::stderr_print( ust::concat( "Error opening archive file: ", ust::enum_to_string( e ), "\n" ) );
+			return ust::null_optional;
+		}
+	}
+}
+
+fn LoadMap( ust::file_readable mut f ) : ust::optional</MapData/>
+{
+	var u64 mut file_size(0);
+	result_match( f.get_metatada() )
+	{
+		Ok(m) -> { file_size= m.size; },
+		Err(e) ->
+		{
+			ust::stderr_print( ust::concat( "Error getting archive file size: ", ust::enum_to_string( e ), "\n" ) );
+			return ust::null_optional;
+		}
+	}
+
+	ust::stdout_print( ust::concat( "Has size ", ust::to_string8(file_size), " bytes\n" ) );
+
+	var size_type num_structs= size_type(file_size) / typeinfo</MapStruct/>.size_of;
+
+	var MapData mut result;
+
+	var MapStruct dummy_struct= zero_init;
+
+	result.structs.resize( num_structs, dummy_struct );
+
+	auto read_res=
+		f.read_exact(
+			unsafe( ust::array_view_mut</byte8/>(
+				ust::ptr_cast_to_byte8( result.structs.data() ),
+				result.structs.size() * typeinfo</MapStruct/>.size_of ) ) );
+
+	if( read_res.is_error() )
+	{
+		ust::stderr_print( ust::concat( "Failed to read! Error: ", ust::enum_to_string( read_res.try_deref_error() ), ", \n" ) );
+		return ust::null_optional;
+	}
+
+	return result;
 }
