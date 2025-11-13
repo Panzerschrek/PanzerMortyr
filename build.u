@@ -1,15 +1,138 @@
 import "/build_system.uh"
+import "/path_utils.u"
 
 fn GetPackageInfo( BK::BuildSystemInterface &mut build_system_interface ) : BK::PackageInfo
 {
-	ust::ignore_unused( build_system_interface );
+	var BK::TargetTriple target_triple= build_system_interface.GetTargetTriple();
+	var bool is_host_windows= ust::constexpr_string_equals( compiler::target::os, "windows" );
+	var bool is_taget_windows= target_triple.operating_system == "windows";
 
-	var BK::BuildTarget mut target
+	var BK::BuildTarget mut raylib_wrapper_target
+	{
+		.target_type = BK::BuildTargetType::Library,
+		.name= "raylib_wrapper",
+	};
+
+	var ust::filesystem_path raylib_src_path= ust::path::join( build_system_interface.GetCurrentPackageSourceDirectory(), "raylib" );
+	var ust::filesystem_path raylib_build_path= ust::path::join( build_system_interface.GetCurrentPackageBuildDirectory(), "raylib_build" );
+	var ust::filesystem_path cmake_cache_file= ust::path::join( raylib_build_path, "CMakeCache.txt" );
+
+	var ust::filesystem_path raylib_compiled=
+		ust::path::join(
+			raylib_build_path,
+			"raylib",
+			( is_taget_windows
+				? ust::string_view8( "raylib.lib" )
+				: ust::string_view8( "libraylib.a" ) ) );
+
+	var ust::filesystem_path raylib_header= ust::path::join( raylib_src_path, "src", "raylib.h" );
+
+	var ust::string_view8 mut cmake_build_type;
+	switch( build_system_interface.GetBuildConfiguration() )
+	{
+		BK::BuildConfiguration::Debug -> { cmake_build_type= "Debug"; },
+		BK::BuildConfiguration::Release -> { cmake_build_type= "Release"; },
+		BK::BuildConfiguration::MinSizeRelease -> { cmake_build_type= "MinSizeRel"; },
+	}
+
+	var ust::string8 cmake_executable =
+		ust::concat(
+			"cmake",
+			( is_host_windows ? ust::string_view8(".exe") : ust::string_view8("") ) );
+
+	var BK::CustomBuildStep mut raylib_cmake_generate_step
+	{
+		.command= BK::CustomBuildStep::ExeCommand
+		{
+			.exe_path= cmake_executable,
+			.command_line= ust::make_array</ust::string8/>(
+				"-S", raylib_src_path,
+				"-B", raylib_build_path,
+				"-DBUILD_EXAMPLES=OFF",
+				ust::concat( "-DCMAKE_BUILD_TYPE=", cmake_build_type ),
+				"-G", "Ninja" )
+		},
+		.input_files= ust::make_array( ust::path::join( raylib_src_path, "CMakeLists.txt" ) ),
+		.output_files= ust::make_array( cmake_cache_file ),
+		.comment= "cmake generation for raylib",
+	};
+
+	var BK::CustomBuildStep mut raylib_cmake_build_step
+	{
+		.command= BK::CustomBuildStep::ExeCommand
+		{
+			.exe_path= cmake_executable,
+			.command_line= ust::make_array</ust::string8/>( "--build", raylib_build_path )
+		},
+		.input_files= ust::make_array( cmake_cache_file ),
+		.output_files= ust::make_array( raylib_compiled ),
+		.comment= "cmake build for raylib",
+	};
+
+	auto build_system_executable_path= build_system_interface.GetBuildSystemExecutablePath();
+	auto bin_path_opt= ust::path::get_parent_path( build_system_executable_path );
+
+	var ust::string8 cpp_header_converter_executable_name=
+		ust::concat(
+			"u.._cpp_header_converter",
+			( is_host_windows ? ust::string_view8(".exe") : ust::string_view8("") ) );
+
+	var ust::filesystem_path cpp_header_converter_path=
+		ust::path::join(
+			bin_path_opt.try_deref(), cpp_header_converter_executable_name );
+
+	var ust::filesystem_path_view raylib_header_converted_base_name= "raylib.uh";
+
+	var ust::filesystem_path raylib_header_converted=
+		ust::path::join(
+			build_system_interface.GetCurrentPackageBuildTargetGeneratedPublicHeadersDirectory( raylib_wrapper_target.name ),
+			raylib_header_converted_base_name );
+
+	var BK::CustomBuildStep mut raylib_header_convertion_step
+	{
+		.command= BK::CustomBuildStep::ExeCommand
+		{
+			.exe_path= cpp_header_converter_path,
+			.command_line= ust::make_array</ust::string8/>( raylib_header, "-o", raylib_header_converted, "--", "-std=c11" ),
+		},
+		.comment= raylib_header_converted_base_name,
+		.input_files= ust::make_array( raylib_header ),
+		.output_files= ust::make_array( raylib_header_converted ),
+	};
+
+	raylib_wrapper_target.generated_public_header_files.push_back( raylib_header_converted_base_name );
+
+	raylib_wrapper_target.external_libraries.push_back( raylib_compiled );
+
+	if( is_taget_windows )
+	{
+		raylib_wrapper_target.external_libraries.push_back( "gdi32.lib" );
+		raylib_wrapper_target.external_libraries.push_back( "user32.lib" );
+		raylib_wrapper_target.external_libraries.push_back( "shell32.lib" );
+		raylib_wrapper_target.external_libraries.push_back( "winmm.lib" );
+	}
+	else
+	{
+		raylib_wrapper_target.external_libraries.push_back( "-ldl" );
+	}
+
+	var BK::BuildTarget mut archive_extractor_target
 	{
 		.target_type = BK::BuildTargetType::Executable,
 		.name= "archive_extractor",
 		.source_files= ust::make_array</ ust::string8 />( "archive_extractor/main.u" ),
 	};
 
-	return BK::PackageInfo{ .build_targets= ust::make_array( move(target) ) };
+	return BK::PackageInfo
+	{
+		.build_targets=
+			ust::make_array(
+				move(raylib_wrapper_target),
+				move(archive_extractor_target) ),
+		.custom_build_steps=
+			ust::make_array(
+				move( raylib_cmake_generate_step ),
+				move( raylib_cmake_build_step ),
+				move( raylib_header_convertion_step ) )
+	};
 }
