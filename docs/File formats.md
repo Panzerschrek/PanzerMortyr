@@ -5,7 +5,7 @@ The game archive contains files of the following types (extensions):
 * LEM
 * LAM - some map data?
 * OBB
-* PAL
+* PAL - seems to be palettes (they are all 768 bytes in size)
 * STD - text files, mostly confings and maybe scripts. They are written in some scripting language.
 * WAV - sound in well-known wave format
 * WAY - presumably file with map waypoints
