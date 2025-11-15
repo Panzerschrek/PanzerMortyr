@@ -1,7 +1,9 @@
 import "/enum_string_conversions.u"
 import "/file_helpers.u"
+import "/integer_parsing.u"
 import "/path_utils.u"
 import "/stdout.u"
+import "/string_conversions.u"
 import "materials_file.uh"
 
 fn LoadMaterialsFile( ust::filesystem_path_view maps_directory ) : ust::optional</MaterialsDescription/>
@@ -24,17 +26,55 @@ fn LoadMaterialsFile( ust::filesystem_path_view maps_directory ) : ust::optional
 
 fn ParseMaterialsFile( ust::string_view8 file_contents ) : MaterialsDescription
 {
+	var MaterialsDescription mut materials_description;
+
+	var MaterialsDescription::Block mut current_block;
+	var u32 mut current_block_index= 0xFFFFFFFFu;
+
 	foreach( line : ust::wrap_raw_iterator( LinesRawIterator( file_contents ) ) )
 	{
 		ust::stdout_print( ust::concat( "LINE: \"\"\"", line, "\"\"\"\nWORDS: " ) );
-		foreach( word : ust::wrap_raw_iterator( WordsIterator( line ) ) )
+
+		auto mut words_it= ust::wrap_raw_iterator( WordsIterator( line ) );
+
+		auto first_word= words_it.next();
+		if( first_word.empty() )
 		{
-			ust::stdout_print( ust::concat( "\"", word, "\" " ) );
+			continue;
 		}
-		ust::stdout_print( "\n" );
+
+		if( first_word.try_deref() == "blok" )
+		{
+			if( current_block_index != 0xFFFFFFFFu )
+			{
+				materials_description.blocks.insert_new( current_block_index, take( current_block ) );
+			}
+
+			auto block_index_str_opt= words_it.next();
+			if( block_index_str_opt.empty() )
+			{
+				continue;
+			}
+			auto index_opt= ust::parse_integer_exact</u32/>( block_index_str_opt.try_deref() );
+			if( index_opt.empty() )
+			{
+				continue;
+			}
+			current_block_index= index_opt.try_deref();
+		}
 	}
 
-	return MaterialsDescription{};
+	if( current_block_index != 0xFFFFFFFFu )
+	{
+		materials_description.blocks.insert_new( current_block_index, take( current_block ) );
+	}
+
+	foreach( pair : materials_description.blocks )
+	{
+		ust::stdout_print( ust::concat( "Block ", ust::to_string8( pair.key() ), "\n" ) );
+	}
+
+	return materials_description;
 }
 
 class LinesRawIterator
