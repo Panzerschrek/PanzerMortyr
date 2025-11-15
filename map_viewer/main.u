@@ -78,20 +78,60 @@ pretty_main
 
 	var u32 mut offset= 0u;
 
-	var ust::vector</u32/> mut used_material_indices;
+	var ust::vector</u32/> mut used_texture_indices;
 	foreach( &s : map_opt.try_deref().polygons )
 	{
-		used_material_indices.push_back( u32( s.data0[0] ) );
+		used_texture_indices.push_back( u32( s.data0[0] ) );
 	}
-	ust::sort( used_material_indices );
-	used_material_indices.remove_adjacent_duplicates();
-	foreach( index : used_material_indices )
+	ust::sort( used_texture_indices );
+	used_texture_indices.remove_adjacent_duplicates();
+	foreach( index : used_texture_indices )
 	{
 		ust::stdout_print( ust::concat( "Has material index ", ust::to_string8(index), "\n" ) );
 	}
 
-	if_var( &block : materials.try_deref().blocks.find( 41u ) )
+	var Texture dummy_texture= zero_init;
+	var ust::vector</Texture/> mut map_textures( used_texture_indices.size(), dummy_texture );
+
+	with( &block : materials.try_deref().blocks[ 41u ] )
 	{
+		foreach( pair : used_texture_indices.iter().zip( map_textures.iter() ) )
+		{
+			var size_type id( pair.first );
+			if( id < block.textures.size() )
+			{
+				// Hacky way to make uppercase.
+				// TODO - perform this conversion during archive extraction.
+				var ust::string8 mut base_name= block.textures[id].mips[1];
+				foreach( &mut c : base_name )
+				{
+					if( c >= 'a' && c <= 'z' )
+					{
+						c= char8( u32('A') + (u32(c) - u32('a') ) );
+					}
+				}
+
+				auto mut image_file_nt= ust::path::join( map_dir.try_deref(), base_name );
+				image_file_nt+= "\0";
+
+				var Image image= unsafe( LoadImage( image_file_nt.data() ) );
+				if( ust::is_nullptr( image.data ) )
+				{
+					ust::stderr_print( ust::concat( "Failed to load image\"" , image_file_nt, "\"!\n" ) );
+					return -1;
+				}
+
+				pair.second = unsafe( LoadTextureFromImage( image ) );
+				if( pair.second.id == 0u )
+				{
+					ust::stderr_print( "Failed to load test texture from image!\n" );
+					return -1;
+				}
+
+				unsafe( UnloadImage( image ) );
+			}
+		}
+
 		ust::stdout_print( "Block textures: \n" );
 		foreach( &t : block.textures )
 		{
