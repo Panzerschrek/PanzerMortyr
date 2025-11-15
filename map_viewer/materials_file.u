@@ -31,19 +31,21 @@ fn ParseMaterialsFile( ust::string_view8 file_contents ) : MaterialsDescription
 	var MaterialsDescription::Block mut current_block;
 	var u32 mut current_block_index= 0xFFFFFFFFu;
 
+	var ust::optional</MaterialsDescription::Texture/> mut current_texture;
+
 	foreach( line : ust::wrap_raw_iterator( LinesRawIterator( file_contents ) ) )
 	{
-		ust::stdout_print( ust::concat( "LINE: \"\"\"", line, "\"\"\"\nWORDS: " ) );
-
 		auto mut words_it= ust::wrap_raw_iterator( WordsIterator( line ) );
 
-		auto first_word= words_it.next();
-		if( first_word.empty() )
+		auto first_word_opt= words_it.next();
+		if( first_word_opt.empty() )
 		{
 			continue;
 		}
 
-		if( first_word.try_deref() == "blok" )
+		var ust::string_view8 first_word= first_word_opt.try_deref();
+
+		if( first_word == "blok" )
 		{
 			if( current_block_index != 0xFFFFFFFFu )
 			{
@@ -62,6 +64,56 @@ fn ParseMaterialsFile( ust::string_view8 file_contents ) : MaterialsDescription
 			}
 			current_block_index= index_opt.try_deref();
 		}
+		else if( first_word == "mipmapa" )
+		{
+			if( !current_texture.empty() )
+			{
+				current_block.textures.push_back( current_texture.try_take() );
+			}
+
+			var MaterialsDescription::Texture mut t;
+
+			for( auto mut i= 0u; i < 4u; ++i )
+			{
+				auto image_file_opt= words_it.next();
+				if( image_file_opt.empty() )
+				{
+					break;
+				}
+				t.mips[i]= image_file_opt.try_deref();
+			}
+
+			current_texture.reset( move(t) );
+		}
+		else if( first_word == "material" )
+		{
+			if( !current_texture.empty() )
+			{
+				auto index_str_opt= words_it.next();
+				auto name_opt= words_it.next();
+				if( index_str_opt.empty() || name_opt.empty() )
+				{
+					continue;
+				}
+
+				auto index_opt= ust::parse_integer_exact</u32/>( index_str_opt.try_deref() );
+				if( index_opt.empty() )
+				{
+					continue;
+				}
+				var u32 index= index_opt.try_deref();
+				if( index >= 4u )
+				{
+					continue;
+				}
+				current_texture.try_deref().materials[index]= name_opt.try_deref();
+			}
+		}
+	}
+
+	if( !current_texture.empty() )
+	{
+		current_block.textures.push_back( current_texture.try_take() );
 	}
 
 	if( current_block_index != 0xFFFFFFFFu )
@@ -72,6 +124,29 @@ fn ParseMaterialsFile( ust::string_view8 file_contents ) : MaterialsDescription
 	foreach( pair : materials_description.blocks )
 	{
 		ust::stdout_print( ust::concat( "Block ", ust::to_string8( pair.key() ), "\n" ) );
+		foreach( &texture : pair.value().textures )
+		{
+			var [ ust::string_view8, 9 ] parts
+			[
+				"\"",
+				texture.mips[0],
+				"\" \"",
+				texture.mips[1],
+				"\" \"",
+				texture.mips[2],
+				"\" \"",
+				texture.mips[3],
+				"\"\n",
+			];
+			ust::stdout_print( ust::string8::concat( parts ) );
+			for( auto mut i= 0u; i < 4u; ++i )
+			{
+				if( !texture.materials[i].empty() )
+				{
+					ust::stdout_print( ust::concat( ust::to_string8(i), " ", texture.materials[i], "\n" ) );
+				}
+			}
+		}
 	}
 
 	return materials_description;
