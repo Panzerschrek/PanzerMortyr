@@ -54,24 +54,6 @@ pretty_main
 		.projection( CAMERA_PERSPECTIVE )
 	};
 
-	auto mut test_image_file_nt= ust::path::join( map_dir.try_deref(), "OBRA0100.BMP" );
-	test_image_file_nt+= "\0";
-	var Image test_image= unsafe( LoadImage( test_image_file_nt.data() ) );
-	if( ust::is_nullptr( test_image.data ) )
-	{
-		ust::stderr_print( "Failed to load test image!\n" );
-		return -1;
-	}
-
-	var Texture2D test_texture= unsafe( LoadTextureFromImage( test_image ) );
-	if( test_texture.id == 0u )
-	{
-		ust::stderr_print( "Failed to load test texture from image!\n" );
-		return -1;
-	}
-
-	unsafe( UnloadImage( test_image ) );
-
 	unsafe( DisableCursor() );
 
 	unsafe( SetTargetFPS(60) );
@@ -93,10 +75,14 @@ pretty_main
 	var Texture dummy_texture= zero_init;
 	var ust::vector</Texture/> mut map_textures( used_texture_indices.size(), dummy_texture );
 
+	var ust::vector</Material/> mut draw_materials;
+
 	with( &block : materials.try_deref().blocks[ 41u ] )
 	{
 		foreach( pair : used_texture_indices.iter().zip( map_textures.iter() ) )
 		{
+			var Material mut material= unsafe( LoadMaterialDefault() );
+
 			var size_type id( pair.first );
 			if( id < block.textures.size() )
 			{
@@ -129,7 +115,13 @@ pretty_main
 				}
 
 				unsafe( UnloadImage( image ) );
+
+				unsafe
+				{
+					$>( material.maps ).texture = pair.second;
+				}
 			}
+			draw_materials.push_back( move(material) );
 		}
 
 		ust::stdout_print( "Block textures: \n" );
@@ -145,166 +137,188 @@ pretty_main
 	var ust::vector</f32/> mut mesh_texture_coordinates;
 	var ust::vector</u8/> mut mesh_colors;
 
-	foreach( &s : map_opt.try_deref().polygons )
+	var ust::vector</tup[ size_type, size_type ] /> mut vertex_offsets_and_counts( used_texture_indices.size(), ust::make_tuple( 0s, 0s ) );
+
+	for( auto mut i= 0s; i < used_texture_indices.size(); ++i )
 	{
-		ust::ignore_unused( s.data0 );
-		ust::ignore_unused( s.data1 );
-		ust::ignore_unused( s.data2 );
+		var u32 texture_index= used_texture_indices[i];
 
-		var [ i32, 3 ] pos[ (s.center[0]), (s.center[1]), (s.center[2]) ];
+		vertex_offsets_and_counts[i][0]= mesh_vertices.size() / 3s;
 
-		var [ i32, 3 ] shift0[ (s.vertices[0][0]), (s.vertices[0][1]), (s.vertices[0][2]) ];
-		var [ i32, 3 ] shift1[ (s.vertices[1][0]), (s.vertices[1][1]), (s.vertices[1][2]) ];
-		var [ i32, 3 ] shift2[ (s.vertices[2][0]), (s.vertices[2][1]), (s.vertices[2][2]) ];
-		var [ i32, 3 ] shift3[ (s.vertices[3][0]), (s.vertices[3][1]), (s.vertices[3][2]) ];
+		var size_type mut num_quads_with_this_texture= 0s;
 
-		var [ i32, 3 ] shifts_min
-		[
-			ust::min( ust::min(shift0[0], shift1[0]), ust::min(shift2[0], shift3[0]) ),
-			ust::min( ust::min(shift0[1], shift1[1]), ust::min(shift2[1], shift3[1]) ),
-			ust::min( ust::min(shift0[2], shift1[2]), ust::min(shift2[2], shift3[2]) ),
-		];
-		var [ i32, 3 ] shifts_max
-		[
-			ust::max( ust::max(shift0[0], shift1[0]), ust::max(shift2[0], shift3[0]) ),
-			ust::max( ust::max(shift0[1], shift1[1]), ust::max(shift2[1], shift3[1]) ),
-			ust::max( ust::max(shift0[2], shift1[2]), ust::max(shift2[2], shift3[2]) ),
-		];
-
-		var [ i32, 3 ] center
-		[
-			// Using signed integer division by two is important here.
-			// Using fractional numbers or bit-shift isn't correct, because this leads to gaps in map geometry.
-			0 + ( shifts_min[0] + shifts_max[0] ) / 2,
-			0 + ( shifts_min[1] + shifts_max[1] ) / 2,
-			0 + ( shifts_min[2] + shifts_max[2] ) / 2,
-		];
-
-		var Color c
+		foreach( &s : map_opt.try_deref().polygons )
 		{
-			.r(f32(center[0]) / 2.0f + 128.0f),
-			.g(f32(center[1]) / 2.0f + 128.0f),
-			.b(f32(center[2]) / 2.0f + 128.0f),
-			.a(255)
-		};
+			if( u32(s.data0[0]) != texture_index )
+			{
+				continue;
+			}
 
-		var Vector3 pos0{ .x( pos[0] - center[0] + shift0[0] ), .y( pos[1] - center[1] + shift0[1] ), .z( pos[2] - center[2] + shift0[2] ) };
-		var Vector3 pos1{ .x( pos[0] - center[0] + shift1[0] ), .y( pos[1] - center[1] + shift1[1] ), .z( pos[2] - center[2] + shift1[2] ) };
-		var Vector3 pos2{ .x( pos[0] - center[0] + shift2[0] ), .y( pos[1] - center[1] + shift2[1] ), .z( pos[2] - center[2] + shift2[2] ) };
-		var Vector3 pos3{ .x( pos[0] - center[0] + shift3[0] ), .y( pos[1] - center[1] + shift3[1] ), .z( pos[2] - center[2] + shift3[2] ) };
+			ust::ignore_unused( s.data0 );
+			ust::ignore_unused( s.data1 );
+			ust::ignore_unused( s.data2 );
 
-		var Vector2 tc0{ .x= 0.0f, .y= 0.0f };
-		var Vector2 tc1{ .x= 0.0f, .y= 1.0f };
-		var Vector2 tc2{ .x= 1.0f, .y= 1.0f };
-		var Vector2 tc3{ .x= 1.0f, .y= 0.0f };
+			var [ i32, 3 ] pos[ (s.center[0]), (s.center[1]), (s.center[2]) ];
 
-		mesh_vertices.push_back( pos2.x );
-		mesh_vertices.push_back( pos2.y );
-		mesh_vertices.push_back( pos2.z );
-		mesh_normals.push_back( 0.0f );
-		mesh_normals.push_back( 0.0f );
-		mesh_normals.push_back( 1.0f );
-		mesh_texture_coordinates.push_back( tc2.x );
-		mesh_texture_coordinates.push_back( tc2.y );
-		mesh_colors.push_back( c.r );
-		mesh_colors.push_back( c.g );
-		mesh_colors.push_back( c.b );
-		mesh_colors.push_back( c.a );
+			var [ i32, 3 ] shift0[ (s.vertices[0][0]), (s.vertices[0][1]), (s.vertices[0][2]) ];
+			var [ i32, 3 ] shift1[ (s.vertices[1][0]), (s.vertices[1][1]), (s.vertices[1][2]) ];
+			var [ i32, 3 ] shift2[ (s.vertices[2][0]), (s.vertices[2][1]), (s.vertices[2][2]) ];
+			var [ i32, 3 ] shift3[ (s.vertices[3][0]), (s.vertices[3][1]), (s.vertices[3][2]) ];
 
-		mesh_vertices.push_back( pos1.x );
-		mesh_vertices.push_back( pos1.y );
-		mesh_vertices.push_back( pos1.z );
-		mesh_normals.push_back( 0.0f );
-		mesh_normals.push_back( 0.0f );
-		mesh_normals.push_back( 1.0f );
-		mesh_texture_coordinates.push_back( tc1.x );
-		mesh_texture_coordinates.push_back( tc1.y );
-		mesh_colors.push_back( c.r );
-		mesh_colors.push_back( c.g );
-		mesh_colors.push_back( c.b );
-		mesh_colors.push_back( c.a );
+			var [ i32, 3 ] shifts_min
+			[
+				ust::min( ust::min(shift0[0], shift1[0]), ust::min(shift2[0], shift3[0]) ),
+				ust::min( ust::min(shift0[1], shift1[1]), ust::min(shift2[1], shift3[1]) ),
+				ust::min( ust::min(shift0[2], shift1[2]), ust::min(shift2[2], shift3[2]) ),
+			];
+			var [ i32, 3 ] shifts_max
+			[
+				ust::max( ust::max(shift0[0], shift1[0]), ust::max(shift2[0], shift3[0]) ),
+				ust::max( ust::max(shift0[1], shift1[1]), ust::max(shift2[1], shift3[1]) ),
+				ust::max( ust::max(shift0[2], shift1[2]), ust::max(shift2[2], shift3[2]) ),
+			];
 
-		mesh_vertices.push_back( pos0.x );
-		mesh_vertices.push_back( pos0.y );
-		mesh_vertices.push_back( pos0.z );
-		mesh_normals.push_back( 0.0f );
-		mesh_normals.push_back( 0.0f );
-		mesh_normals.push_back( 1.0f );
-		mesh_texture_coordinates.push_back( tc0.x );
-		mesh_texture_coordinates.push_back( tc0.y );
-		mesh_colors.push_back( c.r );
-		mesh_colors.push_back( c.g );
-		mesh_colors.push_back( c.b );
-		mesh_colors.push_back( c.a );
+			var [ i32, 3 ] center
+			[
+				// Using signed integer division by two is important here.
+				// Using fractional numbers or bit-shift isn't correct, because this leads to gaps in map geometry.
+				0 + ( shifts_min[0] + shifts_max[0] ) / 2,
+				0 + ( shifts_min[1] + shifts_max[1] ) / 2,
+				0 + ( shifts_min[2] + shifts_max[2] ) / 2,
+			];
 
-		mesh_vertices.push_back( pos3.x );
-		mesh_vertices.push_back( pos3.y );
-		mesh_vertices.push_back( pos3.z );
-		mesh_normals.push_back( 0.0f );
-		mesh_normals.push_back( 0.0f );
-		mesh_normals.push_back( 1.0f );
-		mesh_texture_coordinates.push_back( tc3.x );
-		mesh_texture_coordinates.push_back( tc3.y );
-		mesh_colors.push_back( c.r );
-		mesh_colors.push_back( c.g );
-		mesh_colors.push_back( c.b );
-		mesh_colors.push_back( c.a );
+			var Color c
+			{
+				.r(f32(center[0]) / 2.0f + 128.0f),
+				.g(f32(center[1]) / 2.0f + 128.0f),
+				.b(f32(center[2]) / 2.0f + 128.0f),
+				.a(255)
+			};
 
-		mesh_vertices.push_back( pos2.x );
-		mesh_vertices.push_back( pos2.y );
-		mesh_vertices.push_back( pos2.z );
-		mesh_normals.push_back( 0.0f );
-		mesh_normals.push_back( 0.0f );
-		mesh_normals.push_back( 1.0f );
-		mesh_texture_coordinates.push_back( tc2.x );
-		mesh_texture_coordinates.push_back( tc2.y );
-		mesh_colors.push_back( c.r );
-		mesh_colors.push_back( c.g );
-		mesh_colors.push_back( c.b );
-		mesh_colors.push_back( c.a );
+			var Vector3 pos0{ .x( pos[0] - center[0] + shift0[0] ), .y( pos[1] - center[1] + shift0[1] ), .z( pos[2] - center[2] + shift0[2] ) };
+			var Vector3 pos1{ .x( pos[0] - center[0] + shift1[0] ), .y( pos[1] - center[1] + shift1[1] ), .z( pos[2] - center[2] + shift1[2] ) };
+			var Vector3 pos2{ .x( pos[0] - center[0] + shift2[0] ), .y( pos[1] - center[1] + shift2[1] ), .z( pos[2] - center[2] + shift2[2] ) };
+			var Vector3 pos3{ .x( pos[0] - center[0] + shift3[0] ), .y( pos[1] - center[1] + shift3[1] ), .z( pos[2] - center[2] + shift3[2] ) };
 
-		mesh_vertices.push_back( pos0.x );
-		mesh_vertices.push_back( pos0.y );
-		mesh_vertices.push_back( pos0.z );
-		mesh_normals.push_back( 0.0f );
-		mesh_normals.push_back( 0.0f );
-		mesh_normals.push_back( 1.0f );
-		mesh_texture_coordinates.push_back( tc0.x );
-		mesh_texture_coordinates.push_back( tc0.y );
-		mesh_colors.push_back( c.r );
-		mesh_colors.push_back( c.g );
-		mesh_colors.push_back( c.b );
-		mesh_colors.push_back( c.a );
+			var Vector2 tc0{ .x= 0.0f, .y= 0.0f };
+			var Vector2 tc1{ .x= 0.0f, .y= 1.0f };
+			var Vector2 tc2{ .x= 1.0f, .y= 1.0f };
+			var Vector2 tc3{ .x= 1.0f, .y= 0.0f };
+
+			mesh_vertices.push_back( pos2.x );
+			mesh_vertices.push_back( pos2.y );
+			mesh_vertices.push_back( pos2.z );
+			mesh_normals.push_back( 0.0f );
+			mesh_normals.push_back( 0.0f );
+			mesh_normals.push_back( 1.0f );
+			mesh_texture_coordinates.push_back( tc2.x );
+			mesh_texture_coordinates.push_back( tc2.y );
+			mesh_colors.push_back( c.r );
+			mesh_colors.push_back( c.g );
+			mesh_colors.push_back( c.b );
+			mesh_colors.push_back( c.a );
+
+			mesh_vertices.push_back( pos1.x );
+			mesh_vertices.push_back( pos1.y );
+			mesh_vertices.push_back( pos1.z );
+			mesh_normals.push_back( 0.0f );
+			mesh_normals.push_back( 0.0f );
+			mesh_normals.push_back( 1.0f );
+			mesh_texture_coordinates.push_back( tc1.x );
+			mesh_texture_coordinates.push_back( tc1.y );
+			mesh_colors.push_back( c.r );
+			mesh_colors.push_back( c.g );
+			mesh_colors.push_back( c.b );
+			mesh_colors.push_back( c.a );
+
+			mesh_vertices.push_back( pos0.x );
+			mesh_vertices.push_back( pos0.y );
+			mesh_vertices.push_back( pos0.z );
+			mesh_normals.push_back( 0.0f );
+			mesh_normals.push_back( 0.0f );
+			mesh_normals.push_back( 1.0f );
+			mesh_texture_coordinates.push_back( tc0.x );
+			mesh_texture_coordinates.push_back( tc0.y );
+			mesh_colors.push_back( c.r );
+			mesh_colors.push_back( c.g );
+			mesh_colors.push_back( c.b );
+			mesh_colors.push_back( c.a );
+
+			mesh_vertices.push_back( pos3.x );
+			mesh_vertices.push_back( pos3.y );
+			mesh_vertices.push_back( pos3.z );
+			mesh_normals.push_back( 0.0f );
+			mesh_normals.push_back( 0.0f );
+			mesh_normals.push_back( 1.0f );
+			mesh_texture_coordinates.push_back( tc3.x );
+			mesh_texture_coordinates.push_back( tc3.y );
+			mesh_colors.push_back( c.r );
+			mesh_colors.push_back( c.g );
+			mesh_colors.push_back( c.b );
+			mesh_colors.push_back( c.a );
+
+			mesh_vertices.push_back( pos2.x );
+			mesh_vertices.push_back( pos2.y );
+			mesh_vertices.push_back( pos2.z );
+			mesh_normals.push_back( 0.0f );
+			mesh_normals.push_back( 0.0f );
+			mesh_normals.push_back( 1.0f );
+			mesh_texture_coordinates.push_back( tc2.x );
+			mesh_texture_coordinates.push_back( tc2.y );
+			mesh_colors.push_back( c.r );
+			mesh_colors.push_back( c.g );
+			mesh_colors.push_back( c.b );
+			mesh_colors.push_back( c.a );
+
+			mesh_vertices.push_back( pos0.x );
+			mesh_vertices.push_back( pos0.y );
+			mesh_vertices.push_back( pos0.z );
+			mesh_normals.push_back( 0.0f );
+			mesh_normals.push_back( 0.0f );
+			mesh_normals.push_back( 1.0f );
+			mesh_texture_coordinates.push_back( tc0.x );
+			mesh_texture_coordinates.push_back( tc0.y );
+			mesh_colors.push_back( c.r );
+			mesh_colors.push_back( c.g );
+			mesh_colors.push_back( c.b );
+			mesh_colors.push_back( c.a );
+
+			++num_quads_with_this_texture;
+		}
+
+		vertex_offsets_and_counts[i][1]= num_quads_with_this_texture * 6s;
 	}
 
-	var Mesh mut mesh
+	var ust::vector</Mesh/> mut per_texture_meshes;
+
+	for( auto mut i= 0s; i < used_texture_indices.size(); ++i )
 	{
-		.vertexCount( mesh_vertices.size() / 3s ),
-		.triangleCount( mesh_vertices.size() / 9s ),
-		.vertices= unsafe( mesh_vertices.data() ),
-		.texcoords= unsafe( mesh_texture_coordinates.data() ),
-		.texcoords2= zero_init,
-		.normals= unsafe( mesh_normals.data() ),
-		.tangents= zero_init,
-		.colors= unsafe( mesh_colors.data() ),
-		.indices= zero_init,
-		.animVertices= zero_init,
-		.animNormals= zero_init,
-		.boneIds= zero_init,
-		.boneWeights= zero_init,
-		.boneMatrices= zero_init,
-		.boneCount= zero_init,
-		.vaoId= zero_init,
-		.vboId= zero_init,
-	};
+		var size_type vertex_offset= vertex_offsets_and_counts[i][0];
+		var size_type num_vertices= vertex_offsets_and_counts[i][1];
 
-	unsafe( UploadMesh( $<(mesh), false ) );
+		var Mesh mut mesh
+		{
+			.vertexCount( num_vertices ),
+			.triangleCount( num_vertices / 3s ),
+			.vertices= unsafe( mesh_vertices.data() + vertex_offset * 3s ),
+			.texcoords= unsafe( mesh_texture_coordinates.data() + vertex_offset * 2s ),
+			.texcoords2= zero_init,
+			.normals= unsafe( mesh_normals.data() + vertex_offset * 3s ),
+			.tangents= zero_init,
+			.colors= unsafe( mesh_colors.data() + vertex_offset * 4s ),
+			.indices= zero_init,
+			.animVertices= zero_init,
+			.animNormals= zero_init,
+			.boneIds= zero_init,
+			.boneWeights= zero_init,
+			.boneMatrices= zero_init,
+			.boneCount= zero_init,
+			.vaoId= zero_init,
+			.vboId= zero_init,
+		};
 
-	var Material material= unsafe( LoadMaterialDefault() );
-
-	unsafe
-	{
-		$>( material.maps ).texture = test_texture;
+		unsafe( UploadMesh( $<(mesh), false ) );
+		per_texture_meshes.push_back( move(mesh) );
 	}
 
 	while( ! unsafe( WindowShouldClose() ) )
@@ -337,17 +351,16 @@ pretty_main
 				matrix.m10= -scale;
 				matrix.m15= 1.0f;
 
-				unsafe( DrawMesh( mesh, material, matrix ) );
+				for( auto mut i= 0s; i < used_texture_indices.size(); ++i )
+				{
+					unsafe( DrawMesh( per_texture_meshes[i], draw_materials[i], matrix ) );
+				}
 			}
 			unsafe( EndMode3D() );
 		}
 
-		unsafe( DrawTexture( test_texture, 0, 0, Color{ .r(255), .g(255), .b(255), .a(255) } ) );
-
 		unsafe( EndDrawing() );
 	}
-
-	unsafe( UnloadTexture( test_texture ) );
 
 	unsafe( CloseWindow() );
 
