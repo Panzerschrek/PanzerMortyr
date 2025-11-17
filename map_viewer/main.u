@@ -3,6 +3,7 @@ import "/file.u"
 import "/main_wrapper.u"
 import "/math.u"
 import "/path_utils.u"
+import "/scoped_array.u"
 import "/stdout.u"
 import "/string_conversions.u"
 import "/vector.u"
@@ -87,24 +88,66 @@ pretty_main
 				ust::stderr_print( ust::concat( "Failed to load image\"" , image_file_nt, "\"!\n" ) );
 				return -1;
 			}
-
-			var Texture mut texture = unsafe( LoadTextureFromImage( image ) );
-			if( texture.id == 0u )
+			if( image.format != i32( PIXELFORMAT_UNCOMPRESSED_R8G8B8 ) )
 			{
-				ust::stderr_print( "Failed to load test texture from image!\n" );
+				ust::stderr_print( ust::concat( "Invalid pixel format o image\"" , image_file_nt, "\"!\n" ) );
 				return -1;
 			}
 
-			var Material mut material= unsafe( LoadMaterialDefault() );
-			unsafe
+			var u32 tile_size_x= u32( image.width ) >> 1u;
+			var u32 tile_size_y= u32( image.height ) >> 1u;
+
+			type PixelType= [ u8, 3 ];
+
+			scoped_array PixelType mut tile_data[ size_type(tile_size_x * tile_size_y ) ]( ust::make_array( 0u8, 0u8, 0u8 ) );
+
+			var $(PixelType) image_data= unsafe( ust::byte_ptr_cast</PixelType/>( image.data ) );
+
+			for( auto mut tile_y= 0u; tile_y < 2u; ++tile_y )
 			{
-				$>( material.maps ).texture = texture;
+				for( auto mut tile_x= 0u; tile_x < 2u; ++tile_x )
+				{
+					var u32 src_y= tile_y * tile_size_y;
+					var u32 src_x= tile_x * tile_size_x;
+					unsafe
+					{
+						var $(PixelType) tile_src_data= image_data + src_x + src_y * u32(image.width);
+
+						for( auto mut y= 0u; y < tile_size_y; ++y )
+						{
+							for( auto mut x= 0u; x < tile_size_x; ++x )
+							{
+								tile_data[ size_type( x + y * tile_size_x ) ]= $>( tile_src_data + x + y * u32( image.width ) );
+							}
+						}
+
+						var Image tile_image
+						{
+							.data= ust::ptr_cast_to_byte8( tile_data.data() ),
+							.width( tile_size_x ),
+							.height( tile_size_y ),
+							.mipmaps(1),
+							.format= image.format,
+						};
+
+						var Texture mut texture = LoadTextureFromImage( tile_image );
+						if( texture.id == 0u )
+						{
+							ust::stderr_print( "Failed to load test texture from image!\n" );
+							return -1;
+						}
+
+						var Material mut material= LoadMaterialDefault();
+
+						$>( material.maps ).texture = texture;
+
+						block_materials.push_back( move(material) );
+						block_textures.push_back( move(texture) );
+					}
+				}
 			}
 
 			unsafe( UnloadImage( image ) );
-
-			block_materials.push_back( move(material) );
-			block_textures.push_back( move(texture) );
 		}
 
 		ust::stdout_print( "Block textures: \n" );
@@ -130,8 +173,7 @@ pretty_main
 
 		foreach( &s : map_opt.try_deref().polygons )
 		{
-			var u32 quad_texture( s.texture_id );
-			if( size_type( quad_texture / 4u ) != i )
+			if( size_type( s.texture_id ) != i )
 			{
 				continue;
 			}
@@ -246,14 +288,13 @@ pretty_main
 
 			var Vector2 tc_quad_offset
 			{
-				.x= f32( ( quad_texture >> 0u ) & 1u ) * 0.5f - f32( (i32(s.some_sort_of_uv_offset_i_dont_really_know_yet[0]) + 128) % 128 ) / 256.0f,
-				.y= f32( ( quad_texture >> 1u ) & 1u ) * 0.5f + f32( (i32(s.some_sort_of_uv_offset_i_dont_really_know_yet[1]) + 128) % 128 ) / 256.0f,
+				.x= -f32( s.some_sort_of_uv_offset_i_dont_really_know_yet[0] ) / 128.0f,
+				.y=  f32( s.some_sort_of_uv_offset_i_dont_really_know_yet[1] ) / 128.0f,
 			};
-			ust::stdout_print( ust::concat( "( ", ust::to_string8( s.data1[0] ), ", ", ust::to_string8( s.data1[1] ), " ) "  ) );
 
 			// TODO - read it from polygon properties?
 			// It seems like some textures are scaled.
-			var f32 ts_scale= 1.0f / 256.0f;
+			var f32 ts_scale= 1.0f / 128.0f;
 
 			auto tc_mod=
 				lambda[&]( f32 f ) : f32
