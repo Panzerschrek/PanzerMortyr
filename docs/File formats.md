@@ -1,8 +1,9 @@
 The game archive contains files of the following types (extensions):
 
-* ANT
+* ZMAP*.ANT - contains mostly map polygons and sometimes some other data
+* ZVOX*.ANT - some map data?
 * BMP - just regular Windows bitmap
-* LEM
+* LEM - some map data?
 * LAM - some map data?
 * OBB
 * PAL - seems to be palettes (they are all 768 bytes in size)
@@ -17,4 +18,4 @@ GENERIC.STD - seems to be some sort of settings file (with key bindings).
 ICE.STD - lists levels with various properties including dependent resource files.
 KEYS.STD - some other sort of settings file with key bindings?
 TEXT.STD - HUD/Menu string tables.
-TEXAB.STD - contains some texture descriptions (materials?).
+TEXAB.STD - contains some texture descriptions (materials).
