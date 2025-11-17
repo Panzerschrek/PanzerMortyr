@@ -1,0 +1,259 @@
+import "/enum_string_conversions.u"
+import "/file_helpers.u"
+import "/integer_parsing.u"
+import "/path_utils.u"
+import "/stdout.u"
+import "/string_conversions.u"
+import "materials_file.uh"
+
+fn LoadMaterialsFile( ust::filesystem_path_view maps_directory ) : ust::optional</MaterialsDescription/>
+{
+	var ust::filesystem_path file_path= ust::path::join( maps_directory, "TXTAB.STD" );
+
+	result_match( ust::read_file_to_string( file_path ) )
+	{
+		Ok(contents) ->
+		{
+			return ParseMaterialsFile( contents );
+		},
+		Err(e) ->
+		{
+			ust::stderr_print( ust::concat( "Failed to read file \"", file_path, "\"! Error: ", ust::enum_to_string(e), "\n" ) );
+			return ust::null_optional;
+		}
+	}
+}
+
+fn ParseMaterialsFile( ust::string_view8 file_contents ) : MaterialsDescription
+{
+	var MaterialsDescription mut materials_description;
+
+	var MaterialsDescription::Block mut current_block;
+	var u32 mut current_block_index= 0xFFFFFFFFu;
+
+	var ust::optional</MaterialsDescription::Texture/> mut current_texture;
+
+	foreach( line : ust::wrap_raw_iterator( LinesRawIterator( file_contents ) ) )
+	{
+		auto mut words_it= ust::wrap_raw_iterator( WordsIterator( line ) );
+
+		auto first_word_opt= words_it.next();
+		if( first_word_opt.empty() )
+		{
+			continue;
+		}
+
+		var ust::string_view8 first_word= first_word_opt.try_deref();
+
+		if( first_word == "blok" )
+		{
+			if( current_block_index != 0xFFFFFFFFu )
+			{
+				if( !current_texture.empty() )
+				{
+					current_block.textures.push_back( current_texture.try_take() );
+				}
+
+				materials_description.blocks.insert_new( current_block_index, take( current_block ) );
+			}
+
+			auto block_index_str_opt= words_it.next();
+			if( block_index_str_opt.empty() )
+			{
+				continue;
+			}
+			auto index_opt= ust::parse_integer_exact</u32/>( block_index_str_opt.try_deref() );
+			if( index_opt.empty() )
+			{
+				continue;
+			}
+			current_block_index= index_opt.try_deref();
+		}
+		else if( first_word == "mipmapa" )
+		{
+			if( !current_texture.empty() )
+			{
+				current_block.textures.push_back( current_texture.try_take() );
+			}
+
+			var MaterialsDescription::Texture mut t;
+
+			for( auto mut i= 0u; i < 4u; ++i )
+			{
+				auto image_file_opt= words_it.next();
+				if( image_file_opt.empty() )
+				{
+					break;
+				}
+				t.mips[i]= image_file_opt.try_deref();
+			}
+
+			current_texture.reset( move(t) );
+		}
+		else if( first_word == "material" )
+		{
+			if( !current_texture.empty() )
+			{
+				auto index_str_opt= words_it.next();
+				auto name_opt= words_it.next();
+				if( index_str_opt.empty() || name_opt.empty() )
+				{
+					continue;
+				}
+
+				auto index_opt= ust::parse_integer_exact</u32/>( index_str_opt.try_deref() );
+				if( index_opt.empty() )
+				{
+					continue;
+				}
+				var u32 index= index_opt.try_deref();
+				if( index >= 4u )
+				{
+					continue;
+				}
+				current_texture.try_deref().materials[index]= name_opt.try_deref();
+			}
+		}
+	}
+
+	if( !current_texture.empty() )
+	{
+		current_block.textures.push_back( current_texture.try_take() );
+	}
+
+	if( current_block_index != 0xFFFFFFFFu )
+	{
+		materials_description.blocks.insert_new( current_block_index, take( current_block ) );
+	}
+
+	foreach( pair : materials_description.blocks )
+	{
+		ust::stdout_print( ust::concat( "Block ", ust::to_string8( pair.key() ), "\n" ) );
+		foreach( &texture : pair.value().textures )
+		{
+			var [ ust::string_view8, 9 ] parts
+			[
+				"\"",
+				texture.mips[0],
+				"\" \"",
+				texture.mips[1],
+				"\" \"",
+				texture.mips[2],
+				"\" \"",
+				texture.mips[3],
+				"\"\n",
+			];
+			ust::stdout_print( ust::string8::concat( parts ) );
+			for( auto mut i= 0u; i < 4u; ++i )
+			{
+				if( !texture.materials[i].empty() )
+				{
+					ust::stdout_print( ust::concat( ust::to_string8(i), " ", texture.materials[i], "\n" ) );
+				}
+			}
+		}
+	}
+
+	return materials_description;
+}
+
+class LinesRawIterator
+{
+public:
+	fn constructor( ust::string_view8 s ) @( ust::reference_notation::pollution::param0_param_1_inner_reference )
+		( s_= s )
+	{}
+
+	fn next( mut this ) : ust::optional</ust::string_view8/> @( ust::reference_notation::return_inner_references::param0_inner_reference0 )
+	{
+		loop
+		{
+			if( s_.empty() )
+			{
+				return ust::null_optional;
+			}
+
+			var size_type mut end= 0s;
+			var size_type mut string_end= 0s;
+			while( end < s_.size() )
+			{
+				if( s_.subrange_start(end).starts_with( "\r\n" ) )
+				{
+					string_end= end;
+					end= string_end + 2s;
+					break;
+				}
+				else if( s_.subrange_start(end).starts_with( "\n" ) )
+				{
+					string_end= end;
+					end= string_end + 1s;
+					break;
+				}
+				++end;
+			}
+
+			auto res= s_.subrange_end( string_end );
+
+			for( auto mut i= 0s; i < end; ++i )
+			{
+				s_.drop_front();
+			}
+			if( !s_.empty() )
+			{
+				s_.drop_front();
+			}
+
+			if( !res.empty() )
+			{
+				return res;
+			}
+		}
+	}
+
+private:
+	ust::string_view8 s_;
+}
+
+class WordsIterator
+{
+public:
+	fn constructor( ust::string_view8 s ) @( ust::reference_notation::pollution::param0_param_1_inner_reference )
+		( s_= s )
+	{}
+
+	fn next( mut this ) : ust::optional</ust::string_view8/> @( ust::reference_notation::return_inner_references::param0_inner_reference0 )
+	{
+		loop
+		{
+			if( s_.empty() )
+			{
+				return ust::null_optional;
+			}
+
+			var size_type mut end= 0s;
+			while( end < s_.size() && !( s_[end] == ' ' || s_[end] == '\t' ) )
+			{
+				++end;
+			}
+
+			auto res= s_.subrange_end( end );
+
+			for( auto mut i= 0s; i < end; ++i )
+			{
+				s_.drop_front();
+			}
+			if( !s_.empty() )
+			{
+				s_.drop_front();
+			}
+
+			if( !res.empty() )
+			{
+				return res;
+			}
+		}
+	}
+
+private:
+	ust::string_view8 s_;
+}

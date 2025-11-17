@@ -1,0 +1,473 @@
+import "/enum_string_conversions.u"
+import "/file.u"
+import "/main_wrapper.u"
+import "/math.u"
+import "/path_utils.u"
+import "/scoped_array.u"
+import "/stdout.u"
+import "/string_conversions.u"
+import "/vector.u"
+
+import "/raylib_wrapper/raylib.uh"
+
+import "map_files.uh"
+import "materials_file.uh"
+
+pretty_main
+{
+	if( args.size() < 2s )
+	{
+		ust::stderr_print( "Not enough arguments!\n" );
+		return -1;
+	}
+	var ust::string_view8 map_file_path= args[1s];
+
+	auto map_opt= LoadMap( map_file_path );
+	if( map_opt.empty() )
+	{
+		return -1;
+	}
+
+	var ust::optional</ust::filesystem_path_view/> map_dir= ust::path::get_parent_path( map_file_path );
+	if( map_dir.empty() )
+	{
+		ust::stderr_print( "Can't get parent directory for the map file!\n" );
+		return -1;
+	}
+
+	auto materials = LoadMaterialsFile( map_dir.try_deref() );
+	if( materials.empty() )
+	{
+		return -1;
+	}
+
+	var i32 screen_width = 1024;
+	var i32 screen_height = 768;
+
+	unsafe( InitWindow( screen_width, screen_height, $<( cast_mut( "PanzerMortyr MapViewer\0"[0] ) ) ) );
+
+	var Camera3D mut camera
+	{
+		.position = Vector3{ .x= 10.0f, .y= 10.0f, .z= 10.0f },
+		.target = Vector3{ .x= 0.0f, .y= 0.0f, .z= 0.0f },
+		.up = Vector3{ .x= 0.0f, .y= 0.0f, .z= 1.0f },
+		.fovy = 75.0f,
+		.projection( CAMERA_PERSPECTIVE )
+	};
+
+	if( !compiler::options::generate_debug_info )
+	{
+		unsafe( DisableCursor() );
+	}
+
+	unsafe( SetTargetFPS(60) );
+
+	var ust::vector</Material/> mut block_materials;
+	var ust::vector</Texture/> mut block_textures;
+
+	with( &block : materials.try_deref().blocks[ 41u ] )
+	{
+		foreach( &block_texture : block.textures )
+		{
+			// Hacky way to make uppercase.
+			// TODO - perform this conversion during archive extraction.
+			var ust::string8 mut base_name= block_texture.mips[1];
+			foreach( &mut c : base_name )
+			{
+				if( c >= 'a' && c <= 'z' )
+				{
+					c= char8( u32('A') + (u32(c) - u32('a') ) );
+				}
+			}
+
+			auto mut image_file_nt= ust::path::join( map_dir.try_deref(), base_name );
+			image_file_nt+= "\0";
+
+			var Image image= unsafe( LoadImage( image_file_nt.data() ) );
+			if( ust::is_nullptr( image.data ) )
+			{
+				ust::stderr_print( ust::concat( "Failed to load image\"" , image_file_nt, "\"!\n" ) );
+				return -1;
+			}
+			if( image.format != i32( PIXELFORMAT_UNCOMPRESSED_R8G8B8 ) )
+			{
+				ust::stderr_print( ust::concat( "Invalid pixel format o image\"" , image_file_nt, "\"!\n" ) );
+				return -1;
+			}
+
+			var u32 tile_size_x= u32( image.width ) >> 1u;
+			var u32 tile_size_y= u32( image.height ) >> 1u;
+
+			type PixelType= [ u8, 3 ];
+
+			scoped_array PixelType mut tile_data[ size_type(tile_size_x * tile_size_y ) ]( ust::make_array( 0u8, 0u8, 0u8 ) );
+
+			var $(PixelType) image_data= unsafe( ust::byte_ptr_cast</PixelType/>( image.data ) );
+
+			for( auto mut tile_y= 0u; tile_y < 2u; ++tile_y )
+			{
+				for( auto mut tile_x= 0u; tile_x < 2u; ++tile_x )
+				{
+					var u32 src_y= tile_y * tile_size_y;
+					var u32 src_x= tile_x * tile_size_x;
+					unsafe
+					{
+						var $(PixelType) tile_src_data= image_data + src_x + src_y * u32(image.width);
+
+						for( auto mut y= 0u; y < tile_size_y; ++y )
+						{
+							for( auto mut x= 0u; x < tile_size_x; ++x )
+							{
+								tile_data[ size_type( x + y * tile_size_x ) ]= $>( tile_src_data + x + y * u32( image.width ) );
+							}
+						}
+
+						var Image tile_image
+						{
+							.data= ust::ptr_cast_to_byte8( tile_data.data() ),
+							.width( tile_size_x ),
+							.height( tile_size_y ),
+							.mipmaps(1),
+							.format= image.format,
+						};
+
+						var Texture mut texture = LoadTextureFromImage( tile_image );
+						if( texture.id == 0u )
+						{
+							ust::stderr_print( "Failed to load test texture from image!\n" );
+							return -1;
+						}
+
+						var Material mut material= LoadMaterialDefault();
+
+						$>( material.maps ).texture = texture;
+
+						block_materials.push_back( move(material) );
+						block_textures.push_back( move(texture) );
+					}
+				}
+			}
+
+			unsafe( UnloadImage( image ) );
+		}
+
+		ust::stdout_print( "Block textures: \n" );
+		foreach( &t : block.textures )
+		{
+			ust::stdout_print( ust::concat( t.mips[0u], "\n" ) );
+		}
+		ust::stdout_print( ust::concat( "Total ", ust::to_string8( block.textures.size() ), " textures\n" ) );
+	}
+
+	var ust::vector</f32/> mut mesh_vertices;
+	var ust::vector</f32/> mut mesh_texture_coordinates;
+	var ust::vector</u8/> mut mesh_colors;
+
+	var ust::vector</tup[ size_type, size_type ] /> mut vertex_offsets_and_counts( block_materials.size(), ust::make_tuple( 0s, 0s ) );
+
+	for( auto mut i= 0s; i < block_materials.size(); ++i )
+	{
+		vertex_offsets_and_counts[i][0]= mesh_vertices.size() / 3s;
+
+		var size_type mut num_quads_with_this_texture= 0s;
+
+		foreach( &s : map_opt.try_deref().quads )
+		{
+			if( size_type( s.texture_id ) != i )
+			{
+				continue;
+			}
+
+			var [ i32, 3 ] pos[ (s.center[0]), (s.center[1]), (s.center[2]) ];
+
+			var [ i32, 3 ] shift0[ (s.vertices[0][0]), (s.vertices[0][1]), (s.vertices[0][2]) ];
+			var [ i32, 3 ] shift1[ (s.vertices[1][0]), (s.vertices[1][1]), (s.vertices[1][2]) ];
+			var [ i32, 3 ] shift2[ (s.vertices[2][0]), (s.vertices[2][1]), (s.vertices[2][2]) ];
+			var [ i32, 3 ] shift3[ (s.vertices[3][0]), (s.vertices[3][1]), (s.vertices[3][2]) ];
+
+			var [ i32, 3 ] shifts_min
+			[
+				ust::min( ust::min(shift0[0], shift1[0]), ust::min(shift2[0], shift3[0]) ),
+				ust::min( ust::min(shift0[1], shift1[1]), ust::min(shift2[1], shift3[1]) ),
+				ust::min( ust::min(shift0[2], shift1[2]), ust::min(shift2[2], shift3[2]) ),
+			];
+			var [ i32, 3 ] shifts_max
+			[
+				ust::max( ust::max(shift0[0], shift1[0]), ust::max(shift2[0], shift3[0]) ),
+				ust::max( ust::max(shift0[1], shift1[1]), ust::max(shift2[1], shift3[1]) ),
+				ust::max( ust::max(shift0[2], shift1[2]), ust::max(shift2[2], shift3[2]) ),
+			];
+
+			var [ i32, 3 ] center
+			[
+				// Using signed integer division by two is important here.
+				// Using fractional numbers or bit-shift isn't correct, because this leads to gaps in map geometry.
+				0 + ( shifts_min[0] + shifts_max[0] ) / 2,
+				0 + ( shifts_min[1] + shifts_max[1] ) / 2,
+				0 + ( shifts_min[2] + shifts_max[2] ) / 2,
+			];
+
+			var Color c{ .r(255), .g(255), .b(255), .a(255) };
+
+			var Vector3 pos0{ .x( pos[0] - center[0] + shift0[0] ), .y( pos[1] - center[1] + shift0[1] ), .z( pos[2] - center[2] + shift0[2] ) };
+			var Vector3 pos1{ .x( pos[0] - center[0] + shift1[0] ), .y( pos[1] - center[1] + shift1[1] ), .z( pos[2] - center[2] + shift1[2] ) };
+			var Vector3 pos2{ .x( pos[0] - center[0] + shift2[0] ), .y( pos[1] - center[1] + shift2[1] ), .z( pos[2] - center[2] + shift2[2] ) };
+			var Vector3 pos3{ .x( pos[0] - center[0] + shift3[0] ), .y( pos[1] - center[1] + shift3[1] ), .z( pos[2] - center[2] + shift3[2] ) };
+
+			var Vector3 mut u_vec{ .x= 0.0f, .y= 1.0f, .z= 0.0f };
+			var Vector3 mut v_vec{ .x= 1.0f, .y= 0.0f, .z= 0.0f };
+
+			var f32 c_tau= 2.0f * 3.1415926535f;
+
+			// TODO - fix this code.
+			// In rare cases with non-zero roll result texture basis isn't correct.
+			{
+				var f32 angle= f32( s.texture_roll ) * ( -c_tau / 256.0f );
+				var f32 c= ust::cos(angle);
+				var f32 s= ust::sin(angle);
+
+				u_vec= Vector3{ .x= u_vec.x * c - u_vec.y * s, .y= u_vec.x * s + u_vec.y * c, .z= u_vec.z };
+				v_vec= Vector3{ .x= v_vec.x * c - v_vec.y * s, .y= v_vec.x * s + v_vec.y * c, .z= v_vec.z };
+			}
+			{
+				var f32 angle= ( f32( s.normal_elevation ) + 256.0f ) * ( c_tau / 1024.0f );
+				var f32 c= ust::cos(angle);
+				var f32 s= ust::sin(angle);
+
+				u_vec= Vector3{ .x= u_vec.x * c - u_vec.z * s, .y= u_vec.y, .z= u_vec.x * s + u_vec.z * c };
+				v_vec= Vector3{ .x= v_vec.x * c - v_vec.z * s, .y= v_vec.y, .z= v_vec.x * s + v_vec.z * c };
+			}
+			{
+				var f32 angle= ( 768.0f - f32(s.normal_azimuth) ) * ( c_tau / 1024.0f );
+				var f32 c= ust::cos(angle);
+				var f32 s= ust::sin(angle);
+
+				u_vec= Vector3{ .x= u_vec.x * c - u_vec.y * s, .y= u_vec.x * s + u_vec.y * c, .z= u_vec.z };
+				v_vec= Vector3{ .x= v_vec.x * c - v_vec.y * s, .y= v_vec.x * s + v_vec.y * c, .z= v_vec.z };
+			}
+
+			var Vector2 tc_offset{ .x( s.tc_offset[0] ), .y( s.tc_offset[1] ), 	};
+
+			// It seems like all textures (or at least the majority of them) have identical scale.
+			var f32 ts_scale= 1.0f / 128.0f;
+
+			var Vector2 tc0
+			{
+				.x= ( f32( shift0[0] - shift0[0] ) * u_vec.x + f32(shift0[1] - shift0[1]) * u_vec.y + f32(shift0[2]  - shift0[2]) * u_vec.z + tc_offset.x ) * ts_scale ,
+				.y= ( f32( shift0[0] - shift0[0] ) * v_vec.x + f32(shift0[1] - shift0[1]) * v_vec.y + f32(shift0[2]  - shift0[2]) * v_vec.z + tc_offset.y ) * ts_scale,
+			};
+			var Vector2 tc1
+			{
+				.x= ( f32( shift1[0] - shift0[0] ) * u_vec.x + f32(shift1[1] - shift0[1]) * u_vec.y + f32(shift1[2]  - shift0[2]) * u_vec.z + tc_offset.x ) * ts_scale,
+				.y= ( f32( shift1[0] - shift0[0] ) * v_vec.x + f32(shift1[1] - shift0[1]) * v_vec.y + f32(shift1[2]  - shift0[2]) * v_vec.z + tc_offset.y ) * ts_scale,
+			};
+			var Vector2 tc2
+			{
+				.x= ( f32( shift2[0] - shift0[0] ) * u_vec.x + f32(shift2[1] - shift0[1]) * u_vec.y + f32(shift2[2]  - shift0[2]) * u_vec.z + tc_offset.x ) * ts_scale,
+				.y= ( f32( shift2[0] - shift0[0] ) * v_vec.x + f32(shift2[1] - shift0[1]) * v_vec.y + f32(shift2[2]  - shift0[2]) * v_vec.z + tc_offset.y ) * ts_scale,
+			};
+			var Vector2 tc3
+			{
+				.x= ( f32( shift3[0] - shift0[0] ) * u_vec.x + f32(shift3[1] - shift0[1]) * u_vec.y + f32(shift3[2]  - shift0[2]) * u_vec.z + tc_offset.x ) * ts_scale,
+				.y= ( f32( shift3[0] - shift0[0] ) * v_vec.x + f32(shift3[1] - shift0[1]) * v_vec.y + f32(shift3[2]  - shift0[2]) * v_vec.z + tc_offset.y ) * ts_scale,
+			};
+
+			mesh_vertices.push_back( pos2.x );
+			mesh_vertices.push_back( pos2.y );
+			mesh_vertices.push_back( pos2.z );
+			mesh_texture_coordinates.push_back( tc2.x );
+			mesh_texture_coordinates.push_back( tc2.y );
+			mesh_colors.push_back( c.r );
+			mesh_colors.push_back( c.g );
+			mesh_colors.push_back( c.b );
+			mesh_colors.push_back( c.a );
+
+			mesh_vertices.push_back( pos1.x );
+			mesh_vertices.push_back( pos1.y );
+			mesh_vertices.push_back( pos1.z );
+			mesh_texture_coordinates.push_back( tc1.x );
+			mesh_texture_coordinates.push_back( tc1.y );
+			mesh_colors.push_back( c.r );
+			mesh_colors.push_back( c.g );
+			mesh_colors.push_back( c.b );
+			mesh_colors.push_back( c.a );
+
+			mesh_vertices.push_back( pos0.x );
+			mesh_vertices.push_back( pos0.y );
+			mesh_vertices.push_back( pos0.z );
+			mesh_texture_coordinates.push_back( tc0.x );
+			mesh_texture_coordinates.push_back( tc0.y );
+			mesh_colors.push_back( c.r );
+			mesh_colors.push_back( c.g );
+			mesh_colors.push_back( c.b );
+			mesh_colors.push_back( c.a );
+
+			mesh_vertices.push_back( pos3.x );
+			mesh_vertices.push_back( pos3.y );
+			mesh_vertices.push_back( pos3.z );
+			mesh_texture_coordinates.push_back( tc3.x );
+			mesh_texture_coordinates.push_back( tc3.y );
+			mesh_colors.push_back( c.r );
+			mesh_colors.push_back( c.g );
+			mesh_colors.push_back( c.b );
+			mesh_colors.push_back( c.a );
+
+			mesh_vertices.push_back( pos2.x );
+			mesh_vertices.push_back( pos2.y );
+			mesh_vertices.push_back( pos2.z );
+			mesh_texture_coordinates.push_back( tc2.x );
+			mesh_texture_coordinates.push_back( tc2.y );
+			mesh_colors.push_back( c.r );
+			mesh_colors.push_back( c.g );
+			mesh_colors.push_back( c.b );
+			mesh_colors.push_back( c.a );
+
+			mesh_vertices.push_back( pos0.x );
+			mesh_vertices.push_back( pos0.y );
+			mesh_vertices.push_back( pos0.z );
+			mesh_texture_coordinates.push_back( tc0.x );
+			mesh_texture_coordinates.push_back( tc0.y );
+			mesh_colors.push_back( c.r );
+			mesh_colors.push_back( c.g );
+			mesh_colors.push_back( c.b );
+			mesh_colors.push_back( c.a );
+
+			++num_quads_with_this_texture;
+		}
+
+		vertex_offsets_and_counts[i][1]= num_quads_with_this_texture * 6s;
+	}
+
+	var ust::vector</Mesh/> mut per_texture_meshes;
+
+	for( auto mut i= 0s; i < block_materials.size(); ++i )
+	{
+		var size_type vertex_offset= vertex_offsets_and_counts[i][0];
+		var size_type num_vertices= vertex_offsets_and_counts[i][1];
+
+		var Mesh mut mesh
+		{
+			.vertexCount( num_vertices ),
+			.triangleCount( num_vertices / 3s ),
+			.vertices= unsafe( mesh_vertices.data() + vertex_offset * 3s ),
+			.texcoords= unsafe( mesh_texture_coordinates.data() + vertex_offset * 2s ),
+			.texcoords2= zero_init,
+			.normals= zero_init,
+			.tangents= zero_init,
+			.colors= unsafe( mesh_colors.data() + vertex_offset * 4s ),
+			.indices= zero_init,
+			.animVertices= zero_init,
+			.animNormals= zero_init,
+			.boneIds= zero_init,
+			.boneWeights= zero_init,
+			.boneMatrices= zero_init,
+			.boneCount= zero_init,
+			.vaoId= zero_init,
+			.vboId= zero_init,
+		};
+
+		unsafe( UploadMesh( $<(mesh), false ) );
+		per_texture_meshes.push_back( move(mesh) );
+	}
+
+
+	while( ! unsafe( WindowShouldClose() ) )
+	{
+		unsafe( UpdateCamera( $<(camera), i32( CAMERA_FREE ) ) );
+
+		if( unsafe( IsKeyPressed( i32( 'Z' ) ) ) )
+		{
+		}
+
+		unsafe(  BeginDrawing() );
+		{
+			unsafe( ClearBackground( Color{ .r(32), .g(16), .b(8), .a(0) } ) );
+
+			unsafe( BeginMode3D(camera) );
+			{
+				unsafe( DrawCube( Vector3{ .x(1), .y(0), .z(0) }, 2.0f, 0.2f, 0.2f, Color{ .r(255), .g(0), .b(0), .a(255) } ) );
+				unsafe( DrawCube( Vector3{ .x(0), .y(1), .z(0) }, 0.2f, 2.0f, 0.2f, Color{ .r(0), .g(255), .b(0), .a(255) } ) );
+				unsafe( DrawCube( Vector3{ .x(0), .y(0), .z(1) }, 0.2f, 0.2f, 2.0f, Color{ .r(0), .g(0), .b(255), .a(255) } ) );
+
+				// The original game uses units with pixel size.
+				// Scale it a little bit down, since camera controller operates with larger units.
+				var f32 scale= 1.0f / 64.0f;
+
+				var Matrix mut matrix= zero_init;
+				matrix.m0= scale;
+				matrix.m5= scale;
+				matrix.m10= -scale; // The original game seems to use Z down coordinate system. Flip it to be order to be displayed in OpenGL.
+				matrix.m15= 1.0f;
+
+				for( auto mut i= 0s; i < block_materials.size(); ++i )
+				{
+					unsafe( DrawMesh( per_texture_meshes[i], block_materials[i], matrix ) );
+				}
+			}
+			unsafe( EndMode3D() );
+		}
+
+		unsafe( EndDrawing() );
+	}
+
+	unsafe( CloseWindow() );
+
+	return 0;
+}
+
+struct MapData
+{
+	ust::vector</MapQuad/> quads;
+}
+
+fn LoadMap( ust::filesystem_path_view file_path ) : ust::optional</MapData/>
+{
+	result_match( ust::file_readable::open( file_path ) )
+	{
+		Ok( mut f ) -> { return LoadMap( move(f) ); },
+		Err(e) ->
+		{
+			ust::stderr_print( ust::concat( "Error opening archive file: ", ust::enum_to_string( e ), "\n" ) );
+			return ust::null_optional;
+		}
+	}
+}
+
+fn LoadMap( ust::file_readable mut f ) : ust::optional</MapData/>
+{
+	var ANTFileHeader mut header= zero_init;
+
+	if_var( e :
+		f.read_exact(
+			unsafe( ust::array_view_mut</byte8/>(
+				ust::ptr_cast_to_byte8( $<(header) ),
+				 typeinfo</ANTFileHeader/>.size_of ) ) ).as_error_ref() )
+	{
+		ust::stderr_print( ust::concat( "Error reading map file: ", ust::enum_to_string( e ), "\n" ) );
+		return ust::null_optional;
+	}
+
+	if( header.signature != ANTFileHeader::c_expected_signature )
+	{
+		ust::stderr_print( ust::concat( "Unexpected file signature \"", header.signature, "\"!" ) );
+		return ust::null_optional;
+	}
+
+	var MapData mut result;
+
+	var MapQuad dummy_quad= zero_init;
+
+	result.quads.resize( size_type( header.num_quads ), dummy_quad );
+
+	if_var( e :
+		f.read_exact(
+			unsafe( ust::array_view_mut</byte8/>(
+				ust::ptr_cast_to_byte8( result.quads.data() ),
+				result.quads.size() * typeinfo</MapQuad/>.size_of ) ) ).as_error_ref() )
+	{
+		ust::stderr_print( ust::concat( "Failed to read! Error: ", ust::enum_to_string( e ), ", \n" ) );
+		return ust::null_optional;
+	}
+
+	return result;
+}
