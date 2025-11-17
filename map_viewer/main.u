@@ -3,7 +3,6 @@ import "/file.u"
 import "/main_wrapper.u"
 import "/math.u"
 import "/path_utils.u"
-import "/sort.u"
 import "/stdout.u"
 import "/string_conversions.u"
 import "/vector.u"
@@ -61,68 +60,51 @@ pretty_main
 
 	unsafe( SetTargetFPS(60) );
 
-	var ust::vector</u32/> mut used_texture_indices;
-	foreach( &s : map_opt.try_deref().polygons )
-	{
-		used_texture_indices.push_back( u32(s.texture_id) / 4u );
-	}
-	ust::sort( used_texture_indices );
-	used_texture_indices.remove_adjacent_duplicates();
-	foreach( index : used_texture_indices )
-	{
-		ust::stdout_print( ust::concat( "Has material index ", ust::to_string8(index), "\n" ) );
-	}
-
-	var Texture dummy_texture= zero_init;
-	var ust::vector</Texture/> mut map_textures( used_texture_indices.size(), dummy_texture );
-
-	var ust::vector</Material/> mut draw_materials;
+	var ust::vector</Material/> mut block_materials;
+	var ust::vector</Texture/> mut block_textures;
 
 	with( &block : materials.try_deref().blocks[ 41u ] )
 	{
-		foreach( pair : used_texture_indices.iter().zip( map_textures.iter() ) )
+		foreach( &block_texture : block.textures )
 		{
-			var Material mut material= unsafe( LoadMaterialDefault() );
-
-			var size_type id( pair.first );
-			if( id < block.textures.size() )
+			// Hacky way to make uppercase.
+			// TODO - perform this conversion during archive extraction.
+			var ust::string8 mut base_name= block_texture.mips[1];
+			foreach( &mut c : base_name )
 			{
-				// Hacky way to make uppercase.
-				// TODO - perform this conversion during archive extraction.
-				var ust::string8 mut base_name= block.textures[id].mips[1];
-				foreach( &mut c : base_name )
+				if( c >= 'a' && c <= 'z' )
 				{
-					if( c >= 'a' && c <= 'z' )
-					{
-						c= char8( u32('A') + (u32(c) - u32('a') ) );
-					}
-				}
-
-				auto mut image_file_nt= ust::path::join( map_dir.try_deref(), base_name );
-				image_file_nt+= "\0";
-
-				var Image image= unsafe( LoadImage( image_file_nt.data() ) );
-				if( ust::is_nullptr( image.data ) )
-				{
-					ust::stderr_print( ust::concat( "Failed to load image\"" , image_file_nt, "\"!\n" ) );
-					return -1;
-				}
-
-				pair.second = unsafe( LoadTextureFromImage( image ) );
-				if( pair.second.id == 0u )
-				{
-					ust::stderr_print( "Failed to load test texture from image!\n" );
-					return -1;
-				}
-
-				unsafe( UnloadImage( image ) );
-
-				unsafe
-				{
-					$>( material.maps ).texture = pair.second;
+					c= char8( u32('A') + (u32(c) - u32('a') ) );
 				}
 			}
-			draw_materials.push_back( move(material) );
+
+			auto mut image_file_nt= ust::path::join( map_dir.try_deref(), base_name );
+			image_file_nt+= "\0";
+
+			var Image image= unsafe( LoadImage( image_file_nt.data() ) );
+			if( ust::is_nullptr( image.data ) )
+			{
+				ust::stderr_print( ust::concat( "Failed to load image\"" , image_file_nt, "\"!\n" ) );
+				return -1;
+			}
+
+			var Texture mut texture = unsafe( LoadTextureFromImage( image ) );
+			if( texture.id == 0u )
+			{
+				ust::stderr_print( "Failed to load test texture from image!\n" );
+				return -1;
+			}
+
+			var Material mut material= unsafe( LoadMaterialDefault() );
+			unsafe
+			{
+				$>( material.maps ).texture = texture;
+			}
+
+			unsafe( UnloadImage( image ) );
+
+			block_materials.push_back( move(material) );
+			block_textures.push_back( move(texture) );
 		}
 
 		ust::stdout_print( "Block textures: \n" );
@@ -138,12 +120,10 @@ pretty_main
 	var ust::vector</f32/> mut mesh_texture_coordinates;
 	var ust::vector</u8/> mut mesh_colors;
 
-	var ust::vector</tup[ size_type, size_type ] /> mut vertex_offsets_and_counts( used_texture_indices.size(), ust::make_tuple( 0s, 0s ) );
+	var ust::vector</tup[ size_type, size_type ] /> mut vertex_offsets_and_counts( block_materials.size(), ust::make_tuple( 0s, 0s ) );
 
-	for( auto mut i= 0s; i < used_texture_indices.size(); ++i )
+	for( auto mut i= 0s; i < block_materials.size(); ++i )
 	{
-		var u32 texture_index= used_texture_indices[i];
-
 		vertex_offsets_and_counts[i][0]= mesh_vertices.size() / 3s;
 
 		var size_type mut num_quads_with_this_texture= 0s;
@@ -151,7 +131,7 @@ pretty_main
 		foreach( &s : map_opt.try_deref().polygons )
 		{
 			var u32 quad_texture( s.texture_id );
-			if( quad_texture / 4u != texture_index )
+			if( size_type( quad_texture / 4u ) != i )
 			{
 				continue;
 			}
@@ -411,7 +391,7 @@ pretty_main
 
 	var ust::vector</Mesh/> mut per_texture_meshes;
 
-	for( auto mut i= 0s; i < used_texture_indices.size(); ++i )
+	for( auto mut i= 0s; i < block_materials.size(); ++i )
 	{
 		var size_type vertex_offset= vertex_offsets_and_counts[i][0];
 		var size_type num_vertices= vertex_offsets_and_counts[i][1];
@@ -473,9 +453,9 @@ pretty_main
 				matrix.m10= -scale;
 				matrix.m15= 1.0f;
 
-				for( auto mut i= 0s; i < used_texture_indices.size(); ++i )
+				for( auto mut i= 0s; i < block_materials.size(); ++i )
 				{
-					unsafe( DrawMesh( per_texture_meshes[i], draw_materials[i], matrix ) );
+					unsafe( DrawMesh( per_texture_meshes[i], block_materials[i], matrix ) );
 				}
 			}
 			unsafe( EndMode3D() );
