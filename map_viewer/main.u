@@ -15,15 +15,22 @@ import "materials_file.uh"
 
 pretty_main
 {
-	if( args.size() < 2s )
+	if( args.size() < 3s )
 	{
 		ust::stderr_print( "Not enough arguments!\n" );
 		return -1;
 	}
 	var ust::string_view8 map_file_path= args[1s];
+	var ust::string_view8 zpos_file_path= args[2s];
 
 	auto map_opt= LoadMap( map_file_path );
 	if( map_opt.empty() )
+	{
+		return -1;
+	}
+
+	auto zpos_opt= LoadZposMap( zpos_file_path );
+	if( zpos_opt.empty() )
 	{
 		return -1;
 	}
@@ -403,6 +410,11 @@ pretty_main
 				{
 					unsafe( DrawMesh( per_texture_meshes[i], block_materials[i], matrix ) );
 				}
+
+				foreach( &s : zpos_opt.try_deref().structs )
+				{
+					unsafe( DrawCube( Vector3{ .x= f32(s.data[0]) * scale, .y= f32(s.data[1]) * scale, .z= f32(s.data[2]) * -scale }, 0.15f, 0.15f, 0.15f, Color{ .r(255), .g(0), .b(255), .a(255) } ) );
+				}
 			}
 			unsafe( EndMode3D() );
 		}
@@ -420,6 +432,16 @@ struct MapData
 	ust::vector</MapQuad/> quads;
 }
 
+struct ZposData
+{
+	ust::vector</ZposStruct/> structs;
+}
+
+struct ZposStruct
+{
+	[ i32, 3 ] data;
+}
+
 fn LoadMap( ust::filesystem_path_view file_path ) : ust::optional</MapData/>
 {
 	result_match( ust::file_readable::open( file_path ) )
@@ -427,7 +449,7 @@ fn LoadMap( ust::filesystem_path_view file_path ) : ust::optional</MapData/>
 		Ok( mut f ) -> { return LoadMap( move(f) ); },
 		Err(e) ->
 		{
-			ust::stderr_print( ust::concat( "Error opening archive file: ", ust::enum_to_string( e ), "\n" ) );
+			ust::stderr_print( ust::concat( "Error opening file: ", ust::enum_to_string( e ), "\n" ) );
 			return ust::null_optional;
 		}
 	}
@@ -464,6 +486,70 @@ fn LoadMap( ust::file_readable mut f ) : ust::optional</MapData/>
 			unsafe( ust::array_view_mut</byte8/>(
 				ust::ptr_cast_to_byte8( result.quads.data() ),
 				result.quads.size() * typeinfo</MapQuad/>.size_of ) ) ).as_error_ref() )
+	{
+		ust::stderr_print( ust::concat( "Failed to read! Error: ", ust::enum_to_string( e ), ", \n" ) );
+		return ust::null_optional;
+	}
+
+	return result;
+}
+
+fn LoadZposMap( ust::filesystem_path_view file_path ) : ust::optional</ZposData/>
+{
+	result_match( ust::file_readable::open( file_path ) )
+	{
+		Ok( mut f ) -> { return LoadZposMap( move(f) ); },
+		Err(e) ->
+		{
+			ust::stderr_print( ust::concat( "Error opening file: ", ust::enum_to_string( e ), "\n" ) );
+			return ust::null_optional;
+		}
+	}
+}
+
+fn LoadZposMap( ust::file_readable mut f ) : ust::optional</ZposData/>
+{
+	var ZPosFileHeader mut header= zero_init;
+
+	if_var( e :
+		f.read_exact(
+			unsafe( ust::array_view_mut</byte8/>(
+				ust::ptr_cast_to_byte8( $<(header) ),
+				 typeinfo</ZPosFileHeader/>.size_of ) ) ).as_error_ref() )
+	{
+		ust::stderr_print( ust::concat( "Error reading map file: ", ust::enum_to_string( e ), "\n" ) );
+		return ust::null_optional;
+	}
+
+	if( header.signature != ZPosFileHeader::c_expected_signature )
+	{
+		ust::stderr_print( ust::concat( "Unexpected file signature \"", header.signature, "\"!" ) );
+		return ust::null_optional;
+	}
+
+	var u64 mut file_size(0);
+	result_match( f.get_metatada() )
+	{
+		Ok(m) -> { file_size= m.size; },
+		Err(e) ->
+		{
+			ust::stderr_print( ust::concat( "Error getting archive file size: ", ust::enum_to_string( e ), "\n" ) );
+			return ust::null_optional;
+		}
+	}
+
+	var ZposData mut result;
+
+	var size_type num_structs= ( size_type(file_size) - typeinfo</ZPosFileHeader/>.size_of ) / typeinfo</ZposData/>.size_of;
+
+	var ZposStruct dummy_struct= zero_init;
+	result.structs.resize( num_structs, dummy_struct );
+
+	if_var( e :
+		f.read_exact(
+			unsafe( ust::array_view_mut</byte8/>(
+				ust::ptr_cast_to_byte8( result.structs.data() ),
+				result.structs.size() * typeinfo</ZposStruct/>.size_of ) ) ).as_error_ref() )
 	{
 		ust::stderr_print( ust::concat( "Failed to read! Error: ", ust::enum_to_string( e ), ", \n" ) );
 		return ust::null_optional;
