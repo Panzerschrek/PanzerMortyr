@@ -15,15 +15,22 @@ import "materials_file.uh"
 
 pretty_main
 {
-	if( args.size() < 2s )
+	if( args.size() < 3s )
 	{
 		ust::stderr_print( "Not enough arguments!\n" );
 		return -1;
 	}
 	var ust::string_view8 map_file_path= args[1s];
+	var ust::string_view8 zpoz_file_path= args[2s];
 
 	auto map_opt= LoadMap( map_file_path );
 	if( map_opt.empty() )
+	{
+		return -1;
+	}
+
+	auto zpoz_opt= LoadZpozMap( zpoz_file_path );
+	if( zpoz_opt.empty() )
 	{
 		return -1;
 	}
@@ -150,13 +157,6 @@ pretty_main
 
 			unsafe( UnloadImage( image ) );
 		}
-
-		ust::stdout_print( "Block textures: \n" );
-		foreach( &t : block.textures )
-		{
-			ust::stdout_print( ust::concat( t.mips[0u], "\n" ) );
-		}
-		ust::stdout_print( ust::concat( "Total ", ust::to_string8( block.textures.size() ), " textures\n" ) );
 	}
 
 	var ust::vector</f32/> mut mesh_vertices;
@@ -370,6 +370,7 @@ pretty_main
 		per_texture_meshes.push_back( move(mesh) );
 	}
 
+	var size_type mut offset= 0s;
 
 	while( ! unsafe( WindowShouldClose() ) )
 	{
@@ -377,6 +378,8 @@ pretty_main
 
 		if( unsafe( IsKeyPressed( i32( 'Z' ) ) ) )
 		{
+			offset+= 1s;
+			ust::stdout_print( ust::concat( "Offset is ", ust::to_string8(offset), "\n" ) );
 		}
 
 		unsafe(  BeginDrawing() );
@@ -403,6 +406,49 @@ pretty_main
 				{
 					unsafe( DrawMesh( per_texture_meshes[i], block_materials[i], matrix ) );
 				}
+
+				if( true )
+				{
+					foreach( &entity : zpoz_opt.try_deref().entities )
+					{
+						var Color color{ .r(u32(entity.kind) * 37u), .g(u32(entity.kind) * 1179u), .b(u32(entity.kind) * 5423u), .a(255) };
+
+						var Vector3 pos{ .x= f32(entity.position[0s]) * scale, .y= f32(entity.position[1s]) * scale, .z= f32(entity.position[2s]) * -scale };
+
+						unsafe( DrawCube( pos, 0.4f, 0.4f, 0.6f, color ) );
+					}
+				}
+
+				if( false )
+				{
+					foreach( &s : zpoz_opt.try_deref().structs1 )
+					{
+						var Color color{ .r(0), .g(255), .b(0), .a(255) };
+
+						var Vector3 pos{ .x= f32(s.data[0s + offset]) * scale, .y= f32(s.data[1s + offset]) * scale, .z= f32(s.data[2s + offset]) * -scale };
+
+						unsafe( DrawCube( pos, 0.2f, 0.2f, 0.2f, color ) );
+					}
+				}
+
+				if( true )
+				{
+					foreach( &pair : zpoz_opt.try_deref().light_sources.iter().zip( zpoz_opt.try_deref().light_sources_extra.iter() ) )
+					{
+						var ZpozLightSource& light_source= pair.first;
+						var ZpozLightSourceExtraData& light_source_extra= pair.second;
+
+						var Vector3 pos{ .x= f32(light_source.position[0]) * scale, .y= f32(light_source.position[1]) * scale, .z= f32(light_source.position[2]) * -scale };
+						var f32 radius= ust::min( 32.0f, ust::max( 0.1f, f32(light_source.radius) * scale ) );
+
+						var Color color{ .r(light_source.power), .g(light_source.power), .b(light_source.power), .a(255) };
+
+						unsafe( DrawSphereWires( pos, radius, 6, 8, color ) );
+						unsafe( DrawCube( pos, 0.15f, 0.15f, 0.15f, color ) );
+
+						ust::ignore_unused( light_source_extra );
+					}
+				}
 			}
 			unsafe( EndMode3D() );
 		}
@@ -420,6 +466,15 @@ struct MapData
 	ust::vector</MapQuad/> quads;
 }
 
+struct ZpozData
+{
+	ust::vector</ZpozEntity/> entities;
+	ust::vector</ZpozStruct1/> structs1;
+	ust::vector</ZpozLightSource/> light_sources;
+	ust::vector</ZpozLightSourceExtraData/> light_sources_extra;
+	ust::vector</ZPozStruct3/> structs3;
+}
+
 fn LoadMap( ust::filesystem_path_view file_path ) : ust::optional</MapData/>
 {
 	result_match( ust::file_readable::open( file_path ) )
@@ -427,7 +482,7 @@ fn LoadMap( ust::filesystem_path_view file_path ) : ust::optional</MapData/>
 		Ok( mut f ) -> { return LoadMap( move(f) ); },
 		Err(e) ->
 		{
-			ust::stderr_print( ust::concat( "Error opening archive file: ", ust::enum_to_string( e ), "\n" ) );
+			ust::stderr_print( ust::concat( "Error opening file: ", ust::enum_to_string( e ), "\n" ) );
 			return ust::null_optional;
 		}
 	}
@@ -468,6 +523,159 @@ fn LoadMap( ust::file_readable mut f ) : ust::optional</MapData/>
 		ust::stderr_print( ust::concat( "Failed to read! Error: ", ust::enum_to_string( e ), ", \n" ) );
 		return ust::null_optional;
 	}
+
+	return result;
+}
+
+fn LoadZpozMap( ust::filesystem_path_view file_path ) : ust::optional</ZpozData/>
+{
+	result_match( ust::file_readable::open( file_path ) )
+	{
+		Ok( mut f ) -> { return LoadZpozMap( move(f) ); },
+		Err(e) ->
+		{
+			ust::stderr_print( ust::concat( "Error opening file: ", ust::enum_to_string( e ), "\n" ) );
+			return ust::null_optional;
+		}
+	}
+}
+
+fn LoadZpozMap( ust::file_readable mut f ) : ust::optional</ZpozData/>
+{
+	var ZPozFileHeader mut header= zero_init;
+
+	if_var( e :
+		f.read_exact(
+			unsafe( ust::array_view_mut</byte8/>(
+				ust::ptr_cast_to_byte8( $<(header) ),
+				 typeinfo</ZPozFileHeader/>.size_of ) ) ).as_error_ref() )
+	{
+		ust::stderr_print( ust::concat( "Error reading map file: ", ust::enum_to_string( e ), "\n" ) );
+		return ust::null_optional;
+	}
+
+	if( header.signature != ZPozFileHeader::c_expected_signature )
+	{
+		ust::stderr_print( ust::concat( "Unexpected file signature \"", header.signature, "\"!" ) );
+		return ust::null_optional;
+	}
+
+	var u64 mut file_size(0);
+	result_match( f.get_metatada() )
+	{
+		Ok(m) -> { file_size= m.size; },
+		Err(e) ->
+		{
+			ust::stderr_print( ust::concat( "Error getting archive file size: ", ust::enum_to_string( e ), "\n" ) );
+			return ust::null_optional;
+		}
+	}
+
+	var ZpozData mut result;
+
+	{
+		var ZpozEntity dummy_entity= zero_init;
+		result.entities.resize( size_type( header.num_entities ), dummy_entity );
+
+		if_var( e :
+			f.read_exact(
+				unsafe( ust::array_view_mut</byte8/>(
+					ust::ptr_cast_to_byte8( result.entities.data() ),
+					result.entities.size() * typeinfo</ZpozEntity/>.size_of ) ) ).as_error_ref() )
+		{
+			ust::stderr_print( ust::concat( "Failed to read! Error: ", ust::enum_to_string( e ), "!\n" ) );
+			return ust::null_optional;
+		}
+	}
+
+	{
+		var ZpozStruct1 dummy_struct1= zero_init;
+		result.structs1.resize( size_type( header.num_structs1 ), dummy_struct1 );
+
+		if_var( e :
+			f.read_exact(
+				unsafe( ust::array_view_mut</byte8/>(
+					ust::ptr_cast_to_byte8( result.structs1.data() ),
+					result.structs1.size() * typeinfo</ZpozStruct1/>.size_of ) ) ).as_error_ref() )
+		{
+			ust::stderr_print( ust::concat( "Failed to read! Error: ", ust::enum_to_string( e ), "!\n" ) );
+			return ust::null_optional;
+		}
+	}
+
+	var ZPozIntermediateHeader mut intermediate_header= zero_init;
+
+	if_var( e :
+		f.read_exact(
+			unsafe( ust::array_view_mut</byte8/>(
+				ust::ptr_cast_to_byte8( $<(intermediate_header) ),
+				 typeinfo</ZPozIntermediateHeader/>.size_of ) ) ).as_error_ref() )
+	{
+		ust::stderr_print( ust::concat( "Error reading map file: ", ust::enum_to_string( e ), "\n" ) );
+		return ust::null_optional;
+	}
+
+	{
+		var ZpozLightSource dummy_light_source= zero_init;
+		result.light_sources.resize( size_type( intermediate_header.num_light_sources ), dummy_light_source );
+
+		if_var( e :
+			f.read_exact(
+				unsafe( ust::array_view_mut</byte8/>(
+					ust::ptr_cast_to_byte8( result.light_sources.data() ),
+					result.light_sources.size() * typeinfo</ZpozLightSource/>.size_of ) ) ).as_error_ref() )
+		{
+			ust::stderr_print( ust::concat( "Failed to read! Error: ", ust::enum_to_string( e ), "!\n" ) );
+			return ust::null_optional;
+		}
+	}
+
+	{
+		var ZpozLightSourceExtraData dummy_light_source_extra_data= zero_init;
+		result.light_sources_extra.resize( size_type( intermediate_header.num_light_sources ), dummy_light_source_extra_data );
+
+		if_var( e :
+			f.read_exact(
+				unsafe( ust::array_view_mut</byte8/>(
+					ust::ptr_cast_to_byte8( result.light_sources_extra.data() ),
+					result.light_sources_extra.size() * typeinfo</ZpozLightSourceExtraData/>.size_of ) ) ).as_error_ref() )
+		{
+			ust::stderr_print( ust::concat( "Failed to read! Error: ", ust::enum_to_string( e ), "!\n" ) );
+			return ust::null_optional;
+		}
+	}
+
+	{
+		var size_type offset=
+			typeinfo</ZPozFileHeader/>.size_of +
+			result.entities.size() * typeinfo</ZpozEntity/>.size_of +
+			result.structs1.size() * typeinfo</ZpozStruct1/>.size_of +
+			typeinfo</ZPozIntermediateHeader/>.size_of +
+			result.light_sources.size() * typeinfo</ZpozLightSource/>.size_of +
+			result.light_sources_extra.size() * typeinfo</ZpozLightSourceExtraData/>.size_of;
+
+		var size_type num_structs3= ( size_type( file_size ) - offset ) /typeinfo</ZPozStruct3/>.size_of;
+
+		var ZPozStruct3 dummy_struct3= zero_init;
+		result.structs3.resize( num_structs3, dummy_struct3 );
+
+		if_var( e :
+			f.read_exact(
+				unsafe( ust::array_view_mut</byte8/>(
+					ust::ptr_cast_to_byte8( result.structs3.data() ),
+					result.structs3.size() * typeinfo</ZPozStruct3/>.size_of ) ) ).as_error_ref() )
+		{
+			ust::stderr_print( ust::concat( "Failed to read! Error: ", ust::enum_to_string( e ), "!\n" ) );
+			return ust::null_optional;
+		}
+	}
+
+	var i32 mut max_struct3_data= 0;
+	foreach( &s : result.structs3 )
+	{
+		ust::max_assign( max_struct3_data, s.data[0] );
+	}
+	ust::stdout_print( ust::concat( "Max struct3 data is ", ust::to_string8( max_struct3_data ), "\n" ) );
 
 	return result;
 }
