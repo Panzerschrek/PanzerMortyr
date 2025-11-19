@@ -21,7 +21,7 @@ pretty_main
 		return -1;
 	}
 	var ust::string_view8 map_file_path= args[1s];
-	var ust::string_view8 zpos_file_path= args[2s];
+	var ust::string_view8 zpoz_file_path= args[2s];
 
 	auto map_opt= LoadMap( map_file_path );
 	if( map_opt.empty() )
@@ -29,8 +29,8 @@ pretty_main
 		return -1;
 	}
 
-	auto zpos_opt= LoadZposMap( zpos_file_path );
-	if( zpos_opt.empty() )
+	auto zpoz_opt= LoadZpozMap( zpoz_file_path );
+	if( zpoz_opt.empty() )
 	{
 		return -1;
 	}
@@ -409,11 +409,11 @@ pretty_main
 
 				if( true )
 				{
-					foreach( &s : zpos_opt.try_deref().structs0 )
+					foreach( &entity : zpoz_opt.try_deref().entities )
 					{
-						var Color color{ .r(u32(s.kind) * 37u), .g(u32(s.kind) * 1179u), .b(u32(s.kind) * 5423u), .a(255) };
+						var Color color{ .r(u32(entity.kind) * 37u), .g(u32(entity.kind) * 1179u), .b(u32(entity.kind) * 5423u), .a(255) };
 
-						var Vector3 pos{ .x= f32(s.position[0s]) * scale, .y= f32(s.position[1s]) * scale, .z= f32(s.position[2s]) * -scale };
+						var Vector3 pos{ .x= f32(entity.position[0s]) * scale, .y= f32(entity.position[1s]) * scale, .z= f32(entity.position[2s]) * -scale };
 
 						unsafe( DrawCube( pos, 0.4f, 0.4f, 0.6f, color ) );
 					}
@@ -421,7 +421,7 @@ pretty_main
 
 				if( false )
 				{
-					foreach( &s : zpos_opt.try_deref().structs1 )
+					foreach( &s : zpoz_opt.try_deref().structs1 )
 					{
 						var Color color{ .r(0), .g(255), .b(0), .a(255) };
 
@@ -433,20 +433,20 @@ pretty_main
 
 				if( true )
 				{
-					foreach( &pair : zpos_opt.try_deref().structs2.iter().zip( zpos_opt.try_deref().structs2_extra.iter() ) )
+					foreach( &pair : zpoz_opt.try_deref().light_sources.iter().zip( zpoz_opt.try_deref().light_sources_extra.iter() ) )
 					{
-						var ZposStruct2& s= pair.first;
-						var ZPosStruct2ExtraData& s_extra= pair.second;
+						var ZpozLightSource& light_source= pair.first;
+						var ZpozLightSourceExtraData& light_source_extra= pair.second;
 
-						var Vector3 pos{ .x= f32(s.position[0]) * scale, .y= f32(s.position[1]) * scale, .z= f32(s.position[2]) * -scale };
-						var f32 radius= ust::min( 32.0f, ust::max( 0.1f, f32(s.radius) * scale ) );
+						var Vector3 pos{ .x= f32(light_source.position[0]) * scale, .y= f32(light_source.position[1]) * scale, .z= f32(light_source.position[2]) * -scale };
+						var f32 radius= ust::min( 32.0f, ust::max( 0.1f, f32(light_source.radius) * scale ) );
 
-						var Color color{ .r(s.power), .g(s.power), .b(s.power), .a(255) };
+						var Color color{ .r(light_source.power), .g(light_source.power), .b(light_source.power), .a(255) };
 
 						unsafe( DrawSphereWires( pos, radius, 6, 8, color ) );
 						unsafe( DrawCube( pos, 0.15f, 0.15f, 0.15f, color ) );
 
-						ust::ignore_unused( s_extra );
+						ust::ignore_unused( light_source_extra );
 					}
 				}
 			}
@@ -466,13 +466,13 @@ struct MapData
 	ust::vector</MapQuad/> quads;
 }
 
-struct ZposData
+struct ZpozData
 {
-	ust::vector</ZposStruct0/> structs0;
-	ust::vector</ZposStruct1/> structs1;
-	ust::vector</ZposStruct2/> structs2;
-	ust::vector</ZPosStruct2ExtraData/> structs2_extra;
-	ust::vector</ZPosStruct3/> structs3;
+	ust::vector</ZpozEntity/> entities;
+	ust::vector</ZpozStruct1/> structs1;
+	ust::vector</ZpozLightSource/> light_sources;
+	ust::vector</ZpozLightSourceExtraData/> light_sources_extra;
+	ust::vector</ZPozStruct3/> structs3;
 }
 
 fn LoadMap( ust::filesystem_path_view file_path ) : ust::optional</MapData/>
@@ -527,11 +527,11 @@ fn LoadMap( ust::file_readable mut f ) : ust::optional</MapData/>
 	return result;
 }
 
-fn LoadZposMap( ust::filesystem_path_view file_path ) : ust::optional</ZposData/>
+fn LoadZpozMap( ust::filesystem_path_view file_path ) : ust::optional</ZpozData/>
 {
 	result_match( ust::file_readable::open( file_path ) )
 	{
-		Ok( mut f ) -> { return LoadZposMap( move(f) ); },
+		Ok( mut f ) -> { return LoadZpozMap( move(f) ); },
 		Err(e) ->
 		{
 			ust::stderr_print( ust::concat( "Error opening file: ", ust::enum_to_string( e ), "\n" ) );
@@ -540,21 +540,21 @@ fn LoadZposMap( ust::filesystem_path_view file_path ) : ust::optional</ZposData/
 	}
 }
 
-fn LoadZposMap( ust::file_readable mut f ) : ust::optional</ZposData/>
+fn LoadZpozMap( ust::file_readable mut f ) : ust::optional</ZpozData/>
 {
-	var ZPosFileHeader mut header= zero_init;
+	var ZPozFileHeader mut header= zero_init;
 
 	if_var( e :
 		f.read_exact(
 			unsafe( ust::array_view_mut</byte8/>(
 				ust::ptr_cast_to_byte8( $<(header) ),
-				 typeinfo</ZPosFileHeader/>.size_of ) ) ).as_error_ref() )
+				 typeinfo</ZPozFileHeader/>.size_of ) ) ).as_error_ref() )
 	{
 		ust::stderr_print( ust::concat( "Error reading map file: ", ust::enum_to_string( e ), "\n" ) );
 		return ust::null_optional;
 	}
 
-	if( header.signature != ZPosFileHeader::c_expected_signature )
+	if( header.signature != ZPozFileHeader::c_expected_signature )
 	{
 		ust::stderr_print( ust::concat( "Unexpected file signature \"", header.signature, "\"!" ) );
 		return ust::null_optional;
@@ -571,17 +571,17 @@ fn LoadZposMap( ust::file_readable mut f ) : ust::optional</ZposData/>
 		}
 	}
 
-	var ZposData mut result;
+	var ZpozData mut result;
 
 	{
-		var ZposStruct0 dummy_struct0= zero_init;
-		result.structs0.resize( size_type( header.num_structs0 ), dummy_struct0 );
+		var ZpozEntity dummy_entity= zero_init;
+		result.entities.resize( size_type( header.num_entities ), dummy_entity );
 
 		if_var( e :
 			f.read_exact(
 				unsafe( ust::array_view_mut</byte8/>(
-					ust::ptr_cast_to_byte8( result.structs0.data() ),
-					result.structs0.size() * typeinfo</ZposStruct0/>.size_of ) ) ).as_error_ref() )
+					ust::ptr_cast_to_byte8( result.entities.data() ),
+					result.entities.size() * typeinfo</ZpozEntity/>.size_of ) ) ).as_error_ref() )
 		{
 			ust::stderr_print( ust::concat( "Failed to read! Error: ", ust::enum_to_string( e ), "!\n" ) );
 			return ust::null_optional;
@@ -589,41 +589,41 @@ fn LoadZposMap( ust::file_readable mut f ) : ust::optional</ZposData/>
 	}
 
 	{
-		var ZposStruct1 dummy_struct1= zero_init;
+		var ZpozStruct1 dummy_struct1= zero_init;
 		result.structs1.resize( size_type( header.num_structs1 ), dummy_struct1 );
 
 		if_var( e :
 			f.read_exact(
 				unsafe( ust::array_view_mut</byte8/>(
 					ust::ptr_cast_to_byte8( result.structs1.data() ),
-					result.structs1.size() * typeinfo</ZposStruct1/>.size_of ) ) ).as_error_ref() )
+					result.structs1.size() * typeinfo</ZpozStruct1/>.size_of ) ) ).as_error_ref() )
 		{
 			ust::stderr_print( ust::concat( "Failed to read! Error: ", ust::enum_to_string( e ), "!\n" ) );
 			return ust::null_optional;
 		}
 	}
 
-	var ZPosIntermediateHeader mut intermediate_header= zero_init;
+	var ZPozIntermediateHeader mut intermediate_header= zero_init;
 
 	if_var( e :
 		f.read_exact(
 			unsafe( ust::array_view_mut</byte8/>(
 				ust::ptr_cast_to_byte8( $<(intermediate_header) ),
-				 typeinfo</ZPosIntermediateHeader/>.size_of ) ) ).as_error_ref() )
+				 typeinfo</ZPozIntermediateHeader/>.size_of ) ) ).as_error_ref() )
 	{
 		ust::stderr_print( ust::concat( "Error reading map file: ", ust::enum_to_string( e ), "\n" ) );
 		return ust::null_optional;
 	}
 
 	{
-		var ZposStruct2 dummy_struct2= zero_init;
-		result.structs2.resize( size_type( intermediate_header.num_structs2 ), dummy_struct2 );
+		var ZpozLightSource dummy_light_source= zero_init;
+		result.light_sources.resize( size_type( intermediate_header.num_light_sources ), dummy_light_source );
 
 		if_var( e :
 			f.read_exact(
 				unsafe( ust::array_view_mut</byte8/>(
-					ust::ptr_cast_to_byte8( result.structs2.data() ),
-					result.structs2.size() * typeinfo</ZposStruct2/>.size_of ) ) ).as_error_ref() )
+					ust::ptr_cast_to_byte8( result.light_sources.data() ),
+					result.light_sources.size() * typeinfo</ZpozLightSource/>.size_of ) ) ).as_error_ref() )
 		{
 			ust::stderr_print( ust::concat( "Failed to read! Error: ", ust::enum_to_string( e ), "!\n" ) );
 			return ust::null_optional;
@@ -631,14 +631,14 @@ fn LoadZposMap( ust::file_readable mut f ) : ust::optional</ZposData/>
 	}
 
 	{
-		var ZPosStruct2ExtraData dummy_struct2= zero_init;
-		result.structs2_extra.resize( size_type( intermediate_header.num_structs2 ), dummy_struct2 );
+		var ZpozLightSourceExtraData dummy_light_source_extra_data= zero_init;
+		result.light_sources_extra.resize( size_type( intermediate_header.num_light_sources ), dummy_light_source_extra_data );
 
 		if_var( e :
 			f.read_exact(
 				unsafe( ust::array_view_mut</byte8/>(
-					ust::ptr_cast_to_byte8( result.structs2_extra.data() ),
-					result.structs2_extra.size() * typeinfo</ZPosStruct2ExtraData/>.size_of ) ) ).as_error_ref() )
+					ust::ptr_cast_to_byte8( result.light_sources_extra.data() ),
+					result.light_sources_extra.size() * typeinfo</ZpozLightSourceExtraData/>.size_of ) ) ).as_error_ref() )
 		{
 			ust::stderr_print( ust::concat( "Failed to read! Error: ", ust::enum_to_string( e ), "!\n" ) );
 			return ust::null_optional;
@@ -647,23 +647,23 @@ fn LoadZposMap( ust::file_readable mut f ) : ust::optional</ZposData/>
 
 	{
 		var size_type offset=
-			typeinfo</ZPosFileHeader/>.size_of +
-			result.structs0.size() * typeinfo</ZposStruct0/>.size_of +
-			result.structs1.size() * typeinfo</ZposStruct1/>.size_of +
-			typeinfo</ZPosIntermediateHeader/>.size_of +
-			result.structs2.size() * typeinfo</ZposStruct2/>.size_of +
-			result.structs2_extra.size() * typeinfo</ZPosStruct2ExtraData/>.size_of;
+			typeinfo</ZPozFileHeader/>.size_of +
+			result.entities.size() * typeinfo</ZpozEntity/>.size_of +
+			result.structs1.size() * typeinfo</ZpozStruct1/>.size_of +
+			typeinfo</ZPozIntermediateHeader/>.size_of +
+			result.light_sources.size() * typeinfo</ZpozLightSource/>.size_of +
+			result.light_sources_extra.size() * typeinfo</ZpozLightSourceExtraData/>.size_of;
 
-		var size_type num_structs3= ( size_type( file_size ) - offset ) /typeinfo</ZPosStruct3/>.size_of;
+		var size_type num_structs3= ( size_type( file_size ) - offset ) /typeinfo</ZPozStruct3/>.size_of;
 
-		var ZPosStruct3 dummy_struct3= zero_init;
+		var ZPozStruct3 dummy_struct3= zero_init;
 		result.structs3.resize( num_structs3, dummy_struct3 );
 
 		if_var( e :
 			f.read_exact(
 				unsafe( ust::array_view_mut</byte8/>(
 					ust::ptr_cast_to_byte8( result.structs3.data() ),
-					result.structs3.size() * typeinfo</ZPosStruct3/>.size_of ) ) ).as_error_ref() )
+					result.structs3.size() * typeinfo</ZPozStruct3/>.size_of ) ) ).as_error_ref() )
 		{
 			ust::stderr_print( ust::concat( "Failed to read! Error: ", ust::enum_to_string( e ), "!\n" ) );
 			return ust::null_optional;
