@@ -23,21 +23,23 @@ namespace PM
 
 fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 {
-	if( args.size() < 3s )
+	if( args.size() < 4s )
 	{
 		ust::stderr_print( "Not enough arguments!\n" );
 		return -1;
 	}
 	var ust::string_view8 zmap_file_path= args[1s];
-	var ust::string_view8 zpoz_file_path= args[2s];
+	var ust::string_view8 zvox_file_path= args[2s];
+	var ust::string_view8 zpoz_file_path= args[3s];
 
-	auto map_opt= LoadMap( zmap_file_path, zpoz_file_path );
+	auto map_opt= LoadMap( zmap_file_path, zvox_file_path, zpoz_file_path );
 	if( map_opt.empty() )
 	{
 		return -1;
 	}
 
 	var MapData& map= map_opt.try_deref();
+	ust::ignore_unused( map.zvox );
 
 	var ust::optional</ust::filesystem_path_view/> map_dir= ust::path::get_parent_path( zmap_file_path );
 	if( map_dir.empty() )
@@ -619,12 +621,17 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 struct MapData
 {
 	ZmapData zmap;
+	ZvoxData zvox;
 	ZpozData zpos;
 }
 
 struct ZmapData
 {
 	ust::vector</ZmapQuad/> quads;
+}
+
+struct ZvoxData
+{
 }
 
 struct ZpozData
@@ -636,17 +643,18 @@ struct ZpozData
 	ust::vector</ZPozStruct3/> structs3;
 }
 
-fn LoadMap( ust::filesystem_path_view zmap_file_path, ust::filesystem_path_view zpoz_file_path ) : ust::optional</MapData/>
+fn LoadMap( ust::filesystem_path_view zmap_file_path, ust::filesystem_path_view zvox_file_path, ust::filesystem_path_view zpoz_file_path ) : ust::optional</MapData/>
 {
 	auto mut zmap_data= LoadZmapFile( zmap_file_path );
+	auto mut zvox_data= LoadZvoxFile( zvox_file_path );
 	auto mut zpoz_data= LoadZpozFile( zpoz_file_path );
 
-	if( zmap_data.empty() || zpoz_data.empty() )
+	if( zmap_data.empty() || zvox_data.empty() || zpoz_data.empty() )
 	{
 		return ust::null_optional;
 	}
 
-	return MapData{ .zmap= zmap_data.try_take(), .zpos= zpoz_data.try_take() };
+	return MapData{ .zmap= zmap_data.try_take(), .zvox= zvox_data.try_take(), .zpos= zpoz_data.try_take() };
 }
 
 fn LoadZmapFile( ust::filesystem_path_view file_path ) : ust::optional</ZmapData/>
@@ -697,6 +705,44 @@ fn LoadZmapFile( ust::file_readable mut f ) : ust::optional</ZmapData/>
 		ust::stderr_print( ust::concat( "Failed to read! Error: ", ust::enum_to_string( e ), ", \n" ) );
 		return ust::null_optional;
 	}
+
+	return result;
+}
+
+fn LoadZvoxFile( ust::filesystem_path_view file_path ) : ust::optional</ZvoxData/>
+{
+	result_match( ust::file_readable::open( file_path ) )
+	{
+		Ok( mut f ) -> { return LoadZvoxFile( move(f) ); },
+		Err(e) ->
+		{
+			ust::stderr_print( ust::concat( "Error opening file: ", ust::enum_to_string( e ), "\n" ) );
+			return ust::null_optional;
+		}
+	}
+}
+
+fn LoadZvoxFile( ust::file_readable mut f ) : ust::optional</ZvoxData/>
+{
+	var ZVoxFileHeader mut header= zero_init;
+
+	if_var( e :
+		f.read_exact(
+			unsafe( ust::array_view_mut</byte8/>(
+				ust::ptr_cast_to_byte8( $<(header) ),
+				 typeinfo</ZVoxFileHeader/>.size_of ) ) ).as_error_ref() )
+	{
+		ust::stderr_print( ust::concat( "Error reading map file: ", ust::enum_to_string( e ), "\n" ) );
+		return ust::null_optional;
+	}
+
+	if( header.signature != ZVoxFileHeader::c_expected_signature )
+	{
+		ust::stderr_print( ust::concat( "Unexpected file signature \"", header.signature, "\"!" ) );
+		return ust::null_optional;
+	}
+
+	var ZvoxData mut result;
 
 	return result;
 }
