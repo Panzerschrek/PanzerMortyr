@@ -378,11 +378,116 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 		per_texture_meshes.push_back( move(mesh) );
 	}
 
+	auto mut digits_dexture_file_nt= ust::path::join( map_dir.try_deref(), "PANBL.BMP" );
+	digits_dexture_file_nt+= "\0";
+	var Texture digits_dexture= unsafe( LoadTexture( digits_dexture_file_nt.data() ) );
+	if( digits_dexture.id == 0u )
+	{
+		ust::stdout_print( "Failed to load digits texture!\n" );
+		return -1;
+	}
+
+	var Material mut digits_material= unsafe( LoadMaterialDefault() );
+	unsafe{ $>( digits_material.maps ).texture = digits_dexture; }
+
+	var ust::vector</f32/> mut digit_mesh_vertices;
+	var ust::vector</f32/> mut digit_mesh_texture_coordinatess;
+
+	var f32 digit_half_width= 4.0f;
+	var f32 digit_half_height= 8.0f;
+
+	for( auto mut i= 0u; i < 11u; ++i )
+	{
+		var [ Vector3, 4 ] pos
+		[
+			{ .x= -digit_half_width, .y= -digit_half_height, .z= 0.0f },
+			{ .x= -digit_half_width, .y=  digit_half_height, .z= 0.0f },
+			{ .x=  digit_half_width, .y=  digit_half_height, .z= 0.0f },
+			{ .x=  digit_half_width, .y= -digit_half_height, .z= 0.0f },
+		];
+
+		var f32 glyph_width= 1.0f / 16.0f;
+		var f32 glyph_height= 1.0f / 8.0f;
+		var [ Vector2, 4 ] tc
+		[
+			{ .x= glyph_width * f32( i + 1u ), .y= 0.0f },
+			{ .x= glyph_width * f32( i + 1u ), .y= glyph_height },
+			{ .x= glyph_width * f32(i), .y= glyph_height },
+			{ .x= glyph_width * f32(i), .y= 0.0f },
+		];
+
+		digit_mesh_vertices.push_back( pos[2].x );
+		digit_mesh_vertices.push_back( pos[2].y );
+		digit_mesh_vertices.push_back( pos[2].z );
+		digit_mesh_texture_coordinatess.push_back( tc[2].x );
+		digit_mesh_texture_coordinatess.push_back( tc[2].y );
+
+		digit_mesh_vertices.push_back( pos[1].x );
+		digit_mesh_vertices.push_back( pos[1].y );
+		digit_mesh_vertices.push_back( pos[1].z );
+		digit_mesh_texture_coordinatess.push_back( tc[1].x );
+		digit_mesh_texture_coordinatess.push_back( tc[1].y );
+
+		digit_mesh_vertices.push_back( pos[0].x );
+		digit_mesh_vertices.push_back( pos[0].y );
+		digit_mesh_vertices.push_back( pos[0].z );
+		digit_mesh_texture_coordinatess.push_back( tc[0].x );
+		digit_mesh_texture_coordinatess.push_back( tc[0].y );
+
+		digit_mesh_vertices.push_back( pos[3].x );
+		digit_mesh_vertices.push_back( pos[3].y );
+		digit_mesh_vertices.push_back( pos[3].z );
+		digit_mesh_texture_coordinatess.push_back( tc[3].x );
+		digit_mesh_texture_coordinatess.push_back( tc[3].y );
+
+		digit_mesh_vertices.push_back( pos[2].x );
+		digit_mesh_vertices.push_back( pos[2].y );
+		digit_mesh_vertices.push_back( pos[2].z );
+		digit_mesh_texture_coordinatess.push_back( tc[2].x );
+		digit_mesh_texture_coordinatess.push_back( tc[2].y );
+
+		digit_mesh_vertices.push_back( pos[0].x );
+		digit_mesh_vertices.push_back( pos[0].y );
+		digit_mesh_vertices.push_back( pos[0].z );
+		digit_mesh_texture_coordinatess.push_back( tc[0].x );
+		digit_mesh_texture_coordinatess.push_back( tc[0].y );
+	}
+
+	var [ Mesh, 11 ] mut digit_meshes= zero_init; // The last one is minus sign.
+
+	for( var size_type mut i= 0s; i < 11s; ++i )
+	{
+		var size_type vertex_offset= 6s * i;
+
+		var Mesh &mut mesh= digit_meshes[i];
+		mesh.vertexCount= 6;
+		mesh.triangleCount= 2;
+		mesh.vertices= unsafe( digit_mesh_vertices.data() + vertex_offset * 3s );
+		mesh.texcoords= unsafe( digit_mesh_texture_coordinatess.data() + vertex_offset * 2s );
+
+		unsafe( UploadMesh( $<(mesh), false ) );
+	}
+
 	var size_type mut offset= 0s;
+
+	var bool mut display_map= true, mut display_entities= true, mut display_lights= true;
 
 	while( ! unsafe( WindowShouldClose() ) )
 	{
 		unsafe( UpdateCamera( $<(camera), i32( CAMERA_FREE ) ) );
+
+		if( unsafe( IsKeyPressed( i32( 'M' ) ) ) )
+		{
+			display_map= !display_map;
+		}
+		if( unsafe( IsKeyPressed( i32( 'E' ) ) ) )
+		{
+			display_entities= !display_entities;
+		}
+		if( unsafe( IsKeyPressed( i32( 'L' ) ) ) )
+		{
+			display_lights= !display_lights;
+		}
 
 		if( unsafe( IsKeyPressed( i32( 'Z' ) ) ) )
 		{
@@ -390,7 +495,7 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 			ust::stdout_print( ust::concat( "Offset is ", ust::to_string8(offset), "\n" ) );
 		}
 
-		unsafe(  BeginDrawing() );
+		unsafe( BeginDrawing() );
 		{
 			unsafe( ClearBackground( Color{ .r(32), .g(16), .b(8), .a(0) } ) );
 
@@ -410,20 +515,66 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 				matrix.m10= -scale; // The original game seems to use Z down coordinate system. Flip it to be order to be displayed in OpenGL.
 				matrix.m15= 1.0f;
 
-				for( auto mut i= 0s; i < block_materials.size(); ++i )
+				auto draw_number=
+					lambda[&]( i32 mut num, Vector3 pos ) unsafe
+					{
+						var Matrix mut digit_matrix= zero_init;
+						digit_matrix.m0= scale;
+						digit_matrix.m5= scale;
+						digit_matrix.m10= -scale;
+						digit_matrix.m15= 1.0f;
+						digit_matrix.m12= pos.x * scale;
+						digit_matrix.m13= pos.y * scale;
+						digit_matrix.m14= -pos.z * scale;
+
+						var bool mut is_negative= false;
+						if( num < 0 )
+						{
+							is_negative= true;
+							num= -num;
+						}
+
+						loop
+						{
+							unsafe( DrawMesh( digit_meshes[ u32( num ) % 10u ], digits_material, digit_matrix ) );
+							digit_matrix.m12 += scale * digit_half_width * 2.0f;
+							num/= 10;
+							if( num == 0 )
+							{
+								break;
+							}
+						}
+
+						if( is_negative )
+						{
+							unsafe( DrawMesh( digit_meshes[ 10 ], digits_material, digit_matrix ) );
+						}
+					};
+
+				if( display_map )
 				{
-					unsafe( DrawMesh( per_texture_meshes[i], block_materials[i], matrix ) );
+					for( auto mut i= 0s; i < block_materials.size(); ++i )
+					{
+						unsafe( DrawMesh( per_texture_meshes[i], block_materials[i], matrix ) );
+					}
 				}
 
-				if( true )
+				if( display_entities )
 				{
 					foreach( &entity : zpoz_opt.try_deref().entities )
 					{
+						if( entity.alive_flag == 0u16 )
+						{
+							continue;
+						}
+
 						var Color color{ .r(u32(entity.kind) * 37u), .g(u32(entity.kind) * 1179u), .b(u32(entity.kind) * 5423u), .a(255) };
 
 						var Vector3 pos{ .x= f32(entity.position[0s]) * scale, .y= f32(entity.position[1s]) * scale, .z= f32(entity.position[2s]) * -scale };
 
 						unsafe( DrawCube( pos, 0.4f, 0.4f, 0.6f, color ) );
+
+						unsafe( draw_number( i32( entity.kind ), Vector3{ .x(entity.position[0s]), .y(entity.position[1s]), .z( i32(entity.position[2s]) - 24 ) } ) );
 					}
 				}
 
@@ -439,7 +590,7 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 					}
 				}
 
-				if( true )
+				if( display_lights )
 				{
 					foreach( &pair : zpoz_opt.try_deref().light_sources.iter().zip( zpoz_opt.try_deref().light_sources_extra.iter() ) )
 					{
