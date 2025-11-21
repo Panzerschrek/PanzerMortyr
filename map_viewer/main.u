@@ -23,27 +23,28 @@ namespace PM
 
 fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 {
-	if( args.size() < 3s )
+	if( args.size() < 4s )
 	{
 		ust::stderr_print( "Not enough arguments!\n" );
 		return -1;
 	}
-	var ust::string_view8 map_file_path= args[1s];
-	var ust::string_view8 zpoz_file_path= args[2s];
+	var ust::string_view8 zmap_file_path= args[1s];
+	var ust::string_view8 zvox_file_path= args[2s];
+	var ust::string_view8 zpoz_file_path= args[3s];
 
-	auto map_opt= LoadMap( map_file_path );
+	auto map_opt= LoadMap( zmap_file_path, zvox_file_path, zpoz_file_path );
 	if( map_opt.empty() )
 	{
 		return -1;
 	}
 
-	auto zpoz_opt= LoadZpozMap( zpoz_file_path );
-	if( zpoz_opt.empty() )
-	{
-		return -1;
-	}
+	var MapData& map= map_opt.try_deref();
 
-	var ust::optional</ust::filesystem_path_view/> map_dir= ust::path::get_parent_path( map_file_path );
+	ust::stdout_print( ust::concat( "Num entities: ", ust::to_string8( map.zpos.entities.size() ), "\n" ) );
+	ust::stdout_print( ust::concat( "Num lights: ", ust::to_string8( map.zpos.light_sources.size() ), "\n" ) );
+	ust::stdout_print( ust::concat( "Num zpoz struct1: ", ust::to_string8( map.zpos.structs1.size() ), "\n" ) );
+
+	var ust::optional</ust::filesystem_path_view/> map_dir= ust::path::get_parent_path( zmap_file_path );
 	if( map_dir.empty() )
 	{
 		ust::stderr_print( "Can't get parent directory for the map file!\n" );
@@ -179,7 +180,7 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 
 		var size_type mut num_quads_with_this_texture= 0s;
 
-		foreach( &s : map_opt.try_deref().quads )
+		foreach( &s : map.zmap.quads )
 		{
 			if( size_type( s.texture_id ) != i )
 			{
@@ -470,7 +471,7 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 
 	var size_type mut offset= 0s;
 
-	var bool mut display_map= true, mut display_entities= true, mut display_lights= true;
+	var bool mut display_map= true, mut display_zvox_structs1= true, mut display_entities= true, mut display_lights= true;
 
 	while( ! unsafe( WindowShouldClose() ) )
 	{
@@ -479,6 +480,10 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 		if( unsafe( IsKeyPressed( i32( 'M' ) ) ) )
 		{
 			display_map= !display_map;
+		}
+		if( unsafe( IsKeyPressed( i32( 'K' ) ) ) )
+		{
+			display_zvox_structs1= !display_zvox_structs1;
 		}
 		if( unsafe( IsKeyPressed( i32( 'E' ) ) ) )
 		{
@@ -559,9 +564,25 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 					}
 				}
 
+				if( display_zvox_structs1 )
+				{
+					foreach( &s : map.zvox.light_sources )
+					{
+						var Color color{ .r(255), .g(0), .b(255), .a(255) };
+
+						var Vector3 pos{ .x= f32(s.position[0s]) * scale, .y= f32(s.position[1s]) * scale, .z= f32(s.position[2s]) * -scale };
+
+						unsafe( DrawCubeWires( pos, 0.4f, 0.4f, 0.6f, color ) );
+
+						var f32 radius= ust::min( 32.0f, ust::max( 0.1f, f32(s.radius) * scale ) );
+
+						unsafe( DrawSphereWires( pos, radius, 6, 8, color ) );
+					}
+				}
+
 				if( display_entities )
 				{
-					foreach( &entity : zpoz_opt.try_deref().entities )
+					foreach( &entity : map.zpos.entities )
 					{
 						if( entity.alive_flag == 0u16 )
 						{
@@ -580,7 +601,7 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 
 				if( false )
 				{
-					foreach( &s : zpoz_opt.try_deref().structs1 )
+					foreach( &s : map.zpos.structs1 )
 					{
 						var Color color{ .r(0), .g(255), .b(0), .a(255) };
 
@@ -592,7 +613,7 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 
 				if( display_lights )
 				{
-					foreach( &pair : zpoz_opt.try_deref().light_sources.iter().zip( zpoz_opt.try_deref().light_sources_extra.iter() ) )
+					foreach( &pair : map.zpos.light_sources.iter().zip( map.zpos.light_sources_extra.iter() ) )
 					{
 						var ZpozLightSource& light_source= pair.first;
 						var ZpozLightSourceExtraData& light_source_extra= pair.second;
@@ -622,7 +643,20 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 
 struct MapData
 {
-	ust::vector</MapQuad/> quads;
+	ZmapData zmap;
+	ZvoxData zvox;
+	ZpozData zpos;
+}
+
+struct ZmapData
+{
+	ust::vector</ZmapQuad/> quads;
+}
+
+struct ZvoxData
+{
+	ust::vector</ZvoxStruct0/> structs0;
+	ust::vector</ZvoxLightSource/> light_sources;
 }
 
 struct ZpozData
@@ -634,11 +668,25 @@ struct ZpozData
 	ust::vector</ZPozStruct3/> structs3;
 }
 
-fn LoadMap( ust::filesystem_path_view file_path ) : ust::optional</MapData/>
+fn LoadMap( ust::filesystem_path_view zmap_file_path, ust::filesystem_path_view zvox_file_path, ust::filesystem_path_view zpoz_file_path ) : ust::optional</MapData/>
+{
+	auto mut zmap_data= LoadZmapFile( zmap_file_path );
+	auto mut zvox_data= LoadZvoxFile( zvox_file_path );
+	auto mut zpoz_data= LoadZpozFile( zpoz_file_path );
+
+	if( zmap_data.empty() || zvox_data.empty() || zpoz_data.empty() )
+	{
+		return ust::null_optional;
+	}
+
+	return MapData{ .zmap= zmap_data.try_take(), .zvox= zvox_data.try_take(), .zpos= zpoz_data.try_take() };
+}
+
+fn LoadZmapFile( ust::filesystem_path_view file_path ) : ust::optional</ZmapData/>
 {
 	result_match( ust::file_readable::open( file_path ) )
 	{
-		Ok( mut f ) -> { return LoadMap( move(f) ); },
+		Ok( mut f ) -> { return LoadZmapFile( move(f) ); },
 		Err(e) ->
 		{
 			ust::stderr_print( ust::concat( "Error opening file: ", ust::enum_to_string( e ), "\n" ) );
@@ -647,7 +695,7 @@ fn LoadMap( ust::filesystem_path_view file_path ) : ust::optional</MapData/>
 	}
 }
 
-fn LoadMap( ust::file_readable mut f ) : ust::optional</MapData/>
+fn LoadZmapFile( ust::file_readable mut f ) : ust::optional</ZmapData/>
 {
 	var ZMapFileHeader mut header= zero_init;
 
@@ -667,9 +715,9 @@ fn LoadMap( ust::file_readable mut f ) : ust::optional</MapData/>
 		return ust::null_optional;
 	}
 
-	var MapData mut result;
+	var ZmapData mut result;
 
-	var MapQuad dummy_quad= zero_init;
+	var ZmapQuad dummy_quad= zero_init;
 
 	result.quads.resize( size_type( header.num_quads ), dummy_quad );
 
@@ -677,7 +725,7 @@ fn LoadMap( ust::file_readable mut f ) : ust::optional</MapData/>
 		f.read_exact(
 			unsafe( ust::array_view_mut</byte8/>(
 				ust::ptr_cast_to_byte8( result.quads.data() ),
-				result.quads.size() * typeinfo</MapQuad/>.size_of ) ) ).as_error_ref() )
+				result.quads.size() * typeinfo</ZmapQuad/>.size_of ) ) ).as_error_ref() )
 	{
 		ust::stderr_print( ust::concat( "Failed to read! Error: ", ust::enum_to_string( e ), ", \n" ) );
 		return ust::null_optional;
@@ -686,11 +734,11 @@ fn LoadMap( ust::file_readable mut f ) : ust::optional</MapData/>
 	return result;
 }
 
-fn LoadZpozMap( ust::filesystem_path_view file_path ) : ust::optional</ZpozData/>
+fn LoadZvoxFile( ust::filesystem_path_view file_path ) : ust::optional</ZvoxData/>
 {
 	result_match( ust::file_readable::open( file_path ) )
 	{
-		Ok( mut f ) -> { return LoadZpozMap( move(f) ); },
+		Ok( mut f ) -> { return LoadZvoxFile( move(f) ); },
 		Err(e) ->
 		{
 			ust::stderr_print( ust::concat( "Error opening file: ", ust::enum_to_string( e ), "\n" ) );
@@ -699,7 +747,77 @@ fn LoadZpozMap( ust::filesystem_path_view file_path ) : ust::optional</ZpozData/
 	}
 }
 
-fn LoadZpozMap( ust::file_readable mut f ) : ust::optional</ZpozData/>
+fn LoadZvoxFile( ust::file_readable mut f ) : ust::optional</ZvoxData/>
+{
+	var ZVoxFileHeader mut header= zero_init;
+
+	if_var( e :
+		f.read_exact(
+			unsafe( ust::array_view_mut</byte8/>(
+				ust::ptr_cast_to_byte8( $<(header) ),
+				 typeinfo</ZVoxFileHeader/>.size_of ) ) ).as_error_ref() )
+	{
+		ust::stderr_print( ust::concat( "Error reading map file: ", ust::enum_to_string( e ), "\n" ) );
+		return ust::null_optional;
+	}
+
+	if( header.signature != ZVoxFileHeader::c_expected_signature )
+	{
+		ust::stderr_print( ust::concat( "Unexpected file signature \"", header.signature, "\"!" ) );
+		return ust::null_optional;
+	}
+
+	var ZvoxData mut result;
+
+	{
+		var ZvoxStruct0 mut dummy_struct0= zero_init;
+		result.structs0.resize( size_type( header.num_structs0 ), dummy_struct0 );
+
+		if_var( e :
+			f.read_exact(
+				unsafe( ust::array_view_mut</byte8/>(
+					ust::ptr_cast_to_byte8( result.structs0.data() ),
+					result.structs0.size() * typeinfo</ZvoxStruct0/>.size_of ) ) ).as_error_ref() )
+		{
+			ust::stderr_print( ust::concat( "Failed to read! Error: ", ust::enum_to_string( e ), "!\n" ) );
+			return ust::null_optional;
+		}
+	}
+
+	{
+		var ZvoxLightSource mut dummy_struct1= zero_init;
+		result.light_sources.resize( size_type( header.num_structs1 ), dummy_struct1 );
+
+		if_var( e :
+			f.read_exact(
+				unsafe( ust::array_view_mut</byte8/>(
+					ust::ptr_cast_to_byte8( result.light_sources.data() ),
+					result.light_sources.size() * typeinfo</ZvoxLightSource/>.size_of ) ) ).as_error_ref() )
+		{
+			ust::stderr_print( ust::concat( "Failed to read! Error: ", ust::enum_to_string( e ), "!\n" ) );
+			return ust::null_optional;
+		}
+	}
+
+	// There is at least one more data block left in this file, which size and meaning isn't known yet.
+
+	return result;
+}
+
+fn LoadZpozFile( ust::filesystem_path_view file_path ) : ust::optional</ZpozData/>
+{
+	result_match( ust::file_readable::open( file_path ) )
+	{
+		Ok( mut f ) -> { return LoadZpozFile( move(f) ); },
+		Err(e) ->
+		{
+			ust::stderr_print( ust::concat( "Error opening file: ", ust::enum_to_string( e ), "\n" ) );
+			return ust::null_optional;
+		}
+	}
+}
+
+fn LoadZpozFile( ust::file_readable mut f ) : ust::optional</ZpozData/>
 {
 	var ZPozFileHeader mut header= zero_init;
 
