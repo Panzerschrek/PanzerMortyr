@@ -64,7 +64,7 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 	}
 
 	var i32 screen_width = 1024;
-	var i32 screen_height = 1024;
+	var i32 screen_height = 768;
 
 	unsafe( InitWindow( screen_width, screen_height, $<( cast_mut( "PanzerMortyr MapViewer\0"[0] ) ) ) );
 
@@ -84,25 +84,67 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 
 	unsafe( SetTargetFPS(60) );
 
+	var [ ust::vector</byte8/>, 2 ] mut palettes;
+	var [ Texture, 2 ] mut palette_textures= zero_init;
+
 	var ust::vector</Material/> mut block_materials;
 	var ust::vector</Texture/> mut block_textures;
 
 	with( &block : materials.try_deref().blocks[ 41u ] )
 	{
+		for( auto mut i= 0s; i < 2s; ++i )
+		{
+			var ust::filesystem_path palette_file_path=
+				ust::path::join(
+					map_dir.try_deref(),
+					ConvertToUppercase(
+						( i == 0s ? block.palette0.file_name : block.palette1.file_name ) ) );
+
+			result_match( ust::read_file_to_byte8_vector( palette_file_path ) )
+			{
+				Ok( mut contents ) ->
+				{
+					if( contents.size() != 768s )
+					{
+						ust::stderr_print( ust::concat( "Invalid palette size ", ust::to_string8( contents.size() ), "!\n" ) );
+						return -1;
+					}
+					ust::stdout_print( ust::concat( "Loaded palette \"", palette_file_path, "\"\n" ) );
+					palettes[i]= move(contents);
+
+					for( auto mut j= 0s; j < 256s; ++j )
+					{
+						palettes[i].swap( j * 3s, j * 3s + 2s );
+					}
+
+					palette_textures[i]=
+						unsafe( LoadTextureFromImage(
+							Image
+							{
+								.data= palettes[i].data(),
+								.width= 16,
+								.height= 16,
+								.mipmaps= 1,
+								.format( PIXELFORMAT_UNCOMPRESSED_R8G8B8 ),
+							} ) );
+
+					if( palette_textures[i].id == 0u )
+					{
+						ust::stdout_print( "Failed to create palette texture!\n" );
+						return -1;
+					}
+				},
+				Err( e ) ->
+				{
+					ust::stderr_print( ust::concat( "Failed to load palette! Error: ", ust::enum_to_string( e ), "\n" ) );
+					return -1;
+				},
+			}
+		}
+
 		foreach( &block_texture : block.textures )
 		{
-			// Hacky way to make uppercase.
-			// TODO - perform this conversion during archive extraction.
-			var ust::string8 mut base_name= block_texture.mips[1];
-			foreach( &mut c : base_name )
-			{
-				if( c >= 'a' && c <= 'z' )
-				{
-					c= char8( u32('A') + (u32(c) - u32('a') ) );
-				}
-			}
-
-			auto mut image_file_nt= ust::path::join( map_dir.try_deref(), base_name );
+			auto mut image_file_nt= ust::path::join( map_dir.try_deref(), ConvertToUppercase( block_texture.mips[1] ) );
 			image_file_nt+= "\0";
 
 			var Image image= unsafe( LoadImage( image_file_nt.data() ) );
@@ -518,6 +560,9 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 		{
 			unsafe( ClearBackground( Color{ .r(32), .g(16), .b(8), .a(0) } ) );
 
+			unsafe( DrawTextureEx( palette_textures[0], Vector2{ .x= 0.0f, .y= 0.0f }, 0.0f, 8.0f, Color{ .r(255), .g(255), .b(255), .a(255) } ) );
+			unsafe( DrawTextureEx( palette_textures[1], Vector2{ .x= 140.0f, .y= 0.0f }, 0.0f, 8.0f, Color{ .r(255), .g(255), .b(255), .a(255) } ) );
+
 			unsafe( BeginMode3D(camera) );
 			{
 				unsafe( DrawCube( Vector3{ .x(1), .y(0), .z(0) }, 2.0f, 0.2f, 0.2f, Color{ .r(255), .g(0), .b(0), .a(255) } ) );
@@ -586,7 +631,7 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 
 						var Vector3 pos{ .x= f32(s.position[0s]) * scale, .y= f32(s.position[1s]) * scale, .z= f32(s.position[2s]) * -scale };
 
-						unsafe( DrawCubeWires( pos, 0.4f, 0.4f, 0.6f, color ) );
+						unsafe( DrawCube( pos, 0.1f, 0.1f, 0.3f, color ) );
 
 						var f32 radius= ust::min( 32.0f, ust::max( 0.1f, f32(s.radius) * scale ) );
 
@@ -635,10 +680,12 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 						var Vector3 pos{ .x= f32(light_source.position[0]) * scale, .y= f32(light_source.position[1]) * scale, .z= f32(light_source.position[2]) * -scale };
 						var f32 radius= ust::min( 32.0f, ust::max( 0.1f, f32(light_source.radius) * scale ) );
 
-						var Color color{ .r(light_source.power), .g(light_source.power), .b(light_source.power), .a(255) };
+						var Color color{ .r(light_source.power >> 1u), .g(light_source.power >> 1u), .b(light_source.power >> 1u), .a(255) };
 
 						unsafe( DrawSphereWires( pos, radius, 6, 8, color ) );
 						unsafe( DrawCube( pos, 0.15f, 0.15f, 0.15f, color ) );
+
+						unsafe( draw_number( i32( light_source.power ), Vector3{ .x(light_source.position[0s]), .y(light_source.position[1s]), .z( i32(light_source.position[2s]) - 24 ) } ) );
 
 						ust::ignore_unused( light_source_extra );
 					}
@@ -1095,6 +1142,20 @@ fn LoadZmapLamFile( ust::file_readable mut f ) : ust::optional</ZmapLamData/>
 	}
 
 	return result;
+}
+
+fn ConvertToUppercase( ust::string_view8 s ) : ust::string8
+{
+	return ust::string8::from_mapped_range(
+		s,
+		lambda( char8 c ) : char8
+		{
+			if( c >= 'a' && c <= 'z' )
+			{
+				return char8( u32(c) - u32('a') + u32('A') );
+			}
+			return c;
+		} );
 }
 
 } // namespace PM
