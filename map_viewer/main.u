@@ -84,25 +84,36 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 
 	unsafe( SetTargetFPS(60) );
 
+	var ust::vector</byte8/> mut palette;
+
 	var ust::vector</Material/> mut block_materials;
 	var ust::vector</Texture/> mut block_textures;
 
 	with( &block : materials.try_deref().blocks[ 41u ] )
 	{
+		var ust::filesystem_path palette_file_path= ust::path::join( map_dir.try_deref(), ConvertToUppercase( block.palette0.file_name ) );
+		result_match( ust::read_file_to_byte8_vector( palette_file_path ) )
+		{
+			Ok( mut contents ) ->
+			{
+				if( contents.size() != 768s )
+				{
+					ust::stderr_print( ust::concat( "Invalid palette size ", ust::to_string8( palette.size() ), "!\n" ) );
+					return -1;
+				}
+				ust::stdout_print( ust::concat( "Loaded palette \"", palette_file_path, "\"\n" ) );
+				palette= move(contents);
+			},
+			Err( e ) ->
+			{
+				ust::stderr_print( ust::concat( "Failed to load palette! Error: ", ust::enum_to_string( e ), "\n" ) );
+				return -1;
+			},
+		}
+
 		foreach( &block_texture : block.textures )
 		{
-			// Hacky way to make uppercase.
-			// TODO - perform this conversion during archive extraction.
-			var ust::string8 mut base_name= block_texture.mips[1];
-			foreach( &mut c : base_name )
-			{
-				if( c >= 'a' && c <= 'z' )
-				{
-					c= char8( u32('A') + (u32(c) - u32('a') ) );
-				}
-			}
-
-			auto mut image_file_nt= ust::path::join( map_dir.try_deref(), base_name );
+			auto mut image_file_nt= ust::path::join( map_dir.try_deref(), ConvertToUppercase( block_texture.mips[1] ) );
 			image_file_nt+= "\0";
 
 			var Image image= unsafe( LoadImage( image_file_nt.data() ) );
@@ -1095,6 +1106,20 @@ fn LoadZmapLamFile( ust::file_readable mut f ) : ust::optional</ZmapLamData/>
 	}
 
 	return result;
+}
+
+fn ConvertToUppercase( ust::string_view8 s ) : ust::string8
+{
+	return ust::string8::from_mapped_range(
+		s,
+		lambda( char8 c ) : char8
+		{
+			if( c >= 'a' && c <= 'z' )
+			{
+				return char8( u32(c) - u32('a') + u32('A') );
+			}
+			return c;
+		} );
 }
 
 } // namespace PM
