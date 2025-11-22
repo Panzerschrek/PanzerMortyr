@@ -84,54 +84,62 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 
 	unsafe( SetTargetFPS(60) );
 
-	var ust::vector</byte8/> mut palette;
-	var Texture mut palette_texture= zero_init;
+	var [ ust::vector</byte8/>, 2 ] mut palettes;
+	var [ Texture, 2 ] mut palette_textures= zero_init;
 
 	var ust::vector</Material/> mut block_materials;
 	var ust::vector</Texture/> mut block_textures;
 
 	with( &block : materials.try_deref().blocks[ 41u ] )
 	{
-		var ust::filesystem_path palette_file_path= ust::path::join( map_dir.try_deref(), ConvertToUppercase( block.palette1.file_name ) );
-		result_match( ust::read_file_to_byte8_vector( palette_file_path ) )
+		for( auto mut i= 0s; i < 2s; ++i )
 		{
-			Ok( mut contents ) ->
+			var ust::filesystem_path palette_file_path=
+				ust::path::join(
+					map_dir.try_deref(),
+					ConvertToUppercase(
+						( i == 0s ? block.palette0.file_name : block.palette1.file_name ) ) );
+
+			result_match( ust::read_file_to_byte8_vector( palette_file_path ) )
 			{
-				if( contents.size() != 768s )
+				Ok( mut contents ) ->
 				{
-					ust::stderr_print( ust::concat( "Invalid palette size ", ust::to_string8( palette.size() ), "!\n" ) );
+					if( contents.size() != 768s )
+					{
+						ust::stderr_print( ust::concat( "Invalid palette size ", ust::to_string8( contents.size() ), "!\n" ) );
+						return -1;
+					}
+					ust::stdout_print( ust::concat( "Loaded palette \"", palette_file_path, "\"\n" ) );
+					palettes[i]= move(contents);
+
+					for( auto mut j= 0s; j < 256s; ++j )
+					{
+						palettes[i].swap( j * 3s, j * 3s + 2s );
+					}
+
+					palette_textures[i]=
+						unsafe( LoadTextureFromImage(
+							Image
+							{
+								.data= palettes[i].data(),
+								.width= 16,
+								.height= 16,
+								.mipmaps= 1,
+								.format( PIXELFORMAT_UNCOMPRESSED_R8G8B8 ),
+							} ) );
+
+					if( palette_textures[i].id == 0u )
+					{
+						ust::stdout_print( "Failed to create palette texture!\n" );
+						return -1;
+					}
+				},
+				Err( e ) ->
+				{
+					ust::stderr_print( ust::concat( "Failed to load palette! Error: ", ust::enum_to_string( e ), "\n" ) );
 					return -1;
-				}
-				ust::stdout_print( ust::concat( "Loaded palette \"", palette_file_path, "\"\n" ) );
-				palette= move(contents);
-
-				for( auto mut i= 0s; i < 256s; ++i )
-				{
-					palette.swap( i * 3s, i * 3s + 2s );
-				}
-
-				palette_texture=
-					unsafe( LoadTextureFromImage(
-						Image
-						{
-							.data= palette.data(),
-							.width= 16,
-							.height= 16,
-							.mipmaps= 1,
-							.format( PIXELFORMAT_UNCOMPRESSED_R8G8B8 ),
-						} ) );
-
-				if( palette_texture.id == 0u )
-				{
-					ust::stdout_print( "Failed to create palette texture!\n" );
-					return -1;
-				}
-			},
-			Err( e ) ->
-			{
-				ust::stderr_print( ust::concat( "Failed to load palette! Error: ", ust::enum_to_string( e ), "\n" ) );
-				return -1;
-			},
+				},
+			}
 		}
 
 		foreach( &block_texture : block.textures )
@@ -552,7 +560,8 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 		{
 			unsafe( ClearBackground( Color{ .r(32), .g(16), .b(8), .a(0) } ) );
 
-			unsafe( DrawTextureEx( palette_texture, Vector2{ .x= 0.0f, .y= 0.0f }, 0.0f, 8.0f, Color{ .r(255), .g(255), .b(255), .a(255) } ) );
+			unsafe( DrawTextureEx( palette_textures[0], Vector2{ .x= 0.0f, .y= 0.0f }, 0.0f, 8.0f, Color{ .r(255), .g(255), .b(255), .a(255) } ) );
+			unsafe( DrawTextureEx( palette_textures[1], Vector2{ .x= 140.0f, .y= 0.0f }, 0.0f, 8.0f, Color{ .r(255), .g(255), .b(255), .a(255) } ) );
 
 			unsafe( BeginMode3D(camera) );
 			{
@@ -620,12 +629,13 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 					{
 						//var Color color{ .r(255), .g(0), .b(255), .a(255) };
 
-						var u32 color_index= ust::min( u32( s.data1[1] ), 255u );
+						var u32 color_index= ust::min( 255u, u32( s.data1[1] ) );
+
 						var Color color
 						{
-							.r( palette[ size_type( color_index ) * 3s + 0s ] ),
-							.g( palette[ size_type( color_index ) * 3s + 1s ] ),
-							.b( palette[ size_type( color_index ) * 3s + 2s ] ),
+							.r( palettes[1u][ size_type( color_index ) * 3s + 0s ] ),
+							.g( palettes[1u][ size_type( color_index ) * 3s + 1s ] ),
+							.b( palettes[1u][ size_type( color_index ) * 3s + 2s ] ),
 							.a(255)
 						};
 
