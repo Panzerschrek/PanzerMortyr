@@ -24,7 +24,7 @@ namespace PM
 
 fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 {
-	if( args.size() < 5s )
+	if( args.size() < 6s )
 	{
 		ust::stderr_print( "Not enough arguments!\n" );
 		return -1;
@@ -33,14 +33,17 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 	var ust::string_view8 zvox_file_path= args[2s];
 	var ust::string_view8 zpoz_file_path= args[3s];
 	var ust::string_view8 zmap_lam_file_path= args[4s];
+	var ust::string_view8 zmap_lem_file_path= args[5s];
 
-	auto map_opt= LoadMap( zmap_file_path, zvox_file_path, zpoz_file_path, zmap_lam_file_path );
+	auto map_opt= LoadMap( zmap_file_path, zvox_file_path, zpoz_file_path, zmap_lam_file_path, zmap_lem_file_path );
 	if( map_opt.empty() )
 	{
 		return -1;
 	}
 
 	var MapData& map= map_opt.try_deref();
+
+	ust::ignore_unused( map.zmap_lem );
 
 	ust::stdout_print( ust::concat( "Num quads: ", ust::to_string8( map.zmap.quads.size() ), "\n" ) );
 	ust::stdout_print( ust::concat( "Num entities: ", ust::to_string8( map.zpos.entities.size() ), "\n" ) );
@@ -708,6 +711,7 @@ struct MapData
 	ZvoxData zvox;
 	ZpozData zpos;
 	ZmapLamData zmap_lam;
+	ZmapLemData zmap_lem;
 }
 
 struct ZmapData
@@ -737,18 +741,28 @@ struct ZmapLamData
 	ust::vector</ZmapLamStruct2/> structs2;
 }
 
+struct ZmapLemData
+{
+}
+
 fn LoadMap(
 	ust::filesystem_path_view zmap_file_path,
 	ust::filesystem_path_view zvox_file_path,
 	ust::filesystem_path_view zpoz_file_path,
-	ust::filesystem_path_view zmap_lam_file_path ) : ust::optional</MapData/>
+	ust::filesystem_path_view zmap_lam_file_path,
+	ust::filesystem_path_view zmap_lem_file_path ) : ust::optional</MapData/>
 {
 	auto mut zmap_data= LoadZmapFile( zmap_file_path );
 	auto mut zvox_data= LoadZvoxFile( zvox_file_path );
 	auto mut zpoz_data= LoadZpozFile( zpoz_file_path );
 	auto mut zmap_lam_data= LoadZmapLamFile( zmap_lam_file_path );
+	auto mut zmap_lem_data= LoadZmapLemFile( zmap_lem_file_path );
 
-	if( zmap_data.empty() || zvox_data.empty() || zpoz_data.empty() || zmap_lam_data.empty() )
+	if( zmap_data.empty() ||
+		zvox_data.empty() ||
+		zpoz_data.empty() ||
+		zmap_lam_data.empty() ||
+		zmap_lem_data.empty() )
 	{
 		return ust::null_optional;
 	}
@@ -759,6 +773,7 @@ fn LoadMap(
 		.zvox= zvox_data.try_take(),
 		.zpos= zpoz_data.try_take(),
 		.zmap_lam= zmap_lam_data.try_take(),
+		.zmap_lem= zmap_lem_data.try_take(),
 	};
 }
 
@@ -1140,6 +1155,38 @@ fn LoadZmapLamFile( ust::file_readable mut f ) : ust::optional</ZmapLamData/>
 
 		ust::stdout_print( ust::concat( "ZMAP*.LAM structs1 are in range ", ust::to_string8(min_index), " to ", ust::to_string8(max_index), "\n" ) );
 	}
+
+	return result;
+}
+
+fn LoadZmapLemFile( ust::filesystem_path_view file_path ) : ust::optional</ZmapLemData/>
+{
+	result_match( ust::file_readable::open( file_path ) )
+	{
+		Ok( mut f ) -> { return LoadZmapLemFile( move(f) ); },
+		Err(e) ->
+		{
+			ust::stderr_print( ust::concat( "Error opening file: ", ust::enum_to_string( e ), "\n" ) );
+			return ust::null_optional;
+		}
+	}
+}
+
+fn LoadZmapLemFile( ust::file_readable mut f ) : ust::optional</ZmapLemData/>
+{
+	var ZmapLemHeader mut header= zero_init;
+
+	if_var( e :
+		f.read_exact(
+			unsafe( ust::array_view_mut</byte8/>(
+				ust::ptr_cast_to_byte8( $<(header) ),
+				 typeinfo</ZPozFileHeader/>.size_of ) ) ).as_error_ref() )
+	{
+		ust::stderr_print( ust::concat( "Error reading map file: ", ust::enum_to_string( e ), "\n" ) );
+		return ust::null_optional;
+	}
+
+	var ZmapLemData mut result;
 
 	return result;
 }
