@@ -24,7 +24,7 @@ namespace PM
 
 fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 {
-	if( args.size() < 5s )
+	if( args.size() < 6s )
 	{
 		ust::stderr_print( "Not enough arguments!\n" );
 		return -1;
@@ -33,8 +33,9 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 	var ust::string_view8 zvox_file_path= args[2s];
 	var ust::string_view8 zpoz_file_path= args[3s];
 	var ust::string_view8 zmap_lam_file_path= args[4s];
+	var ust::string_view8 zmap_lem_file_path= args[5s];
 
-	auto map_opt= LoadMap( zmap_file_path, zvox_file_path, zpoz_file_path, zmap_lam_file_path );
+	auto map_opt= LoadMap( zmap_file_path, zvox_file_path, zpoz_file_path, zmap_lam_file_path, zmap_lem_file_path );
 	if( map_opt.empty() )
 	{
 		return -1;
@@ -42,13 +43,21 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 
 	var MapData& map= map_opt.try_deref();
 
-	ust::stdout_print( ust::concat( "Num quads: ", ust::to_string8( map.zmap.quads.size() ), "\n" ) );
-	ust::stdout_print( ust::concat( "Num entities: ", ust::to_string8( map.zpos.entities.size() ), "\n" ) );
-	ust::stdout_print( ust::concat( "Num lights: ", ust::to_string8( map.zpos.light_sources.size() ), "\n" ) );
-	ust::stdout_print( ust::concat( "Num zpoz struct1: ", ust::to_string8( map.zpos.structs1.size() ), "\n" ) );
+	ust::ignore_unused( map.zmap_lem );
+
+	ust::stdout_print( "\n" );
+	ust::stdout_print( ust::concat( "Num zmap quads: ", ust::to_string8( map.zmap.quads.size() ), "\n" ) );
+	ust::stdout_print( ust::concat( "Num zpoz entities: ", ust::to_string8( map.zpoz.entities.size() ), "\n" ) );
+	ust::stdout_print( ust::concat( "Num zpoz structs1: ", ust::to_string8( map.zpoz.structs1.size() ), "\n" ) );
+	ust::stdout_print( ust::concat( "Num zpoz light sources: ", ust::to_string8( map.zpoz.light_sources.size() ), "\n" ) );
+	ust::stdout_print( ust::concat( "Num zpoz structs3: ", ust::to_string8( map.zpoz.structs3.size() ), "\n" ) );
+	ust::stdout_print( ust::concat( "Num zvox structs0: ", ust::to_string8( map.zvox.structs0.size() ), "\n" ) );
+	ust::stdout_print( ust::concat( "Num zvox light sources: ", ust::to_string8( map.zvox.light_sources.size() ), "\n" ) );
+	ust::stdout_print( ust::concat( "Num zvox structs2: ", ust::to_string8( map.zvox.structs2.size() ), "\n" ) );
 	ust::stdout_print( ust::concat( "Num zmap.lam structs0: ", ust::to_string8( map.zmap_lam.structs0.size() ), "\n" ) );
 	ust::stdout_print( ust::concat( "Num zmap.lam structs1: ", ust::to_string8( map.zmap_lam.structs1.size() ), "\n" ) );
 	ust::stdout_print( ust::concat( "Num zmap.lam structs2: ", ust::to_string8( map.zmap_lam.structs2.size() ), "\n" ) );
+	ust::stdout_print( "\n" );
 
 	var ust::optional</ust::filesystem_path_view/> map_dir= ust::path::get_parent_path( zmap_file_path );
 	if( map_dir.empty() )
@@ -539,9 +548,25 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 		unsafe( UploadMesh( $<(mesh), false ) );
 	}
 
+	auto mut zmap_lem_file_contents= ust::read_file_to_byte8_vector( zmap_lem_file_path ).try_take();
+	var size_type width= 512s;
+	var size_type size_corrected= ( zmap_lem_file_contents.size() + ( width - 1s ) ) / width * width;
+	zmap_lem_file_contents.resize( size_corrected, byte8(0u8) );
+
+	var Image zmap_lam_image
+	{
+		.data= unsafe( zmap_lem_file_contents.data() ),
+		.mipmaps= 1,
+		.width(width),
+		.height( zmap_lem_file_contents.size() / width ),
+		.format( PIXELFORMAT_UNCOMPRESSED_GRAYSCALE ),
+	};
+
+	var Texture zmap_lem_texture= unsafe( LoadTextureFromImage( zmap_lam_image ) );
+
 	var size_type mut offset= 0s;
 
-	var bool mut display_map= true, mut display_zvox_structs1= true, mut display_entities= true, mut display_lights= true;
+	var bool mut display_map= true, mut display_bounding_boxes= false, mut display_zvox_structs1= true, mut display_entities= true, mut display_lights= true;
 
 	while( ! unsafe( WindowShouldClose() ) )
 	{
@@ -550,6 +575,10 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 		if( unsafe( IsKeyPressed( i32( 'M' ) ) ) )
 		{
 			display_map= !display_map;
+		}
+		if( unsafe( IsKeyPressed( i32( 'B' ) ) ) )
+		{
+			display_bounding_boxes= !display_bounding_boxes;
 		}
 		if( unsafe( IsKeyPressed( i32( 'K' ) ) ) )
 		{
@@ -576,6 +605,8 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 
 			unsafe( DrawTextureEx( palette_textures[0], Vector2{ .x= 0.0f, .y= 0.0f }, 0.0f, 8.0f, Color{ .r(255), .g(255), .b(255), .a(255) } ) );
 			unsafe( DrawTextureEx( palette_textures[1], Vector2{ .x= 140.0f, .y= 0.0f }, 0.0f, 8.0f, Color{ .r(255), .g(255), .b(255), .a(255) } ) );
+
+			unsafe( DrawTexture( zmap_lem_texture, 0, 0, Color{ .r(255), .g(255), .b(255), .a(255) } ) );
 
 			unsafe( BeginMode3D(camera) );
 			{
@@ -650,6 +681,27 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 					}
 				}
 
+				if( display_bounding_boxes )
+				{
+					foreach( &s : map.zmap.quads )
+					{
+						var Color color
+						{
+							.r(s.bounding_box_half_size[0] >> 1u),
+							.g(s.bounding_box_half_size[1] >> 1u),
+							.b(s.bounding_box_half_size[2] >> 1u),
+							.a(255)
+						};
+						var Vector3 pos{ .x= f32(s.center[0s]) * scale, .y= f32(s.center[1s]) * scale, .z= f32(s.center[2s]) * -scale };
+						unsafe( DrawCubeWires(
+							pos,
+							f32(s.bounding_box_half_size[0]) * 2.0f * scale,
+							f32(s.bounding_box_half_size[1]) * 2.0f * scale,
+							f32(s.bounding_box_half_size[2]) * 2.0f * scale,
+							color ) );
+					}
+				}
+
 				if( display_zvox_structs1 )
 				{
 					foreach( &s : map.zvox.light_sources )
@@ -660,15 +712,30 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 
 						unsafe( DrawCube( pos, 0.1f, 0.1f, 0.3f, color ) );
 
-						var f32 radius= ust::min( 32.0f, ust::max( 0.1f, f32(s.radius) * scale ) );
+						var f32 radius= ust::max( 0.01f, f32(s.radius) * scale );
 
-						unsafe( DrawSphereWires( pos, radius, 6, 8, color ) );
+						unsafe( DrawSphereWires( pos, radius, 8, 8, color ) );
+					}
+				}
+
+				if( false )
+				{
+					// It doesn't look like map-related things with proper positions.
+					foreach( &s : map.zvox.structs2 )
+					{
+						var Color color{ .r(255), .g(0), .b(255), .a(255) };
+
+						var Vector3 pos{ .x= f32(s.data0[0s + offset]) * scale, .y= f32(s.data0[1s + offset]) * scale, .z= f32(s.data0[2s + offset]) * -scale };
+
+						unsafe( DrawCube( pos, 0.1f, 0.1f, 0.3f, color ) );
+
+						unsafe( draw_number( i32( s.data1[0] ), Vector3{ .x(s.data0[0s]), .y(s.data0[1s]), .z( i32(s.data0[2s]) - 24 ) } ) );
 					}
 				}
 
 				if( display_entities )
 				{
-					foreach( &entity : map.zpos.entities )
+					foreach( &entity : map.zpoz.entities )
 					{
 						if( entity.alive_flag == 0u16 )
 						{
@@ -687,7 +754,7 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 
 				if( false )
 				{
-					foreach( &s : map.zpos.structs1 )
+					foreach( &s : map.zpoz.structs1 )
 					{
 						var Color color{ .r(0), .g(255), .b(0), .a(255) };
 
@@ -699,22 +766,30 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 
 				if( display_lights )
 				{
-					foreach( &pair : map.zpos.light_sources.iter().zip( map.zpos.light_sources_extra.iter() ) )
+					foreach( &pair : map.zpoz.light_sources.iter().zip( map.zpoz.light_sources_extra.iter() ) )
 					{
 						var ZpozLightSource& light_source= pair.first;
+
 						var ZpozLightSourceExtraData& light_source_extra= pair.second;
 
 						var Vector3 pos{ .x= f32(light_source.position[0]) * scale, .y= f32(light_source.position[1]) * scale, .z= f32(light_source.position[2]) * -scale };
-						var f32 radius= ust::min( 32.0f, ust::max( 0.1f, f32(light_source.radius) * scale ) );
+						var f32 radius= f32(light_source.radius) * scale;
 
 						var Color color{ .r(light_source.power >> 1u), .g(light_source.power >> 1u), .b(light_source.power >> 1u), .a(255) };
 
-						unsafe( DrawSphereWires( pos, radius, 6, 8, color ) );
+						unsafe( DrawSphereWires( pos, radius, 7, 9, color ) );
 						unsafe( DrawCube( pos, 0.15f, 0.15f, 0.15f, color ) );
 
 						unsafe( draw_number( i32( light_source.power ), Vector3{ .x(light_source.position[0s]), .y(light_source.position[1s]), .z( i32(light_source.position[2s]) - 24 ) } ) );
 
 						ust::ignore_unused( light_source_extra );
+
+						// For some reason light sources are always mapped to a nearby quad.
+						var ZmapQuad& quad= map.zmap.quads[ size_type( light_source.nearby_quad_index ) ];
+						var Vector3 quad_pos{ .x= f32(quad.center[0]) * scale, .y= f32(quad.center[1]) * scale, .z= f32(quad.center[2]) * -scale };
+						var Color quad_color{ .r(16u), .g(144u), .b(16u), .a(255) };
+						unsafe( DrawCube( quad_pos, 0.05f, 0.05f, 0.05f, quad_color ) );
+						unsafe( DrawLine3D( pos, quad_pos, quad_color ) );
 					}
 				}
 			}
@@ -733,8 +808,9 @@ struct MapData
 {
 	ZmapData zmap;
 	ZvoxData zvox;
-	ZpozData zpos;
+	ZpozData zpoz;
 	ZmapLamData zmap_lam;
+	ZmapLemData zmap_lem;
 }
 
 struct ZmapData
@@ -746,6 +822,7 @@ struct ZvoxData
 {
 	ust::vector</ZvoxStruct0/> structs0;
 	ust::vector</ZvoxLightSource/> light_sources;
+	ust::vector</ZvoxStruct2/> structs2;
 }
 
 struct ZpozData
@@ -764,18 +841,28 @@ struct ZmapLamData
 	ust::vector</ZmapLamStruct2/> structs2;
 }
 
+struct ZmapLemData
+{
+}
+
 fn LoadMap(
 	ust::filesystem_path_view zmap_file_path,
 	ust::filesystem_path_view zvox_file_path,
 	ust::filesystem_path_view zpoz_file_path,
-	ust::filesystem_path_view zmap_lam_file_path ) : ust::optional</MapData/>
+	ust::filesystem_path_view zmap_lam_file_path,
+	ust::filesystem_path_view zmap_lem_file_path ) : ust::optional</MapData/>
 {
 	auto mut zmap_data= LoadZmapFile( zmap_file_path );
 	auto mut zvox_data= LoadZvoxFile( zvox_file_path );
 	auto mut zpoz_data= LoadZpozFile( zpoz_file_path );
 	auto mut zmap_lam_data= LoadZmapLamFile( zmap_lam_file_path );
+	auto mut zmap_lem_data= LoadZmapLemFile( zmap_lem_file_path );
 
-	if( zmap_data.empty() || zvox_data.empty() || zpoz_data.empty() || zmap_lam_data.empty() )
+	if( zmap_data.empty() ||
+		zvox_data.empty() ||
+		zpoz_data.empty() ||
+		zmap_lam_data.empty() ||
+		zmap_lem_data.empty() )
 	{
 		return ust::null_optional;
 	}
@@ -784,8 +871,9 @@ fn LoadMap(
 	{
 		.zmap= zmap_data.try_take(),
 		.zvox= zvox_data.try_take(),
-		.zpos= zpoz_data.try_take(),
+		.zpoz= zpoz_data.try_take(),
 		.zmap_lam= zmap_lam_data.try_take(),
+		.zmap_lem= zmap_lem_data.try_take(),
 	};
 }
 
@@ -820,6 +908,24 @@ fn LoadZmapFile( ust::file_readable mut f ) : ust::optional</ZmapData/>
 	{
 		ust::stderr_print( ust::concat( "Unexpected file signature \"", header.signature, "\"!" ) );
 		return ust::null_optional;
+	}
+
+	{
+		var ust::string8 mut m;
+		m+= "ZMAP header nums: ";
+		m+= ust::to_string8( header.num_quads );
+		m+= ", ";
+		m+= ust::to_string8( header.presumable_some_other_num );
+		m+= ", ";
+		m+= ust::to_string8( header.data[0] );
+		m+= ", ";
+		m+= ust::to_string8( header.data[1] );
+		m+= ", ";
+		m+= ust::to_string8( header.data[2] );
+		m+= ", ";
+		m+= ust::to_string8( header.data[3] );
+		m+= "\n";
+		ust::stdout_print( m );
 	}
 
 	var ZmapData mut result;
@@ -874,6 +980,24 @@ fn LoadZvoxFile( ust::file_readable mut f ) : ust::optional</ZvoxData/>
 		return ust::null_optional;
 	}
 
+	{
+		var ust::string8 mut m;
+		m+= "ZVOX header nums: ";
+		m+= ust::to_string8( header.num_structs1 );
+		m+= ", ";
+		m+= ust::to_string8( header.num_structs0 );
+		m+= ", ";
+		m+= ust::to_string8( header.num_structs2 );
+		m+= ", ";
+		m+= ust::to_string8( header.num3 );
+		m+= ", ";
+		m+= ust::to_string8( header.num4 );
+		m+= ", ";
+		m+= ust::to_string8( header.num5 );
+		m+= "\n";
+		ust::stdout_print( m );
+	}
+
 	var ZvoxData mut result;
 
 	{
@@ -900,6 +1024,21 @@ fn LoadZvoxFile( ust::file_readable mut f ) : ust::optional</ZvoxData/>
 				unsafe( ust::array_view_mut</byte8/>(
 					ust::ptr_cast_to_byte8( result.light_sources.data() ),
 					result.light_sources.size() * typeinfo</ZvoxLightSource/>.size_of ) ) ).as_error_ref() )
+		{
+			ust::stderr_print( ust::concat( "Failed to read! Error: ", ust::enum_to_string( e ), "!\n" ) );
+			return ust::null_optional;
+		}
+	}
+
+	{
+		var ZvoxStruct2 mut dummy_struct2= zero_init;
+		result.structs2.resize( size_type( header.num_structs2 ), dummy_struct2 );
+
+		if_var( e :
+			f.read_exact(
+				unsafe( ust::array_view_mut</byte8/>(
+					ust::ptr_cast_to_byte8( result.structs2.data() ),
+					result.structs2.size() * typeinfo</ZvoxStruct2/>.size_of ) ) ).as_error_ref() )
 		{
 			ust::stderr_print( ust::concat( "Failed to read! Error: ", ust::enum_to_string( e ), "!\n" ) );
 			return ust::null_optional;
@@ -955,6 +1094,24 @@ fn LoadZpozFile( ust::file_readable mut f ) : ust::optional</ZpozData/>
 		}
 	}
 
+	{
+		var ust::string8 mut m;
+		m+= "ZPOZ header nums: ";
+		m+= ust::to_string8( header.num_entities );
+		m+= ", ";
+		m+= ust::to_string8( header.num_structs1 );
+		m+= ", ";
+		m+= ust::to_string8( header.data[0] );
+		m+= ", ";
+		m+= ust::to_string8( header.data[1] );
+		m+= ", ";
+		m+= ust::to_string8( header.data[2] );
+		m+= ", ";
+		m+= ust::to_string8( header.data[3] );
+		m+= "\n";
+		ust::stdout_print( m );
+	}
+
 	var ZpozData mut result;
 
 	{
@@ -997,6 +1154,20 @@ fn LoadZpozFile( ust::file_readable mut f ) : ust::optional</ZpozData/>
 	{
 		ust::stderr_print( ust::concat( "Error reading map file: ", ust::enum_to_string( e ), "\n" ) );
 		return ust::null_optional;
+	}
+
+	{
+		var ust::string8 mut m;
+		m+= "ZPOZ intermediate header nums: ";
+		m+= ust::to_string8( intermediate_header.num0 );
+		m+= ", ";
+		m+= ust::to_string8( intermediate_header.num1 );
+		m+= ", ";
+		m+= ust::to_string8( intermediate_header.num_light_sources );
+		m+= ", ";
+		m+= ust::to_string8( intermediate_header.num2 );
+		m+= "\n";
+		ust::stdout_print( m );
 	}
 
 	{
@@ -1054,12 +1225,33 @@ fn LoadZpozFile( ust::file_readable mut f ) : ust::optional</ZpozData/>
 		}
 	}
 
-	var i32 mut max_struct3_data= 0;
-	foreach( &s : result.structs3 )
+	if( false )
 	{
-		ust::max_assign( max_struct3_data, s.data[0] );
+		var i32 mut max_offset= 0;
+		var size_type mut num_non_negative_offsets= 0s;
+		foreach( &s : result.light_sources_extra )
+		{
+			foreach( offset : s.data )
+			{
+				if( offset >= 0 )
+				{
+					ust::max_assign( max_offset, offset );
+					++num_non_negative_offsets;
+				}
+			}
+		}
+		ust::stdout_print( ust::concat( "Max light extra offset is ", ust::to_string8( max_offset ), ", has ", ust::to_string8(num_non_negative_offsets), " non-negative offsets\n" ) );
 	}
-	ust::stdout_print( ust::concat( "Max struct3 data is ", ust::to_string8( max_struct3_data ), "\n" ) );
+
+	if( false )
+	{
+		var i32 mut max_struct3_data= 0;
+		foreach( &s : result.structs3 )
+		{
+			ust::max_assign( max_struct3_data, s.data[0] );
+		}
+		ust::stdout_print( ust::concat( "Max struct3 data is ", ust::to_string8( max_struct3_data ), "\n" ) );
+	}
 
 	return result;
 }
@@ -1089,6 +1281,28 @@ fn LoadZmapLamFile( ust::file_readable mut f ) : ust::optional</ZmapLamData/>
 	{
 		ust::stderr_print( ust::concat( "Error reading map file: ", ust::enum_to_string( e ), "\n" ) );
 		return ust::null_optional;
+	}
+
+	{
+		var ust::string8 mut m;
+		m+= "ZMAP*.LAM header nums: ";
+		m+= ust::to_string8( header.num0 );
+		m+= ", ";
+		m+= ust::to_string8( header.num_structs0 );
+		m+= ", ";
+		m+= ust::to_string8( header.num_structs1 );
+		m+= ", ";
+		m+= ust::to_string8( header.num3 );
+		m+= ", ";
+		m+= ust::to_string8( header.num4 );
+		m+= ", ";
+		m+= ust::to_string8( header.num_structs2 );
+		m+= ", ";
+		m+= ust::to_string8( header.num6 );
+		m+= ", ";
+		m+= ust::to_string8( header.num7 );
+		m+= "\n";
+		ust::stdout_print( m );
 	}
 
 	var ZmapLamData mut result;
@@ -1139,6 +1353,7 @@ fn LoadZmapLamFile( ust::file_readable mut f ) : ust::optional</ZmapLamData/>
 
 	// There is some data still left - at least several kilobytes. It's at least one more block.
 
+	if( false )
 	{
 		var i32 mut min_index= 0;
 		var i32 mut max_index= 0;
@@ -1153,6 +1368,7 @@ fn LoadZmapLamFile( ust::file_readable mut f ) : ust::optional</ZmapLamData/>
 
 		ust::stdout_print( ust::concat( "ZMAP*.LAM indices are in range ", ust::to_string8(min_index), " to ", ust::to_string8(max_index), "\n" ) );
 	}
+	if( false )
 	{
 		var i32 mut min_index= 0;
 		var i32 mut max_index= 0;
@@ -1166,6 +1382,52 @@ fn LoadZmapLamFile( ust::file_readable mut f ) : ust::optional</ZmapLamData/>
 		}
 
 		ust::stdout_print( ust::concat( "ZMAP*.LAM structs1 are in range ", ust::to_string8(min_index), " to ", ust::to_string8(max_index), "\n" ) );
+	}
+
+	return result;
+}
+
+fn LoadZmapLemFile( ust::filesystem_path_view file_path ) : ust::optional</ZmapLemData/>
+{
+	result_match( ust::file_readable::open( file_path ) )
+	{
+		Ok( mut f ) -> { return LoadZmapLemFile( move(f) ); },
+		Err(e) ->
+		{
+			ust::stderr_print( ust::concat( "Error opening file: ", ust::enum_to_string( e ), "\n" ) );
+			return ust::null_optional;
+		}
+	}
+}
+
+fn LoadZmapLemFile( ust::file_readable mut f ) : ust::optional</ZmapLemData/>
+{
+	var ZmapLemHeader mut header= zero_init;
+
+	if_var( e :
+		f.read_exact(
+			unsafe( ust::array_view_mut</byte8/>(
+				ust::ptr_cast_to_byte8( $<(header) ),
+				 typeinfo</ZPozFileHeader/>.size_of ) ) ).as_error_ref() )
+	{
+		ust::stderr_print( ust::concat( "Error reading map file: ", ust::enum_to_string( e ), "\n" ) );
+		return ust::null_optional;
+	}
+
+	var ZmapLemData mut result;
+
+	{
+		var ust::string8 mut m;
+		m+= "ZMAP*.LEM header nums: ";
+		m+= ust::to_string8( header.num0 );
+		m+= ", ";
+		m+= ust::to_string8( header.num1 );
+		m+= ", ";
+		m+= ust::to_string8( header.num2 );
+		m+= ", ";
+		m+= ust::to_string8( header.num3 );
+		m+= "\n";
+		ust::stdout_print( m );
 	}
 
 	return result;
