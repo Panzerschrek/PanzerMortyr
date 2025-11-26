@@ -1,6 +1,7 @@
 import "/enum_string_conversions.u"
 import "/file.u"
 import "/file_helpers.u"
+import "/hash_set.u"
 import "/main_wrapper.u"
 import "/math.u"
 import "/path_utils.u"
@@ -43,6 +44,36 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 
 	var MapData& map= map_opt.try_deref();
 
+	for( auto mut i= 0s; i < map.zpoz.light_sources.size(); ++i )
+	{
+		var ZpozLightSource& l_zpoz= map.zpoz.light_sources[i];
+		var ZvoxLightSource& l_zvox= map.zvox.light_sources[i];
+		if( l_zpoz.position != l_zvox.position )
+		{
+			ust::stdout_print( ust::concat( "Position mismatch for light ", ust::to_string8( i ), "\n" ) );
+		}
+		if( l_zpoz.radius != l_zvox.radius )
+		{
+			ust::stdout_print( ust::concat( "Radius mismatch for light ", ust::to_string8( i ), "\n" ) );
+		}
+		if( l_zpoz.data0[0] != l_zvox.data0[0] )
+		{
+			ust::stdout_print( ust::concat( "data0[0] mismatch for light ", ust::to_string8( i ), "\n" ) );
+		}
+		if( l_zpoz.power != u32( l_zvox.data0[1] ) )
+		{
+			ust::stdout_print( ust::concat( "power mismatch for light ", ust::to_string8( i ), "\n" ) );
+		}
+		if( l_zpoz.data1[0] != u32( l_zvox.data0[2] ) )
+		{
+			ust::stdout_print( ust::concat( "data1[0] mismatch for light ", ust::to_string8( i ), "\n" ) );
+		}
+		if( l_zpoz.first_quad_index != u32( l_zvox.first_quad_index ) )
+		{
+			ust::stdout_print( ust::concat( "first_quad_index mismatch for light ", ust::to_string8( i ), "\n" ) );
+		}
+	}
+
 	ust::ignore_unused( map.zmap_lem );
 
 	ust::stdout_print( "\n" );
@@ -58,6 +89,15 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 	ust::stdout_print( ust::concat( "Num zmap.lam structs1: ", ust::to_string8( map.zmap_lam.structs1.size() ), "\n" ) );
 	ust::stdout_print( ust::concat( "Num zmap.lam structs2: ", ust::to_string8( map.zmap_lam.structs2.size() ), "\n" ) );
 	ust::stdout_print( "\n" );
+
+	{
+		var u32 mut num_quad_refs= 0u;
+		foreach( &s : map.zvox.light_sources )
+		{
+			num_quad_refs+= u32( s.data1[0] );
+		}
+		ust::stdout_print( ust::concat( "Num zvox light soruce quad refs: ", ust::to_string8( num_quad_refs ), "\n" ) );
+	}
 
 	var ust::optional</ust::filesystem_path_view/> map_dir= ust::path::get_parent_path( zmap_file_path );
 	if( map_dir.empty() )
@@ -99,129 +139,165 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 	var ust::vector</Material/> mut block_materials;
 	var ust::vector</Texture/> mut block_textures;
 
-	with( &block : materials.try_deref().blocks[ 41u ] )
+	var MaterialsDescription::Block& materials_block= materials.try_deref().blocks[ 41u ];
+
+	for( auto mut i= 0s; i < 2s; ++i )
 	{
-		for( auto mut i= 0s; i < 2s; ++i )
+		var ust::filesystem_path palette_file_path=
+			ust::path::join(
+				map_dir.try_deref(),
+				ConvertToUppercase(
+					( i == 0s ? materials_block.palette0.file_name : materials_block.palette1.file_name ) ) );
+
+		result_match( ust::read_file_to_byte8_vector( palette_file_path ) )
 		{
-			var ust::filesystem_path palette_file_path=
-				ust::path::join(
-					map_dir.try_deref(),
-					ConvertToUppercase(
-						( i == 0s ? block.palette0.file_name : block.palette1.file_name ) ) );
-
-			result_match( ust::read_file_to_byte8_vector( palette_file_path ) )
+			Ok( mut contents ) ->
 			{
-				Ok( mut contents ) ->
+				if( contents.size() != 768s )
 				{
-					if( contents.size() != 768s )
-					{
-						ust::stderr_print( ust::concat( "Invalid palette size ", ust::to_string8( contents.size() ), "!\n" ) );
-						return -1;
-					}
-					ust::stdout_print( ust::concat( "Loaded palette \"", palette_file_path, "\"\n" ) );
-					palettes[i]= move(contents);
-
-					for( auto mut j= 0s; j < 256s; ++j )
-					{
-						palettes[i].swap( j * 3s, j * 3s + 2s );
-					}
-
-					palette_textures[i]=
-						unsafe( LoadTextureFromImage(
-							Image
-							{
-								.data= palettes[i].data(),
-								.width= 16,
-								.height= 16,
-								.mipmaps= 1,
-								.format( PIXELFORMAT_UNCOMPRESSED_R8G8B8 ),
-							} ) );
-
-					if( palette_textures[i].id == 0u )
-					{
-						ust::stdout_print( "Failed to create palette texture!\n" );
-						return -1;
-					}
-				},
-				Err( e ) ->
-				{
-					ust::stderr_print( ust::concat( "Failed to load palette! Error: ", ust::enum_to_string( e ), "\n" ) );
+					ust::stderr_print( ust::concat( "Invalid palette size ", ust::to_string8( contents.size() ), "!\n" ) );
 					return -1;
-				},
+				}
+				ust::stdout_print( ust::concat( "Loaded palette \"", palette_file_path, "\"\n" ) );
+				palettes[i]= move(contents);
+
+				for( auto mut j= 0s; j < 256s; ++j )
+				{
+					palettes[i].swap( j * 3s, j * 3s + 2s );
+				}
+
+				palette_textures[i]=
+					unsafe( LoadTextureFromImage(
+						Image
+						{
+							.data= palettes[i].data(),
+							.width= 16,
+							.height= 16,
+							.mipmaps= 1,
+							.format( PIXELFORMAT_UNCOMPRESSED_R8G8B8 ),
+						} ) );
+
+				if( palette_textures[i].id == 0u )
+				{
+					ust::stdout_print( "Failed to create palette texture!\n" );
+					return -1;
+				}
+			},
+			Err( e ) ->
+			{
+				ust::stderr_print( ust::concat( "Failed to load palette! Error: ", ust::enum_to_string( e ), "\n" ) );
+				return -1;
+			},
+		}
+	}
+
+	foreach( &block_texture : materials_block.textures )
+	{
+		auto mut image_file_nt= ust::path::join( map_dir.try_deref(), ConvertToUppercase( block_texture.mips[1] ) );
+		image_file_nt+= "\0";
+
+		var Image image= unsafe( LoadImage( image_file_nt.data() ) );
+		if( ust::is_nullptr( image.data ) )
+		{
+			ust::stderr_print( ust::concat( "Failed to load image\"" , image_file_nt, "\"!\n" ) );
+			return -1;
+		}
+		if( image.format != i32( PIXELFORMAT_UNCOMPRESSED_R8G8B8 ) )
+		{
+			ust::stderr_print( ust::concat( "Invalid pixel format o image\"" , image_file_nt, "\"!\n" ) );
+			return -1;
+		}
+
+		var u32 tile_size_x= u32( image.width ) >> 1u;
+		var u32 tile_size_y= u32( image.height ) >> 1u;
+
+		type PixelType= [ u8, 3 ];
+
+		scoped_array PixelType mut tile_data[ size_type(tile_size_x * tile_size_y ) ]( ust::make_array( 0u8, 0u8, 0u8 ) );
+
+		var $(PixelType) image_data= unsafe( ust::byte_ptr_cast</PixelType/>( image.data ) );
+
+		for( auto mut tile_y= 0u; tile_y < 2u; ++tile_y )
+		{
+			for( auto mut tile_x= 0u; tile_x < 2u; ++tile_x )
+			{
+				var u32 src_y= tile_y * tile_size_y;
+				var u32 src_x= tile_x * tile_size_x;
+				unsafe
+				{
+					var $(PixelType) tile_src_data= image_data + src_x + src_y * u32(image.width);
+
+					for( auto mut y= 0u; y < tile_size_y; ++y )
+					{
+						for( auto mut x= 0u; x < tile_size_x; ++x )
+						{
+							tile_data[ size_type( x + y * tile_size_x ) ]= $>( tile_src_data + x + y * u32( image.width ) );
+						}
+					}
+
+					var Image tile_image
+					{
+						.data= ust::ptr_cast_to_byte8( tile_data.data() ),
+						.width( tile_size_x ),
+						.height( tile_size_y ),
+						.mipmaps(1),
+						.format= image.format,
+					};
+
+					var Texture mut texture = LoadTextureFromImage( tile_image );
+					if( texture.id == 0u )
+					{
+						ust::stderr_print( "Failed to load test texture from image!\n" );
+						return -1;
+					}
+
+					var Material mut material= LoadMaterialDefault();
+
+					$>( material.maps ).texture = texture;
+
+					block_materials.push_back( move(material) );
+					block_textures.push_back( move(texture) );
+				}
 			}
 		}
 
-		foreach( &block_texture : block.textures )
+		unsafe( UnloadImage( image ) );
+	}
+
+	foreach( &el : typeinfo</MaterialsDescription::SpecialMaterial/>.elements_list )
+	{
+		ust::stdout_print( ust::concat( el.name, " texture index is ", ust::to_string8( materials_block.special_material_indices[ size_type( el.value ) ] ), "\n" ) );
+	}
+
+	// Dummy material for polygons with strange material numbers.
+	block_materials.push_back( unsafe( LoadMaterialDefault() ) );
+
+	{
+		var ust::hash_set</size_type/> mut missing_materials;
+		foreach( &q : map.zmap.quads ) label enumerate_quads
 		{
-			auto mut image_file_nt= ust::path::join( map_dir.try_deref(), ConvertToUppercase( block_texture.mips[1] ) );
-			image_file_nt+= "\0";
-
-			var Image image= unsafe( LoadImage( image_file_nt.data() ) );
-			if( ust::is_nullptr( image.data ) )
+			var size_type index( q.texture_id );
+			if( index >= block_materials.size() - 1s )
 			{
-				ust::stderr_print( ust::concat( "Failed to load image\"" , image_file_nt, "\"!\n" ) );
-				return -1;
-			}
-			if( image.format != i32( PIXELFORMAT_UNCOMPRESSED_R8G8B8 ) )
-			{
-				ust::stderr_print( ust::concat( "Invalid pixel format o image\"" , image_file_nt, "\"!\n" ) );
-				return -1;
-			}
-
-			var u32 tile_size_x= u32( image.width ) >> 1u;
-			var u32 tile_size_y= u32( image.height ) >> 1u;
-
-			type PixelType= [ u8, 3 ];
-
-			scoped_array PixelType mut tile_data[ size_type(tile_size_x * tile_size_y ) ]( ust::make_array( 0u8, 0u8, 0u8 ) );
-
-			var $(PixelType) image_data= unsafe( ust::byte_ptr_cast</PixelType/>( image.data ) );
-
-			for( auto mut tile_y= 0u; tile_y < 2u; ++tile_y )
-			{
-				for( auto mut tile_x= 0u; tile_x < 2u; ++tile_x )
+				foreach( known_texture_index : MaterialsDescription::c_special_material_texture_indices )
 				{
-					var u32 src_y= tile_y * tile_size_y;
-					var u32 src_x= tile_x * tile_size_x;
-					unsafe
+					if( index == size_type(known_texture_index) )
 					{
-						var $(PixelType) tile_src_data= image_data + src_x + src_y * u32(image.width);
-
-						for( auto mut y= 0u; y < tile_size_y; ++y )
-						{
-							for( auto mut x= 0u; x < tile_size_x; ++x )
-							{
-								tile_data[ size_type( x + y * tile_size_x ) ]= $>( tile_src_data + x + y * u32( image.width ) );
-							}
-						}
-
-						var Image tile_image
-						{
-							.data= ust::ptr_cast_to_byte8( tile_data.data() ),
-							.width( tile_size_x ),
-							.height( tile_size_y ),
-							.mipmaps(1),
-							.format= image.format,
-						};
-
-						var Texture mut texture = LoadTextureFromImage( tile_image );
-						if( texture.id == 0u )
-						{
-							ust::stderr_print( "Failed to load test texture from image!\n" );
-							return -1;
-						}
-
-						var Material mut material= LoadMaterialDefault();
-
-						$>( material.maps ).texture = texture;
-
-						block_materials.push_back( move(material) );
-						block_textures.push_back( move(texture) );
+						continue label enumerate_quads;
 					}
 				}
+				missing_materials.insert(index);
 			}
+		}
 
-			unsafe( UnloadImage( image ) );
+		if( !missing_materials.empty() )
+		{
+			ust::stdout_print( "Missing materials: " );
+			foreach( m : missing_materials )
+			{
+				ust::stdout_print( ust::concat( ust::to_string8( m ), " " ) );
+			}
+			ust::stdout_print( "\n" );
 		}
 	}
 
@@ -241,9 +317,32 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 		{
 			var ZmapQuad& s= pair.first;
 
-			if( size_type( s.texture_id ) != i )
+			// TODO - optimize this lookup, use a hash-map instead.
+			var ust::optional</size_type/> mut special_material_opt;
+			for( auto mut j= 0s; j < typeinfo</MaterialsDescription::SpecialMaterial/>.element_count; ++j )
 			{
-				continue;
+				if( u32( s.texture_id ) == MaterialsDescription::c_special_material_texture_indices[j] )
+				{
+					special_material_opt= j;
+					break;
+				}
+			}
+
+			if_var( special_material_index : special_material_opt )
+			{
+				if( materials_block.special_material_indices[ special_material_index ] != u32(i) )
+				{
+					continue;
+				}
+			}
+			else
+			{
+				if( size_type( s.texture_id ) != i &&
+					// Move quads with materials outside block materials list into the last group (with dummy material).
+					!( i == block_materials.size() - 1s && size_type( s.texture_id ) >= block_materials.size() ) )
+				{
+					continue;
+				}
 			}
 
 			var [ i32, 3 ] pos[ (s.center[0]), (s.center[1]), (s.center[2]) ];
@@ -706,7 +805,7 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 				{
 					foreach( &s : map.zvox.light_sources )
 					{
-						var Color color{ .r(255), .g(0), .b(255), .a(255) };
+						var Color color{ .r(255), .g(0), .b(255), .a(128) };
 
 						var Vector3 pos{ .x= f32(s.position[0s]) * scale, .y= f32(s.position[1s]) * scale, .z= f32(s.position[2s]) * -scale };
 
@@ -715,6 +814,17 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 						var f32 radius= ust::max( 0.01f, f32(s.radius) * scale );
 
 						unsafe( DrawSphereWires( pos, radius, 8, 8, color ) );
+						unsafe( draw_number( i32( s.radius ), Vector3{ .x(s.position[0s]), .y(s.position[1s]), .z( i32(s.position[2s]) ) } ) );
+
+						// This "light source" has several linked quads numbered sequentially.
+						for( auto mut i= 0u; i < u32( s.data1[0] ); ++i )
+						{
+							var ZmapQuad& quad= map.zmap.quads[ size_type( u32( s.first_quad_index ) + i ) ];
+							var Vector3 quad_pos{ .x= f32(quad.center[0]) * scale, .y= f32(quad.center[1]) * scale, .z= f32(quad.center[2]) * -scale };
+							var Color quad_color{ .r(16u), .g(144u), .b(16u), .a(255) };
+							unsafe( DrawCube( quad_pos, 0.05f, 0.05f, 0.05f, quad_color ) );
+							unsafe( DrawLine3D( pos, quad_pos, quad_color ) );
+						}
 					}
 				}
 
@@ -785,7 +895,7 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 						ust::ignore_unused( light_source_extra );
 
 						// For some reason light sources are always mapped to a nearby quad.
-						var ZmapQuad& quad= map.zmap.quads[ size_type( light_source.nearby_quad_index ) ];
+						var ZmapQuad& quad= map.zmap.quads[ size_type( light_source.first_quad_index ) ];
 						var Vector3 quad_pos{ .x= f32(quad.center[0]) * scale, .y= f32(quad.center[1]) * scale, .z= f32(quad.center[2]) * -scale };
 						var Color quad_color{ .r(16u), .g(144u), .b(16u), .a(255) };
 						unsafe( DrawCube( quad_pos, 0.05f, 0.05f, 0.05f, quad_color ) );
