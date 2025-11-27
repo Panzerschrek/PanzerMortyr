@@ -64,7 +64,7 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 	ust::stdout_print( ust::concat( "Num zpoz structs3: ", ust::to_string8( map.zpoz.structs3.size() ), "\n" ) );
 	ust::stdout_print( ust::concat( "Num zvox structs0: ", ust::to_string8( map.zvox.structs0.size() ), "\n" ) );
 	ust::stdout_print( ust::concat( "Num zvox clusters: ", ust::to_string8( map.zvox.clusters.size() ), "\n" ) );
-	ust::stdout_print( ust::concat( "Num zvox structs2: ", ust::to_string8( map.zvox.structs2.size() ), "\n" ) );
+	ust::stdout_print( ust::concat( "Num zvox light sources: ", ust::to_string8( map.zvox.light_sources.size() ), "\n" ) );
 	ust::stdout_print( ust::concat( "Num zmap.lam structs0: ", ust::to_string8( map.zmap_lam.structs0.size() ), "\n" ) );
 	ust::stdout_print( ust::concat( "Num zmap.lam structs1: ", ust::to_string8( map.zmap_lam.structs1.size() ), "\n" ) );
 	ust::stdout_print( ust::concat( "Num zmap.lam structs2: ", ust::to_string8( map.zmap_lam.structs2.size() ), "\n" ) );
@@ -791,38 +791,38 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 
 				if( display_clusters )
 				{
-					foreach( &s : map.zvox.clusters )
+					foreach( &cluster : map.zvox.clusters )
 					{
-						var Color mut color{ .r(s.c.bounding_box_half_size[0]), .g(s.c.bounding_box_half_size[1]), .b(s.c.bounding_box_half_size[2]), .a(128) };
+						var Color mut color{ .r(cluster.c.bounding_box_half_size[0]), .g(cluster.c.bounding_box_half_size[1]), .b(cluster.c.bounding_box_half_size[2]), .a(128) };
 
-						var Vector3 pos{ .x= f32(s.c.center[0s]) * scale, .y= f32(s.c.center[1s]) * scale, .z= f32(s.c.center[2s]) * -scale };
+						var Vector3 pos{ .x= f32(cluster.c.center[0s]) * scale, .y= f32(cluster.c.center[1s]) * scale, .z= f32(cluster.c.center[2s]) * -scale };
 
 						color.a= 255u8;
 						unsafe( DrawCubeWires(
 							pos,
-							f32(s.c.bounding_box_half_size[0]) * scale * 2.0f,
-							f32(s.c.bounding_box_half_size[1]) * scale * 2.0f,
-							f32(s.c.bounding_box_half_size[2]) * scale * 2.0f,
+							f32(cluster.c.bounding_box_half_size[0]) * scale * 2.0f,
+							f32(cluster.c.bounding_box_half_size[1]) * scale * 2.0f,
+							f32(cluster.c.bounding_box_half_size[2]) * scale * 2.0f,
 							color ) );
 
-						unsafe( draw_number( i32( s.c.num_children_clusters ), Vector3{ .x(s.c.center[0s]), .y(s.c.center[1s]), .z( i32(s.c.center[2s]) ) } ) );
+						unsafe( draw_number( i32( cluster.c.num_children_clusters ), Vector3{ .x(cluster.c.center[0s]), .y(cluster.c.center[1s]), .z( i32(cluster.c.center[2s]) ) } ) );
 
 						// This cluster has several linked quads numbered sequentially.
-						for( auto mut i= 0u; i < u32( s.data1[0] ); ++i )
+						for( auto mut i= 0u; i < u32( cluster.data1[0] ); ++i )
 						{
-							var ZmapQuad& quad= map.zmap.quads[ size_type( u32( s.c.first_quad_index ) + i ) ];
+							var ZmapQuad& quad= map.zmap.quads[ size_type( u32( cluster.c.first_quad_index ) + i ) ];
 							var Vector3 quad_pos{ .x= f32(quad.center[0]) * scale, .y= f32(quad.center[1]) * scale, .z= f32(quad.center[2]) * -scale };
 							var Color quad_color{ .r(16u), .g(144u), .b(16u), .a(255) };
 							unsafe( DrawCube( quad_pos, 0.05f, 0.05f, 0.05f, quad_color ) );
 							unsafe( DrawLine3D( pos, quad_pos, quad_color ) );
 						}
 
-						// This cluster has several linked actual light sources.
-						for( auto mut i= s.data1[2]; i < s.data1[4]; ++i )
+						// This cluster has several linked light sources.
+						for( auto mut i= cluster.data1[2]; i < cluster.data1[4]; ++i )
 						{
 							var Color color{ .r(0), .g(255), .b(0), .a(128) };
-							auto& s2= map.zvox.structs2[ size_type( i ) ];
-							var Vector3 s2_pos{ .x= f32(s.c.center[0] + s2.data0[0s]) * scale, .y= f32(s.c.center[1] + s2.data0[1s]) * scale, .z= f32(s.c.center[2] + s2.data0[2s]) * -scale };
+							auto& s2= map.zvox.light_sources[ size_type( i ) ];
+							var Vector3 s2_pos{ .x= f32(cluster.c.center[0] + s2.offset[0s]) * scale, .y= f32(cluster.c.center[1] + s2.offset[1s]) * scale, .z= f32(cluster.c.center[2] + s2.offset[2s]) * -scale };
 							unsafe( DrawSphereWires( s2_pos, 0.125f, 7, 9, color ) );
 						}
 
@@ -903,7 +903,7 @@ struct ZvoxData
 {
 	ust::vector</ZvoxStruct0/> structs0;
 	ust::vector</ZvoxCluster/> clusters;
-	ust::vector</ZvoxStruct2/> structs2;
+	ust::vector</ZvoxLightSource/> light_sources;
 }
 
 struct ZpozData
@@ -1068,7 +1068,7 @@ fn LoadZvoxFile( ust::file_readable mut f ) : ust::optional</ZvoxData/>
 		m+= ", ";
 		m+= ust::to_string8( header.num_structs0 );
 		m+= ", ";
-		m+= ust::to_string8( header.num_structs2 );
+		m+= ust::to_string8( header.num_light_sources );
 		m+= ", ";
 		m+= ust::to_string8( header.num3 );
 		m+= ", ";
@@ -1112,14 +1112,14 @@ fn LoadZvoxFile( ust::file_readable mut f ) : ust::optional</ZvoxData/>
 	}
 
 	{
-		var ZvoxStruct2 mut dummy_struct2= zero_init;
-		result.structs2.resize( size_type( header.num_structs2 ), dummy_struct2 );
+		var ZvoxLightSource mut dummy_light_source= zero_init;
+		result.light_sources.resize( size_type( header.num_light_sources ), dummy_light_source );
 
 		if_var( e :
 			f.read_exact(
 				unsafe( ust::array_view_mut</byte8/>(
-					ust::ptr_cast_to_byte8( result.structs2.data() ),
-					result.structs2.size() * typeinfo</ZvoxStruct2/>.size_of ) ) ).as_error_ref() )
+					ust::ptr_cast_to_byte8( result.light_sources.data() ),
+					result.light_sources.size() * typeinfo</ZvoxLightSource/>.size_of ) ) ).as_error_ref() )
 		{
 			ust::stderr_print( ust::concat( "Failed to read! Error: ", ust::enum_to_string( e ), "!\n" ) );
 			return ust::null_optional;
@@ -1147,12 +1147,12 @@ fn LoadZvoxFile( ust::file_readable mut f ) : ust::optional</ZvoxData/>
 	{
 		var [ i32, 3 ] mut mins[ 999999, 999999, 999999, ], mut maxs[ -999999, -999999, -999999 ];
 		var [ i16, 2 ] mut extra_mins[ (9999), (9999) ], mut extra_maxs[ (-9999), (-9999) ];
-		foreach( &s : result.structs2 )
+		foreach( &s : result.light_sources )
 		{
 			for( auto mut i= 0s; i < 3s; ++i )
 			{
-				ust::min_assign( mins[i], s.data0[i] );
-				ust::max_assign( maxs[i], s.data0[i] );
+				ust::min_assign( mins[i], s.offset[i] );
+				ust::max_assign( maxs[i], s.offset[i] );
 			}
 			for( auto mut i= 0s; i < 2s; ++i )
 			{
@@ -1160,10 +1160,10 @@ fn LoadZvoxFile( ust::file_readable mut f ) : ust::optional</ZvoxData/>
 				ust::max_assign( extra_maxs[i], s.data1[i] );
 			}
 		}
-		ust::stdout_print( ust::concat( "ZVOX structs2 mins: ", ust::to_string8(mins[0]), ", ", ust::to_string8(mins[1]), ", ", ust::to_string8(mins[2]), "\n" ) );
-		ust::stdout_print( ust::concat( "ZVOX structs2 maxs: ", ust::to_string8(maxs[0]), ", ", ust::to_string8(maxs[1]), ", ", ust::to_string8(maxs[2]), "\n" ) );
-		ust::stdout_print( ust::concat( "ZVOX structs2 extra mins: ", ust::to_string8(extra_mins[0]), ", ", ust::to_string8(extra_mins[1]), "\n" ) );
-		ust::stdout_print( ust::concat( "ZVOX structs2 extra maxs: ", ust::to_string8(extra_maxs[0]), ", ", ust::to_string8(extra_maxs[1]), "\n" ) );
+		ust::stdout_print( ust::concat( "ZVOX light sources mins: ", ust::to_string8(mins[0]), ", ", ust::to_string8(mins[1]), ", ", ust::to_string8(mins[2]), "\n" ) );
+		ust::stdout_print( ust::concat( "ZVOX light sources maxs: ", ust::to_string8(maxs[0]), ", ", ust::to_string8(maxs[1]), ", ", ust::to_string8(maxs[2]), "\n" ) );
+		ust::stdout_print( ust::concat( "ZVOX light sources extra mins: ", ust::to_string8(extra_mins[0]), ", ", ust::to_string8(extra_mins[1]), "\n" ) );
+		ust::stdout_print( ust::concat( "ZVOX light sources extra maxs: ", ust::to_string8(extra_maxs[0]), ", ", ust::to_string8(extra_maxs[1]), "\n" ) );
 	}
 
 	return result;
