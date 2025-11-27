@@ -44,33 +44,11 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 
 	var MapData& map= map_opt.try_deref();
 
-	for( auto mut i= 0s; i < map.zpoz.light_sources.size(); ++i )
+	for( auto mut i= 0s; i < map.zpoz.clusters.size(); ++i )
 	{
-		var ZpozLightSource& l_zpoz= map.zpoz.light_sources[i];
-		var ZvoxLightSource& l_zvox= map.zvox.light_sources[i];
-		if( l_zpoz.position != l_zvox.position )
+		if( map.zpoz.clusters[i] != map.zvox.clusters[i].c )
 		{
-			ust::stdout_print( ust::concat( "Position mismatch for light ", ust::to_string8( i ), "\n" ) );
-		}
-		if( l_zpoz.radius != l_zvox.radius )
-		{
-			ust::stdout_print( ust::concat( "Radius mismatch for light ", ust::to_string8( i ), "\n" ) );
-		}
-		if( l_zpoz.data0[0] != l_zvox.data0[0] )
-		{
-			ust::stdout_print( ust::concat( "data0[0] mismatch for light ", ust::to_string8( i ), "\n" ) );
-		}
-		if( l_zpoz.power != u32( l_zvox.data0[1] ) )
-		{
-			ust::stdout_print( ust::concat( "power mismatch for light ", ust::to_string8( i ), "\n" ) );
-		}
-		if( l_zpoz.data1[0] != u32( l_zvox.data0[2] ) )
-		{
-			ust::stdout_print( ust::concat( "data1[0] mismatch for light ", ust::to_string8( i ), "\n" ) );
-		}
-		if( l_zpoz.first_quad_index != u32( l_zvox.first_quad_index ) )
-		{
-			ust::stdout_print( ust::concat( "first_quad_index mismatch for light ", ust::to_string8( i ), "\n" ) );
+			ust::stdout_print( ust::concat( "Data mismatch for cluster ", ust::to_string8( i ), "\n" ) );
 		}
 	}
 
@@ -80,11 +58,11 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 	ust::stdout_print( ust::concat( "Num zmap quads: ", ust::to_string8( map.zmap.quads.size() ), "\n" ) );
 	ust::stdout_print( ust::concat( "Num zpoz entities: ", ust::to_string8( map.zpoz.entities.size() ), "\n" ) );
 	ust::stdout_print( ust::concat( "Num zpoz structs1: ", ust::to_string8( map.zpoz.structs1.size() ), "\n" ) );
-	ust::stdout_print( ust::concat( "Num zpoz light sources: ", ust::to_string8( map.zpoz.light_sources.size() ), "\n" ) );
+	ust::stdout_print( ust::concat( "Num zpoz clusters: ", ust::to_string8( map.zpoz.clusters.size() ), "\n" ) );
 	ust::stdout_print( ust::concat( "Num zpoz structs3: ", ust::to_string8( map.zpoz.structs3.size() ), "\n" ) );
 	ust::stdout_print( ust::concat( "Num zvox structs0: ", ust::to_string8( map.zvox.structs0.size() ), "\n" ) );
+	ust::stdout_print( ust::concat( "Num zvox clusters: ", ust::to_string8( map.zvox.clusters.size() ), "\n" ) );
 	ust::stdout_print( ust::concat( "Num zvox light sources: ", ust::to_string8( map.zvox.light_sources.size() ), "\n" ) );
-	ust::stdout_print( ust::concat( "Num zvox structs2: ", ust::to_string8( map.zvox.structs2.size() ), "\n" ) );
 	ust::stdout_print( ust::concat( "Num zmap.lam structs0: ", ust::to_string8( map.zmap_lam.structs0.size() ), "\n" ) );
 	ust::stdout_print( ust::concat( "Num zmap.lam structs1: ", ust::to_string8( map.zmap_lam.structs1.size() ), "\n" ) );
 	ust::stdout_print( ust::concat( "Num zmap.lam structs2: ", ust::to_string8( map.zmap_lam.structs2.size() ), "\n" ) );
@@ -92,11 +70,24 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 
 	{
 		var u32 mut num_quad_refs= 0u;
-		foreach( &s : map.zvox.light_sources )
+		var u32 mut num_child_clusters= 0u, mut num_child_refs= 0u;
+		foreach( &s : map.zvox.clusters )
 		{
-			num_quad_refs+= u32( s.data1[0] );
+			num_quad_refs+= u32( s.num_quads );
+			if( s.c.num_children_clusters < 0 )
+			{
+				++num_child_clusters;
+			}
+			else
+			{
+				num_child_refs+= u32( s.c.num_children_clusters );
+			}
 		}
-		ust::stdout_print( ust::concat( "Num zvox light soruce quad refs: ", ust::to_string8( num_quad_refs ), "\n" ) );
+		// This number should be equal to number of quads.
+		ust::stdout_print( ust::concat( "Num zvox cluster quad refs: ", ust::to_string8( num_quad_refs ), "\n" ) );
+		// These 2 numbers should be equal.
+		ust::stdout_print( ust::concat( "Num zvox child clusters: ", ust::to_string8( num_child_clusters ), "\n" ) );
+		ust::stdout_print( ust::concat( "Num zvox child refs: ", ust::to_string8( num_child_refs ), "\n" ) );
 	}
 
 	var ust::optional</ust::filesystem_path_view/> map_dir= ust::path::get_parent_path( zmap_file_path );
@@ -665,7 +656,7 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 
 	var size_type mut offset= 0s;
 
-	var bool mut display_map= true, mut display_bounding_boxes= false, mut display_zvox_structs1= true, mut display_entities= true, mut display_lights= true;
+	var bool mut display_map= true, mut display_bounding_boxes= false, mut display_entities= true, mut display_clusters= true, mut display_light_sources= true;
 
 	while( ! unsafe( WindowShouldClose() ) )
 	{
@@ -679,17 +670,17 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 		{
 			display_bounding_boxes= !display_bounding_boxes;
 		}
-		if( unsafe( IsKeyPressed( i32( 'K' ) ) ) )
-		{
-			display_zvox_structs1= !display_zvox_structs1;
-		}
 		if( unsafe( IsKeyPressed( i32( 'E' ) ) ) )
 		{
 			display_entities= !display_entities;
 		}
+		if( unsafe( IsKeyPressed( i32( 'C' ) ) ) )
+		{
+			display_clusters= !display_clusters;
+		}
 		if( unsafe( IsKeyPressed( i32( 'L' ) ) ) )
 		{
-			display_lights= !display_lights;
+			display_light_sources= !display_light_sources;
 		}
 
 		if( unsafe( IsKeyPressed( i32( 'Z' ) ) ) )
@@ -801,45 +792,63 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 					}
 				}
 
-				if( display_zvox_structs1 )
+				if( display_clusters )
 				{
-					foreach( &s : map.zvox.light_sources )
+					foreach( &cluster : map.zvox.clusters )
 					{
-						var Color color{ .r(255), .g(0), .b(255), .a(128) };
+						var Color mut color{ .r(cluster.c.bounding_box_half_size[0]), .g(cluster.c.bounding_box_half_size[1]), .b(cluster.c.bounding_box_half_size[2]), .a(128) };
 
-						var Vector3 pos{ .x= f32(s.position[0s]) * scale, .y= f32(s.position[1s]) * scale, .z= f32(s.position[2s]) * -scale };
+						var Vector3 pos{ .x= f32(cluster.c.center[0s]) * scale, .y= f32(cluster.c.center[1s]) * scale, .z= f32(cluster.c.center[2s]) * -scale };
 
-						unsafe( DrawCube( pos, 0.1f, 0.1f, 0.3f, color ) );
+						color.a= 255u8;
+						unsafe( DrawCubeWires(
+							pos,
+							f32(cluster.c.bounding_box_half_size[0]) * scale * 2.0f,
+							f32(cluster.c.bounding_box_half_size[1]) * scale * 2.0f,
+							f32(cluster.c.bounding_box_half_size[2]) * scale * 2.0f,
+							color ) );
 
-						var f32 radius= ust::max( 0.01f, f32(s.radius) * scale );
+						unsafe( draw_number( i32( cluster.c.num_children_clusters ), Vector3{ .x(cluster.c.center[0s]), .y(cluster.c.center[1s]), .z( i32(cluster.c.center[2s]) ) } ) );
 
-						unsafe( DrawSphereWires( pos, radius, 8, 8, color ) );
-						unsafe( draw_number( i32( s.radius ), Vector3{ .x(s.position[0s]), .y(s.position[1s]), .z( i32(s.position[2s]) ) } ) );
-
-						// This "light source" has several linked quads numbered sequentially.
-						for( auto mut i= 0u; i < u32( s.data1[0] ); ++i )
+						// This cluster has several linked quads numbered sequentially.
+						for( auto mut i= 0u; i < u32( cluster.num_quads ); ++i )
 						{
-							var ZmapQuad& quad= map.zmap.quads[ size_type( u32( s.first_quad_index ) + i ) ];
+							var ZmapQuad& quad= map.zmap.quads[ size_type( u32( cluster.c.first_quad_index ) + i ) ];
 							var Vector3 quad_pos{ .x= f32(quad.center[0]) * scale, .y= f32(quad.center[1]) * scale, .z= f32(quad.center[2]) * -scale };
 							var Color quad_color{ .r(16u), .g(144u), .b(16u), .a(255) };
 							unsafe( DrawCube( quad_pos, 0.05f, 0.05f, 0.05f, quad_color ) );
 							unsafe( DrawLine3D( pos, quad_pos, quad_color ) );
 						}
+
+						unsafe( DrawCube( pos, 0.1f, 0.1f, 0.3f, color ) );
+					}
+					foreach( &s : map.zvox.clusters )
+					{
+						var Color mut color{ .r(s.c.bounding_box_half_size[0]), .g(s.c.bounding_box_half_size[1]), .b(s.c.bounding_box_half_size[2]), .a(96) };
+
+						var Vector3 pos{ .x= f32(s.c.center[0s]) * scale, .y= f32(s.c.center[1s]) * scale, .z= f32(s.c.center[2s]) * -scale };
+
+						unsafe( DrawCube(
+							pos,
+							f32(s.c.bounding_box_half_size[0]) * scale * 2.0f,
+							f32(s.c.bounding_box_half_size[1]) * scale * 2.0f,
+							f32(s.c.bounding_box_half_size[2]) * scale * 2.0f,
+							color ) );
 					}
 				}
 
-				if( false )
+				if( display_light_sources )
 				{
-					// It doesn't look like map-related things with proper positions.
-					foreach( &s : map.zvox.structs2 )
+					foreach( &cluster : map.zvox.clusters )
 					{
-						var Color color{ .r(255), .g(0), .b(255), .a(255) };
-
-						var Vector3 pos{ .x= f32(s.data0[0s + offset]) * scale, .y= f32(s.data0[1s + offset]) * scale, .z= f32(s.data0[2s + offset]) * -scale };
-
-						unsafe( DrawCube( pos, 0.1f, 0.1f, 0.3f, color ) );
-
-						unsafe( draw_number( i32( s.data1[0] ), Vector3{ .x(s.data0[0s]), .y(s.data0[1s]), .z( i32(s.data0[2s]) - 24 ) } ) );
+						// This cluster has several linked light sources.
+						for( auto mut i= cluster.light_sources_begin; i < cluster.light_sources_end; ++i )
+						{
+							var Color color{ .r(0), .g(255), .b(0), .a(128) };
+							auto& s2= map.zvox.light_sources[ size_type( i ) ];
+							var Vector3 s2_pos{ .x= f32(cluster.c.center[0] + s2.offset[0s]) * scale, .y= f32(cluster.c.center[1] + s2.offset[1s]) * scale, .z= f32(cluster.c.center[2] + s2.offset[2s]) * -scale };
+							unsafe( DrawSphereWires( s2_pos, 0.125f, 7, 9, color ) );
+						}
 					}
 				}
 
@@ -873,35 +882,6 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 						unsafe( DrawCube( pos, 0.2f, 0.2f, 0.2f, color ) );
 					}
 				}
-
-				if( display_lights )
-				{
-					foreach( &pair : map.zpoz.light_sources.iter().zip( map.zpoz.light_sources_extra.iter() ) )
-					{
-						var ZpozLightSource& light_source= pair.first;
-
-						var ZpozLightSourceExtraData& light_source_extra= pair.second;
-
-						var Vector3 pos{ .x= f32(light_source.position[0]) * scale, .y= f32(light_source.position[1]) * scale, .z= f32(light_source.position[2]) * -scale };
-						var f32 radius= f32(light_source.radius) * scale;
-
-						var Color color{ .r(light_source.power >> 1u), .g(light_source.power >> 1u), .b(light_source.power >> 1u), .a(255) };
-
-						unsafe( DrawSphereWires( pos, radius, 7, 9, color ) );
-						unsafe( DrawCube( pos, 0.15f, 0.15f, 0.15f, color ) );
-
-						unsafe( draw_number( i32( light_source.power ), Vector3{ .x(light_source.position[0s]), .y(light_source.position[1s]), .z( i32(light_source.position[2s]) - 24 ) } ) );
-
-						ust::ignore_unused( light_source_extra );
-
-						// For some reason light sources are always mapped to a nearby quad.
-						var ZmapQuad& quad= map.zmap.quads[ size_type( light_source.first_quad_index ) ];
-						var Vector3 quad_pos{ .x= f32(quad.center[0]) * scale, .y= f32(quad.center[1]) * scale, .z= f32(quad.center[2]) * -scale };
-						var Color quad_color{ .r(16u), .g(144u), .b(16u), .a(255) };
-						unsafe( DrawCube( quad_pos, 0.05f, 0.05f, 0.05f, quad_color ) );
-						unsafe( DrawLine3D( pos, quad_pos, quad_color ) );
-					}
-				}
 			}
 			unsafe( EndMode3D() );
 		}
@@ -931,16 +911,16 @@ struct ZmapData
 struct ZvoxData
 {
 	ust::vector</ZvoxStruct0/> structs0;
+	ust::vector</ZvoxCluster/> clusters;
 	ust::vector</ZvoxLightSource/> light_sources;
-	ust::vector</ZvoxStruct2/> structs2;
 }
 
 struct ZpozData
 {
 	ust::vector</ZpozEntity/> entities;
 	ust::vector</ZpozStruct1/> structs1;
-	ust::vector</ZpozLightSource/> light_sources;
-	ust::vector</ZpozLightSourceExtraData/> light_sources_extra;
+	ust::vector</ZpozCluster/> clusters;
+	ust::vector</ZpozClusterExtra/> clusters_extra;
 	ust::vector</ZPozStruct3/> structs3;
 }
 
@@ -1097,7 +1077,7 @@ fn LoadZvoxFile( ust::file_readable mut f ) : ust::optional</ZvoxData/>
 		m+= ", ";
 		m+= ust::to_string8( header.num_structs0 );
 		m+= ", ";
-		m+= ust::to_string8( header.num_structs2 );
+		m+= ust::to_string8( header.num_light_sources );
 		m+= ", ";
 		m+= ust::to_string8( header.num3 );
 		m+= ", ";
@@ -1126,8 +1106,23 @@ fn LoadZvoxFile( ust::file_readable mut f ) : ust::optional</ZvoxData/>
 	}
 
 	{
-		var ZvoxLightSource mut dummy_struct1= zero_init;
-		result.light_sources.resize( size_type( header.num_structs1 ), dummy_struct1 );
+		var ZvoxCluster mut dummy_cluster= zero_init;
+		result.clusters.resize( size_type( header.num_structs1 ), dummy_cluster );
+
+		if_var( e :
+			f.read_exact(
+				unsafe( ust::array_view_mut</byte8/>(
+					ust::ptr_cast_to_byte8( result.clusters.data() ),
+					result.clusters.size() * typeinfo</ZvoxCluster/>.size_of ) ) ).as_error_ref() )
+		{
+			ust::stderr_print( ust::concat( "Failed to read! Error: ", ust::enum_to_string( e ), "!\n" ) );
+			return ust::null_optional;
+		}
+	}
+
+	{
+		var ZvoxLightSource mut dummy_light_source= zero_init;
+		result.light_sources.resize( size_type( header.num_light_sources ), dummy_light_source );
 
 		if_var( e :
 			f.read_exact(
@@ -1140,22 +1135,45 @@ fn LoadZvoxFile( ust::file_readable mut f ) : ust::optional</ZvoxData/>
 		}
 	}
 
-	{
-		var ZvoxStruct2 mut dummy_struct2= zero_init;
-		result.structs2.resize( size_type( header.num_structs2 ), dummy_struct2 );
+	// There is at least one more data block left in this file, which size and meaning isn't known yet.
 
-		if_var( e :
-			f.read_exact(
-				unsafe( ust::array_view_mut</byte8/>(
-					ust::ptr_cast_to_byte8( result.structs2.data() ),
-					result.structs2.size() * typeinfo</ZvoxStruct2/>.size_of ) ) ).as_error_ref() )
+	if( false )
+	{
+		var i32 mut min_data2= 99999999, mut max_data2= -99999999;
+		var i32 mut min_data4= 99999999, mut max_data4= -99999999;
+		foreach( &s : result.clusters )
 		{
-			ust::stderr_print( ust::concat( "Failed to read! Error: ", ust::enum_to_string( e ), "!\n" ) );
-			return ust::null_optional;
+			ust::min_assign( min_data2, s.light_sources_begin );
+			ust::max_assign( max_data2, s.light_sources_begin );
+			ust::min_assign( min_data4, s.light_sources_end );
+			ust::max_assign( max_data4, s.light_sources_end );
 		}
+		ust::stdout_print( ust::concat( "ZVOX clusters data1[2] min/max: ", ust::to_string8(min_data2), ", ", ust::to_string8(max_data2), "\n" ) );
+		ust::stdout_print( ust::concat( "ZVOX clusters data1[4] min/max: ", ust::to_string8(min_data4), ", ", ust::to_string8(max_data4), "\n" ) );
 	}
 
-	// There is at least one more data block left in this file, which size and meaning isn't known yet.
+	if( false )
+	{
+		var [ i32, 3 ] mut mins[ 999999, 999999, 999999, ], mut maxs[ -999999, -999999, -999999 ];
+		var [ i16, 2 ] mut extra_mins[ (9999), (9999) ], mut extra_maxs[ (-9999), (-9999) ];
+		foreach( &s : result.light_sources )
+		{
+			for( auto mut i= 0s; i < 3s; ++i )
+			{
+				ust::min_assign( mins[i], s.offset[i] );
+				ust::max_assign( maxs[i], s.offset[i] );
+			}
+			for( auto mut i= 0s; i < 2s; ++i )
+			{
+				ust::min_assign( extra_mins[i], s.data1[i] );
+				ust::max_assign( extra_maxs[i], s.data1[i] );
+			}
+		}
+		ust::stdout_print( ust::concat( "ZVOX light sources mins: ", ust::to_string8(mins[0]), ", ", ust::to_string8(mins[1]), ", ", ust::to_string8(mins[2]), "\n" ) );
+		ust::stdout_print( ust::concat( "ZVOX light sources maxs: ", ust::to_string8(maxs[0]), ", ", ust::to_string8(maxs[1]), ", ", ust::to_string8(maxs[2]), "\n" ) );
+		ust::stdout_print( ust::concat( "ZVOX light sources extra mins: ", ust::to_string8(extra_mins[0]), ", ", ust::to_string8(extra_mins[1]), "\n" ) );
+		ust::stdout_print( ust::concat( "ZVOX light sources extra maxs: ", ust::to_string8(extra_maxs[0]), ", ", ust::to_string8(extra_maxs[1]), "\n" ) );
+	}
 
 	return result;
 }
@@ -1273,7 +1291,7 @@ fn LoadZpozFile( ust::file_readable mut f ) : ust::optional</ZpozData/>
 		m+= ", ";
 		m+= ust::to_string8( intermediate_header.num1 );
 		m+= ", ";
-		m+= ust::to_string8( intermediate_header.num_light_sources );
+		m+= ust::to_string8( intermediate_header.num_clusters );
 		m+= ", ";
 		m+= ust::to_string8( intermediate_header.num2 );
 		m+= "\n";
@@ -1281,14 +1299,14 @@ fn LoadZpozFile( ust::file_readable mut f ) : ust::optional</ZpozData/>
 	}
 
 	{
-		var ZpozLightSource dummy_light_source= zero_init;
-		result.light_sources.resize( size_type( intermediate_header.num_light_sources ), dummy_light_source );
+		var ZpozCluster dummy_cluster= zero_init;
+		result.clusters.resize( size_type( intermediate_header.num_clusters ), dummy_cluster );
 
 		if_var( e :
 			f.read_exact(
 				unsafe( ust::array_view_mut</byte8/>(
-					ust::ptr_cast_to_byte8( result.light_sources.data() ),
-					result.light_sources.size() * typeinfo</ZpozLightSource/>.size_of ) ) ).as_error_ref() )
+					ust::ptr_cast_to_byte8( result.clusters.data() ),
+					result.clusters.size() * typeinfo</ZpozCluster/>.size_of ) ) ).as_error_ref() )
 		{
 			ust::stderr_print( ust::concat( "Failed to read! Error: ", ust::enum_to_string( e ), "!\n" ) );
 			return ust::null_optional;
@@ -1296,14 +1314,14 @@ fn LoadZpozFile( ust::file_readable mut f ) : ust::optional</ZpozData/>
 	}
 
 	{
-		var ZpozLightSourceExtraData dummy_light_source_extra_data= zero_init;
-		result.light_sources_extra.resize( size_type( intermediate_header.num_light_sources ), dummy_light_source_extra_data );
+		var ZpozClusterExtra dummy_cluster_extra_data= zero_init;
+		result.clusters_extra.resize( size_type( intermediate_header.num_clusters ), dummy_cluster_extra_data );
 
 		if_var( e :
 			f.read_exact(
 				unsafe( ust::array_view_mut</byte8/>(
-					ust::ptr_cast_to_byte8( result.light_sources_extra.data() ),
-					result.light_sources_extra.size() * typeinfo</ZpozLightSourceExtraData/>.size_of ) ) ).as_error_ref() )
+					ust::ptr_cast_to_byte8( result.clusters_extra.data() ),
+					result.clusters_extra.size() * typeinfo</ZpozClusterExtra/>.size_of ) ) ).as_error_ref() )
 		{
 			ust::stderr_print( ust::concat( "Failed to read! Error: ", ust::enum_to_string( e ), "!\n" ) );
 			return ust::null_optional;
@@ -1316,8 +1334,8 @@ fn LoadZpozFile( ust::file_readable mut f ) : ust::optional</ZpozData/>
 			result.entities.size() * typeinfo</ZpozEntity/>.size_of +
 			result.structs1.size() * typeinfo</ZpozStruct1/>.size_of +
 			typeinfo</ZPozIntermediateHeader/>.size_of +
-			result.light_sources.size() * typeinfo</ZpozLightSource/>.size_of +
-			result.light_sources_extra.size() * typeinfo</ZpozLightSourceExtraData/>.size_of;
+			result.clusters.size() * typeinfo</ZpozCluster/>.size_of +
+			result.clusters_extra.size() * typeinfo</ZpozClusterExtra/>.size_of;
 
 		var size_type num_structs3= ( size_type( file_size ) - offset ) /typeinfo</ZPozStruct3/>.size_of;
 
@@ -1339,7 +1357,7 @@ fn LoadZpozFile( ust::file_readable mut f ) : ust::optional</ZpozData/>
 	{
 		var i32 mut max_offset= 0;
 		var size_type mut num_non_negative_offsets= 0s;
-		foreach( &s : result.light_sources_extra )
+		foreach( &s : result.clusters_extra )
 		{
 			foreach( offset : s.data )
 			{
@@ -1350,7 +1368,7 @@ fn LoadZpozFile( ust::file_readable mut f ) : ust::optional</ZpozData/>
 				}
 			}
 		}
-		ust::stdout_print( ust::concat( "Max light extra offset is ", ust::to_string8( max_offset ), ", has ", ust::to_string8(num_non_negative_offsets), " non-negative offsets\n" ) );
+		ust::stdout_print( ust::concat( "Max cluster extra offset is ", ust::to_string8( max_offset ), ", has ", ust::to_string8(num_non_negative_offsets), " non-negative offsets\n" ) );
 	}
 
 	if( false )

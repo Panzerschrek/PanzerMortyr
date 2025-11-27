@@ -65,7 +65,7 @@ struct ZVoxFileHeader ordered
 	[ char8, 4 ] signature;
 	u32 num_structs1;
 	u32 num_structs0;
-	u32 num_structs2;
+	u32 num_light_sources;
 	u32 num3;
 	u32 num4;
 	u32 num5;
@@ -82,44 +82,51 @@ struct ZvoxStruct0 ordered
 
 static_assert( typeinfo</ZvoxStruct0/>.size_of == 32s );
 
-// It looks like it's a light source (positions are identical to positions in ZPOZ file).
-struct ZvoxLightSource ordered
+// Cluster with extra data (additional to data stored in cluster struct in ZPOZ file).
+struct ZvoxCluster ordered
 {
-	// All fields below has identical values to fileds of ZpozLightSource struct.
-	[ i32, 3 ] position;
-	i32 radius; // Identical to radius in ZpozLightSource struct.
-	[ i32, 3 ] data0;
+	ZpozCluster c;
 
-	// Index of the first related quad.
-	u32 first_quad_index;
+	// Contains number of quads which belong to this cluster.
+	i32 num_quads;
 
-	// Extra light data stored in "zvox" file.
-	// It doesn't equal to ZpozLightSourceExtraData values.
-	// data1[0] - contains number of quads, which are somewhat related to this "light source".
-	//  They are enumerated starting with data0[3].
-	//  It seems that each quad has exactly one related "light source".
-	//  It's likely that such "light sources" represent centers of quad clusters or submodels.
-	// data1[1] - always minus one, except an "light source" near a button and 1 for "light source" near a door opeated by this button.
-	// data1[2] - zero or unique small integers (sequentional).
-	// data1[3] - in most cases zero, but sometimes large (16-bit) non-unique positive numbers (with minor byte zero). 74 for button, 26 for door.
-	// data1[4] - zero or unique small integers (sequentional), but not equal to data1[2].
-	// data1[5] - mostly minus one, but sometimes non-unique negative values like -242.
-	// data1[6] - mostly zero. 1 for underwater light sources. 8 for button.
-	// data1[7] - always zero.
-	[ i32, 8 ] data1;
+	//  Always minus one, except a cluster near a button and 1 for a cluster near a door opeated by this button.
+	i32 unknown1;
+
+	// First ZvoxLightSource index.
+	// For buttons/doors may mean something different.
+	i32 light_sources_begin;
+
+	// In most cases zero, but sometimes large (16-bit) non-unique positive numbers (with minor byte zero). 74 for button, 26 for door.
+	// Usually clusters with non-zero large values represent large volumes of air or water.
+	// Different values are assigned to different kinds of area?
+	i32 unknown3;
+
+	// Last ZvoxLightSource index (not including).
+	i32 light_sources_end;
+
+	// Mostly minus one, but sometimes non-unique negative values like -242.
+	// It seems like values slightly greater than -256 represent ambient sound sources with sound index equal to data[5] + 256.
+	i32 ambient_sound_index;
+
+	// Mostly zero, equal to 1 for water volumes, is 8 for button.
+	i32 contents;
+
+	// Always zero.
+	i32 unknown7;
 }
 
-static_assert( typeinfo</ZvoxLightSource/>.size_of == 64s );
+static_assert( typeinfo</ZvoxCluster/>.size_of == 64s );
 
-struct ZvoxStruct2
+struct ZvoxLightSource
 {
-	// data0[0], data0[1], data0[2] - seems to be small positive and negative integers (up to 1000).
-	[ i32, 3 ] data0;
+	// Position of this light source relative to the center of its parent cluster.
+	[ i32, 3 ] offset;
 	// It seems to be pairs of small 16-bit integers (mostly positive, but rarely negative).
 	[ i16, 2 ] data1;
 }
 
-static_assert( typeinfo</ZvoxStruct2/>.size_of == 16s );
+static_assert( typeinfo</ZvoxLightSource/>.size_of == 16s );
 
 struct ZPozFileHeader ordered
 {
@@ -176,35 +183,32 @@ struct ZPozIntermediateHeader ordered
 {
 	u32 num0;
 	u32 num1;
-	u32 num_light_sources;
+	u32 num_clusters;
 	u32 num2;
 }
 
 static_assert( typeinfo</ZPozIntermediateHeader/>.size_of == 16s );
 
-// Presumably a light source.
-struct ZpozLightSource ordered
+// Cluster contains several polygons and may contain light sources.
+struct ZpozCluster ordered
 {
-	[ i32, 3 ] position;
+	[ i32, 3 ] center;
 
-	i32 radius;
+	// Represents a box around this cluster. At least for the majority of them.
+	[ i32, 3 ] bounding_box_half_size;
 
-	// Contains integer numbers up to 320 with small number of bits set. Maybe it's some sort of flags?
-	[ i32, 1 ] data0;
-	u32 power; // Not sure, but it's likely a light power value.
-
-	// data1[0] - mostly -1, sometimes 0, (rarely) small negative or a small positive value.
-	// Is 3 for level exit.
-	// Maybe sound effect index?
-	[ u32, 1 ] data1;
+	// Contains number of children clusters (located within its boundaries).
+	// For clusters with no parent and no children it seems to be zero.
+	// For clusters located within boundaries of an another clusters it's -1.
+	i32 num_children_clusters;
 
 	// Index of the first related quad.
 	u32 first_quad_index;
 }
 
-static_assert( typeinfo</ZpozLightSource/>.size_of == 32s );
+static_assert( typeinfo</ZpozCluster/>.size_of == 32s );
 
-struct ZpozLightSourceExtraData ordered
+struct ZpozClusterExtra ordered
 {
 	// Usually it's all minus ones.
 	// But sometimes there are not so large (16-bit) positive values, which generally increase (but not always).
@@ -213,10 +217,10 @@ struct ZpozLightSourceExtraData ordered
 	[ i32, 4 ] data;
 }
 
-static_assert( typeinfo</ZpozLightSourceExtraData/>.size_of == 16s );
+static_assert( typeinfo</ZpozClusterExtra/>.size_of == 16s );
 
 // The rest of a ZPOZ file contains not so large 32-bit numbers.
-// Presumably it's light source indices.
+// Presumably it's cluster indices.
 struct ZPozStruct3
 {
 	[ i32, 1 ] data;
