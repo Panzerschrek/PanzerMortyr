@@ -106,6 +106,37 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 		// This number is almost equal to remaining size of "ZPOZ" file multiplied by 4.
 		ust::stdout_print( ust::concat( "Num zpoz cluster refs: ", ust::to_string8( num_arr_refs ), "\n" ) );
 	}
+	{
+		for( auto mut i= 0s; i < map.zpoz.clusters_extra.size(); ++i )
+		{
+			var ZpozClusterExtra& extra= map.zpoz.clusters_extra[i];
+			if( extra.data[0] != -1 )
+			{
+				var ust::string8 mut s;
+				s+= "Cluster ";
+				s+= ust::to_string8(i);
+				s+= " links: ";
+
+				var i32 bias= i32(map.zpoz.clusters.size()) * 4;
+				for( auto mut some_offset= extra.data[0]; some_offset < extra.data[1]; ++some_offset )
+				{
+					s+= ust::to_string8( map.zpoz.structs3[ size_type( some_offset - bias ) ].data[0] );
+					s+= " ";
+				}
+				s+= "\n";
+
+				s+= "extra links: ";
+				for( auto mut some_offset= extra.data[2]; some_offset < extra.data[3]; ++some_offset )
+				{
+					s+= ust::to_string8( map.zpoz.structs3[ size_type( some_offset - bias ) ].data[0] );
+					s+= " ";
+				}
+				s+= "\n";
+
+				ust::stdout_print( s );
+			}
+		}
+	}
 
 	var ust::optional</ust::filesystem_path_view/> map_dir= ust::path::get_parent_path( zmap_file_path );
 	if( map_dir.empty() )
@@ -877,39 +908,33 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 					{
 						var ZpozCluster& cluster= pair.first;
 
-						if( cluster.num_children_clusters == -1 )
-						{
-							// For now ingore such clusters, since visibility for them seems to be broken.
-							continue;
-						}
-
 						var Vector3 pos{ .x= f32(cluster.center[0s]) * scale, .y= f32(cluster.center[1s]) * scale, .z= f32(cluster.center[2s]) * -scale };
 
 						var i32 bias= i32(map.zpoz.clusters.size()) * 4;
 						if( pair.second.data[0] != -1 )
 						{
-							// TODO - know which range should be used, 0 to 1 or 2 to 3.
-							for( auto mut some_offset= pair.second.data[0]; some_offset < pair.second.data[1]; ++some_offset )
-							{
-								if( size_type( some_offset - bias ) < map.zpoz.structs3.size() )
-								{
-									var size_type index( map.zpoz.structs3[ size_type( some_offset - bias ) ].data[0] );
-									// For now ignore cluster0, since surprisingly many clusters have references to it.
-									// But what if cluster0 is really visible?
-									if( index != 0s )
-									{
-										var ZpozCluster& other_cluster= map.zpoz.clusters[ index ];
+							var size_type some_offset( pair.second.data[2] - bias );
 
-										if( other_cluster.num_children_clusters == -1 )
-										{
-											// For now ingore such clusters, since visibility for them seems to be broken.
-											continue;
-										}
-										var Vector3 other_pos{ .x= f32(other_cluster.center[0s]) * scale, .y= f32(other_cluster.center[1s]) * scale, .z= f32(other_cluster.center[2s]) * -scale };
-										var Color color{ .r(16u), .g(200u), .b(16u), .a(200u) };
-										unsafe( DrawLine3D( pos, other_pos, color ) );
-									}
-								}
+							// We have 2 subranges for both pairs of indices.
+							var size_type size0( map.zpoz.structs3[ some_offset  ].data[0] );
+							var size_type subrange0_start= some_offset + 8s;
+							var size_type size1( map.zpoz.structs3[ subrange0_start + size0 ].data[0] ) ;
+							var size_type subrange1_start= subrange0_start + size_type(size0) + 8s;
+
+							ust::ignore_unused( size0 );
+							ust::ignore_unused( subrange0_start );
+							ust::ignore_unused( size1 );
+							ust::ignore_unused( subrange1_start );
+
+							for( auto mut i= 0s; i < size0; ++i )
+							{
+								var size_type index( map.zpoz.structs3[ subrange0_start + i ].data[0] );
+
+								var ZpozCluster& other_cluster= map.zpoz.clusters[ index ];
+
+								var Vector3 other_pos{ .x= f32(other_cluster.center[0s]) * scale, .y= f32(other_cluster.center[1s]) * scale, .z= f32(other_cluster.center[2s]) * -scale };
+								var Color color{ .r(16u), .g(200u), .b(16u), .a(200u) };
+								unsafe( DrawLine3D( pos, other_pos, color ) );
 							}
 						}
 					}
