@@ -679,7 +679,8 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 		mut display_entities= true,
 		mut display_clusters= true,
 		mut display_light_sources= true,
-		mut display_zvos_structs0= true;
+		mut display_zvos_structs0= true,
+		mut display_visibility_information= false;
 
 	while( ! unsafe( WindowShouldClose() ) )
 	{
@@ -708,6 +709,10 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 		if( unsafe( IsKeyPressed( i32( 'K' ) ) ) )
 		{
 			display_zvos_structs0= !display_zvos_structs0;
+		}
+		if( unsafe( IsKeyPressed( i32( 'V' ) ) ) )
+		{
+			display_visibility_information= !display_visibility_information;
 		}
 
 		if( unsafe( IsKeyPressed( i32( 'Z' ) ) ) )
@@ -837,7 +842,7 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 							f32(cluster.c.bounding_box_half_size[2]) * scale * 2.0f,
 							color ) );
 
-						unsafe( draw_number( i32( cluster.c.num_children_clusters ), Vector3{ .x(cluster.c.center[0s]), .y(cluster.c.center[1s]), .z( i32(cluster.c.center[2s]) ) } ) );
+						unsafe( draw_number( i32( cluster.c.num_children_clusters ), Vector3{ .x(cluster.c.center[0s]), .y(cluster.c.center[1s]), .z( i32(cluster.c.center[2s] - 24) ) } ) );
 
 						// This cluster has several linked quads numbered sequentially.
 						for( auto mut i= 0u; i < u32( cluster.num_quads ); ++i )
@@ -863,6 +868,50 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 							f32(s.c.bounding_box_half_size[1]) * scale * 2.0f,
 							f32(s.c.bounding_box_half_size[2]) * scale * 2.0f,
 							color ) );
+					}
+				}
+
+				if( display_visibility_information )
+				{
+					foreach( pair : map.zpoz.clusters.iter().zip( map.zpoz.clusters_extra.iter() ) )
+					{
+						var ZpozCluster& cluster= pair.first;
+
+						if( cluster.num_children_clusters == -1 )
+						{
+							// For now ingore such clusters, since visibility for them seems to be broken.
+							continue;
+						}
+
+						var Vector3 pos{ .x= f32(cluster.center[0s]) * scale, .y= f32(cluster.center[1s]) * scale, .z= f32(cluster.center[2s]) * -scale };
+
+						var i32 bias= i32(map.zpoz.clusters.size()) * 4;
+						if( pair.second.data[0] != -1 )
+						{
+							// TODO - know which range should be used, 0 to 1 or 2 to 3.
+							for( auto mut some_offset= pair.second.data[0]; some_offset < pair.second.data[1]; ++some_offset )
+							{
+								if( size_type( some_offset - bias ) < map.zpoz.structs3.size() )
+								{
+									var size_type index( map.zpoz.structs3[ size_type( some_offset - bias ) ].data[0] );
+									// For now ignore cluster0, since surprisingly many clusters have references to it.
+									// But what if cluster0 is really visible?
+									if( index != 0s )
+									{
+										var ZpozCluster& other_cluster= map.zpoz.clusters[ index ];
+
+										if( other_cluster.num_children_clusters == -1 )
+										{
+											// For now ingore such clusters, since visibility for them seems to be broken.
+											continue;
+										}
+										var Vector3 other_pos{ .x= f32(other_cluster.center[0s]) * scale, .y= f32(other_cluster.center[1s]) * scale, .z= f32(other_cluster.center[2s]) * -scale };
+										var Color color{ .r(16u), .g(200u), .b(16u), .a(200u) };
+										unsafe( DrawLine3D( pos, other_pos, color ) );
+									}
+								}
+							}
+						}
 					}
 				}
 
@@ -1471,11 +1520,14 @@ fn LoadZpozFile( ust::file_readable mut f ) : ust::optional</ZpozData/>
 
 	if( false )
 	{
+		var i32 mut min_struct3_data= 0x7FFFFFFF;
 		var i32 mut max_struct3_data= 0;
 		foreach( &s : result.structs3 )
 		{
+			ust::min_assign( min_struct3_data, s.data[0] );
 			ust::max_assign( max_struct3_data, s.data[0] );
 		}
+		ust::stdout_print( ust::concat( "Min struct3 data is ", ust::to_string8( min_struct3_data ), "\n" ) );
 		ust::stdout_print( ust::concat( "Max struct3 data is ", ust::to_string8( max_struct3_data ), "\n" ) );
 	}
 
