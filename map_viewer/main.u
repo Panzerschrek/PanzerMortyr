@@ -59,7 +59,7 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 	ust::stdout_print( ust::concat( "Num zpoz entities: ", ust::to_string8( map.zpoz.entities.size() ), "\n" ) );
 	ust::stdout_print( ust::concat( "Num zpoz structs1: ", ust::to_string8( map.zpoz.structs1.size() ), "\n" ) );
 	ust::stdout_print( ust::concat( "Num zpoz clusters: ", ust::to_string8( map.zpoz.clusters.size() ), "\n" ) );
-	ust::stdout_print( ust::concat( "Num zpoz structs3: ", ust::to_string8( map.zpoz.structs3.size() ), "\n" ) );
+	ust::stdout_print( ust::concat( "Num zpoz cluster indices: ", ust::to_string8( map.zpoz.cluster_indices.size() ), "\n" ) );
 	ust::stdout_print( ust::concat( "Num zvox structs0: ", ust::to_string8( map.zvox.structs0.size() ), "\n" ) );
 	ust::stdout_print( ust::concat( "Num zvox clusters: ", ust::to_string8( map.zvox.clusters.size() ), "\n" ) );
 	ust::stdout_print( ust::concat( "Num zvox light sources: ", ust::to_string8( map.zvox.light_sources.size() ), "\n" ) );
@@ -120,7 +120,7 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 				var i32 bias= i32(map.zpoz.clusters.size()) * 4;
 				for( auto mut some_offset= extra.data[0]; some_offset < extra.data[1]; ++some_offset )
 				{
-					s+= ust::to_string8( map.zpoz.structs3[ size_type( some_offset - bias ) ].data[0] );
+					s+= ust::to_string8( map.zpoz.cluster_indices[ size_type( some_offset - bias ) ] );
 					s+= " ";
 				}
 				s+= "\n";
@@ -128,7 +128,7 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 				s+= "extra links: ";
 				for( auto mut some_offset= extra.data[2]; some_offset < extra.data[3]; ++some_offset )
 				{
-					s+= ust::to_string8( map.zpoz.structs3[ size_type( some_offset - bias ) ].data[0] );
+					s+= ust::to_string8( map.zpoz.cluster_indices[ size_type( some_offset - bias ) ] );
 					s+= " ";
 				}
 				s+= "\n";
@@ -916,9 +916,9 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 							var size_type some_offset( pair.second.data[2] - bias );
 
 							// We have 2 subranges for both pairs of indices.
-							var size_type size0( map.zpoz.structs3[ some_offset  ].data[0] );
+							var size_type size0( map.zpoz.cluster_indices[ some_offset  ] );
 							var size_type subrange0_start= some_offset + 8s;
-							var size_type size1( map.zpoz.structs3[ subrange0_start + size0 ].data[0] ) ;
+							var size_type size1( map.zpoz.cluster_indices[ subrange0_start + size0 ] );
 							var size_type subrange1_start= subrange0_start + size_type(size0) + 8s;
 
 							ust::ignore_unused( size0 );
@@ -928,7 +928,7 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 
 							for( auto mut i= 0s; i < size0; ++i )
 							{
-								var size_type index( map.zpoz.structs3[ subrange0_start + i ].data[0] );
+								var size_type index( map.zpoz.cluster_indices[ subrange0_start + i ] );
 
 								var ZpozCluster& other_cluster= map.zpoz.clusters[ index ];
 
@@ -1072,7 +1072,7 @@ struct ZpozData
 	ust::vector</ZpozStruct1/> structs1;
 	ust::vector</ZpozCluster/> clusters;
 	ust::vector</ZpozClusterExtra/> clusters_extra;
-	ust::vector</ZPozStruct3/> structs3;
+	ust::vector</ZPozClusterIndex/> cluster_indices;
 }
 
 struct ZmapLamData
@@ -1497,15 +1497,15 @@ fn LoadZpozFile( ust::file_readable mut f ) : ust::optional</ZpozData/>
 			result.clusters.size() * typeinfo</ZpozCluster/>.size_of +
 			result.clusters_extra.size() * typeinfo</ZpozClusterExtra/>.size_of;
 
-		var size_type num_structs3= ( size_type( file_size ) - offset ) /typeinfo</ZPozStruct3/>.size_of;
+		var size_type num_cluster_indices= ( size_type( file_size ) - offset ) /typeinfo</ZPozClusterIndex/>.size_of;
 
-		result.structs3.resize( num_structs3, ust::make_zeroed</ZPozStruct3/>() );
+		result.cluster_indices.resize( num_cluster_indices, ust::make_zeroed</ZPozClusterIndex/>() );
 
 		if_var( e :
 			f.read_exact(
 				unsafe( ust::array_view_mut</byte8/>(
-					ust::ptr_cast_to_byte8( result.structs3.data() ),
-					result.structs3.size() * typeinfo</ZPozStruct3/>.size_of ) ) ).as_error_ref() )
+					ust::ptr_cast_to_byte8( result.cluster_indices.data() ),
+					result.cluster_indices.size() * typeinfo</ZPozClusterIndex/>.size_of ) ) ).as_error_ref() )
 		{
 			ust::stderr_print( ust::concat( "Failed to read! Error: ", ust::enum_to_string( e ), "!\n" ) );
 			return ust::null_optional;
@@ -1545,15 +1545,15 @@ fn LoadZpozFile( ust::file_readable mut f ) : ust::optional</ZpozData/>
 
 	if( false )
 	{
-		var i32 mut min_struct3_data= 0x7FFFFFFF;
-		var i32 mut max_struct3_data= 0;
-		foreach( &s : result.structs3 )
+		var i32 mut min_index= 0x7FFFFFFF;
+		var i32 mut max_index= 0;
+		foreach( &i : result.cluster_indices )
 		{
-			ust::min_assign( min_struct3_data, s.data[0] );
-			ust::max_assign( max_struct3_data, s.data[0] );
+			ust::min_assign( min_index, i );
+			ust::max_assign( max_index, i );
 		}
-		ust::stdout_print( ust::concat( "Min struct3 data is ", ust::to_string8( min_struct3_data ), "\n" ) );
-		ust::stdout_print( ust::concat( "Max struct3 data is ", ust::to_string8( max_struct3_data ), "\n" ) );
+		ust::stdout_print( ust::concat( "Min zpoz cluster index is ", ust::to_string8( min_index ), "\n" ) );
+		ust::stdout_print( ust::concat( "Max zpoz cluster index is ", ust::to_string8( max_index ), "\n" ) );
 	}
 
 	return result;
