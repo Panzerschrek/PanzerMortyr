@@ -63,7 +63,7 @@ struct ZVoxFileHeader ordered
 	auto c_expected_signature= "VOXA";
 
 	[ char8, 4 ] signature;
-	u32 num_structs1;
+	u32 num_clusters;
 	u32 num_structs0;
 	u32 num_light_sources;
 	u32 num3;
@@ -75,12 +75,31 @@ struct ZVoxFileHeader ordered
 
 static_assert( typeinfo</ZVoxFileHeader/>.size_of == 32s );
 
+// Some sort of box-shaped invisible entity.
+// Maybe it's a trigger?
+// There are only few of them and one of them is placed where level ends.
 struct ZvoxStruct0 ordered
 {
+	// data[0], data[1], data[2] - presumably a center of a bounding box.
+	// data[3], data[4], data[5] - presumably half size of a bounding box.
+	// data[6] - always -1.
+	// data[7] - always -1.
+	// data[8] - 1 for map exit, 0 for other volumens.
+	// data[9] - -1 or small positive integers.
+	[ i32, 10 ] data;
+}
+
+static_assert( typeinfo</ZvoxStruct0/>.size_of == 40s );
+
+struct ZvoxStruct1 ordered
+{
+	// data[3] is 1 or -1.
+	// data[4] is 0 or 1.
+	// Other fields are zero.
 	[ i32, 8 ] data;
 }
 
-static_assert( typeinfo</ZvoxStruct0/>.size_of == 32s );
+static_assert( typeinfo</ZvoxStruct1/>.size_of == 32s );
 
 // Cluster with extra data (additional to data stored in cluster struct in ZPOZ file).
 struct ZvoxCluster ordered
@@ -90,11 +109,12 @@ struct ZvoxCluster ordered
 	// Contains number of quads which belong to this cluster.
 	i32 num_quads;
 
-	//  Always minus one, except a cluster near a button and 1 for a cluster near a door opeated by this button.
+	//  Always minus one, except 0 for a button and 1 for a door opeated by this button.
 	i32 unknown1;
 
 	// First ZvoxLightSource index.
-	// For buttons/doors may mean something different.
+	// May have different meaning for button/door clusters.
+	// For a button it's 8 and for a door it's 96 (with light_sources_end equal to 0).
 	i32 light_sources_begin;
 
 	// In most cases zero, but sometimes large (16-bit) non-unique positive numbers (with minor byte zero). 74 for button, 26 for door.
@@ -106,7 +126,7 @@ struct ZvoxCluster ordered
 	i32 light_sources_end;
 
 	// Mostly minus one, but sometimes non-unique negative values like -242.
-	// It seems like values slightly greater than -256 represent ambient sound sources with sound index equal to data[5] + 256.
+	// It seems like values slightly greater than -256 represent ambient sound sources with sound index equal to ambient_sound_index + 256.
 	i32 ambient_sound_index;
 
 	// Mostly zero, equal to 1 for water volumes, is 8 for button.
@@ -123,6 +143,9 @@ struct ZvoxLightSource
 	// Position of this light source relative to the center of its parent cluster.
 	[ i32, 3 ] offset;
 	// It seems to be pairs of small 16-bit integers (mostly positive, but rarely negative).
+	// data1[0] is 11, 19 or 35 for light sources with flame sprites (minor 3 bits are equal to 3).
+	// data1[0] has minor 3 bits equal to 0 for light sources with coronas (street lamps).
+	// data1[0] with 3 minor bits zeroed and then multiplyed by 2 seems to be an index in the "de_kolory" palette representing light source color.
 	[ i16, 2 ] data1;
 }
 
@@ -182,7 +205,7 @@ static_assert( typeinfo</ZpozStruct1/>.size_of == 328s );
 struct ZPozIntermediateHeader ordered
 {
 	u32 num0;
-	u32 num1;
+	u32 num_visibility_info_ints;
 	u32 num_clusters;
 	u32 num2;
 }
@@ -208,23 +231,26 @@ struct ZpozCluster ordered
 
 static_assert( typeinfo</ZpozCluster/>.size_of == 32s );
 
-struct ZpozClusterExtra ordered
+struct ZpozClusterVisibilityData ordered
 {
 	// Usually it's all minus ones.
 	// But sometimes there are not so large (16-bit) positive values, which generally increase (but not always).
 	// Maximum value is slightly less than ZPosIntermediateHeader.num1.
 	// data[1] - data[0] and data[3] - data[2] are always positive values (roughly between 10 and 100).
+	// If num_clusters * 4 is subtracted from these values, all them fit into number of cluster indices.
+	// It seems like data[0] to data[1] and data[2] to data[3] represent two spans it cluster index array.
+	// it looks like visibility information (which clusters are visible from this cluster).
+	// It's unclear why we have two ranges here. Maybe one is for camera and another is for lights?
+	// Both ranges have format like N 0 0 0 0 0 0 0 [ N nums ] M 0 0 0 0 0 0 0 [ M nums ].
+	// So, each range contains two subranges inside. There is only prefix of 8 numbers, first number is count, other 7 are always zero.
+	// All 4 subranges mostly contain the same cluster numbers, but sometimes there are a couple of less or more numbers.
 	[ i32, 4 ] data;
 }
 
-static_assert( typeinfo</ZpozClusterExtra/>.size_of == 16s );
+static_assert( typeinfo</ZpozClusterVisibilityData/>.size_of == 16s );
 
-// The rest of a ZPOZ file contains not so large 32-bit numbers.
-// Presumably it's cluster indices.
-struct ZPozStruct3
-{
-	[ i32, 1 ] data;
-}
+// The rest of a ZPOZ file contains cluster indices (addressed by ZpozClusterExtra structures).
+type ZPozClusterIndex= i32;
 
 struct ZmapLamHeader
 {
