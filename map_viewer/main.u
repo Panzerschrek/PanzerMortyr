@@ -66,6 +66,7 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 	ust::stdout_print( ust::concat( "Num zmap.lam structs0: ", ust::to_string8( map.zmap_lam.structs0.size() ), "\n" ) );
 	ust::stdout_print( ust::concat( "Num zmap.lam structs1: ", ust::to_string8( map.zmap_lam.structs1.size() ), "\n" ) );
 	ust::stdout_print( ust::concat( "Num zmap.lam structs2: ", ust::to_string8( map.zmap_lam.structs2.size() ), "\n" ) );
+	ust::stdout_print( ust::concat( "Num zmap.lem clusters: ", ust::to_string8( map.zmap_lem.clusters_sky_visibility_data.size() ), "\n" ) );
 	ust::stdout_print( "\n" );
 
 	{
@@ -690,22 +691,6 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 		unsafe( UploadMesh( $<(mesh), false ) );
 	}
 
-	auto mut zmap_lem_file_contents= ust::read_file_to_byte8_vector( zmap_lem_file_path ).try_take();
-	var size_type width= 512s;
-	var size_type size_corrected= ( zmap_lem_file_contents.size() + ( width - 1s ) ) / width * width;
-	zmap_lem_file_contents.resize( size_corrected, byte8(0u8) );
-
-	var Image zmap_lam_image
-	{
-		.data= unsafe( zmap_lem_file_contents.data() ),
-		.mipmaps= 1,
-		.width(width),
-		.height( zmap_lem_file_contents.size() / width ),
-		.format( PIXELFORMAT_UNCOMPRESSED_GRAYSCALE ),
-	};
-
-	var Texture zmap_lem_texture= unsafe( LoadTextureFromImage( zmap_lam_image ) );
-
 	var size_type mut offset= 0s;
 
 	var bool
@@ -715,7 +700,8 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 		mut display_clusters= true,
 		mut display_light_sources= true,
 		mut display_zvos_structs0= true,
-		mut display_visibility_information= false;
+		mut display_visibility_information= false,
+		mut display_sky_visibility= false;
 
 	while( ! unsafe( WindowShouldClose() ) )
 	{
@@ -749,6 +735,10 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 		{
 			display_visibility_information= !display_visibility_information;
 		}
+		if( unsafe( IsKeyPressed( i32( 'R' ) ) ) )
+		{
+			display_sky_visibility= !display_sky_visibility;
+		}
 
 		if( unsafe( IsKeyPressed( i32( 'Z' ) ) ) )
 		{
@@ -764,8 +754,6 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 
 			unsafe( DrawTextureEx( palette_textures[0], Vector2{ .x= 0.0f, .y= 0.0f }, 0.0f, 8.0f, Color{ .r(255), .g(255), .b(255), .a(255) } ) );
 			unsafe( DrawTextureEx( palette_textures[1], Vector2{ .x= 140.0f, .y= 0.0f }, 0.0f, 8.0f, Color{ .r(255), .g(255), .b(255), .a(255) } ) );
-
-			unsafe( DrawTexture( zmap_lem_texture, 0, 0, Color{ .r(255), .g(255), .b(255), .a(255) } ) );
 
 			unsafe( BeginMode3D(camera) );
 			{
@@ -863,11 +851,15 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 
 				if( display_clusters )
 				{
-					foreach( &cluster : map.zvox.clusters )
+					for( auto mut cluster_index= 0s; cluster_index < map.zvox.clusters.size(); ++cluster_index )
 					{
+						var ZvoxCluster& cluster= map.zvox.clusters[cluster_index];
+
 						var Color mut color{ .r(cluster.c.bounding_box_half_size[0]), .g(cluster.c.bounding_box_half_size[1]), .b(cluster.c.bounding_box_half_size[2]), .a(128) };
 
 						var Vector3 pos{ .x= f32(cluster.c.center[0s]) * scale, .y= f32(cluster.c.center[1s]) * scale, .z= f32(cluster.c.center[2s]) * -scale };
+
+						unsafe( DrawCube( pos, 0.1f, 0.1f, 0.1f, color ) );
 
 						color.a= 255u8;
 						unsafe( DrawCubeWires(
@@ -877,20 +869,35 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 							f32(cluster.c.bounding_box_half_size[2]) * scale * 2.0f,
 							color ) );
 
-						unsafe( draw_number( i32( cluster.c.num_children_clusters ), Vector3{ .x(cluster.c.center[0s]), .y(cluster.c.center[1s]), .z( i32(cluster.c.center[2s] - 24) ) } ) );
+						unsafe( draw_number( i32( cluster_index ), Vector3{ .x(cluster.c.center[0s]), .y(cluster.c.center[1s]), .z( i32(cluster.c.center[2s] - 24) ) } ) );
 
-						// This cluster has several linked quads numbered sequentially.
-						for( auto mut i= 0u; i < u32( cluster.num_quads ); ++i )
+						if( false )
 						{
-							var ZmapQuad& quad= map.zmap.quads[ size_type( u32( cluster.c.first_quad_index ) + i ) ];
-							var Vector3 quad_pos{ .x= f32(quad.center[0]) * scale, .y= f32(quad.center[1]) * scale, .z= f32(quad.center[2]) * -scale };
-							var Color quad_color{ .r(16u), .g(144u), .b(16u), .a(255) };
-							unsafe( DrawCube( quad_pos, 0.05f, 0.05f, 0.05f, quad_color ) );
-							unsafe( DrawLine3D( pos, quad_pos, quad_color ) );
+							// This cluster has several linked quads numbered sequentially.
+							for( auto mut i= 0u; i < u32( cluster.num_quads ); ++i )
+							{
+								var ZmapQuad& quad= map.zmap.quads[ size_type( u32( cluster.c.first_quad_index ) + i ) ];
+								var Vector3 quad_pos{ .x= f32(quad.center[0]) * scale, .y= f32(quad.center[1]) * scale, .z= f32(quad.center[2]) * -scale };
+								var Color quad_color{ .r(16u), .g(144u), .b(16u), .a(255) };
+								unsafe( DrawCube( quad_pos, 0.05f, 0.05f, 0.05f, quad_color ) );
+								unsafe( DrawLine3D( pos, quad_pos, quad_color ) );
+							}
 						}
-
-						unsafe( DrawCube( pos, 0.1f, 0.1f, 0.3f, color ) );
+						if( false )
+						{
+							// Children clusters are located after this cluster.
+							if( cluster.c.num_children_clusters >= 0 )
+							{
+								for( auto mut i= 0s; i < size_type(cluster.c.num_children_clusters); ++i )
+								{
+									var ZvoxCluster& other_cluster= map.zvox.clusters[ cluster_index + 1s + i ];
+									var Vector3 other_pos{ .x= f32(other_cluster.c.center[0]) * scale, .y= f32(other_cluster.c.center[1]) * scale, .z= f32(other_cluster.c.center[2]) * -scale };
+									unsafe( DrawLine3D( pos, other_pos, Color{ .r(16u), .g(144u), .b(144u), .a(255) } ) );
+								}
+							}
+						}
 					}
+
 					foreach( &s : map.zvox.clusters )
 					{
 						var Color mut color{ .r(s.c.bounding_box_half_size[0]), .g(s.c.bounding_box_half_size[1]), .b(s.c.bounding_box_half_size[2]), .a(96) };
@@ -939,6 +946,53 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 								var Vector3 other_pos{ .x= f32(other_cluster.center[0s]) * scale, .y= f32(other_cluster.center[1s]) * scale, .z= f32(other_cluster.center[2s]) * -scale };
 								var Color color{ .r(16u), .g(200u), .b(16u), .a(200u) };
 								unsafe( DrawLine3D( pos, other_pos, color ) );
+							}
+						}
+					}
+				}
+
+				if( display_sky_visibility )
+				{
+					foreach( pair : map.zvox.clusters.iter().zip( map.zmap_lem.clusters_sky_visibility_data.iter() ) )
+					{
+						var ZvoxCluster& cluster= pair.first;
+						var ZmapLemClusterSkyVisibilityData& extra_data= pair.second;
+
+						var bool mut all_zeros= true;
+						foreach( n : extra_data.data )
+						{
+							all_zeros &= n == 0u;
+						}
+
+						if( all_zeros )
+						{
+							continue;
+						}
+
+						var Vector3 start{ .x= f32(cluster.c.center[0s] - cluster.c.bounding_box_half_size[0]) * scale, .y= f32(cluster.c.center[1s] - cluster.c.bounding_box_half_size[1]) * scale, .z= f32(cluster.c.center[2s] - cluster.c.bounding_box_half_size[2]) * -scale };
+						var Vector3 end{ .x= f32(cluster.c.center[0s] + cluster.c.bounding_box_half_size[0]) * scale, .y= f32(cluster.c.center[1s] + cluster.c.bounding_box_half_size[1]) * scale, .z= f32(cluster.c.center[2s] + cluster.c.bounding_box_half_size[2]) * -scale };
+
+						var u32 size_x= 4u;
+						var u32 size_y= 4u;
+						var u32 size_z= 4u;
+						var u32 dz= u32(offset & 3s);
+						var f32 quad_size_x= (start.x - end.x) / f32(size_x);
+						var f32 quad_size_y= (start.y - end.y) / f32(size_y);
+						var f32 quad_size_z= (start.z - end.z) / f32(size_z);
+						for( auto mut dy= 0u; dy < size_y; ++dy )
+						{
+							for( auto mut dx= 0u; dx < size_x; ++dx )
+							{
+								var u32 val= extra_data.data[ dx + dy * size_x + dz * size_x * size_y ];
+
+								if( val != 0u )
+								{
+									var Vector3 pos{ .x= start.x + (end.x - start.x) * ( f32(dx) + 0.5f ) / f32(size_x), .y= start.y + (end.y - start.y) * ( f32(dy) + 0.5f ) / f32(size_y), .z= start.z + (end.z - start.z) * ( f32(dz) + 0.5f ) / f32(size_z) };
+									var Color mut color{ .r( ( val >> 0u ) & 255u ), .g( ( val >> 8u ) & 255u ), .b( ( val >> 16u ) & 255u ), .a(32) };
+									unsafe( DrawCube( pos, quad_size_x, quad_size_y, quad_size_z, color ) );
+									color.a= 255u8;
+									unsafe( DrawCubeWires( pos, quad_size_x, quad_size_y, quad_size_z, color ) );
+								}
 							}
 						}
 					}
@@ -1088,6 +1142,7 @@ struct ZmapLamData
 
 struct ZmapLemData
 {
+	ust::vector</ZmapLemClusterSkyVisibilityData/> clusters_sky_visibility_data;
 }
 
 fn LoadMap(
@@ -1512,6 +1567,20 @@ fn LoadZpozFile( ust::file_readable mut f ) : ust::optional</ZpozData/>
 
 	if( false )
 	{
+		for( auto mut field_index= 0s; field_index < 328s / 4s; ++field_index )
+		{
+			var i32 mut min_value= 0x7FFFFFFF, mut max_value= -0x7FFFFFFF;
+			foreach( &s : result.structs1 )
+			{
+				ust::min_assign( min_value, s.data[field_index] );
+				ust::max_assign( max_value, s.data[field_index] );
+			}
+			ust::stdout_print( ust::concat( "ZPOZ struct1 field ", ust::to_string8( field_index ), " min/max values are ", ust::to_string8( min_value ), " and ", ust::to_string8( max_value ), "\n" ) );
+		}
+	}
+
+	if( false )
+	{
 		var [ i32, 4 ] mut min_offset[ 0x7FFFFFFF, 0x7FFFFFFF, 0x7FFFFFFF, 0x7FFFFFFF ];
 		var [ i32, 4 ] mut max_offset= zero_init;
 		var size_type mut num_non_negative_offsets= 0s;
@@ -1707,20 +1776,66 @@ fn LoadZmapLemFile( ust::file_readable mut f ) : ust::optional</ZmapLemData/>
 		return ust::null_optional;
 	}
 
-	var ZmapLemData mut result;
-
 	{
 		var ust::string8 mut m;
 		m+= "ZMAP*.LEM header nums: ";
 		m+= ust::to_string8( header.num0 );
 		m+= ", ";
-		m+= ust::to_string8( header.num1 );
+		m+= ust::to_string8( header.num_clusters );
 		m+= ", ";
 		m+= ust::to_string8( header.num2 );
 		m+= ", ";
 		m+= ust::to_string8( header.num3 );
+		m+= ", ";
+		m+= ust::to_string8( header.num4 );
+		m+= ", ";
+		m+= ust::to_string8( header.num5 );
+		m+= ", ";
+		m+= ust::to_string8( header.num6 );
+		m+= ", ";
+		m+= ust::to_string8( header.num7 );
 		m+= "\n";
 		ust::stdout_print( m );
+	}
+
+	var ZmapLemData mut result;
+
+	result.clusters_sky_visibility_data.resize( size_type( header.num_clusters ), ust::make_zeroed</ZmapLemClusterSkyVisibilityData/>() );
+
+	if_var( e :
+		f.read_exact(
+			unsafe( ust::array_view_mut</byte8/>(
+				ust::ptr_cast_to_byte8( result.clusters_sky_visibility_data.data() ),
+				result.clusters_sky_visibility_data.size() * typeinfo</ZmapLemClusterSkyVisibilityData/>.size_of ) ) ).as_error_ref() )
+	{
+		ust::stderr_print( ust::concat( "Failed to read! Error: ", ust::enum_to_string( e ), "!\n" ) );
+		return ust::null_optional;
+	}
+
+	if( false )
+	{
+		for( auto mut field_index= 0s; field_index < 64s; ++field_index )
+		{
+			var u32 mut min_value= 0u, mut max_value= 0xFFFFFFFFu;
+			var ust::hash_set</u32/> mut present_values;
+			foreach( &s : result.clusters_sky_visibility_data )
+			{
+				ust::min_assign( min_value, s.data[field_index] );
+				ust::max_assign( max_value, s.data[field_index] );
+				present_values.insert( s.data[field_index] );
+			}
+			ust::stdout_print( ust::concat( "ZMAP*.LEM cluster data field ", ust::to_string8( field_index ), " min/max values are ", ust::to_string8( min_value ), " and ", ust::to_string8( max_value ), "\n" ) );
+
+			var ust::string8 mut s;
+			s+= "Present values: ";
+			foreach( v : present_values )
+			{
+				s+= ust::to_string8(v);
+				s+= " ";
+			}
+			s+= "\n";
+			ust::stdout_print(s);
+		}
 	}
 
 	return result;
