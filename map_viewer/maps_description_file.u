@@ -1,8 +1,11 @@
 import "/enum_string_conversions.u"
 import "/file_helpers.u"
+import "/integer_parsing.u"
 import "/path_utils.u"
 import "/stdout.u"
+import "/string_conversions.u"
 import "maps_description_file.uh"
+import "string_iterators.uh"
 
 namespace PM
 {
@@ -29,7 +32,53 @@ fn ParseMapsDescriptionFile( ust::string_view8 file_contents ) : ust::optional</
 {
 	var MapsDescription mut maps_description;
 
-	ust::stdout_print( file_contents );
+	var ust::optional</ tup[ u32, MapsDescription::MapDescription ] /> mut current_map;
+
+	foreach( line : ust::wrap_raw_iterator( LinesRawIterator( file_contents ) ) )
+	{
+		auto mut words_it= ust::wrap_raw_iterator( WordsIterator( line ) );
+
+		auto first_word_opt= words_it.next();
+		if( first_word_opt.empty() )
+		{
+			continue;
+		}
+
+		var ust::string_view8 first_word= first_word_opt.try_deref();
+
+		if( first_word == "etap" )
+		{
+			if( !current_map.empty() )
+			{
+				auto [ index, mut m ]= current_map.try_take();
+				maps_description.maps.insert_new( index, move(m) );
+			}
+
+			auto index_str_opt= words_it.next();
+			if( index_str_opt.empty() )
+			{
+				continue;
+			}
+			auto index_opt= ust::parse_integer_exact</u32/>( index_str_opt.try_deref() );
+			if( index_opt.empty() )
+			{
+				continue;
+			}
+
+			current_map.reset( ust::make_tuple( index_opt.try_deref(), MapsDescription::MapDescription{} ) );
+		}
+	}
+
+	if( !current_map.empty() )
+	{
+		auto [ index, mut m ]= current_map.try_take();
+		maps_description.maps.insert_new( index, move(m) );
+	}
+
+	foreach( &pair : maps_description.maps )
+	{
+		ust::stdout_print( ust::concat( "Map ", ust::to_string8( pair.key() ), "\n" ) );
+	}
 
 	return maps_description;
 }
