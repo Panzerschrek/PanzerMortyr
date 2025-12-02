@@ -51,15 +51,21 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 	if( true )
 	{
 		var i32 mut max_index= -10000;
+		var size_type mut num_even_indices= 0s;
 		foreach( &t : model.triangles )
 		{
-			foreach( index : t.indices)
+			foreach( index : t.indices )
 			{
 				ust::max_assign( max_index, index );
+				if( (index & 1 ) == 0 )
+				{
+					++num_even_indices;
+				}
 			}
 		}
 
 		ust::stdout_print( ust::concat( "Max index is ", ust::to_string8(max_index), "\n" ) );
+		ust::stdout_print( ust::concat( "Num even indices is ", ust::to_string8(num_even_indices), "\n" ) );
 	}
 
 	unsafe( SetTraceLogLevel( i32( LOG_WARNING ) ) ); // Disable info and verbose log messages from Raylib.
@@ -126,20 +132,38 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 
 				var f32 scale= 1.0f / 1.0f;
 
-				foreach( &v : model.vertices )
+				foreach( &v : model.vertices.range() )
 				{
-					unsafe( DrawCube(
+					unsafe( DrawCubeWires(
 						Vector3
 						{
 							.x= f32(v.coords[0]) * scale,
 							.y= f32(v.coords[1]) * scale,
 							.z= f32(v.coords[2]) * -scale
 						},
-						0.2f,
-						0.2f,
-						0.2f,
+						0.1f,
+						0.1f,
+						0.1f,
 						Color{ .r(255), .g(0), .b(255), .a(255) } ) );
 				}
+
+
+				foreach( &t : model.triangles )
+				{
+					var ObbVertex& v0= model.vertices[ size_type( t.indices[0] ) / 2s ];
+					var ObbVertex& v1= model.vertices[ size_type( t.indices[1] ) / 2s ];
+					var ObbVertex& v2= model.vertices[ size_type( t.indices[2] ) / 2s ];
+
+					var Vector3 p0{ .x= f32(v0.coords[0]) * scale, .y= f32(v0.coords[1s]) * scale, .z= f32(v0.coords[2]) * -scale };
+					var Vector3 p1{ .x= f32(v1.coords[0]) * scale, .y= f32(v1.coords[1s]) * scale, .z= f32(v1.coords[2]) * -scale };
+					var Vector3 p2{ .x= f32(v2.coords[0]) * scale, .y= f32(v2.coords[1s]) * scale, .z= f32(v2.coords[2]) * -scale };
+
+					var Color c{ .r(t.indices[0] * 11), .g(t.indices[1] * 17), .b(t.indices[2] * 23), .a(255) };
+
+					unsafe( DrawTriangle3D( p2, p1, p0, c ) );
+				}
+
+
 			}
 			unsafe( EndMode3D() );
 		}
@@ -156,6 +180,7 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 struct ModelData
 {
 	ust::vector</ObbTriangle/> triangles;
+	ust::vector</ObbStruct1/> structs1;
 	ust::vector</ObbVertex/> vertices;
 }
 
@@ -216,7 +241,21 @@ fn LoadModel( ust::file_readable mut f ) : ust::optional</ModelData/>
 		return ust::null_optional;
 	}
 
-	result.vertices.resize( size_type( header.more_data[8] ), ust::make_zeroed</ObbVertex/>() );
+	var size_type num_vertices( header.more_data[8] );
+
+	result.structs1.resize( num_vertices, ust::make_zeroed</ObbStruct1/>() );
+
+	if_var( e :
+		f.read_exact(
+			unsafe( ust::array_view_mut</byte8/>(
+				ust::ptr_cast_to_byte8( result.structs1.data() ),
+				result.structs1.size() * typeinfo</ObbStruct1/>.size_of ) ) ).as_error_ref() )
+	{
+		ust::stderr_print( ust::concat( "Failed to read! Error: ", ust::enum_to_string( e ), "\n" ) );
+		return ust::null_optional;
+	}
+
+	result.vertices.resize( num_vertices, ust::make_zeroed</ObbVertex/>() );
 
 	if_var( e :
 		f.read_exact(
