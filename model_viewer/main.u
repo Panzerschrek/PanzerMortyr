@@ -82,11 +82,14 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 	unsafe( SetTargetFPS(60) );
 
 	var ust::vector</f32/> mut mesh_positions;
-	foreach( &v : model.vertices )
+	var ust::vector</f32/> mut mesh_texture_coordinates;
+	foreach( pair : model.vertices.iter().zip( model.structs1.iter() ) )
 	{
-		mesh_positions.push_back( v.coords[0] );
-		mesh_positions.push_back( v.coords[1] );
-		mesh_positions.push_back( v.coords[2] );
+		mesh_positions.push_back( pair.first[0] );
+		mesh_positions.push_back( pair.first[1] );
+		mesh_positions.push_back( pair.first[2] );
+		mesh_texture_coordinates.push_back( pair.second[0] );
+		mesh_texture_coordinates.push_back( pair.second[1] );
 	}
 
 	var ust::vector</u16/> mut mesh_indices;
@@ -100,12 +103,13 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 	var Mesh mut mesh= zero_init;
 	mesh.vertexCount= i32( model.vertices.size() );
 	mesh.vertices= unsafe( mesh_positions.data() );
+	mesh.texcoords= unsafe( mesh_texture_coordinates.data() );
 	mesh.triangleCount= i32( model.triangles.size() );
 	mesh.indices= unsafe( mesh_indices.data() );
 
 	unsafe( UploadMesh( $<(mesh), false ) );
 
-	var Material material= unsafe( LoadMaterialDefault() );
+	var Material mut material= unsafe( LoadMaterialDefault() );
 
 	auto mut model_file_contents= ust::read_file_to_byte8_vector( model_file_path ).try_take();
 	var size_type width= 512s;
@@ -122,6 +126,8 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 	};
 
 	var Texture model_raw_data_texture= unsafe( LoadTextureFromImage( zmap_lam_image ) );
+
+	unsafe{ $>( material.maps ).texture = model_raw_data_texture; }
 
 	var Camera3D mut camera
 	{
@@ -161,12 +167,7 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 				foreach( &v : model.vertices.range() )
 				{
 					unsafe( DrawCubeWires(
-						Vector3
-						{
-							.x= f32(v.coords[0]) * scale,
-							.y= f32(v.coords[1]) * scale,
-							.z= f32(v.coords[2]) * -scale
-						},
+						Vector3{ .x= f32(v[0]) * scale, .y= f32(v[1]) * scale, .z= f32(v[2]) * -scale },
 						0.1f,
 						0.1f,
 						0.1f,
@@ -198,8 +199,8 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 struct ModelData
 {
 	ust::vector</ObbTriangle/> triangles;
-	ust::vector</ObbStruct1/> structs1;
-	ust::vector</ObbVertex/> vertices;
+	ust::vector</ObbVertexTextureCoordinates/> structs1;
+	ust::vector</ObbVertexPosition/> vertices;
 }
 
 fn LoadModel( ust::filesystem_path_view file_path ) : ust::optional</ModelData/>
@@ -261,25 +262,25 @@ fn LoadModel( ust::file_readable mut f ) : ust::optional</ModelData/>
 
 	var size_type num_vertices( header.more_data[8] );
 
-	result.structs1.resize( num_vertices, ust::make_zeroed</ObbStruct1/>() );
+	result.structs1.resize( num_vertices, ust::make_zeroed</ObbVertexTextureCoordinates/>() );
 
 	if_var( e :
 		f.read_exact(
 			unsafe( ust::array_view_mut</byte8/>(
 				ust::ptr_cast_to_byte8( result.structs1.data() ),
-				result.structs1.size() * typeinfo</ObbStruct1/>.size_of ) ) ).as_error_ref() )
+				result.structs1.size() * typeinfo</ObbVertexTextureCoordinates/>.size_of ) ) ).as_error_ref() )
 	{
 		ust::stderr_print( ust::concat( "Failed to read! Error: ", ust::enum_to_string( e ), "\n" ) );
 		return ust::null_optional;
 	}
 
-	result.vertices.resize( num_vertices, ust::make_zeroed</ObbVertex/>() );
+	result.vertices.resize( num_vertices, ust::make_zeroed</ObbVertexPosition/>() );
 
 	if_var( e :
 		f.read_exact(
 			unsafe( ust::array_view_mut</byte8/>(
 				ust::ptr_cast_to_byte8( result.vertices.data() ),
-				result.vertices.size() * typeinfo</ObbVertex/>.size_of ) ) ).as_error_ref() )
+				result.vertices.size() * typeinfo</ObbVertexPosition/>.size_of ) ) ).as_error_ref() )
 	{
 		ust::stderr_print( ust::concat( "Failed to read! Error: ", ust::enum_to_string( e ), "\n" ) );
 		return ust::null_optional;
