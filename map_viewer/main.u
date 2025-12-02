@@ -2,6 +2,7 @@ import "/enum_string_conversions.u"
 import "/file.u"
 import "/file_helpers.u"
 import "/hash_set.u"
+import "/integer_parsing.u"
 import "/main_wrapper.u"
 import "/math.u"
 import "/path_utils.u"
@@ -12,7 +13,8 @@ import "/vector.u"
 
 import "/raylib_wrapper/raylib.uh"
 
-import "map_files.uh"
+import "map_loading.uh"
+import "maps_description_file.uh"
 import "materials_file.uh"
 
 pretty_main
@@ -25,16 +27,45 @@ namespace PM
 
 fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 {
-	if( args.size() < 6s )
+	if( args.size() < 3s )
 	{
 		ust::stderr_print( "Not enough arguments!\n" );
 		return -1;
 	}
-	var ust::string_view8 zmap_file_path= args[1s];
-	var ust::string_view8 zvox_file_path= args[2s];
-	var ust::string_view8 zpoz_file_path= args[3s];
-	var ust::string_view8 zmap_lam_file_path= args[4s];
-	var ust::string_view8 zmap_lem_file_path= args[5s];
+
+	var ust::filesystem_path_view maps_dir= args[1s];
+	var ust::optional</u32/> map_index_opt= ust::parse_integer_exact</u32/>( args[2s] );
+
+	if( map_index_opt.empty() )
+	{
+		ust::stderr_print( "Failed to parse map index!\n" );
+		return -1;
+	}
+
+	var u32 map_index= map_index_opt.try_deref();
+
+	auto maps_description_opt = LoadMapsDescriptionFile( maps_dir );
+	if( maps_description_opt.empty() )
+	{
+		return -1;
+	}
+
+	var MapsDescription& maps_description= maps_description_opt.try_deref();
+
+	auto map_description_opt= maps_description.maps.find( map_index_opt.try_deref() );
+	if( map_description_opt.empty() )
+	{
+		ust::stderr_print( "No map with given number found!\n" );
+	}
+
+	var MapsDescription::MapDescription& map_description= map_description_opt.try_deref();
+
+	var ust::filesystem_path zmap_file_path= ust::path::join( maps_dir, ConvertToUppercase( map_description.wall_files[0] ) );
+	var ust::filesystem_path zvox_file_path= ust::path::join( maps_dir, ConvertToUppercase( map_description.wall_files[1] ) );
+	var ust::filesystem_path zpoz_file_path= ust::path::join( maps_dir, ConvertToUppercase( map_description.positions_file ) );
+	// TODO - know how we should load such files. They are not listed in "ICE.STD" file.
+	var ust::filesystem_path zmap_lam_file_path= ust::path::join( maps_dir, ust::concat( "ZMAP", ust::to_string8( map_index ), ".LAM" ) );
+	var ust::filesystem_path zmap_lem_file_path= ust::path::join( maps_dir, ust::concat( "ZMAP", ust::to_string8( map_index ), ".LEM" ) );
 
 	auto map_opt= LoadMap( zmap_file_path, zvox_file_path, zpoz_file_path, zmap_lam_file_path, zmap_lem_file_path );
 	if( map_opt.empty() )
@@ -43,16 +74,6 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 	}
 
 	var MapData& map= map_opt.try_deref();
-
-	for( auto mut i= 0s; i < map.zpoz.clusters.size(); ++i )
-	{
-		if( map.zpoz.clusters[i] != map.zvox.clusters[i].c )
-		{
-			ust::stdout_print( ust::concat( "Data mismatch for cluster ", ust::to_string8( i ), "\n" ) );
-		}
-	}
-
-	ust::ignore_unused( map.zmap_lem );
 
 	ust::stdout_print( "\n" );
 	ust::stdout_print( ust::concat( "Num zmap quads: ", ust::to_string8( map.zmap.quads.size() ), "\n" ) );
@@ -69,106 +90,21 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 	ust::stdout_print( ust::concat( "Num zmap.lem clusters: ", ust::to_string8( map.zmap_lem.clusters_sky_visibility_data.size() ), "\n" ) );
 	ust::stdout_print( "\n" );
 
-	{
-		var u32 mut num_quad_refs= 0u;
-		var u32 mut num_child_clusters= 0u, mut num_child_refs= 0u;
-		foreach( &s : map.zvox.clusters )
-		{
-			num_quad_refs+= u32( s.num_quads );
-			if( s.c.num_children_clusters < 0 )
-			{
-				++num_child_clusters;
-			}
-			else
-			{
-				num_child_refs+= u32( s.c.num_children_clusters );
-			}
-		}
-		// This number should be equal to number of quads.
-		ust::stdout_print( ust::concat( "Num zvox cluster quad refs: ", ust::to_string8( num_quad_refs ), "\n" ) );
-		// These 2 numbers should be equal.
-		ust::stdout_print( ust::concat( "Num zvox child clusters: ", ust::to_string8( num_child_clusters ), "\n" ) );
-		ust::stdout_print( ust::concat( "Num zvox child refs: ", ust::to_string8( num_child_refs ), "\n" ) );
-	}
-
-	{
-		var u32 mut num_arr_refs= 0u;
-		foreach( &e : map.zpoz.clusters_visibility_data )
-		{
-			if( e.data[0] >= 0 )
-			{
-				num_arr_refs+= u32( e.data[1] - e.data[0] );
-			}
-			if( e.data[2] >= 0 )
-			{
-				num_arr_refs+= u32( e.data[3] - e.data[2] );
-			}
-		}
-		// This number is almost equal to remaining size of "ZPOZ" file multiplied by 4.
-		ust::stdout_print( ust::concat( "Num zpoz cluster refs: ", ust::to_string8( num_arr_refs ), "\n" ) );
-	}
-
-	if( false )
-	{
-		for( auto mut i= 0s; i < map.zpoz.clusters_visibility_data.size(); ++i )
-		{
-			var ZpozClusterVisibilityData& visibility_data= map.zpoz.clusters_visibility_data[i];
-			if( visibility_data.data[0] != -1 )
-			{
-				var ust::string8 mut s;
-				s+= "Cluster ";
-				s+= ust::to_string8(i);
-				s+= " links: ";
-
-				var i32 bias= i32(map.zpoz.clusters.size()) * 4;
-				for( auto mut some_offset= visibility_data.data[0]; some_offset < visibility_data.data[1]; ++some_offset )
-				{
-					s+= ust::to_string8( map.zpoz.cluster_indices[ size_type( some_offset - bias ) ] );
-					s+= " ";
-				}
-				s+= "\n";
-
-				s+= "extra links: ";
-				for( auto mut some_offset= visibility_data.data[2]; some_offset < visibility_data.data[3]; ++some_offset )
-				{
-					s+= ust::to_string8( map.zpoz.cluster_indices[ size_type( some_offset - bias ) ] );
-					s+= " ";
-				}
-				s+= "\n";
-
-				ust::stdout_print( s );
-			}
-		}
-	}
-
-	var ust::optional</ust::filesystem_path_view/> map_dir= ust::path::get_parent_path( zmap_file_path );
-	if( map_dir.empty() )
-	{
-		ust::stderr_print( "Can't get parent directory for the map file!\n" );
-		return -1;
-	}
-
-	auto materials = LoadMaterialsFile( map_dir.try_deref() );
-	if( materials.empty() )
+	auto materials_opt = LoadMaterialsFile( maps_dir );
+	if( materials_opt.empty() )
 	{
 		return -1;
 	}
+
+	var MaterialsDescription& materials= materials_opt.try_deref();
+
+	// Initialize Raylib before loading textures.
 
 	unsafe( SetTraceLogLevel( i32( LOG_WARNING ) ) ); // Disable info and verbose log messages from Raylib.
 
 	var i32 screen_width = 1024;
 	var i32 screen_height = 768;
-
 	unsafe( InitWindow( screen_width, screen_height, $<( cast_mut( "PanzerMortyr MapViewer\0"[0] ) ) ) );
-
-	var Camera3D mut camera
-	{
-		.position = Vector3{ .x= 10.0f, .y= 10.0f, .z= 10.0f },
-		.target = Vector3{ .x= 0.0f, .y= 0.0f, .z= 0.0f },
-		.up = Vector3{ .x= 0.0f, .y= 0.0f, .z= 1.0f },
-		.fovy = 75.0f,
-		.projection( CAMERA_PERSPECTIVE )
-	};
 
 	if( !compiler::options::generate_debug_info )
 	{
@@ -177,19 +113,23 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 
 	unsafe( SetTargetFPS(60) );
 
+	auto mapterials_block_opt= materials.blocks.find( map_description.materials_block );
+	if( mapterials_block_opt.empty() )
+	{
+		ust::stderr_print( "Can't find materials block!\n" );
+		return -1;
+	}
+
+	var MaterialsDescription::Block& materials_block= mapterials_block_opt.try_deref();
+
 	var [ ust::vector</byte8/>, 2 ] mut palettes;
 	var [ Texture, 2 ] mut palette_textures= zero_init;
-
-	var ust::vector</Material/> mut block_materials;
-	var ust::vector</Texture/> mut block_textures;
-
-	var MaterialsDescription::Block& materials_block= materials.try_deref().blocks[ 41u ];
 
 	for( auto mut i= 0s; i < 2s; ++i )
 	{
 		var ust::filesystem_path palette_file_path=
 			ust::path::join(
-				map_dir.try_deref(),
+				maps_dir,
 				ConvertToUppercase(
 					( i == 0s ? materials_block.palette0.file_name : materials_block.palette1.file_name ) ) );
 
@@ -235,9 +175,12 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 		}
 	}
 
+	var ust::vector</Material/> mut block_materials;
+	var ust::vector</Texture/> mut block_textures;
+
 	foreach( &block_texture : materials_block.textures )
 	{
-		auto mut image_file_nt= ust::path::join( map_dir.try_deref(), ConvertToUppercase( block_texture.mips[1] ) );
+		auto mut image_file_nt= ust::path::join( maps_dir, ConvertToUppercase( block_texture.mips[1] ) );
 		image_file_nt+= "\0";
 
 		var Image image= unsafe( LoadImage( image_file_nt.data() ) );
@@ -251,44 +194,51 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 			ust::stderr_print( ust::concat( "Invalid pixel format o image\"" , image_file_nt, "\"!\n" ) );
 			return -1;
 		}
-
-		var u32 tile_size_x= u32( image.width ) >> 1;
-		var u32 tile_size_y= u32( image.height ) >> 1;
+		if( u32( image.width  ) != MaterialsDescription::c_texture_size * MaterialsDescription::c_texture_file_num_tiles_x ||
+			u32( image.height ) != MaterialsDescription::c_texture_size * MaterialsDescription::c_texture_file_num_tiles_y )
+		{
+			ust::stderr_print( ust::concat( "Invalid dimensions for image\"" , image_file_nt, "\"!\n" ) );
+			return -1;
+		}
 
 		type PixelType= [ u8, 3 ];
+		var u32 tile_area= MaterialsDescription::c_texture_size * MaterialsDescription::c_texture_size;
 
-		scoped_array PixelType mut tile_data[ size_type(tile_size_x * tile_size_y ) ]( ust::make_array( 0u8, 0u8, 0u8 ) );
+		scoped_array PixelType mut tile_data[ size_type( tile_area ) ]( ust::make_array( 0u8, 0u8, 0u8 ) );
 
 		var $(PixelType) image_data= unsafe( ust::byte_ptr_cast</PixelType/>( image.data ) );
 
-		for( auto mut tile_y= 0u; tile_y < 2u; ++tile_y )
+		for( auto mut tile_y= 0u; tile_y < MaterialsDescription::c_texture_file_num_tiles_y; ++tile_y )
 		{
-			for( auto mut tile_x= 0u; tile_x < 2u; ++tile_x )
+			var u32 src_y= tile_y * MaterialsDescription::c_texture_size;
+
+			for( auto mut tile_x= 0u; tile_x < MaterialsDescription::c_texture_file_num_tiles_x; ++tile_x )
 			{
-				var u32 src_y= tile_y * tile_size_y;
-				var u32 src_x= tile_x * tile_size_x;
+				var u32 src_x= tile_x * MaterialsDescription::c_texture_size;
+
 				unsafe
 				{
 					var $(PixelType) tile_src_data= image_data + src_x + src_y * u32(image.width);
 
-					for( auto mut y= 0u; y < tile_size_y; ++y )
+					for( auto mut y= 0u; y < MaterialsDescription::c_texture_size; ++y )
 					{
-						for( auto mut x= 0u; x < tile_size_x; ++x )
-						{
-							tile_data[ size_type( x + y * tile_size_x ) ]= $>( tile_src_data + x + y * u32( image.width ) );
-						}
+						tile_data.subrange_start( size_type( y * MaterialsDescription::c_texture_size ) ).copy_from(
+							ust::array_view_imut</PixelType/>(
+								tile_src_data + y * u32( image.width ),
+								size_type( MaterialsDescription::c_texture_size ) ) );
 					}
 
-					var Image tile_image
-					{
-						.data= ust::ptr_cast_to_byte8( tile_data.data() ),
-						.width( tile_size_x ),
-						.height( tile_size_y ),
-						.mipmaps(1),
-						.format= image.format,
-					};
+					var Texture mut texture =
+						LoadTextureFromImage(
+							Image
+							{
+								.data= ust::ptr_cast_to_byte8( tile_data.data() ),
+								.width ( MaterialsDescription::c_texture_size ),
+								.height( MaterialsDescription::c_texture_size ),
+								.mipmaps(1),
+								.format= image.format,
+							} );
 
-					var Texture mut texture = LoadTextureFromImage( tile_image );
 					if( texture.id == 0u )
 					{
 						ust::stderr_print( "Failed to load test texture from image!\n" );
@@ -306,11 +256,6 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 		}
 
 		unsafe( UnloadImage( image ) );
-	}
-
-	foreach( &el : typeinfo</MaterialsDescription::SpecialMaterial/>.elements_list )
-	{
-		ust::stdout_print( ust::concat( el.name, " texture index is ", ust::to_string8( materials_block.special_material_indices[ size_type( el.value ) ] ), "\n" ) );
 	}
 
 	// Dummy material for polygons with strange material numbers.
@@ -349,7 +294,7 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 	var ust::vector</f32/> mut mesh_texture_coordinates;
 	var ust::vector</u8/> mut mesh_colors;
 
-	var ust::vector</tup[ size_type, size_type ] /> mut vertex_offsets_and_counts( block_materials.size(), ust::make_tuple( 0s, 0s ) );
+	scoped_array tup[ size_type, size_type ] mut vertex_offsets_and_counts[ block_materials.size() ]( ust::make_tuple( 0s, 0s ) );
 
 	for( auto mut i= 0s; i < block_materials.size(); ++i )
 	{
@@ -479,8 +424,7 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 			var Vector2 tc_offset{ .x( s.tc_offset[0] ), .y( s.tc_offset[1] ), 	};
 
 			// OpenGL uses normalized texture coordinates.
-			var f32 ts_scale= 1.0f / 128.0f;
-
+			var f32 ts_scale= 1.0f / f32( MaterialsDescription::c_texture_size );
 
 			var Vector2 tc0
 			{
@@ -569,39 +513,25 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 		vertex_offsets_and_counts[i][1]= num_quads_with_this_texture * 6s;
 	}
 
-	var ust::vector</Mesh/> mut per_texture_meshes;
+	scoped_array Mesh mut per_texture_meshes[ block_materials.size() ]( ust::make_zeroed</Mesh/>() );
 
 	for( auto mut i= 0s; i < block_materials.size(); ++i )
 	{
+		var Mesh& mut mesh= per_texture_meshes[i];
+
 		var size_type vertex_offset= vertex_offsets_and_counts[i][0];
 		var size_type num_vertices= vertex_offsets_and_counts[i][1];
 
-		var Mesh mut mesh
-		{
-			.vertexCount( num_vertices ),
-			.triangleCount( num_vertices / 3s ),
-			.vertices= unsafe( mesh_vertices.data() + vertex_offset * 3s ),
-			.texcoords= unsafe( mesh_texture_coordinates.data() + vertex_offset * 2s ),
-			.texcoords2= zero_init,
-			.normals= zero_init,
-			.tangents= zero_init,
-			.colors= unsafe( mesh_colors.data() + vertex_offset * 4s ),
-			.indices= zero_init,
-			.animVertices= zero_init,
-			.animNormals= zero_init,
-			.boneIds= zero_init,
-			.boneWeights= zero_init,
-			.boneMatrices= zero_init,
-			.boneCount= zero_init,
-			.vaoId= zero_init,
-			.vboId= zero_init,
-		};
+		mesh.vertexCount= i32( num_vertices );
+		mesh.triangleCount= i32( num_vertices / 3s );
+		mesh.vertices= unsafe( mesh_vertices.data() + vertex_offset * 3s );
+		mesh.texcoords= unsafe( mesh_texture_coordinates.data() + vertex_offset * 2s );
+		mesh.colors= unsafe( mesh_colors.data() + vertex_offset * 4s );
 
 		unsafe( UploadMesh( $<(mesh), false ) );
-		per_texture_meshes.push_back( move(mesh) );
 	}
 
-	auto mut digits_dexture_file_nt= ust::path::join( map_dir.try_deref(), "PANBL.BMP" );
+	auto mut digits_dexture_file_nt= ust::path::join( maps_dir, "PANBL.BMP" );
 	digits_dexture_file_nt+= "\0";
 	var Texture digits_dexture= unsafe( LoadTexture( digits_dexture_file_nt.data() ) );
 	if( digits_dexture.id == 0u )
@@ -690,6 +620,15 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 
 		unsafe( UploadMesh( $<(mesh), false ) );
 	}
+
+	var Camera3D mut camera
+	{
+		.position = Vector3{ .x= 10.0f, .y= 10.0f, .z= 10.0f },
+		.target = Vector3{ .x= 0.0f, .y= 0.0f, .z= 0.0f },
+		.up = Vector3{ .x= 0.0f, .y= 0.0f, .z= 1.0f },
+		.fovy = 75.0f,
+		.projection( CAMERA_PERSPECTIVE )
+	};
 
 	var size_type mut offset= 0s;
 
@@ -1097,801 +1036,11 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 		unsafe( EndDrawing() );
 	}
 
+	// Do not care freeng here raylib objects like meshes, materials, textures. We quit anyway and this should release all resoources (even GPU-related).
+
 	unsafe( CloseWindow() );
 
 	return 0;
-}
-
-struct MapData
-{
-	ZmapData zmap;
-	ZvoxData zvox;
-	ZpozData zpoz;
-	ZmapLamData zmap_lam;
-	ZmapLemData zmap_lem;
-}
-
-struct ZmapData
-{
-	ust::vector</ZmapQuad/> quads;
-}
-
-struct ZvoxData
-{
-	ust::vector</ZvoxStruct0/> structs0;
-	ust::vector</ZvoxStruct1/> structs1;
-	ust::vector</ZvoxCluster/> clusters;
-	ust::vector</ZvoxLightSource/> light_sources;
-}
-
-struct ZpozData
-{
-	ust::vector</ZpozEntity/> entities;
-	ust::vector</ZpozStruct1/> structs1;
-	ust::vector</ZpozCluster/> clusters;
-	ust::vector</ZpozClusterVisibilityData/> clusters_visibility_data;
-	ust::vector</ZPozClusterIndex/> cluster_indices;
-}
-
-struct ZmapLamData
-{
-	ust::vector</ZmapLamStruct0/> structs0;
-	ust::vector</ZmapLamStruct1/> structs1;
-	ust::vector</ZmapLamStruct2/> structs2;
-}
-
-struct ZmapLemData
-{
-	ust::vector</ZmapLemClusterSkyVisibilityData/> clusters_sky_visibility_data;
-}
-
-fn LoadMap(
-	ust::filesystem_path_view zmap_file_path,
-	ust::filesystem_path_view zvox_file_path,
-	ust::filesystem_path_view zpoz_file_path,
-	ust::filesystem_path_view zmap_lam_file_path,
-	ust::filesystem_path_view zmap_lem_file_path ) : ust::optional</MapData/>
-{
-	auto mut zmap_data= LoadZmapFile( zmap_file_path );
-	auto mut zvox_data= LoadZvoxFile( zvox_file_path );
-	auto mut zpoz_data= LoadZpozFile( zpoz_file_path );
-	auto mut zmap_lam_data= LoadZmapLamFile( zmap_lam_file_path );
-	auto mut zmap_lem_data= LoadZmapLemFile( zmap_lem_file_path );
-
-	if( zmap_data.empty() ||
-		zvox_data.empty() ||
-		zpoz_data.empty() ||
-		zmap_lam_data.empty() ||
-		zmap_lem_data.empty() )
-	{
-		return ust::null_optional;
-	}
-
-	return MapData
-	{
-		.zmap= zmap_data.try_take(),
-		.zvox= zvox_data.try_take(),
-		.zpoz= zpoz_data.try_take(),
-		.zmap_lam= zmap_lam_data.try_take(),
-		.zmap_lem= zmap_lem_data.try_take(),
-	};
-}
-
-fn LoadZmapFile( ust::filesystem_path_view file_path ) : ust::optional</ZmapData/>
-{
-	result_match( ust::file_readable::open( file_path ) )
-	{
-		Ok( mut f ) -> { return LoadZmapFile( move(f) ); },
-		Err(e) ->
-		{
-			ust::stderr_print( ust::concat( "Error opening file: ", ust::enum_to_string( e ), "\n" ) );
-			return ust::null_optional;
-		}
-	}
-}
-
-fn LoadZmapFile( ust::file_readable mut f ) : ust::optional</ZmapData/>
-{
-	var ZMapFileHeader mut header= zero_init;
-
-	if_var( e :
-		f.read_exact(
-			unsafe( ust::array_view_mut</byte8/>(
-				ust::ptr_cast_to_byte8( $<(header) ),
-				 typeinfo</ZMapFileHeader/>.size_of ) ) ).as_error_ref() )
-	{
-		ust::stderr_print( ust::concat( "Error reading map file: ", ust::enum_to_string( e ), "\n" ) );
-		return ust::null_optional;
-	}
-
-	if( header.signature != ZMapFileHeader::c_expected_signature )
-	{
-		ust::stderr_print( ust::concat( "Unexpected file signature \"", header.signature, "\"!" ) );
-		return ust::null_optional;
-	}
-
-	{
-		var ust::string8 mut m;
-		m+= "ZMAP header nums: ";
-		m+= ust::to_string8( header.num_quads );
-		m+= ", ";
-		m+= ust::to_string8( header.presumable_some_other_num );
-		m+= ", ";
-		m+= ust::to_string8( header.data[0] );
-		m+= ", ";
-		m+= ust::to_string8( header.data[1] );
-		m+= ", ";
-		m+= ust::to_string8( header.data[2] );
-		m+= ", ";
-		m+= ust::to_string8( header.data[3] );
-		m+= "\n";
-		ust::stdout_print( m );
-	}
-
-	var ZmapData mut result;
-
-	result.quads.resize( size_type( header.num_quads ), ust::make_zeroed</ZmapQuad/>() );
-
-	if_var( e :
-		f.read_exact(
-			unsafe( ust::array_view_mut</byte8/>(
-				ust::ptr_cast_to_byte8( result.quads.data() ),
-				result.quads.size() * typeinfo</ZmapQuad/>.size_of ) ) ).as_error_ref() )
-	{
-		ust::stderr_print( ust::concat( "Failed to read! Error: ", ust::enum_to_string( e ), ", \n" ) );
-		return ust::null_optional;
-	}
-
-	return result;
-}
-
-fn LoadZvoxFile( ust::filesystem_path_view file_path ) : ust::optional</ZvoxData/>
-{
-	result_match( ust::file_readable::open( file_path ) )
-	{
-		Ok( mut f ) -> { return LoadZvoxFile( move(f) ); },
-		Err(e) ->
-		{
-			ust::stderr_print( ust::concat( "Error opening file: ", ust::enum_to_string( e ), "\n" ) );
-			return ust::null_optional;
-		}
-	}
-}
-
-fn LoadZvoxFile( ust::file_readable mut f ) : ust::optional</ZvoxData/>
-{
-	var ZVoxFileHeader mut header= zero_init;
-
-	if_var( e :
-		f.read_exact(
-			unsafe( ust::array_view_mut</byte8/>(
-				ust::ptr_cast_to_byte8( $<(header) ),
-				 typeinfo</ZVoxFileHeader/>.size_of ) ) ).as_error_ref() )
-	{
-		ust::stderr_print( ust::concat( "Error reading map file: ", ust::enum_to_string( e ), "\n" ) );
-		return ust::null_optional;
-	}
-
-	if( header.signature != ZVoxFileHeader::c_expected_signature )
-	{
-		ust::stderr_print( ust::concat( "Unexpected file signature \"", header.signature, "\"!" ) );
-		return ust::null_optional;
-	}
-
-	{
-		var ust::string8 mut m;
-		m+= "ZVOX header nums: ";
-		m+= ust::to_string8( header.num_clusters );
-		m+= ", ";
-		m+= ust::to_string8( header.num_structs0 );
-		m+= ", ";
-		m+= ust::to_string8( header.num_light_sources );
-		m+= ", ";
-		m+= ust::to_string8( header.num3 );
-		m+= ", ";
-		m+= ust::to_string8( header.num4 );
-		m+= ", ";
-		m+= ust::to_string8( header.num5 );
-		m+= "\n";
-		ust::stdout_print( m );
-	}
-
-	var ZvoxData mut result;
-
-	result.structs0.resize( size_type( header.num4 ), ust::make_zeroed</ZvoxStruct0/>() );
-
-	if_var( e :
-		f.read_exact(
-			unsafe( ust::array_view_mut</byte8/>(
-				ust::ptr_cast_to_byte8( result.structs0.data() ),
-				result.structs0.size() * typeinfo</ZvoxStruct0/>.size_of ) ) ).as_error_ref() )
-	{
-		ust::stderr_print( ust::concat( "Failed to read! Error: ", ust::enum_to_string( e ), "!\n" ) );
-		return ust::null_optional;
-	}
-
-	result.structs1.resize( size_type( header.num3 ), ust::make_zeroed</ZvoxStruct1/>() );
-
-	if_var( e :
-		f.read_exact(
-			unsafe( ust::array_view_mut</byte8/>(
-				ust::ptr_cast_to_byte8( result.structs1.data() ),
-				result.structs1.size() * typeinfo</ZvoxStruct1/>.size_of ) ) ).as_error_ref() )
-	{
-		ust::stderr_print( ust::concat( "Failed to read! Error: ", ust::enum_to_string( e ), "!\n" ) );
-		return ust::null_optional;
-	}
-
-	result.clusters.resize( size_type( header.num_clusters ), ust::make_zeroed</ZvoxCluster/>() );
-
-	if_var( e :
-		f.read_exact(
-			unsafe( ust::array_view_mut</byte8/>(
-				ust::ptr_cast_to_byte8( result.clusters.data() ),
-				result.clusters.size() * typeinfo</ZvoxCluster/>.size_of ) ) ).as_error_ref() )
-	{
-		ust::stderr_print( ust::concat( "Failed to read! Error: ", ust::enum_to_string( e ), "!\n" ) );
-		return ust::null_optional;
-	}
-
-	result.light_sources.resize( size_type( header.num_light_sources ), ust::make_zeroed</ZvoxLightSource/>() );
-
-	if_var( e :
-		f.read_exact(
-			unsafe( ust::array_view_mut</byte8/>(
-				ust::ptr_cast_to_byte8( result.light_sources.data() ),
-				result.light_sources.size() * typeinfo</ZvoxLightSource/>.size_of ) ) ).as_error_ref() )
-	{
-		ust::stderr_print( ust::concat( "Failed to read! Error: ", ust::enum_to_string( e ), "!\n" ) );
-		return ust::null_optional;
-	}
-
-	// There is at least one more data block left in this file, which size and meaning isn't known yet.
-	// But it is filled with zeros, at least in some cases.
-
-	if( false )
-	{
-		var [ i32, 10 ] mut mins[  0x7FFFFFFF,  0x7FFFFFFF,  0x7FFFFFFF,  0x7FFFFFFF,  0x7FFFFFFF,  0x7FFFFFFF,  0x7FFFFFFF,  0x7FFFFFFF,  0x7FFFFFFF,  0x7FFFFFFF ];
-		var [ i32, 10 ] mut maxs[ -0x7FFFFFFF, -0x7FFFFFFF, -0x7FFFFFFF, -0x7FFFFFFF, -0x7FFFFFFF, -0x7FFFFFFF, -0x7FFFFFFF, -0x7FFFFFFF, -0x7FFFFFFF, -0x7FFFFFFF ];
-		foreach( &s : result.structs0 )
-		{
-			for( auto mut i= 0s; i < 10s; ++i )
-			{
-				ust::min_assign( mins[i], s.data[i] );
-				ust::max_assign( maxs[i], s.data[i] );
-			}
-		}
-
-		for( auto mut i= 0s; i < 10s; ++i )
-		{
-			ust::stdout_print( ust::concat( "ZVOX struct0 field ", ust::to_string8(i), " minmax are ", ust::to_string8( mins[i] ), " ", ust::to_string8( maxs[i] ), "\n" ) );
-		}
-	}
-
-	if( false )
-	{
-		var i32 mut min_data2= 99999999, mut max_data2= -99999999;
-		var i32 mut min_data4= 99999999, mut max_data4= -99999999;
-		foreach( &s : result.clusters )
-		{
-			ust::min_assign( min_data2, s.light_sources_begin );
-			ust::max_assign( max_data2, s.light_sources_begin );
-			ust::min_assign( min_data4, s.light_sources_end );
-			ust::max_assign( max_data4, s.light_sources_end );
-		}
-		ust::stdout_print( ust::concat( "ZVOX clusters data1[2] min/max: ", ust::to_string8(min_data2), ", ", ust::to_string8(max_data2), "\n" ) );
-		ust::stdout_print( ust::concat( "ZVOX clusters data1[4] min/max: ", ust::to_string8(min_data4), ", ", ust::to_string8(max_data4), "\n" ) );
-	}
-
-	if( false )
-	{
-		var [ i32, 3 ] mut mins[ 999999, 999999, 999999, ], mut maxs[ -999999, -999999, -999999 ];
-		var [ i16, 2 ] mut extra_mins[ (9999), (9999) ], mut extra_maxs[ (-9999), (-9999) ];
-		foreach( &s : result.light_sources )
-		{
-			for( auto mut i= 0s; i < 3s; ++i )
-			{
-				ust::min_assign( mins[i], s.offset[i] );
-				ust::max_assign( maxs[i], s.offset[i] );
-			}
-			for( auto mut i= 0s; i < 2s; ++i )
-			{
-				ust::min_assign( extra_mins[i], s.data1[i] );
-				ust::max_assign( extra_maxs[i], s.data1[i] );
-			}
-		}
-		ust::stdout_print( ust::concat( "ZVOX light sources mins: ", ust::to_string8(mins[0]), ", ", ust::to_string8(mins[1]), ", ", ust::to_string8(mins[2]), "\n" ) );
-		ust::stdout_print( ust::concat( "ZVOX light sources maxs: ", ust::to_string8(maxs[0]), ", ", ust::to_string8(maxs[1]), ", ", ust::to_string8(maxs[2]), "\n" ) );
-		ust::stdout_print( ust::concat( "ZVOX light sources extra mins: ", ust::to_string8(extra_mins[0]), ", ", ust::to_string8(extra_mins[1]), "\n" ) );
-		ust::stdout_print( ust::concat( "ZVOX light sources extra maxs: ", ust::to_string8(extra_maxs[0]), ", ", ust::to_string8(extra_maxs[1]), "\n" ) );
-	}
-
-	return result;
-}
-
-fn LoadZpozFile( ust::filesystem_path_view file_path ) : ust::optional</ZpozData/>
-{
-	result_match( ust::file_readable::open( file_path ) )
-	{
-		Ok( mut f ) -> { return LoadZpozFile( move(f) ); },
-		Err(e) ->
-		{
-			ust::stderr_print( ust::concat( "Error opening file: ", ust::enum_to_string( e ), "\n" ) );
-			return ust::null_optional;
-		}
-	}
-}
-
-fn LoadZpozFile( ust::file_readable mut f ) : ust::optional</ZpozData/>
-{
-	var ZPozFileHeader mut header= zero_init;
-
-	if_var( e :
-		f.read_exact(
-			unsafe( ust::array_view_mut</byte8/>(
-				ust::ptr_cast_to_byte8( $<(header) ),
-				 typeinfo</ZPozFileHeader/>.size_of ) ) ).as_error_ref() )
-	{
-		ust::stderr_print( ust::concat( "Error reading map file: ", ust::enum_to_string( e ), "\n" ) );
-		return ust::null_optional;
-	}
-
-	if( header.signature != ZPozFileHeader::c_expected_signature )
-	{
-		ust::stderr_print( ust::concat( "Unexpected file signature \"", header.signature, "\"!" ) );
-		return ust::null_optional;
-	}
-
-	var u64 mut file_size(0);
-	result_match( f.get_metatada() )
-	{
-		Ok(m) -> { file_size= m.size; },
-		Err(e) ->
-		{
-			ust::stderr_print( ust::concat( "Error getting archive file size: ", ust::enum_to_string( e ), "\n" ) );
-			return ust::null_optional;
-		}
-	}
-
-	{
-		var ust::string8 mut m;
-		m+= "ZPOZ header nums: ";
-		m+= ust::to_string8( header.num_entities );
-		m+= ", ";
-		m+= ust::to_string8( header.num_structs1 );
-		m+= ", ";
-		m+= ust::to_string8( header.data[0] );
-		m+= ", ";
-		m+= ust::to_string8( header.data[1] );
-		m+= ", ";
-		m+= ust::to_string8( header.data[2] );
-		m+= ", ";
-		m+= ust::to_string8( header.data[3] );
-		m+= "\n";
-		ust::stdout_print( m );
-	}
-
-	var ZpozData mut result;
-
-	result.entities.resize( size_type( header.num_entities ), ust::make_zeroed</ZpozEntity/>() );
-
-	if_var( e :
-		f.read_exact(
-			unsafe( ust::array_view_mut</byte8/>(
-				ust::ptr_cast_to_byte8( result.entities.data() ),
-				result.entities.size() * typeinfo</ZpozEntity/>.size_of ) ) ).as_error_ref() )
-	{
-		ust::stderr_print( ust::concat( "Failed to read! Error: ", ust::enum_to_string( e ), "!\n" ) );
-		return ust::null_optional;
-	}
-
-	result.structs1.resize( size_type( header.num_structs1 ), ust::make_zeroed</ZpozStruct1/>() );
-
-	if_var( e :
-		f.read_exact(
-			unsafe( ust::array_view_mut</byte8/>(
-				ust::ptr_cast_to_byte8( result.structs1.data() ),
-				result.structs1.size() * typeinfo</ZpozStruct1/>.size_of ) ) ).as_error_ref() )
-	{
-		ust::stderr_print( ust::concat( "Failed to read! Error: ", ust::enum_to_string( e ), "!\n" ) );
-		return ust::null_optional;
-	}
-
-	var ZPozIntermediateHeader mut intermediate_header= zero_init;
-
-	if_var( e :
-		f.read_exact(
-			unsafe( ust::array_view_mut</byte8/>(
-				ust::ptr_cast_to_byte8( $<(intermediate_header) ),
-				 typeinfo</ZPozIntermediateHeader/>.size_of ) ) ).as_error_ref() )
-	{
-		ust::stderr_print( ust::concat( "Error reading map file: ", ust::enum_to_string( e ), "\n" ) );
-		return ust::null_optional;
-	}
-
-	{
-		var ust::string8 mut m;
-		m+= "ZPOZ intermediate header nums: ";
-		m+= ust::to_string8( intermediate_header.num0 );
-		m+= ", ";
-		m+= ust::to_string8( intermediate_header.num_visibility_info_ints );
-		m+= ", ";
-		m+= ust::to_string8( intermediate_header.num_clusters );
-		m+= ", ";
-		m+= ust::to_string8( intermediate_header.num2 );
-		m+= "\n";
-		ust::stdout_print( m );
-	}
-
-	result.clusters.resize( size_type( intermediate_header.num_clusters ), ust::make_zeroed</ZpozCluster/>() );
-
-	if_var( e :
-		f.read_exact(
-			unsafe( ust::array_view_mut</byte8/>(
-				ust::ptr_cast_to_byte8( result.clusters.data() ),
-				result.clusters.size() * typeinfo</ZpozCluster/>.size_of ) ) ).as_error_ref() )
-	{
-		ust::stderr_print( ust::concat( "Failed to read! Error: ", ust::enum_to_string( e ), "!\n" ) );
-		return ust::null_optional;
-	}
-
-	result.clusters_visibility_data.resize( size_type( intermediate_header.num_clusters ), ust::make_zeroed</ZpozClusterVisibilityData/>() );
-
-	if_var( e :
-		f.read_exact(
-			unsafe( ust::array_view_mut</byte8/>(
-				ust::ptr_cast_to_byte8( result.clusters_visibility_data.data() ),
-				result.clusters_visibility_data.size() * typeinfo</ZpozClusterVisibilityData/>.size_of ) ) ).as_error_ref() )
-	{
-		ust::stderr_print( ust::concat( "Failed to read! Error: ", ust::enum_to_string( e ), "!\n" ) );
-		return ust::null_optional;
-	}
-
-	{
-		var size_type num_cluster_indices=
-			size_type( intermediate_header.num_visibility_info_ints ) -
-			size_type( intermediate_header.num_clusters ) * ( typeinfo</ZpozClusterVisibilityData/>.size_of / typeinfo</u32/>.size_of );
-
-		result.cluster_indices.resize( num_cluster_indices, ust::make_zeroed</ZPozClusterIndex/>() );
-
-		if_var( e :
-			f.read_exact(
-				unsafe( ust::array_view_mut</byte8/>(
-					ust::ptr_cast_to_byte8( result.cluster_indices.data() ),
-					result.cluster_indices.size() * typeinfo</ZPozClusterIndex/>.size_of ) ) ).as_error_ref() )
-		{
-			ust::stderr_print( ust::concat( "Failed to read! Error: ", ust::enum_to_string( e ), "!\n" ) );
-			return ust::null_optional;
-		}
-	}
-
-	if( false )
-	{
-		for( auto mut field_index= 0s; field_index < 328s / 4s; ++field_index )
-		{
-			var i32 mut min_value= 0x7FFFFFFF, mut max_value= -0x7FFFFFFF;
-			foreach( &s : result.structs1 )
-			{
-				ust::min_assign( min_value, s.data[field_index] );
-				ust::max_assign( max_value, s.data[field_index] );
-			}
-			ust::stdout_print( ust::concat( "ZPOZ struct1 field ", ust::to_string8( field_index ), " min/max values are ", ust::to_string8( min_value ), " and ", ust::to_string8( max_value ), "\n" ) );
-		}
-	}
-
-	if( false )
-	{
-		var [ i32, 4 ] mut min_offset[ 0x7FFFFFFF, 0x7FFFFFFF, 0x7FFFFFFF, 0x7FFFFFFF ];
-		var [ i32, 4 ] mut max_offset= zero_init;
-		var size_type mut num_non_negative_offsets= 0s;
-		foreach( &s : result.clusters_visibility_data )
-		{
-			for( auto mut i= 0s; i < 4s; ++i )
-			{
-				if( s.data[i] != -1 )
-				{
-					ust::min_assign( min_offset[i], s.data[i] );
-					ust::max_assign( max_offset[i], s.data[i] );
-				}
-			}
-			foreach( offset : s.data )
-			{
-				if( offset >= 0 )
-				{
-					++num_non_negative_offsets;
-				}
-			}
-		}
-		for( auto mut i= 0s; i < 4s; ++i )
-		{
-			ust::stdout_print( ust::concat( "Min cluster visibility info offset is ", ust::to_string8( min_offset[i] ),"\n" ) );
-			ust::stdout_print( ust::concat( "Max cluster visibility info offset is ", ust::to_string8( max_offset[i] ),"\n" ) );
-		}
-		ust::stdout_print( ust::concat( "Has ", ust::to_string8(num_non_negative_offsets), " non-negative offsets\n" ) );
-	}
-
-	if( false )
-	{
-		var i32 mut min_index= 0x7FFFFFFF;
-		var i32 mut max_index= 0;
-		foreach( &i : result.cluster_indices )
-		{
-			ust::min_assign( min_index, i );
-			ust::max_assign( max_index, i );
-		}
-		ust::stdout_print( ust::concat( "Min zpoz cluster index is ", ust::to_string8( min_index ), "\n" ) );
-		ust::stdout_print( ust::concat( "Max zpoz cluster index is ", ust::to_string8( max_index ), "\n" ) );
-	}
-
-	return result;
-}
-
-fn LoadZmapLamFile( ust::filesystem_path_view file_path ) : ust::optional</ZmapLamData/>
-{
-	result_match( ust::file_readable::open( file_path ) )
-	{
-		Ok( mut f ) -> { return LoadZmapLamFile( move(f) ); },
-		Err(e) ->
-		{
-			ust::stderr_print( ust::concat( "Error opening file: ", ust::enum_to_string( e ), "\n" ) );
-			return ust::null_optional;
-		}
-	}
-}
-
-fn LoadZmapLamFile( ust::file_readable mut f ) : ust::optional</ZmapLamData/>
-{
-	var ZmapLamHeader mut header= zero_init;
-
-	if_var( e :
-		f.read_exact(
-			unsafe( ust::array_view_mut</byte8/>(
-				ust::ptr_cast_to_byte8( $<(header) ),
-				 typeinfo</ZPozFileHeader/>.size_of ) ) ).as_error_ref() )
-	{
-		ust::stderr_print( ust::concat( "Error reading map file: ", ust::enum_to_string( e ), "\n" ) );
-		return ust::null_optional;
-	}
-
-	{
-		var ust::string8 mut m;
-		m+= "ZMAP*.LAM header nums: ";
-		m+= ust::to_string8( header.num0 );
-		m+= ", ";
-		m+= ust::to_string8( header.num_structs0 );
-		m+= ", ";
-		m+= ust::to_string8( header.num_structs1 );
-		m+= ", ";
-		m+= ust::to_string8( header.num3 );
-		m+= ", ";
-		m+= ust::to_string8( header.num4 );
-		m+= ", ";
-		m+= ust::to_string8( header.num_structs2 );
-		m+= ", ";
-		m+= ust::to_string8( header.num6 );
-		m+= ", ";
-		m+= ust::to_string8( header.num7 );
-		m+= "\n";
-		ust::stdout_print( m );
-	}
-
-	var ZmapLamData mut result;
-
-	result.structs0.resize( size_type( header.num_structs0 ), ust::make_zeroed</ZmapLamStruct0/>() );
-
-	if_var( e :
-		f.read_exact(
-			unsafe( ust::array_view_mut</byte8/>(
-				ust::ptr_cast_to_byte8( result.structs0.data() ),
-				result.structs0.size() * typeinfo</ZmapLamStruct0/>.size_of ) ) ).as_error_ref() )
-	{
-		ust::stderr_print( ust::concat( "Failed to read! Error: ", ust::enum_to_string( e ), "!\n" ) );
-		return ust::null_optional;
-	}
-
-	result.structs1.resize( size_type( header.num_structs1 ), ust::make_zeroed</ZmapLamStruct1/>() );
-
-	if_var( e :
-		f.read_exact(
-			unsafe( ust::array_view_mut</byte8/>(
-				ust::ptr_cast_to_byte8( result.structs1.data() ),
-				result.structs1.size() * typeinfo</ZmapLamStruct1/>.size_of ) ) ).as_error_ref() )
-	{
-		ust::stderr_print( ust::concat( "Failed to read! Error: ", ust::enum_to_string( e ), "!\n" ) );
-		return ust::null_optional;
-	}
-
-	result.structs2.resize( size_type( header.num_structs2 ), ust::make_zeroed</ZmapLamStruct2/>() );
-
-	if_var( e :
-		f.read_exact(
-			unsafe( ust::array_view_mut</byte8/>(
-				ust::ptr_cast_to_byte8( result.structs2.data() ),
-				result.structs2.size() * typeinfo</ZmapLamStruct2/>.size_of ) ) ).as_error_ref() )
-	{
-		ust::stderr_print( ust::concat( "Failed to read! Error: ", ust::enum_to_string( e ), "!\n" ) );
-		return ust::null_optional;
-	}
-
-	// There is some data still left - at least several kilobytes. It's at least one more block.
-
-	if( false )
-	{
-		var [ i32, 2 ] mut mins[ 0x7FFFFFFF, 0x7FFFFFFF ], mut maxs[ -0x7FFFFFFF, -0x7FFFFFFF ];
-		foreach( &s : result.structs0 )
-		{
-			ust::min_assign( mins[0], s.data[0] );
-			ust::max_assign( maxs[0], s.data[0] );
-			ust::min_assign( mins[1], s.data[1] );
-			ust::max_assign( maxs[1], s.data[1] );
-		}
-
-		ust::stdout_print( ust::concat( "ZMAP*.LAM fields 0 are in range ", ust::to_string8(mins[0]), " to ", ust::to_string8(maxs[0]), "\n" ) );
-		ust::stdout_print( ust::concat( "ZMAP*.LAM fields 1 are in range ", ust::to_string8(mins[1]), " to ", ust::to_string8(maxs[1]), "\n" ) );
-	}
-	if( false )
-	{
-		var i32 mut min_index= 0x7FFFFFFF;
-		var i32 mut max_index= -0x7FFFFFFF;
-		var ust::hash_set</i32/> mut unique_values;
-		foreach( &s : result.structs1 )
-		{
-			ust::min_assign( min_index, i32(s.data[1]) );
-			ust::max_assign( max_index, i32(s.data[1]) );
-			unique_values.insert( i32(s.data[1]) );
-		}
-
-		ust::stdout_print( ust::concat( "ZMAP*.LAM structs1 are in range ", ust::to_string8(min_index), " to ", ust::to_string8(max_index), "\n" ) );
-		ust::stdout_print( ust::concat( "ZMAP*.LAM structs1 num unique values: ", ust::to_string8(unique_values.size()), "\n" ) );
-	}
-
-	if( false )
-	{
-		ust::stdout_print( "Per-quad ZMAP*.LAM ranges: \n" );
-		foreach( &s : result.structs0 )
-		{
-			ust::stdout_print( ust::concat( "( ", ust::to_string8(s.data[0] ), ", ", ust::to_string8( s.data[1] ),  " );\n" ) );
-		}
-		ust::stdout_print( "\n" );
-
-		ust::stdout_print( "Per-quad ZMAP*.LAM data: \n" );
-		foreach( &s : result.structs0 )
-		{
-			var size_type count( s.data[1] );
-			var size_type offset( s.data[0] );
-
-			var ust::string8 mut str;
-			str+= "( ";
-			for( auto mut i= 0s; i < count; ++i )
-			{
-				str+= ust::to_string8( u32( result.structs1[ offset + i ].data[1] ) );
-				str+= ", ";
-			}
-			str+= ");\n";
-			ust::stdout_print( str );
-
-		}
-		ust::stdout_print( "\n" );
-	}
-
-	if( false )
-	{
-		var [ i32, 16 ] mut mins= zero_init;
-		var [ i32, 16 ] mut maxs= zero_init;
-		for( auto mut i= 0s; i < 16s; ++i )
-		{
-			mins[i]= 0x7FFFFFFF;
-			maxs[i]= -0x7FFFFFFF;
-		}
-
-		foreach( &s : result.structs2 )
-		{
-			for( auto mut i= 0s; i < 16s; ++i )
-			{
-				ust::min_assign( mins[i], s.data[i] );
-				ust::max_assign( maxs[i], s.data[i] );
-			}
-		}
-
-		for( auto mut i= 0s; i < 16s; ++i )
-		{
-			ust::stdout_print( ust::concat( "ZMAP*.LAM structs2 field ", ust::to_string8(i), " is in range ", ust::to_string8(mins[i]), " to ", ust::to_string8(maxs[i]), "\n" ) );
-		}
-	}
-
-	return result;
-}
-
-fn LoadZmapLemFile( ust::filesystem_path_view file_path ) : ust::optional</ZmapLemData/>
-{
-	result_match( ust::file_readable::open( file_path ) )
-	{
-		Ok( mut f ) -> { return LoadZmapLemFile( move(f) ); },
-		Err(e) ->
-		{
-			ust::stderr_print( ust::concat( "Error opening file: ", ust::enum_to_string( e ), "\n" ) );
-			return ust::null_optional;
-		}
-	}
-}
-
-fn LoadZmapLemFile( ust::file_readable mut f ) : ust::optional</ZmapLemData/>
-{
-	var ZmapLemHeader mut header= zero_init;
-
-	if_var( e :
-		f.read_exact(
-			unsafe( ust::array_view_mut</byte8/>(
-				ust::ptr_cast_to_byte8( $<(header) ),
-				 typeinfo</ZPozFileHeader/>.size_of ) ) ).as_error_ref() )
-	{
-		ust::stderr_print( ust::concat( "Error reading map file: ", ust::enum_to_string( e ), "\n" ) );
-		return ust::null_optional;
-	}
-
-	{
-		var ust::string8 mut m;
-		m+= "ZMAP*.LEM header nums: ";
-		m+= ust::to_string8( header.num0 );
-		m+= ", ";
-		m+= ust::to_string8( header.num_clusters );
-		m+= ", ";
-		m+= ust::to_string8( header.num2 );
-		m+= ", ";
-		m+= ust::to_string8( header.num3 );
-		m+= ", ";
-		m+= ust::to_string8( header.num4 );
-		m+= ", ";
-		m+= ust::to_string8( header.num5 );
-		m+= ", ";
-		m+= ust::to_string8( header.num6 );
-		m+= ", ";
-		m+= ust::to_string8( header.num7 );
-		m+= "\n";
-		ust::stdout_print( m );
-	}
-
-	var ZmapLemData mut result;
-
-	result.clusters_sky_visibility_data.resize( size_type( header.num_clusters ), ust::make_zeroed</ZmapLemClusterSkyVisibilityData/>() );
-
-	if_var( e :
-		f.read_exact(
-			unsafe( ust::array_view_mut</byte8/>(
-				ust::ptr_cast_to_byte8( result.clusters_sky_visibility_data.data() ),
-				result.clusters_sky_visibility_data.size() * typeinfo</ZmapLemClusterSkyVisibilityData/>.size_of ) ) ).as_error_ref() )
-	{
-		ust::stderr_print( ust::concat( "Failed to read! Error: ", ust::enum_to_string( e ), "!\n" ) );
-		return ust::null_optional;
-	}
-
-	if( false )
-	{
-		for( auto mut field_index= 0s; field_index < 64s; ++field_index )
-		{
-			var u32 mut min_value= 0u, mut max_value= 0xFFFFFFFFu;
-			var ust::hash_set</u32/> mut present_values;
-			foreach( &s : result.clusters_sky_visibility_data )
-			{
-				ust::min_assign( min_value, s.data[field_index] );
-				ust::max_assign( max_value, s.data[field_index] );
-				present_values.insert( s.data[field_index] );
-			}
-			ust::stdout_print( ust::concat( "ZMAP*.LEM cluster data field ", ust::to_string8( field_index ), " min/max values are ", ust::to_string8( min_value ), " and ", ust::to_string8( max_value ), "\n" ) );
-
-			var ust::string8 mut s;
-			s+= "Present values: ";
-			foreach( v : present_values )
-			{
-				s+= ust::to_string8(v);
-				s+= " ";
-			}
-			s+= "\n";
-			ust::stdout_print(s);
-		}
-	}
-
-	return result;
 }
 
 fn ConvertToUppercase( ust::string_view8 s ) : ust::string8

@@ -1,0 +1,535 @@
+import "/enum_string_conversions.u"
+import "/file.u"
+import "/stdout.u"
+import "/string.u"
+import "/string_conversions.u"
+import "map_loading.uh"
+
+namespace PM
+{
+
+fn LoadMap(
+	ust::filesystem_path_view zmap_file_path,
+	ust::filesystem_path_view zvox_file_path,
+	ust::filesystem_path_view zpoz_file_path,
+	ust::filesystem_path_view zmap_lam_file_path,
+	ust::filesystem_path_view zmap_lem_file_path ) : ust::optional</MapData/>
+{
+	auto mut zmap_data= LoadZmapFile( zmap_file_path );
+	auto mut zvox_data= LoadZvoxFile( zvox_file_path );
+	auto mut zpoz_data= LoadZpozFile( zpoz_file_path );
+	auto mut zmap_lam_data= LoadZmapLamFile( zmap_lam_file_path );
+	auto mut zmap_lem_data= LoadZmapLemFile( zmap_lem_file_path );
+
+	if( zmap_data.empty() ||
+		zvox_data.empty() ||
+		zpoz_data.empty() ||
+		zmap_lam_data.empty() ||
+		zmap_lem_data.empty() )
+	{
+		return ust::null_optional;
+	}
+
+	return MapData
+	{
+		.zmap= zmap_data.try_take(),
+		.zvox= zvox_data.try_take(),
+		.zpoz= zpoz_data.try_take(),
+		.zmap_lam= zmap_lam_data.try_take(),
+		.zmap_lem= zmap_lem_data.try_take(),
+	};
+}
+
+fn LoadZmapFile( ust::filesystem_path_view file_path ) : ust::optional</ZmapData/>
+{
+	result_match( ust::file_readable::open( file_path ) )
+	{
+		Ok( mut f ) -> { return LoadZmapFile( move(f) ); },
+		Err(e) ->
+		{
+			ust::stderr_print( ust::concat( "Error opening file: ", ust::enum_to_string( e ), "\n" ) );
+			return ust::null_optional;
+		}
+	}
+}
+
+fn LoadZmapFile( ust::file_readable mut f ) : ust::optional</ZmapData/>
+{
+	var ZMapFileHeader mut header= zero_init;
+
+	if_var( e :
+		f.read_exact(
+			unsafe( ust::array_view_mut</byte8/>(
+				ust::ptr_cast_to_byte8( $<(header) ),
+				 typeinfo</ZMapFileHeader/>.size_of ) ) ).as_error_ref() )
+	{
+		ust::stderr_print( ust::concat( "Error reading map file: ", ust::enum_to_string( e ), "\n" ) );
+		return ust::null_optional;
+	}
+
+	if( header.signature != ZMapFileHeader::c_expected_signature )
+	{
+		ust::stderr_print( ust::concat( "Unexpected file signature \"", header.signature, "\"!" ) );
+		return ust::null_optional;
+	}
+
+	{
+		var ust::string8 mut m;
+		m+= "ZMAP header nums: ";
+		m+= ust::to_string8( header.num_quads );
+		m+= ", ";
+		m+= ust::to_string8( header.presumable_some_other_num );
+		m+= ", ";
+		m+= ust::to_string8( header.data[0] );
+		m+= ", ";
+		m+= ust::to_string8( header.data[1] );
+		m+= ", ";
+		m+= ust::to_string8( header.data[2] );
+		m+= ", ";
+		m+= ust::to_string8( header.data[3] );
+		m+= "\n";
+		ust::stdout_print( m );
+	}
+
+	var ZmapData mut result;
+
+	result.quads.resize( size_type( header.num_quads ), ust::make_zeroed</ZmapQuad/>() );
+
+	if_var( e :
+		f.read_exact(
+			unsafe( ust::array_view_mut</byte8/>(
+				ust::ptr_cast_to_byte8( result.quads.data() ),
+				result.quads.size() * typeinfo</ZmapQuad/>.size_of ) ) ).as_error_ref() )
+	{
+		ust::stderr_print( ust::concat( "Failed to read! Error: ", ust::enum_to_string( e ), ", \n" ) );
+		return ust::null_optional;
+	}
+
+	return result;
+}
+
+fn LoadZvoxFile( ust::filesystem_path_view file_path ) : ust::optional</ZvoxData/>
+{
+	result_match( ust::file_readable::open( file_path ) )
+	{
+		Ok( mut f ) -> { return LoadZvoxFile( move(f) ); },
+		Err(e) ->
+		{
+			ust::stderr_print( ust::concat( "Error opening file: ", ust::enum_to_string( e ), "\n" ) );
+			return ust::null_optional;
+		}
+	}
+}
+
+fn LoadZvoxFile( ust::file_readable mut f ) : ust::optional</ZvoxData/>
+{
+	var ZVoxFileHeader mut header= zero_init;
+
+	if_var( e :
+		f.read_exact(
+			unsafe( ust::array_view_mut</byte8/>(
+				ust::ptr_cast_to_byte8( $<(header) ),
+				 typeinfo</ZVoxFileHeader/>.size_of ) ) ).as_error_ref() )
+	{
+		ust::stderr_print( ust::concat( "Error reading map file: ", ust::enum_to_string( e ), "\n" ) );
+		return ust::null_optional;
+	}
+
+	if( header.signature != ZVoxFileHeader::c_expected_signature )
+	{
+		ust::stderr_print( ust::concat( "Unexpected file signature \"", header.signature, "\"!" ) );
+		return ust::null_optional;
+	}
+
+	{
+		var ust::string8 mut m;
+		m+= "ZVOX header nums: ";
+		m+= ust::to_string8( header.num_clusters );
+		m+= ", ";
+		m+= ust::to_string8( header.num_structs0 );
+		m+= ", ";
+		m+= ust::to_string8( header.num_light_sources );
+		m+= ", ";
+		m+= ust::to_string8( header.num3 );
+		m+= ", ";
+		m+= ust::to_string8( header.num4 );
+		m+= ", ";
+		m+= ust::to_string8( header.num5 );
+		m+= "\n";
+		ust::stdout_print( m );
+	}
+
+	var ZvoxData mut result;
+
+	result.structs0.resize( size_type( header.num4 ), ust::make_zeroed</ZvoxStruct0/>() );
+
+	if_var( e :
+		f.read_exact(
+			unsafe( ust::array_view_mut</byte8/>(
+				ust::ptr_cast_to_byte8( result.structs0.data() ),
+				result.structs0.size() * typeinfo</ZvoxStruct0/>.size_of ) ) ).as_error_ref() )
+	{
+		ust::stderr_print( ust::concat( "Failed to read! Error: ", ust::enum_to_string( e ), "!\n" ) );
+		return ust::null_optional;
+	}
+
+	result.structs1.resize( size_type( header.num3 ), ust::make_zeroed</ZvoxStruct1/>() );
+
+	if_var( e :
+		f.read_exact(
+			unsafe( ust::array_view_mut</byte8/>(
+				ust::ptr_cast_to_byte8( result.structs1.data() ),
+				result.structs1.size() * typeinfo</ZvoxStruct1/>.size_of ) ) ).as_error_ref() )
+	{
+		ust::stderr_print( ust::concat( "Failed to read! Error: ", ust::enum_to_string( e ), "!\n" ) );
+		return ust::null_optional;
+	}
+
+	result.clusters.resize( size_type( header.num_clusters ), ust::make_zeroed</ZvoxCluster/>() );
+
+	if_var( e :
+		f.read_exact(
+			unsafe( ust::array_view_mut</byte8/>(
+				ust::ptr_cast_to_byte8( result.clusters.data() ),
+				result.clusters.size() * typeinfo</ZvoxCluster/>.size_of ) ) ).as_error_ref() )
+	{
+		ust::stderr_print( ust::concat( "Failed to read! Error: ", ust::enum_to_string( e ), "!\n" ) );
+		return ust::null_optional;
+	}
+
+	result.light_sources.resize( size_type( header.num_light_sources ), ust::make_zeroed</ZvoxLightSource/>() );
+
+	if_var( e :
+		f.read_exact(
+			unsafe( ust::array_view_mut</byte8/>(
+				ust::ptr_cast_to_byte8( result.light_sources.data() ),
+				result.light_sources.size() * typeinfo</ZvoxLightSource/>.size_of ) ) ).as_error_ref() )
+	{
+		ust::stderr_print( ust::concat( "Failed to read! Error: ", ust::enum_to_string( e ), "!\n" ) );
+		return ust::null_optional;
+	}
+
+	// There is at least one more data block left in this file, which size and meaning isn't known yet.
+	// But it is filled with zeros, at least in some cases.
+
+	return result;
+}
+
+fn LoadZpozFile( ust::filesystem_path_view file_path ) : ust::optional</ZpozData/>
+{
+	result_match( ust::file_readable::open( file_path ) )
+	{
+		Ok( mut f ) -> { return LoadZpozFile( move(f) ); },
+		Err(e) ->
+		{
+			ust::stderr_print( ust::concat( "Error opening file: ", ust::enum_to_string( e ), "\n" ) );
+			return ust::null_optional;
+		}
+	}
+}
+
+fn LoadZpozFile( ust::file_readable mut f ) : ust::optional</ZpozData/>
+{
+	var ZPozFileHeader mut header= zero_init;
+
+	if_var( e :
+		f.read_exact(
+			unsafe( ust::array_view_mut</byte8/>(
+				ust::ptr_cast_to_byte8( $<(header) ),
+				 typeinfo</ZPozFileHeader/>.size_of ) ) ).as_error_ref() )
+	{
+		ust::stderr_print( ust::concat( "Error reading map file: ", ust::enum_to_string( e ), "\n" ) );
+		return ust::null_optional;
+	}
+
+	if( header.signature != ZPozFileHeader::c_expected_signature )
+	{
+		ust::stderr_print( ust::concat( "Unexpected file signature \"", header.signature, "\"!" ) );
+		return ust::null_optional;
+	}
+
+	var u64 mut file_size(0);
+	result_match( f.get_metatada() )
+	{
+		Ok(m) -> { file_size= m.size; },
+		Err(e) ->
+		{
+			ust::stderr_print( ust::concat( "Error getting archive file size: ", ust::enum_to_string( e ), "\n" ) );
+			return ust::null_optional;
+		}
+	}
+
+	{
+		var ust::string8 mut m;
+		m+= "ZPOZ header nums: ";
+		m+= ust::to_string8( header.num_entities );
+		m+= ", ";
+		m+= ust::to_string8( header.num_structs1 );
+		m+= ", ";
+		m+= ust::to_string8( header.data[0] );
+		m+= ", ";
+		m+= ust::to_string8( header.data[1] );
+		m+= ", ";
+		m+= ust::to_string8( header.data[2] );
+		m+= ", ";
+		m+= ust::to_string8( header.data[3] );
+		m+= "\n";
+		ust::stdout_print( m );
+	}
+
+	var ZpozData mut result;
+
+	result.entities.resize( size_type( header.num_entities ), ust::make_zeroed</ZpozEntity/>() );
+
+	if_var( e :
+		f.read_exact(
+			unsafe( ust::array_view_mut</byte8/>(
+				ust::ptr_cast_to_byte8( result.entities.data() ),
+				result.entities.size() * typeinfo</ZpozEntity/>.size_of ) ) ).as_error_ref() )
+	{
+		ust::stderr_print( ust::concat( "Failed to read! Error: ", ust::enum_to_string( e ), "!\n" ) );
+		return ust::null_optional;
+	}
+
+	result.structs1.resize( size_type( header.num_structs1 ), ust::make_zeroed</ZpozStruct1/>() );
+
+	if_var( e :
+		f.read_exact(
+			unsafe( ust::array_view_mut</byte8/>(
+				ust::ptr_cast_to_byte8( result.structs1.data() ),
+				result.structs1.size() * typeinfo</ZpozStruct1/>.size_of ) ) ).as_error_ref() )
+	{
+		ust::stderr_print( ust::concat( "Failed to read! Error: ", ust::enum_to_string( e ), "!\n" ) );
+		return ust::null_optional;
+	}
+
+	var ZPozIntermediateHeader mut intermediate_header= zero_init;
+
+	if_var( e :
+		f.read_exact(
+			unsafe( ust::array_view_mut</byte8/>(
+				ust::ptr_cast_to_byte8( $<(intermediate_header) ),
+				 typeinfo</ZPozIntermediateHeader/>.size_of ) ) ).as_error_ref() )
+	{
+		ust::stderr_print( ust::concat( "Error reading map file: ", ust::enum_to_string( e ), "\n" ) );
+		return ust::null_optional;
+	}
+
+	{
+		var ust::string8 mut m;
+		m+= "ZPOZ intermediate header nums: ";
+		m+= ust::to_string8( intermediate_header.num0 );
+		m+= ", ";
+		m+= ust::to_string8( intermediate_header.num_visibility_info_ints );
+		m+= ", ";
+		m+= ust::to_string8( intermediate_header.num_clusters );
+		m+= ", ";
+		m+= ust::to_string8( intermediate_header.num2 );
+		m+= "\n";
+		ust::stdout_print( m );
+	}
+
+	result.clusters.resize( size_type( intermediate_header.num_clusters ), ust::make_zeroed</ZpozCluster/>() );
+
+	if_var( e :
+		f.read_exact(
+			unsafe( ust::array_view_mut</byte8/>(
+				ust::ptr_cast_to_byte8( result.clusters.data() ),
+				result.clusters.size() * typeinfo</ZpozCluster/>.size_of ) ) ).as_error_ref() )
+	{
+		ust::stderr_print( ust::concat( "Failed to read! Error: ", ust::enum_to_string( e ), "!\n" ) );
+		return ust::null_optional;
+	}
+
+	result.clusters_visibility_data.resize( size_type( intermediate_header.num_clusters ), ust::make_zeroed</ZpozClusterVisibilityData/>() );
+
+	if_var( e :
+		f.read_exact(
+			unsafe( ust::array_view_mut</byte8/>(
+				ust::ptr_cast_to_byte8( result.clusters_visibility_data.data() ),
+				result.clusters_visibility_data.size() * typeinfo</ZpozClusterVisibilityData/>.size_of ) ) ).as_error_ref() )
+	{
+		ust::stderr_print( ust::concat( "Failed to read! Error: ", ust::enum_to_string( e ), "!\n" ) );
+		return ust::null_optional;
+	}
+
+	{
+		var size_type num_cluster_indices=
+			size_type( intermediate_header.num_visibility_info_ints ) -
+			size_type( intermediate_header.num_clusters ) * ( typeinfo</ZpozClusterVisibilityData/>.size_of / typeinfo</u32/>.size_of );
+
+		result.cluster_indices.resize( num_cluster_indices, ust::make_zeroed</ZPozClusterIndex/>() );
+
+		if_var( e :
+			f.read_exact(
+				unsafe( ust::array_view_mut</byte8/>(
+					ust::ptr_cast_to_byte8( result.cluster_indices.data() ),
+					result.cluster_indices.size() * typeinfo</ZPozClusterIndex/>.size_of ) ) ).as_error_ref() )
+		{
+			ust::stderr_print( ust::concat( "Failed to read! Error: ", ust::enum_to_string( e ), "!\n" ) );
+			return ust::null_optional;
+		}
+	}
+
+	return result;
+}
+
+fn LoadZmapLamFile( ust::filesystem_path_view file_path ) : ust::optional</ZmapLamData/>
+{
+	result_match( ust::file_readable::open( file_path ) )
+	{
+		Ok( mut f ) -> { return LoadZmapLamFile( move(f) ); },
+		Err(e) ->
+		{
+			ust::stderr_print( ust::concat( "Error opening file: ", ust::enum_to_string( e ), "\n" ) );
+			return ust::null_optional;
+		}
+	}
+}
+
+fn LoadZmapLamFile( ust::file_readable mut f ) : ust::optional</ZmapLamData/>
+{
+	var ZmapLamHeader mut header= zero_init;
+
+	if_var( e :
+		f.read_exact(
+			unsafe( ust::array_view_mut</byte8/>(
+				ust::ptr_cast_to_byte8( $<(header) ),
+				 typeinfo</ZPozFileHeader/>.size_of ) ) ).as_error_ref() )
+	{
+		ust::stderr_print( ust::concat( "Error reading map file: ", ust::enum_to_string( e ), "\n" ) );
+		return ust::null_optional;
+	}
+
+	{
+		var ust::string8 mut m;
+		m+= "ZMAP*.LAM header nums: ";
+		m+= ust::to_string8( header.num0 );
+		m+= ", ";
+		m+= ust::to_string8( header.num_structs0 );
+		m+= ", ";
+		m+= ust::to_string8( header.num_structs1 );
+		m+= ", ";
+		m+= ust::to_string8( header.num3 );
+		m+= ", ";
+		m+= ust::to_string8( header.num4 );
+		m+= ", ";
+		m+= ust::to_string8( header.num_structs2 );
+		m+= ", ";
+		m+= ust::to_string8( header.num6 );
+		m+= ", ";
+		m+= ust::to_string8( header.num7 );
+		m+= "\n";
+		ust::stdout_print( m );
+	}
+
+	var ZmapLamData mut result;
+
+	result.structs0.resize( size_type( header.num_structs0 ), ust::make_zeroed</ZmapLamStruct0/>() );
+
+	if_var( e :
+		f.read_exact(
+			unsafe( ust::array_view_mut</byte8/>(
+				ust::ptr_cast_to_byte8( result.structs0.data() ),
+				result.structs0.size() * typeinfo</ZmapLamStruct0/>.size_of ) ) ).as_error_ref() )
+	{
+		ust::stderr_print( ust::concat( "Failed to read! Error: ", ust::enum_to_string( e ), "!\n" ) );
+		return ust::null_optional;
+	}
+
+	result.structs1.resize( size_type( header.num_structs1 ), ust::make_zeroed</ZmapLamStruct1/>() );
+
+	if_var( e :
+		f.read_exact(
+			unsafe( ust::array_view_mut</byte8/>(
+				ust::ptr_cast_to_byte8( result.structs1.data() ),
+				result.structs1.size() * typeinfo</ZmapLamStruct1/>.size_of ) ) ).as_error_ref() )
+	{
+		ust::stderr_print( ust::concat( "Failed to read! Error: ", ust::enum_to_string( e ), "!\n" ) );
+		return ust::null_optional;
+	}
+
+	result.structs2.resize( size_type( header.num_structs2 ), ust::make_zeroed</ZmapLamStruct2/>() );
+
+	if_var( e :
+		f.read_exact(
+			unsafe( ust::array_view_mut</byte8/>(
+				ust::ptr_cast_to_byte8( result.structs2.data() ),
+				result.structs2.size() * typeinfo</ZmapLamStruct2/>.size_of ) ) ).as_error_ref() )
+	{
+		ust::stderr_print( ust::concat( "Failed to read! Error: ", ust::enum_to_string( e ), "!\n" ) );
+		return ust::null_optional;
+	}
+
+	// There is some data still left - at least several kilobytes. It's at least one more block.
+
+	return result;
+}
+
+fn LoadZmapLemFile( ust::filesystem_path_view file_path ) : ust::optional</ZmapLemData/>
+{
+	result_match( ust::file_readable::open( file_path ) )
+	{
+		Ok( mut f ) -> { return LoadZmapLemFile( move(f) ); },
+		Err(e) ->
+		{
+			ust::stderr_print( ust::concat( "Error opening file: ", ust::enum_to_string( e ), "\n" ) );
+			return ust::null_optional;
+		}
+	}
+}
+
+fn LoadZmapLemFile( ust::file_readable mut f ) : ust::optional</ZmapLemData/>
+{
+	var ZmapLemHeader mut header= zero_init;
+
+	if_var( e :
+		f.read_exact(
+			unsafe( ust::array_view_mut</byte8/>(
+				ust::ptr_cast_to_byte8( $<(header) ),
+				 typeinfo</ZPozFileHeader/>.size_of ) ) ).as_error_ref() )
+	{
+		ust::stderr_print( ust::concat( "Error reading map file: ", ust::enum_to_string( e ), "\n" ) );
+		return ust::null_optional;
+	}
+
+	{
+		var ust::string8 mut m;
+		m+= "ZMAP*.LEM header nums: ";
+		m+= ust::to_string8( header.num0 );
+		m+= ", ";
+		m+= ust::to_string8( header.num_clusters );
+		m+= ", ";
+		m+= ust::to_string8( header.num2 );
+		m+= ", ";
+		m+= ust::to_string8( header.num3 );
+		m+= ", ";
+		m+= ust::to_string8( header.num4 );
+		m+= ", ";
+		m+= ust::to_string8( header.num5 );
+		m+= ", ";
+		m+= ust::to_string8( header.num6 );
+		m+= ", ";
+		m+= ust::to_string8( header.num7 );
+		m+= "\n";
+		ust::stdout_print( m );
+	}
+
+	var ZmapLemData mut result;
+
+	result.clusters_sky_visibility_data.resize( size_type( header.num_clusters ), ust::make_zeroed</ZmapLemClusterSkyVisibilityData/>() );
+
+	if_var( e :
+		f.read_exact(
+			unsafe( ust::array_view_mut</byte8/>(
+				ust::ptr_cast_to_byte8( result.clusters_sky_visibility_data.data() ),
+				result.clusters_sky_visibility_data.size() * typeinfo</ZmapLemClusterSkyVisibilityData/>.size_of ) ) ).as_error_ref() )
+	{
+		ust::stderr_print( ust::concat( "Failed to read! Error: ", ust::enum_to_string( e ), "!\n" ) );
+		return ust::null_optional;
+	}
+
+	return result;
+}
+
+} // namespace PM
