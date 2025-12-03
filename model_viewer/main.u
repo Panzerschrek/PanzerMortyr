@@ -154,8 +154,6 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 
 	unsafe( UploadMesh( $<(mesh), false ) );
 
-	var Material mut material= unsafe( LoadMaterialDefault() );
-
 	auto mut model_file_contents= ust::read_file_to_byte8_vector( model_file_path ).try_take();
 	var size_type width= 512s;
 	var size_type size_corrected= ( model_file_contents.size() + ( width - 1s ) ) / width * width;
@@ -172,33 +170,72 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 
 	var Texture model_raw_data_texture= unsafe( LoadTextureFromImage( zmap_lam_image ) );
 
-	var size_type texture_size= 256s;
-	scoped_array u8 mut texture_data_rgb[ texture_size * texture_size * 3s ]( 0u8 );
+	var [ Material, 4 ] mut materials= zero_init;
 
+	for( auto mut i= 0s; i < 3s; ++i )
 	{
-		var TextureData& hd_texture_data= model.hd_textures[0];
+		var size_type texture_size= 256s;
+		scoped_array u8 mut texture_data_rgb[ texture_size * texture_size * 3s ]( 0u8 );
+
+		var TextureData& src_texture_data= model.hd_textures[i];
 
 		for( auto mut i= 0s; i < texture_size * texture_size; ++i )
 		{
-			var size_type index( hd_texture_data.data[ i ] );
-			texture_data_rgb[ i * 3s + 0s ]= hd_texture_data.palette[ index * 3s + 2s ];
-			texture_data_rgb[ i * 3s + 1s ]= hd_texture_data.palette[ index * 3s + 1s ];
-			texture_data_rgb[ i * 3s + 2s ]= hd_texture_data.palette[ index * 3s + 0s ];
+			var size_type index( src_texture_data.data[ i ] );
+			texture_data_rgb[ i * 3s + 0s ]= src_texture_data.palette[ index * 3s + 2s ];
+			texture_data_rgb[ i * 3s + 1s ]= src_texture_data.palette[ index * 3s + 1s ];
+			texture_data_rgb[ i * 3s + 2s ]= src_texture_data.palette[ index * 3s + 0s ];
 		}
+
+		var Image texture_image
+		{
+			.data= unsafe( ust::ptr_cast_to_byte8( texture_data_rgb.data() ) ),
+			.mipmaps= 1,
+			.width(texture_size),
+			.height(texture_size),
+			.format( PIXELFORMAT_UNCOMPRESSED_R8G8B8 ),
+		};
+
+		var Texture texture= unsafe( LoadTextureFromImage( texture_image ) );
+
+		var Material material= unsafe( LoadMaterialDefault() );
+
+		unsafe{ $>( material.maps ).texture = texture; }
+
+		materials[i]= material;
 	}
 
-	var Image texture_image
 	{
-		.data= unsafe( ust::ptr_cast_to_byte8( texture_data_rgb.data() ) ),
-		.mipmaps= 1,
-		.width(texture_size),
-		.height(texture_size),
-		.format( PIXELFORMAT_UNCOMPRESSED_R8G8B8 ),
-	};
+		var size_type texture_size= 128s;
+		scoped_array u8 mut texture_data_rgb[ texture_size * texture_size * 3s ]( 0u8 );
 
-	var Texture texture= unsafe( LoadTextureFromImage( texture_image ) );
+		var TextureData& src_texture_data= model.ld_texture;
 
-	unsafe{ $>( material.maps ).texture = texture; }
+		for( auto mut i= 0s; i < texture_size * texture_size; ++i )
+		{
+			var size_type index( src_texture_data.data[ i ] );
+			texture_data_rgb[ i * 3s + 0s ]= src_texture_data.palette[ index * 3s + 2s ];
+			texture_data_rgb[ i * 3s + 1s ]= src_texture_data.palette[ index * 3s + 1s ];
+			texture_data_rgb[ i * 3s + 2s ]= src_texture_data.palette[ index * 3s + 0s ];
+		}
+
+		var Image texture_image
+		{
+			.data= unsafe( ust::ptr_cast_to_byte8( texture_data_rgb.data() ) ),
+			.mipmaps= 1,
+			.width(texture_size),
+			.height(texture_size),
+			.format( PIXELFORMAT_UNCOMPRESSED_R8G8B8 ),
+		};
+
+		var Texture texture= unsafe( LoadTextureFromImage( texture_image ) );
+
+		var Material material= unsafe( LoadMaterialDefault() );
+
+		unsafe{ $>( material.maps ).texture = texture; }
+
+		materials[3]= material;
+	}
 
 	var Camera3D mut camera
 	{
@@ -210,6 +247,8 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 	};
 
 	var size_type mut offset= 0s;
+
+	var size_type mut material_index= 0s;
 
 	var bool mut is_simple_mode= false;
 
@@ -226,6 +265,10 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 		if( unsafe( IsKeyPressed( i32( 'M' ) ) ) )
 		{
 			is_simple_mode = !is_simple_mode;
+		}
+		if( unsafe( IsKeyPressed( i32( 'T' ) ) ) )
+		{
+			++material_index;
 		}
 
 		unsafe( BeginDrawing() );
@@ -277,7 +320,7 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 					matrix.m10= -scale; // The original game seems to use Z down coordinate system. Flip it to be order to be displayed in OpenGL.
 					matrix.m15= 1.0f;
 
-					unsafe( DrawMesh( mesh, material, matrix ) );
+					unsafe( DrawMesh( mesh, materials[ material_index % 4s ], matrix ) );
 				}
 			}
 			unsafe( EndMode3D() );
