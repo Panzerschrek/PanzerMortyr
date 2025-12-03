@@ -2,6 +2,7 @@ import "/enum_string_conversions.u"
 import "/file.u"
 import "/file_helpers.u"
 import "/main_wrapper.u"
+import "/scoped_array.u"
 import "/stdout.u"
 import "/string_conversions.u"
 
@@ -171,13 +172,28 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 
 	var Texture model_raw_data_texture= unsafe( LoadTextureFromImage( zmap_lam_image ) );
 
+	var size_type texture_size= 256s;
+	scoped_array u8 mut texture_data_rgb[ texture_size * texture_size * 3s ]( 0u8 );
+
+	{
+		var TextureData& hd_texture_data= model.hd_textures[0];
+
+		for( auto mut i= 0s; i < texture_size * texture_size; ++i )
+		{
+			var size_type index( hd_texture_data.data[ i ] );
+			texture_data_rgb[ i * 3s + 0s ]= hd_texture_data.palette[ index * 3s + 2s ];
+			texture_data_rgb[ i * 3s + 1s ]= hd_texture_data.palette[ index * 3s + 1s ];
+			texture_data_rgb[ i * 3s + 2s ]= hd_texture_data.palette[ index * 3s + 0s ];
+		}
+	}
+
 	var Image texture_image
 	{
-		.data= unsafe( ust::ptr_cast_to_byte8( cast_mut( model.hd_textures[2].data ).data() ) ),
+		.data= unsafe( ust::ptr_cast_to_byte8( texture_data_rgb.data() ) ),
 		.mipmaps= 1,
-		.width(256),
-		.height(256),
-		.format( PIXELFORMAT_UNCOMPRESSED_GRAYSCALE ),
+		.width(texture_size),
+		.height(texture_size),
+		.format( PIXELFORMAT_UNCOMPRESSED_R8G8B8 ),
 	};
 
 	var Texture texture= unsafe( LoadTextureFromImage( texture_image ) );
@@ -282,14 +298,17 @@ struct ModelData
 	ust::vector</ObbVertexTextureCoordinates/> texture_coordinates;
 	ust::vector</ObbVertexPosition/> vertices;
 	ust::vector</ObbStruct3/> structs3;
-	ust::vector</u8/> texture_data0;
-	[ HdTextureData, 3 ] hd_textures;
+
+	TextureData ld_texture;
+
+	// They are identical or almost identical.
+	[ TextureData, 3 ] hd_textures;
 }
 
-struct HdTextureData
+struct TextureData
 {
-	[ u8, 768  ] palette= zero_init;
 	ust::vector</u8/> data;
+	[ u8, 768 ] palette= zero_init;
 }
 
 fn LoadModel( ust::filesystem_path_view file_path ) : ust::optional</ModelData/>
@@ -403,13 +422,23 @@ fn LoadModel( ust::file_readable mut f ) : ust::optional</ModelData/>
 		return ust::null_optional;
 	}
 
-	result.texture_data0.resize( 128s * 128s, 0u8 );
+	result.ld_texture.data.resize( 128s * 128s, 0u8 );
 
 	if_var( e :
 		f.read_exact(
 			unsafe( ust::array_view_mut</byte8/>(
-				ust::ptr_cast_to_byte8( result.texture_data0.data() ),
-				result.texture_data0.size() * typeinfo</u8/>.size_of ) ) ).as_error_ref() )
+				ust::ptr_cast_to_byte8( result.ld_texture.data.data() ),
+				result.ld_texture.data.size() * typeinfo</u8/>.size_of ) ) ).as_error_ref() )
+	{
+		ust::stderr_print( ust::concat( "Failed to read! Error: ", ust::enum_to_string( e ), "\n" ) );
+		return ust::null_optional;
+	}
+
+	if_var( e :
+		f.read_exact(
+			unsafe( ust::array_view_mut</byte8/>(
+				ust::ptr_cast_to_byte8( $<( result.ld_texture.palette ) ),
+				typeinfo</ typeof( result.ld_texture.palette ) />.size_of ) ) ).as_error_ref() )
 	{
 		ust::stderr_print( ust::concat( "Failed to read! Error: ", ust::enum_to_string( e ), "\n" ) );
 		return ust::null_optional;
@@ -417,7 +446,19 @@ fn LoadModel( ust::file_readable mut f ) : ust::optional</ModelData/>
 
 	for( auto mut i= 0s; i < 3s; ++i )
 	{
-		var HdTextureData &mut texture_data= result.hd_textures[i];
+		var TextureData &mut texture_data= result.hd_textures[i];
+
+		texture_data.data.resize( 256s * 256s, 0u8 );
+
+		if_var( e :
+			f.read_exact(
+				unsafe( ust::array_view_mut</byte8/>(
+					ust::ptr_cast_to_byte8( texture_data.data.data() ),
+					texture_data.data.size() * typeinfo</u8/>.size_of ) ) ).as_error_ref() )
+		{
+			ust::stderr_print( ust::concat( "Failed to read! Error: ", ust::enum_to_string( e ), "\n" ) );
+			return ust::null_optional;
+		}
 
 		if_var( e :
 			f.read_exact(
@@ -428,21 +469,7 @@ fn LoadModel( ust::file_readable mut f ) : ust::optional</ModelData/>
 			ust::stderr_print( ust::concat( "Failed to read! Error: ", ust::enum_to_string( e ), "\n" ) );
 			return ust::null_optional;
 		}
-
-		texture_data.data.resize( 256s * 256s, 0u8 );
-
-		if_var( e :
-		f.read_exact(
-			unsafe( ust::array_view_mut</byte8/>(
-				ust::ptr_cast_to_byte8( texture_data.data.data() ),
-				texture_data.data.size() * typeinfo</u8/>.size_of ) ) ).as_error_ref() )
-		{
-			ust::stderr_print( ust::concat( "Failed to read! Error: ", ust::enum_to_string( e ), "\n" ) );
-			return ust::null_optional;
-		}
 	}
-
-	// We have still roughly 640 bytes left.
 
 	return result;
 }
