@@ -154,7 +154,7 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 	mesh.triangleCount= i32( model.triangles.size() );
 	mesh.indices= unsafe( mesh_indices.data() );
 
-	unsafe( UploadMesh( $<(mesh), false ) );
+	unsafe( UploadMesh( $<(mesh), true ) );
 
 	auto mut model_file_contents= ust::read_file_to_byte8_vector( model_file_path ).try_take();
 	var size_type width= 512s;
@@ -286,9 +286,12 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 				unsafe( DrawCube( Vector3{ .x(0), .y(1), .z(0) }, 0.2f, 2.0f, 0.2f, Color{ .r(0), .g(255), .b(0), .a(255) } ) );
 				unsafe( DrawCube( Vector3{ .x(0), .y(0), .z(1) }, 0.2f, 0.2f, 2.0f, Color{ .r(0), .g(0), .b(255), .a(255) } ) );
 
+				var f64 frame_rate= 10.0; // TODO - know what is actual framerate (some contant or per-model property).
+				var u32 frame_index= u32( unsafe( GetTime() ) * frame_rate ) % model.num_frames;
+
 				var f32 scale= 1.0f / 1.0f;
 
-				foreach( &v : model.vertex_data.range().subrange_end( size_type( model.num_vertices ) ) )
+				foreach( &v : model.vertex_data.range().subrange( size_type( frame_index * model.num_vertices ), size_type( ( frame_index + 1u ) * model.num_vertices ) ) )
 				{
 					unsafe( DrawCubeWires(
 						Vector3{ .x= f32(v[0]) * scale, .y= f32(v[1]) * scale, .z= f32(v[2]) * -scale },
@@ -317,6 +320,22 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 				}
 				else
 				{
+					for( auto mut i= 0u; i < model.num_vertices; ++i )
+					{
+						var size_type src( frame_index * model.num_vertices + i );
+						var size_type dst= size_type( i * 3u + 0u );
+						mesh_positions[ dst + 0s ]= model.vertex_data[ src ][0];
+						mesh_positions[ dst + 1s ]= model.vertex_data[ src ][1];
+						mesh_positions[ dst + 2s ]= model.vertex_data[ src ][2];
+					}
+
+					unsafe( UpdateMeshBuffer(
+						mesh,
+						0,
+						ust::ptr_cast_to_byte8( mesh_positions.data() ),
+						i32( mesh_positions.size() * typeinfo</f32/>.size_of ),
+						0 ) );
+
 					var Matrix mut matrix= zero_init;
 					matrix.m0= scale;
 					matrix.m5= scale;
