@@ -2,6 +2,7 @@ import "/enum_string_conversions.u"
 import "/file.u"
 import "/file_helpers.u"
 import "/main_wrapper.u"
+import "/math.u"
 import "/scoped_array.u"
 import "/stdout.u"
 import "/string_conversions.u"
@@ -90,23 +91,23 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 	if( false )
 	{
 		ust::stdout_print( "Structs3: " );
-		foreach( &s : model.per_frame_triangles_data )
+		foreach( &s : model.per_frame_triangle_normals )
 		{
-			ust::stderr_print( ust::concat( ust::concat( "( ", ust::to_string8( s[0] ), ", ", ust::to_string8( s[1] ), " ); " ) ) );
+			ust::stderr_print( ust::concat( ust::concat( "( ", ust::to_string8( s.azimuth ), ", ", ust::to_string8( s.elevation ), " ); " ) ) );
 		}
 		ust::stdout_print( "\n" );
 	}
 
-	if( false )
+	if( true )
 	{
 		var [ i32, 2 ] mut mins[ 999999, 999999 ], mut maxs[ -999999, -999999 ];
 
-		foreach( &s : model.per_frame_triangles_data )
+		foreach( &s : model.per_frame_triangle_normals )
 		{
-			ust::min_assign( mins[0], i32( s[0] ) );
-			ust::max_assign( maxs[0], i32( s[0] ) );
-			ust::min_assign( mins[1], i32( s[1] ) );
-			ust::max_assign( maxs[1], i32( s[1] ) );
+			ust::min_assign( mins[0], i32( s.azimuth ) );
+			ust::max_assign( maxs[0], i32( s.azimuth ) );
+			ust::min_assign( mins[1], i32( s.elevation ) );
+			ust::max_assign( maxs[1], i32( s.elevation ) );
 		}
 
 		for( auto mut i= 0s; i < 2s; ++i )
@@ -338,6 +339,8 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 
 				auto vertices_range= model.vertex_data.range().subrange( size_type( frame_index * model.num_vertices ), size_type( ( frame_index + 1u ) * model.num_vertices ) );
 
+				auto triangle_normals_range= model.per_frame_triangle_normals.range().subrange( size_type( frame_index ) * model.triangles.size(), size_type( frame_index + 1u )  * model.triangles.size() );
+
 				foreach( &v : vertices_range )
 				{
 					unsafe( DrawCubeWires(
@@ -350,8 +353,10 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 
 				if( is_simple_mode )
 				{
-					foreach( &t : model.triangles )
+					foreach( pair : model.triangles.iter().zip( triangle_normals_range.iter() ) )
 					{
+						var ObbTriangle& t= pair.first;
+
 						var ObbVertexPosition& v0= vertices_range[ size_type( t.indices[0] ) / 2s ];
 						var ObbVertexPosition& v1= vertices_range[ size_type( t.indices[1] ) / 2s ];
 						var ObbVertexPosition& v2= vertices_range[ size_type( t.indices[2] ) / 2s ];
@@ -360,7 +365,22 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 						var Vector3 p1{ .x= v1[0] * scale, .y= v1[1s] * scale, .z= v1[2] * -scale };
 						var Vector3 p2{ .x= v2[0] * scale, .y= v2[1s] * scale, .z= v2[2] * -scale };
 
-						var Color c{ .r(128), .g(128), .b(128), .a(128) };
+						var ObbPerFrameTriangleNormal& normal_angles= pair.second;
+
+						var f32 c_tau= 2.0f * 3.1415926535f;
+
+						var f32 azimuth= f32( normal_angles.azimuth ) * ( c_tau / 1024.0f );
+						var f32 elevation= f32( normal_angles.elevation ) * ( c_tau / 1024.0f );
+
+						var f32 azimut_sin= ust::sin( azimuth );
+						var f32 azimut_cos= ust::cos( azimuth );
+
+						var f32 elevation_sin= ust::sin( elevation );
+						var f32 elevation_cos= ust::cos( elevation );
+
+						var Vector3 normal{ .x= elevation_cos * azimut_sin, .y= elevation_cos * azimut_cos, .z= elevation_sin };
+
+						var Color c{ .r( i32(normal.x * 126.9f) + 128 ), .g( i32(normal.y * 126.9f) + 128 ), .b( i32(normal.z * 126.9f) + 128 ), .a(255) };
 
 						unsafe( DrawTriangle3D( p2, p1, p0, c ) );
 					}
@@ -416,7 +436,7 @@ struct ModelData
 	// Contains num_vertices * num_frames values.
 	ust::vector</ObbVertexPosition/> vertex_data;
 
-	ust::vector</ObbPerFrameTriangleData/> per_frame_triangles_data;
+	ust::vector</ObbPerFrameTriangleNormal/> per_frame_triangle_normals;
 
 	// Has values in range 1 to number of vertices + 10 (inclusive).
 	// It doesn't look like some sort of nearby vertex index.
@@ -532,13 +552,13 @@ fn LoadModel( ust::file_readable mut f ) : ust::optional</ModelData/>
 		return ust::null_optional;
 	}
 
-	result.per_frame_triangles_data.resize( num_triangles * size_type( result.num_frames ), ust::make_zeroed</ObbPerFrameTriangleData/>() );
+	result.per_frame_triangle_normals.resize( num_triangles * size_type( result.num_frames ), ust::make_zeroed</ObbPerFrameTriangleNormal/>() );
 
 	if_var( e :
 		f.read_exact(
 			unsafe( ust::array_view_mut</byte8/>(
-				ust::ptr_cast_to_byte8( result.per_frame_triangles_data.data() ),
-				result.per_frame_triangles_data.size() * typeinfo</ObbPerFrameTriangleData/>.size_of ) ) ).as_error_ref() )
+				ust::ptr_cast_to_byte8( result.per_frame_triangle_normals.data() ),
+				result.per_frame_triangle_normals.size() * typeinfo</ObbPerFrameTriangleNormal/>.size_of ) ) ).as_error_ref() )
 	{
 		ust::stderr_print( ust::concat( "Failed to read! Error: ", ust::enum_to_string( e ), "\n" ) );
 		return ust::null_optional;
