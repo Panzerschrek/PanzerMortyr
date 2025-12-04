@@ -179,12 +179,13 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 
 	for( auto mut i= 0s; i < 3s; ++i )
 	{
-		var size_type texture_size= 256s;
-		scoped_array u8 mut texture_data_rgb[ texture_size * texture_size * 3s ]( 0u8 );
-
 		var TextureData& src_texture_data= model.hd_textures[i];
 
-		for( auto mut i= 0s; i < texture_size * texture_size; ++i )
+		var size_type area( src_texture_data.size[0] * src_texture_data.size[1] );
+
+		scoped_array u8 mut texture_data_rgb[ area * 3s ]( 0u8 );
+
+		for( auto mut i= 0s; i < area; ++i )
 		{
 			var size_type index( src_texture_data.data[ i ] );
 			texture_data_rgb[ i * 3s + 0s ]= src_texture_data.palette[ index * 3s + 2s ];
@@ -196,8 +197,8 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 		{
 			.data= unsafe( ust::ptr_cast_to_byte8( texture_data_rgb.data() ) ),
 			.mipmaps= 1,
-			.width(texture_size),
-			.height(texture_size),
+			.width (src_texture_data.size[0]),
+			.height(src_texture_data.size[1]),
 			.format( PIXELFORMAT_UNCOMPRESSED_R8G8B8 ),
 		};
 
@@ -211,12 +212,13 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 	}
 
 	{
-		var size_type texture_size= 128s;
-		scoped_array u8 mut texture_data_rgb[ texture_size * texture_size * 3s ]( 0u8 );
-
 		var TextureData& src_texture_data= model.ld_texture;
 
-		for( auto mut i= 0s; i < texture_size * texture_size; ++i )
+		var size_type area( src_texture_data.size[0] * src_texture_data.size[1] );
+
+		scoped_array u8 mut texture_data_rgb[ area * 3s ]( 0u8 );
+
+		for( auto mut i= 0s; i < area; ++i )
 		{
 			var size_type index( src_texture_data.data[ i ] );
 			texture_data_rgb[ i * 3s + 0s ]= src_texture_data.palette[ index * 3s + 2s ];
@@ -228,8 +230,8 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 		{
 			.data= unsafe( ust::ptr_cast_to_byte8( texture_data_rgb.data() ) ),
 			.mipmaps= 1,
-			.width(texture_size),
-			.height(texture_size),
+			.width (src_texture_data.size[0]),
+			.height(src_texture_data.size[1]),
 			.format( PIXELFORMAT_UNCOMPRESSED_R8G8B8 ),
 		};
 
@@ -382,6 +384,7 @@ struct ModelData
 
 struct TextureData
 {
+	[ u32, 2 ] size= zero_init;
 	ust::vector</u8/> data;
 	[ u8, 768 ] palette= zero_init;
 }
@@ -519,31 +522,39 @@ fn LoadModel( ust::file_readable mut f ) : ust::optional</ModelData/>
 		return ust::null_optional;
 	}
 
-	result.ld_texture.data.resize( 128s * 128s, 0u8 );
-
-	if_var( e :
-		f.read_exact(
-			unsafe( ust::array_view_mut</byte8/>(
-				ust::ptr_cast_to_byte8( result.ld_texture.data.data() ),
-				result.ld_texture.data.size() * typeinfo</u8/>.size_of ) ) ).as_error_ref() )
 	{
-		ust::stderr_print( ust::concat( "Failed to read! Error: ", ust::enum_to_string( e ), "\n" ) );
-		return ust::null_optional;
-	}
+		result.ld_texture.size[0]= u32( header.more_data[14] );
+		result.ld_texture.size[1]= u32( header.more_data[15] );
 
-	if_var( e :
-		f.read_exact(
-			unsafe( ust::array_view_mut</byte8/>(
-				ust::ptr_cast_to_byte8( $<( result.ld_texture.palette ) ),
-				typeinfo</ typeof( result.ld_texture.palette ) />.size_of ) ) ).as_error_ref() )
-	{
-		ust::stderr_print( ust::concat( "Failed to read! Error: ", ust::enum_to_string( e ), "\n" ) );
-		return ust::null_optional;
+		result.ld_texture.data.resize( 128s * 128s, 0u8 );
+
+		if_var( e :
+			f.read_exact(
+				unsafe( ust::array_view_mut</byte8/>(
+					ust::ptr_cast_to_byte8( result.ld_texture.data.data() ),
+					result.ld_texture.data.size() * typeinfo</u8/>.size_of ) ) ).as_error_ref() )
+		{
+			ust::stderr_print( ust::concat( "Failed to read! Error: ", ust::enum_to_string( e ), "\n" ) );
+			return ust::null_optional;
+		}
+
+		if_var( e :
+			f.read_exact(
+				unsafe( ust::array_view_mut</byte8/>(
+					ust::ptr_cast_to_byte8( $<( result.ld_texture.palette ) ),
+					typeinfo</ typeof( result.ld_texture.palette ) />.size_of ) ) ).as_error_ref() )
+		{
+			ust::stderr_print( ust::concat( "Failed to read! Error: ", ust::enum_to_string( e ), "\n" ) );
+			return ust::null_optional;
+		}
 	}
 
 	for( auto mut i= 0s; i < 3s; ++i )
 	{
 		var TextureData &mut texture_data= result.hd_textures[i];
+
+		texture_data.size[0]= u32( header.more_data[ 18s + i * 2s + 0s ] );
+		texture_data.size[1]= u32( header.more_data[ 18s + i * 2s + 1s ] );
 
 		texture_data.data.resize( 256s * 256s, 0u8 );
 
