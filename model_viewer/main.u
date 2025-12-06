@@ -569,7 +569,9 @@ fn LoadModel( ust::file_readable mut f ) : ust::optional</ModelData/>
 		f.read_exact(
 			unsafe( ust::array_view_mut</byte8/>(
 				ust::ptr_cast_to_byte8( $<(header_extended) ),
-				 typeinfo</ObbFileHeaderExtended/>.size_of ) ) ).as_error_ref() )
+				( header_base.version_number == ObbFileHeaderBase::c_version5
+					? ObbFileHeaderExtended::c_size_version5
+					: ObbFileHeaderExtended::c_size_version4 ) ) ) ).as_error_ref() )
 	{
 		ust::stderr_print( ust::concat( "Error reading model file: ", ust::enum_to_string( e ), "\n" ) );
 		return ust::null_optional;
@@ -580,7 +582,7 @@ fn LoadModel( ust::file_readable mut f ) : ust::optional</ModelData/>
 		m+= "Model header nums: ";
 		m+= ust::to_string8( header_base.texture_data_offset );
 		m+= ", ";
-		m+= ust::to_string8( header_base.num1 );
+		m+= ust::to_string8( header_base.version_number );
 		m+= "\n";
 		ust::stdout_print( m );
 
@@ -602,7 +604,7 @@ fn LoadModel( ust::file_readable mut f ) : ust::optional</ModelData/>
 	{
 		.num_vertices( header_extended.num_vertices ),
 		.num_frames( header_extended.num_frames ),
-		.num_lod0_triangles( 0 ) // set it later
+		.num_lod0_triangles( header_extended.num_triangles ) // update it later if needed
 	};
 
 	var size_type num_triangles( header_extended.num_triangles );
@@ -655,31 +657,43 @@ fn LoadModel( ust::file_readable mut f ) : ust::optional</ModelData/>
 		return ust::null_optional;
 	}
 
-	// After frame vertex data we have 2 blocks of data - which are just 32-bit integers for vertices and triangles.
-	// Its exact meaning is unclear.
-
-	result.some_per_triangle_ints.resize( num_triangles, 0u );
-
-	if_var( e :
-		f.read_exact(
-			unsafe( ust::array_view_mut</byte8/>(
-				ust::ptr_cast_to_byte8( result.some_per_triangle_ints.data() ),
-				result.some_per_triangle_ints.size() * typeinfo</u32/>.size_of ) ) ).as_error_ref() )
+	if( header_base.version_number == ObbFileHeaderBase::c_version5 )
 	{
-		ust::stderr_print( ust::concat( "Failed to read! Error: ", ust::enum_to_string( e ), "\n" ) );
-		return ust::null_optional;
-	}
+		// After frame vertex data we have 2 blocks of data - which are just 32-bit integers for vertices and triangles.
+		// Its exact meaning is unclear.
 
-	result.some_per_vertex_ints.resize( size_type( result.num_vertices ), 0u );
+		result.some_per_triangle_ints.resize( num_triangles, 0u );
 
-	if_var( e :
-		f.read_exact(
-			unsafe( ust::array_view_mut</byte8/>(
-				ust::ptr_cast_to_byte8( result.some_per_vertex_ints.data() ),
-				result.some_per_vertex_ints.size() * typeinfo</u32/>.size_of ) ) ).as_error_ref() )
-	{
-		ust::stderr_print( ust::concat( "Failed to read! Error: ", ust::enum_to_string( e ), "\n" ) );
-		return ust::null_optional;
+		if_var( e :
+			f.read_exact(
+				unsafe( ust::array_view_mut</byte8/>(
+					ust::ptr_cast_to_byte8( result.some_per_triangle_ints.data() ),
+					result.some_per_triangle_ints.size() * typeinfo</u32/>.size_of ) ) ).as_error_ref() )
+		{
+			ust::stderr_print( ust::concat( "Failed to read! Error: ", ust::enum_to_string( e ), "\n" ) );
+			return ust::null_optional;
+		}
+
+		result.some_per_vertex_ints.resize( size_type( result.num_vertices ), 0u );
+
+		if_var( e :
+			f.read_exact(
+				unsafe( ust::array_view_mut</byte8/>(
+					ust::ptr_cast_to_byte8( result.some_per_vertex_ints.data() ),
+					result.some_per_vertex_ints.size() * typeinfo</u32/>.size_of ) ) ).as_error_ref() )
+		{
+			ust::stderr_print( ust::concat( "Failed to read! Error: ", ust::enum_to_string( e ), "\n" ) );
+			return ust::null_optional;
+		}
+
+		// This lods data is stored in some complex way, it's for now uncelar what it is.
+		// But analysys of this data has shown, how to extract at least number of lod0 triangles.
+
+		var u32 num= result.some_per_vertex_ints.front();
+		if( size_type(num) <= num_triangles )
+		{
+			result.num_lod0_triangles= num;
+		}
 	}
 
 	result.texture_collections.resize( size_type( header_extended.num_texture_collections ) );
@@ -743,20 +757,6 @@ fn LoadModel( ust::file_readable mut f ) : ust::optional</ModelData/>
 				ust::stderr_print( ust::concat( "Failed to read! Error: ", ust::enum_to_string( e ), "\n" ) );
 				return ust::null_optional;
 			}
-		}
-	}
-
-	// This lods data is stored in some complex way, it's for now uncelar what it is.
-	// But analysys of this data has shown, how to extract at least number of lod0 triangles.
-	{
-		var u32 num= result.some_per_vertex_ints.front();
-		if( size_type(num) <= num_triangles )
-		{
-			result.num_lod0_triangles= num;
-		}
-		else
-		{
-			result.num_lod0_triangles= u32( num_triangles );
 		}
 	}
 
