@@ -31,9 +31,12 @@ Textures/materials investigation:
 
 Models format investigation:
 
-* Investigate model format
+* Find exact framerate of per-vertex model animations. Maybe it's stored somewhere, or is just hardcoded for all models.
+* Investigate how LODs are stored and processed in models in #5 format variant.
+* Investigate why HD textures are stored three times with no noticeable difference.
+* Calculate per-vertex normals based on triangle normals, since normals stored in the model file are sometimes broken
 
-Lightting:
+Lighting:
 
 * Investigate how light is applied on per-quad basis (is it per-vertex lighting or maybe some sort of lightmap)?
 * Investigate whether lights can cast shadows or lightting complete ignores line of sight checks.
