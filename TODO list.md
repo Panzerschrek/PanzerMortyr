@@ -13,13 +13,15 @@ Map format investigation:
 * Investigate how exactly light-related sprites (flames, coronas) are defined.
 * Investigate how light source power is stored.
 * Investigate exact meaning of many ZpozEntity fields.
-* Investigate what ZpozStruct1 is.
+* Investigate what ZpozStruct1 is and how it may be connected with navigation graphs in "MAPA*.LEM" file.
 * Investigate what exact kind of visibility data is stored in ZPOZ file and why it seems to have 4 blocks of such data for each cluster.
 * Investigate what and how is stored in "ZMAP.LAM" files.
 * Investigate exact meaning of per-cluster sky-related data in "ZMAP.LEM" file.
 * Investigate how buttons and doors function.
 * Investigate how sky quads affect surrounding lighting.
 * Investigate whether there is ambient light value stored somewhere on per-quad or per-cluster basis.
+* Investigate how navigation graphs are used by enemies AI.
+* Investigate exact meaning of remaining fields of navigation graph structures.
 
 Textures/materials investigation:
 

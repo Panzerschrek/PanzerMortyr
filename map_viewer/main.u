@@ -66,8 +66,35 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 	// TODO - know how we should load such files. They are not listed in "ICE.STD" file.
 	var ust::filesystem_path zmap_lam_file_path= ust::path::join( maps_dir, ust::concat( "ZMAP", ust::to_string8( map_index ), ".LAM" ) );
 	var ust::filesystem_path zmap_lem_file_path= ust::path::join( maps_dir, ust::concat( "ZMAP", ust::to_string8( map_index ), ".LEM" ) );
+	var ust::filesystem_path mapa_way_file_path= ust::path::join( maps_dir, ust::concat( "MAPA0", ust::to_string8( map_index ), ".WAY" ) );
 
-	auto map_opt= LoadMap( zmap_file_path, zvox_file_path, zpoz_file_path, zmap_lam_file_path, zmap_lem_file_path );
+	if( false )
+	{
+		auto mut file_contents= ust::read_file_to_byte8_vector( mapa_way_file_path ).try_take();
+		var size_type width= 512s;
+		var size_type size_corrected= ( file_contents.size() + ( width - 1s ) ) / width * width;
+		file_contents.resize( size_corrected, byte8(0u8) );
+
+		var Image image
+		{
+			.data= unsafe( file_contents.data() ),
+			.mipmaps= 1,
+			.width(width),
+			.height( file_contents.size() / width ),
+			.format( PIXELFORMAT_UNCOMPRESSED_GRAYSCALE ),
+		};
+
+		unsafe( ExportImage( image, $<( cast_mut( "test.png\0"[0] ) ) ) );
+	}
+
+	auto map_opt= LoadMap(
+		zmap_file_path,
+		zvox_file_path,
+		zpoz_file_path,
+		zmap_lam_file_path,
+		zmap_lem_file_path,
+		mapa_way_file_path );
+
 	if( map_opt.empty() )
 	{
 		return -1;
@@ -88,6 +115,7 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 	ust::stdout_print( ust::concat( "Num zmap.lam structs1: ", ust::to_string8( map.zmap_lam.structs1.size() ), "\n" ) );
 	ust::stdout_print( ust::concat( "Num zmap.lam structs2: ", ust::to_string8( map.zmap_lam.structs2.size() ), "\n" ) );
 	ust::stdout_print( ust::concat( "Num zmap.lem clusters: ", ust::to_string8( map.zmap_lem.clusters_sky_visibility_data.size() ), "\n" ) );
+	ust::stdout_print( ust::concat( "Num mapa.way navigation graphs: ", ust::to_string8( map.mapa_way.navigation_graphs.size() ), "\n" ) );
 	ust::stdout_print( "\n" );
 
 	auto materials_opt = LoadMaterialsFile( maps_dir );
@@ -640,7 +668,8 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 		mut display_light_sources= true,
 		mut display_zvos_structs0= true,
 		mut display_visibility_information= false,
-		mut display_sky_visibility= false;
+		mut display_sky_visibility= false,
+		mut display_navigation_graps= false;
 
 	while( ! unsafe( WindowShouldClose() ) )
 	{
@@ -677,6 +706,10 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 		if( unsafe( IsKeyPressed( i32( 'R' ) ) ) )
 		{
 			display_sky_visibility= !display_sky_visibility;
+		}
+		if( unsafe( IsKeyPressed( i32( 'G' ) ) ) )
+		{
+			display_navigation_graps= !display_navigation_graps;
 		}
 
 		if( unsafe( IsKeyPressed( i32( 'Z' ) ) ) )
@@ -995,6 +1028,7 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 							continue;
 						}
 
+
 						var Color color{ .r(u32(entity.kind) * 37u), .g(u32(entity.kind) * 1179u), .b(u32(entity.kind) * 5423u), .a(255) };
 
 						var Vector3 pos{ .x= f32(entity.position[0s]) * scale, .y= f32(entity.position[1s]) * scale, .z= f32(entity.position[2s]) * -scale };
@@ -1027,6 +1061,47 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 						var Vector3 pos{ .x= f32(s.data[0s + offset]) * scale, .y= f32(s.data[1s + offset]) * scale, .z= f32(s.data[2s + offset]) * -scale };
 
 						unsafe( DrawCube( pos, 0.2f, 0.2f, 0.2f, color ) );
+					}
+				}
+
+				if( display_navigation_graps )
+				{
+					var ZpozEntity& entity= map.zpoz.entities[offset];
+
+					var size_type graph_index( entity.data[16] );
+
+					if( graph_index < map.mapa_way.navigation_graphs.size() )
+					{
+						var MapaWayNavigationGraph& graph= map.mapa_way.navigation_graphs[ graph_index ];
+
+						var Color color{ .r(graph_index * 73s), .g(graph_index * 137s), .b(graph_index * 279s ), .a(255) };
+
+						for( auto mut j= 0s; j < size_type( graph.num_nodes ); ++j )
+						{
+							var MapaWayNavigationGraphNode& node= graph.nodes[j];
+
+							var Vector3 pos{ .x= f32(node.position[0]) * scale, .y= f32(node.position[1]) * scale, .z= f32(node.position[2]) * -scale };
+
+							unsafe( DrawCube( pos, 0.2f, 0.2f, 0.2f, color ) );
+
+							for( auto mut k= 0s; k < size_type( graph.num_nodes ); ++k )
+							{
+								if( k == j )
+								{
+									continue;
+								}
+
+								var size_type l= size_type( graph.routing_matrix[j][k] );
+								if( l < size_type( graph.num_nodes ) )
+								{
+									var MapaWayNavigationGraphNode& other_node= graph.nodes[l];
+
+									var Vector3 other_pos{ .x= f32(other_node.position[0]) * scale, .y= f32(other_node.position[1]) * scale, .z= f32(other_node.position[2]) * -scale };
+
+									unsafe( DrawLine3D( pos, other_pos, color ) );
+								}
+							}
+						}
 					}
 				}
 			}

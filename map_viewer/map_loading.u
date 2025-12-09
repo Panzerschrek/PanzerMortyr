@@ -13,19 +13,22 @@ fn LoadMap(
 	ust::filesystem_path_view zvox_file_path,
 	ust::filesystem_path_view zpoz_file_path,
 	ust::filesystem_path_view zmap_lam_file_path,
-	ust::filesystem_path_view zmap_lem_file_path ) : ust::optional</MapData/>
+	ust::filesystem_path_view zmap_lem_file_path,
+	ust::filesystem_path_view mapa_way_file_path ) : ust::optional</MapData/>
 {
 	auto mut zmap_data= LoadZmapFile( zmap_file_path );
 	auto mut zvox_data= LoadZvoxFile( zvox_file_path );
 	auto mut zpoz_data= LoadZpozFile( zpoz_file_path );
 	auto mut zmap_lam_data= LoadZmapLamFile( zmap_lam_file_path );
 	auto mut zmap_lem_data= LoadZmapLemFile( zmap_lem_file_path );
+	auto mut mapa_way_data= LoadMapaWayFile( mapa_way_file_path );
 
 	if( zmap_data.empty() ||
 		zvox_data.empty() ||
 		zpoz_data.empty() ||
 		zmap_lam_data.empty() ||
-		zmap_lem_data.empty() )
+		zmap_lem_data.empty() ||
+		mapa_way_data.empty() )
 	{
 		return ust::null_optional;
 	}
@@ -37,6 +40,7 @@ fn LoadMap(
 		.zpoz= zpoz_data.try_take(),
 		.zmap_lam= zmap_lam_data.try_take(),
 		.zmap_lem= zmap_lem_data.try_take(),
+		.mapa_way= mapa_way_data.try_take(),
 	};
 }
 
@@ -214,17 +218,6 @@ fn LoadZpozFile( ust::file_readable mut f ) : ust::optional</ZpozData/>
 	{
 		ust::stderr_print( ust::concat( "Unexpected file signature \"", header.signature, "\"!" ) );
 		return ust::null_optional;
-	}
-
-	var u64 mut file_size(0);
-	result_match( f.get_metatada() )
-	{
-		Ok(m) -> { file_size= m.size; },
-		Err(e) ->
-		{
-			ust::stderr_print( ust::concat( "Error getting archive file size: ", ust::enum_to_string( e ), "\n" ) );
-			return ust::null_optional;
-		}
 	}
 
 	{
@@ -447,6 +440,100 @@ fn LoadZmapLemFile( ust::file_readable mut f ) : ust::optional</ZmapLemData/>
 	{
 		ust::stderr_print( ust::concat( "Failed to read! Error: ", ust::enum_to_string( e ), "!\n" ) );
 		return ust::null_optional;
+	}
+
+	return result;
+}
+
+fn LoadMapaWayFile( ust::filesystem_path_view file_path ) : ust::optional</MapaWayData/>
+{
+	result_match( ust::file_readable::open( file_path ) )
+	{
+		Ok( mut f ) -> { return LoadMapaWayFile( move(f) ); },
+		Err(e) ->
+		{
+			ust::stderr_print( ust::concat( "Error opening file: ", ust::enum_to_string( e ), "\n" ) );
+			return ust::null_optional;
+		}
+	}
+}
+
+fn LoadMapaWayFile( ust::file_readable mut f ) : ust::optional</MapaWayData/>
+{
+	var MapaWayFileHeader mut header= zero_init;
+
+	if_var( e : f.read_exact( ust::single_element_array_view( header ).to_byte8_range() ).as_error_ref() )
+	{
+		ust::stderr_print( ust::concat( "Error reading map file: ", ust::enum_to_string( e ), "\n" ) );
+		return ust::null_optional;
+	}
+
+	if( header.signature != MapaWayFileHeader::c_expected_signature )
+	{
+		ust::stderr_print( ust::concat( "Unexpected file signature \"", header.signature, "\"!" ) );
+		return ust::null_optional;
+	}
+
+	{
+		var ust::string8 mut m;
+		m+= "MAPA*.WAY header nums: ";
+		m+= ust::to_string8( header.num_navigation_graphs );
+		m+= ", ";
+		m+= ust::to_string8( header.num2 );
+		m+= ", ";
+		m+= ust::to_string8( header.num3 );
+		m+= ", ";
+		m+= ust::to_string8( header.num4 );
+		m+= ", ";
+		m+= ust::to_string8( header.num5 );
+		m+= ", ";
+		m+= ust::to_string8( header.num6 );
+		m+= ", ";
+		m+= ust::to_string8( header.num7 );
+		m+= "\n";
+		ust::stdout_print( m );
+	}
+
+	var MapaWayData mut result;
+
+	result.navigation_graphs.resize( size_type( header.num_navigation_graphs ), ust::make_zeroed</MapaWayNavigationGraph/>() );
+
+	if_var( e : f.read_exact( result.navigation_graphs.range().to_byte8_range() ).as_error_ref() )
+	{
+		ust::stderr_print( ust::concat( "Failed to read! Error: ", ust::enum_to_string( e ), "!\n" ) );
+		return ust::null_optional;
+	}
+
+	if( false )
+	{
+		foreach( &graph : result.navigation_graphs )
+		{
+			var size_type num_elements( graph.num_nodes );
+
+			ust::stdout_print( ust::concat( "MAPA.WAY graph num elements is ", ust::to_string8( num_elements ), "\n" ) );
+
+			var i32 mut min= 0x7FFFFFFF, mut max= -0x7FFFFFFF;
+			for( auto mut y= 0s; y < num_elements; ++y )
+			{
+				for( auto mut x= 0s; x < num_elements; ++x )
+				{
+					var i32 x( graph.routing_matrix[y][x] );
+					ust::min_assign( min, x );
+					ust::max_assign( max, x );
+				}
+			}
+			ust::stdout_print( ust::concat( "MAPA.WAY routing matrix values are in range ", ust::to_string8(min), " to ", ust::to_string8(max), "\n" ) );
+		}
+	}
+
+	if( false )
+	{
+		var size_type mut num_nodes= 0s;
+		foreach( &graph : result.navigation_graphs )
+		{
+			num_nodes+= size_type( graph.num_nodes );
+		}
+		ust::stdout_print( ust::concat( "MAPA*.WAY total nodes: ", ust::to_string8(num_nodes), "\n" ) );
 	}
 
 	return result;
