@@ -1,0 +1,98 @@
+import "/memory.u"
+import "/stdout.u"
+import "/string.u"
+import "opengl_window.uh"
+
+namespace PM
+{
+
+fn OpenGLWindow::constructor()
+	( window_= zero_init /* set later */, gl_context_= zero_init /* set later */ )
+{
+	halt if ( unsafe( SDL_Init( SDL_INIT_VIDEO ) ) != 0 );
+
+	var bool use_gl_debugging= compiler::options::generate_debug_info || compiler::options::optimization_level == '0';
+
+	unsafe
+	{
+		SDL_GL_SetAttribute( SDL_GL_DOUBLEBUFFER, 1 );
+		SDL_GL_SetAttribute( SDL_GL_DEPTH_SIZE, 24 );
+
+		if( use_gl_debugging )
+		{
+			SDL_GL_SetAttribute( SDL_GL_CONTEXT_FLAGS, i32( SDL_GL_CONTEXT_DEBUG_FLAG ) );
+		}
+
+		SDL_GL_SetAttribute( SDL_GL_CONTEXT_MAJOR_VERSION, 3 );
+		SDL_GL_SetAttribute( SDL_GL_CONTEXT_MINOR_VERSION, 3 );
+		SDL_GL_SetAttribute( SDL_GL_CONTEXT_PROFILE_MASK, i32( SDL_GL_CONTEXT_PROFILE_CORE ) );
+	}
+
+	auto SDL_WINDOWPOS_CENTERED= 0x2FFF0000;
+
+	var u32 window_width= 1024u, window_height= 768u;
+
+	window_=
+		unsafe( SDL_CreateWindow(
+			$<( cast_mut( "panzer_mortyr\0"[0] ) ), // TODO - set proper caption.
+			SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
+			i32(window_width), i32(window_height),
+			SDL_WINDOW_OPENGL ) );
+
+	if( ust::is_nullptr( window_ ) )
+	{
+		ust::stderr_print( "Failed to create window!\n" );
+		halt;
+	}
+
+	// TODO - set window icon.
+
+	gl_context_= unsafe( SDL_GL_CreateContext( window_ ) );
+	if( ust::is_nullptr( gl_context_ ) )
+	{
+		ust::stderr_print( "Failed to create OpenGL context!\n" );
+		halt;
+	}
+
+	unsafe( SDL_GL_SetSwapInterval(1) );
+
+	if( use_gl_debugging )
+	{
+		unsafe( glDebugMessageCallback( GLDebugCallback, ust::nullptr</byte8/>() ) );
+	}
+}
+
+fn OpenGLWindow::destructor()
+{
+	unsafe( SDL_GL_DeleteContext( gl_context_ ) );
+	unsafe( SDL_DestroyWindow( window_ ) );
+}
+
+fn OpenGLWindow::SwapWindow( mut this )
+{
+	unsafe( SDL_GL_SwapWindow( window_ ) );
+}
+
+fn GLDebugCallback(
+	GLenum source,
+	GLenum type_,
+	GLuint id,
+	GLenum severity,
+	GLsizei length,
+	$(GLchar) message,
+	$(byte8) user_param ) unsafe call_conv( "C" )
+{
+	ust::ignore_unused( source );
+	ust::ignore_unused( type_ );
+	ust::ignore_unused( id );
+	ust::ignore_unused( severity );
+	ust::ignore_unused( user_param );
+
+	ust::stderr_print(
+		ust::concat(
+			"OpenGL debug message:\n",
+			unsafe( ust::string_view8( message, size_type( length ) ) ),
+			"\n\n" ) );
+}
+
+} // namespace PM
