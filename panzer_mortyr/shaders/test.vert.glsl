@@ -6,5 +6,5 @@ const vec3 coord[3]= vec3[3]( vec3( 0.0, 0.75, 0.5 ), vec3( +0.5, -0.5, 0.0 ), v
 
 void main()
 {
-	gl_Position= vu_matrix * vec4( coord[ gl_VertexID ], 1.0 );
+	gl_Position= vec4( coord[ gl_VertexID ], 1.0 ) * vu_matrix;
 }
