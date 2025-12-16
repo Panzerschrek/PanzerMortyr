@@ -29,6 +29,10 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 	var ust::vector</bool/> mut keyboard_state;
 	var CameraController mut camera_controller( Vec3f( 0.0f, 0.0f, -10.0f ) );
 
+	var u64 system_performace_counter_frequency= ( unsafe( SDL_GetPerformanceFrequency() ) );
+
+	var u64 mut prev_frame_time_point= unsafe( SDL_GetPerformanceCounter() );
+
 	loop label main_loop
 	{
 		var SDL_Event mut event= zero_init;
@@ -57,46 +61,52 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 					break label main_loop;
 				}
 			}
-
-			{
-				var i32 mut key_count= 0;
-				var $(Uint8) keyboard_state_raw= unsafe( SDL_GetKeyboardState( $<( key_count ) ) );
-
-				keyboard_state.resize( size_type( key_count ), false );
-
-				for( auto mut i= 0s; i < size_type(key_count); ++i )
-				{
-					keyboard_state[i]= unsafe( $>( keyboard_state_raw + i ) ) != Uint8(0);
-				}
-			}
-
-			// TODO - calculate proper time delta.
-			camera_controller.Update( 1.0f / 60.0f, keyboard_state );
-
-			unsafe( glClearColor( GLclampf(1.0), GLclampf(0.0), GLclampf(1.0), GLclampf(1.0) ) );
-			unsafe( glClear( GLbitfield( GL_COLOR_BUFFER_BIT ) ) );
-
-			auto viewport_size= window.GetViewportSize();
-
-			var Mat4f translate_matrix= Mat4f::MakeTranslation( -camera_controller.GetPos() );
-			var Mat4f perspective_matrix= Mat4f::MakePerspective( f32(viewport_size[0]) / f32(viewport_size[1]), c_tau / 4.0f, 0.1f, 100.0f );
-
-			var Mat4f matrix= translate_matrix * perspective_matrix;
-
-			test_shader.Bind();
-			test_shader.SetUniform( "fu_triangle_color", 0.8f, 0.1f, 0.1f, 1.0f );
-			test_shader.SetUniform( "vu_matrix", matrix );
-
-			vertex_array_object.Bind();
-
-			unsafe( glDrawArrays( GLenum(GL_TRIANGLES), 0, 3 ) );
-
-			window.SwapWindow();
-
-			// TODO - tune waiting time to avoid waiting to much or too little.
-
-			unsafe( SDL_Delay( 15u ) );
 		}
+
+		{
+			var i32 mut key_count= 0;
+			var $(Uint8) keyboard_state_raw= unsafe( SDL_GetKeyboardState( $<( key_count ) ) );
+
+			keyboard_state.resize( size_type( key_count ), false );
+
+			for( auto mut i= 0s; i < size_type(key_count); ++i )
+			{
+				keyboard_state[i]= unsafe( $>( keyboard_state_raw + i ) ) != Uint8(0);
+			}
+		}
+
+		var u64 cur_frame_time_point=  unsafe( SDL_GetPerformanceCounter() );
+
+		var f32 time_delta_s= ( f32( cur_frame_time_point ) - f32( prev_frame_time_point ) ) / f32( system_performace_counter_frequency );
+		var f32 time_delta_s_limited= ust::min( ust::max( 0.0001f, time_delta_s ), 0.1f );
+
+		camera_controller.Update( time_delta_s_limited, keyboard_state );
+
+		unsafe( glClearColor( GLclampf(1.0), GLclampf(0.0), GLclampf(1.0), GLclampf(1.0) ) );
+		unsafe( glClear( GLbitfield( GL_COLOR_BUFFER_BIT ) ) );
+
+		auto viewport_size= window.GetViewportSize();
+
+		var Mat4f translate_matrix= Mat4f::MakeTranslation( -camera_controller.GetPos() );
+		var Mat4f perspective_matrix= Mat4f::MakePerspective( f32(viewport_size[0]) / f32(viewport_size[1]), c_tau / 4.0f, 0.1f, 100.0f );
+
+		var Mat4f matrix= translate_matrix * perspective_matrix;
+
+		test_shader.Bind();
+		test_shader.SetUniform( "fu_triangle_color", 0.8f, 0.1f, 0.1f, 1.0f );
+		test_shader.SetUniform( "vu_matrix", matrix );
+
+		vertex_array_object.Bind();
+
+		unsafe( glDrawArrays( GLenum(GL_TRIANGLES), 0, 3 ) );
+
+		window.SwapWindow();
+
+		// TODO - tune waiting time to avoid waiting to much or too little.
+
+		unsafe( SDL_Delay( 15u ) );
+
+		prev_frame_time_point= cur_frame_time_point;
 	}
 
 	// This should be called always.
