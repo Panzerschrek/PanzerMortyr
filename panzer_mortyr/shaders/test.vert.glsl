@@ -2,9 +2,9 @@
 
 uniform mat4 vu_matrix;
 
-const vec2 coord[3]= vec2[3]( vec2( 0.0, 0.75 ), vec2( +0.5, -0.5 ), vec2( -0.5, -0.5 ) );
+const vec3 coord[3]= vec3[3]( vec3( 0.0, 0.75, 0.5 ), vec3( +0.5, -0.5, 0.0 ), vec3( -0.5, -0.5, 0.0 ) );
 
 void main()
 {
-	gl_Position= vu_matrix * vec4( coord[ gl_VertexID ].xy, 0.0, 1.0 );
+	gl_Position= vu_matrix * vec4( coord[ gl_VertexID ], 1.0 );
 }
