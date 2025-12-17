@@ -47,7 +47,18 @@ fn LoadZmapFile( ust::filesystem_path_view file_path ) : ust::optional</ZmapData
 {
 	result_match( ust::file_readable::open( file_path ) )
 	{
-		Ok( mut f ) -> { return LoadZmapFile( move(f) ); },
+		Ok( mut f ) ->
+		{
+			result_match( LoadZmapFile( f ) )
+			{
+				Ok( mut d ) -> { return move(d); },
+				Err(e) ->
+				{
+					ust::stderr_print( ust::concat( "Error reading map file: ", ust::enum_to_string( e ), "\n" ) );
+					return ust::null_optional;
+				}
+			}
+		},
 		Err(e) ->
 		{
 			ust::stderr_print( ust::concat( "Error opening file: ", ust::enum_to_string( e ), "\n" ) );
@@ -56,20 +67,15 @@ fn LoadZmapFile( ust::filesystem_path_view file_path ) : ust::optional</ZmapData
 	}
 }
 
-fn LoadZmapFile( ust::file_readable mut f ) : ust::optional</ZmapData/>
+fn LoadZmapFile( ust::file_readable &mut f ) : ust::io_result</ZmapData/>
 {
 	var ZMapFileHeader mut header= zero_init;
-
-	if_var( e : f.read_exact( ust::single_element_array_view( header ).to_byte8_range() ).as_error_ref() )
-	{
-		ust::stderr_print( ust::concat( "Error reading map file: ", ust::enum_to_string( e ), "\n" ) );
-		return ust::null_optional;
-	}
+	result_check_or_return( f.read_exact( ust::single_element_array_view( header ).to_byte8_range() ) );
 
 	if( header.signature != ZMapFileHeader::c_expected_signature )
 	{
 		ust::stderr_print( ust::concat( "Unexpected file signature \"", header.signature, "\"!" ) );
-		return ust::null_optional;
+		return ust::io_error::other;
 	}
 
 	{
@@ -93,12 +99,7 @@ fn LoadZmapFile( ust::file_readable mut f ) : ust::optional</ZmapData/>
 	var ZmapData mut result;
 
 	result.quads.resize( size_type( header.num_quads ), ust::make_zeroed</ZmapQuad/>() );
-
-	if_var( e : f.read_exact( result.quads.range().to_byte8_range() ).as_error_ref() )
-	{
-		ust::stderr_print( ust::concat( "Failed to read! Error: ", ust::enum_to_string( e ), ", \n" ) );
-		return ust::null_optional;
-	}
+	result_check_or_return( f.read_exact( result.quads.range().to_byte8_range() ) );
 
 	return result;
 }
