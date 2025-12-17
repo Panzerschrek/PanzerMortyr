@@ -1,19 +1,13 @@
 import "/main_wrapper.u"
 import "/stdout.u"
-import "/vector.u"
 
 import "/common_lib/map_loading.uh"
 import "/common_lib/materials_file.uh"
 
-import "buffer_object.uh"
 import "camera_controller.uh"
 import "game_filesystem.uh"
-import "mat.uh"
-import "math_constants.uh"
 import "opengl_window.uh"
-import "shader_program.uh"
-import "vertex_array_object.uh"
-import "vertex_formats.uh"
+import "world_drawer.uh"
 
 pretty_main
 {
@@ -34,164 +28,11 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 			"ZMAP41.ANT",
 			LoadZmapFile ).try_take();
 
-	var ust::vector</ MapVertex /> mut vertices;
-	var ust::vector</u16/> mut indices;
-
-	foreach( &q : zmap_data.quads )
-	{
-		var [ [ i32, 3 ], 4 ] shifts
-		[
-			[ (q.vertices[0][0]), (q.vertices[0][1]), (q.vertices[0][2]) ],
-			[ (q.vertices[1][0]), (q.vertices[1][1]), (q.vertices[1][2]) ],
-			[ (q.vertices[2][0]), (q.vertices[2][1]), (q.vertices[2][2]) ],
-			[ (q.vertices[3][0]), (q.vertices[3][1]), (q.vertices[3][2]) ]
-		];
-
-		var [ i32, 3 ] shifts_min
-		[
-			ust::min( ust::min(shifts[0][0], shifts[1][0]), ust::min(shifts[2][0], shifts[3][0]) ),
-			ust::min( ust::min(shifts[0][1], shifts[1][1]), ust::min(shifts[2][1], shifts[3][1]) ),
-			ust::min( ust::min(shifts[0][2], shifts[1][2]), ust::min(shifts[2][2], shifts[3][2]) ),
-		];
-		var [ i32, 3 ] shifts_max
-		[
-			ust::max( ust::max(shifts[0][0], shifts[1][0]), ust::max(shifts[2][0], shifts[3][0]) ),
-			ust::max( ust::max(shifts[0][1], shifts[1][1]), ust::max(shifts[2][1], shifts[3][1]) ),
-			ust::max( ust::max(shifts[0][2], shifts[1][2]), ust::max(shifts[2][2], shifts[3][2]) ),
-		];
-
-		var [ i32, 3 ] center
-		[
-			// Using signed integer division by two is important here.
-			// Using fractional numbers or bit-shift isn't correct, because this leads to gaps in map geometry.
-			i32( q.center[0] ) - ( shifts_min[0] + shifts_max[0] ) / 2,
-			i32( q.center[1] ) - ( shifts_min[1] + shifts_max[1] ) / 2,
-			i32( q.center[2] ) - ( shifts_min[2] + shifts_max[2] ) / 2,
-		];
-
-		var Vec3f mut u_vec( 0.0f, 1.0f,  0.0f );
-		var Vec3f mut v_vec( 1.0f, 0.0f, 0.0f );
-
-		{
-			// TODO - make sure it's correct to zero lower bits.
-			var f32 angle= f32( i32( q.texture_roll ) & ~15 ) * ( -c_tau / 256.0f );
-			var f32 c= ust::cos(angle);
-			var f32 s= ust::sin(angle);
-
-			u_vec= Vec3f( u_vec.x * c - u_vec.y * s, u_vec.x * s + u_vec.y * c, u_vec.z );
-			v_vec= Vec3f( v_vec.x * c - v_vec.y * s, v_vec.x * s + v_vec.y * c, v_vec.z );
-		}
-		{
-			var f32 angle= ( f32( q.normal_elevation ) + 256.0f ) * ( c_tau / 1024.0f );
-			var f32 c= ust::cos(angle);
-			var f32 s= ust::sin(angle);
-
-			u_vec= Vec3f( u_vec.x * c - u_vec.z * s, u_vec.y, u_vec.x * s + u_vec.z * c );
-			v_vec= Vec3f( v_vec.x * c - v_vec.z * s, v_vec.y, v_vec.x * s + v_vec.z * c );
-		}
-		{
-			var f32 angle= ( 768.0f - f32(q.normal_azimuth) ) * ( c_tau / 1024.0f );
-			var f32 c= ust::cos(angle);
-			var f32 s= ust::sin(angle);
-
-			u_vec= Vec3f( u_vec.x * c - u_vec.y * s, u_vec.x * s + u_vec.y * c, u_vec.z );
-			v_vec= Vec3f( v_vec.x * c - v_vec.y * s, v_vec.x * s + v_vec.y * c, v_vec.z );
-		}
-		{
-			// Use experimentally-found factor for texture basis scaling.
-			// This code may be wrong.
-			// It should map bits 8 to scale 1.25, bits 12 to scale 2.25.
-			// Bits 9 are roughly mapped to scale 1.5.
-			//var f32 vecs_scale= ( 1.0f + f32( i32(s.texture_roll) & 15 ) / 9.6f );
-			var f32 vecs_scale= 1.0f / ust::cos( f32( i32(q.texture_roll) & 15 ) * 0.0925f );
-			u_vec.x*= vecs_scale;
-			u_vec.y*= vecs_scale;
-			u_vec.z*= vecs_scale;
-			v_vec.x*= vecs_scale;
-			v_vec.y*= vecs_scale;
-			v_vec.z*= vecs_scale;
-		}
-
-		var Vec2f tc_offset( f32( q.tc_offset[0] ), f32( q.tc_offset[1] ) );
-
-		// OpenGL uses normalized texture coordinates.
-		var f32 tc_scale= 1.0f / f32( MaterialsDescription::c_texture_size );
-
-		var size_type base_index= vertices.size();
-
-		for( auto mut i= 0s; i < 4s; ++i )
-		{
-			var [ f32, 4 ] position
-			[
-				f32( center[0] + shifts[i][0] ),
-				f32( center[1] + shifts[i][1] ),
-				f32( center[2] + shifts[i][2] ),
-				0.0f,
-			];
-
-			var [ f32, 2 ] tc
-			[
-				tc_scale * ( f32( shifts[i][0] - shifts[0][0] ) * u_vec.x + f32( shifts[i][1] - shifts[0][1] ) * u_vec.y + f32( shifts[i][2]  - shifts[0][2] ) * u_vec.z + tc_offset.x ),
-				tc_scale * ( f32( shifts[i][0] - shifts[0][0] ) * v_vec.x + f32( shifts[i][1] - shifts[0][1] ) * v_vec.y + f32( shifts[i][2]  - shifts[0][2] ) * v_vec.z + tc_offset.y ),
-			];
-
-			vertices.push_back( MapVertex{ .position= position, .tex_coordinates= tc, .padding= zero_init } );
-		}
-
-		indices.push_back( u16( base_index + 0s ) );
-		indices.push_back( u16( base_index + 1s ) );
-		indices.push_back( u16( base_index + 2s ) );
-		indices.push_back( u16( base_index + 0s ) );
-		indices.push_back( u16( base_index + 2s ) );
-		indices.push_back( u16( base_index + 3s ) );
-	}
-
 	var OpenGLWindow mut window;
 
-	var ShaderProgram mut test_shader( embed</char8/>( "shaders/test.vert.glsl" ), embed</char8/>( "shaders/test.frag.glsl" ) );
+	var WorldDrawer mut world_drawer;
 
-	// Create buffer object prior to vertex array object using it in order to ensure correct destruction order.
-
-	var BufferObject vertex_buffer_object=
-		BufferObject::CreateStaticDrawBuffer(
-			GLenum( GL_ARRAY_BUFFER ), // Needed for a vertex attribute source.
-			vertices.range().to_byte8_range() );
-
-	var BufferObject index_buffer_object=
-		BufferObject::CreateStaticDrawBuffer(
-			GLenum( GL_ELEMENT_ARRAY_BUFFER ), // Needed for a triangle indices source.
-			indices.range().to_byte8_range() );
-
-	var VertexArrayObject vertex_array_object;
-
-	vertex_array_object.Bind();
-
-	var GLuint c_position_attrib= 0u;
-	var GLuint c_texture_coordinates_attrib= 1u;
-
-	vertex_buffer_object.Bind();
-
-	unsafe( glEnableVertexAttribArray( c_position_attrib ) );
-
-	unsafe( glVertexAttribPointer(
-		c_position_attrib,
-		3,
-		GLenum( GL_FLOAT ),
-		GLboolean(0),
-		GLsizei( typeinfo</MapVertex/>.size_of ),
-		ust::nullptr</byte8/>() + 0s ) );
-
-	unsafe( glEnableVertexAttribArray( c_texture_coordinates_attrib ) );
-
-	unsafe( glVertexAttribPointer(
-		c_texture_coordinates_attrib,
-		2,
-		GLenum( GL_FLOAT ),
-		GLboolean(0),
-		GLsizei( typeinfo</MapVertex/>.size_of ),
-		ust::nullptr</byte8/>() + typeinfo</f32/>.size_of * 4s ) );
-
-	index_buffer_object.Bind();
+	world_drawer.SetMap( zmap_data );
 
 	var ust::vector</bool/> mut keyboard_state;
 	var CameraController mut camera_controller( Vec3f( 0.0f, 0.0f, 0.0f ) );
@@ -249,25 +90,9 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 
 		camera_controller.Update( time_delta_s_limited, keyboard_state );
 
-		unsafe( glClearColor( GLclampf(32.0 / 255.0), GLclampf(16.0 / 255.0), GLclampf(8.0f / 255.0f), GLclampf(1.0) ) );
-		unsafe( glClear( GLbitfield( GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT ) ) );
-
-		unsafe( glEnable( GLenum( GL_DEPTH_TEST ) ) );
-		unsafe( glDepthMask( GLboolean(1) ) );
-		unsafe( glDepthFunc( GLenum( GL_LEQUAL ) ) );
-
-		unsafe( glEnable( GLenum( GL_CULL_FACE ) ) );
-		unsafe( glCullFace( GLenum( GL_FRONT ) ) );
-
 		auto viewport_size= window.GetViewportSize();
 
-		test_shader.Bind();
-		test_shader.SetUniform( "fu_triangle_color", 0.1f, 0.1f, 0.9f, 1.0f );
-		test_shader.SetUniform( "vu_matrix", camera_controller.GetCameraMatrix( f32(viewport_size[0]) / f32(viewport_size[1]) ) );
-
-		vertex_array_object.Bind();
-
-		unsafe( glDrawElements( GLenum( GL_TRIANGLES ), GLsizei( indices.size() ), GLenum( GL_UNSIGNED_SHORT ), ust::nullptr</byte8/>() ) );
+		world_drawer.Draw( camera_controller.GetCameraMatrix( f32(viewport_size[0]) / f32(viewport_size[1]) ) );
 
 		window.SwapWindow();
 
