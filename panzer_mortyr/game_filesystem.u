@@ -1,5 +1,11 @@
 import "/enum_string_conversions.u"
+import "/scoped_array.u"
 import "/stdout.u"
+import "/string_conversions.u"
+
+import "/common_lib/archive_file.uh"
+import "/common_lib/string_utils.uh"
+
 import "game_filesystem.uh"
 
 namespace PM
@@ -8,6 +14,68 @@ namespace PM
 fn GameFilesystem::constructor()
 	( archive_file_= OpenArchiveFile() )
 {
+	var u64 mut file_size(0);
+	result_match( archive_file_.get_metatada() )
+	{
+		Ok(m) -> { file_size= m.size; },
+		Err(e) ->
+		{
+			ust::stderr_print( ust::concat( "Error getting archive file size: ", ust::enum_to_string( e ), "\n" ) );
+			halt;
+		}
+	}
+
+	ust::stdout_print( ust::concat( "Has size ", ust::to_string8(file_size), " bytes\n" ) );
+
+	var ArchiveHeader mut archive_header= zero_init;
+
+	if_var( e : archive_file_.read_exact( ust::single_element_array_view( archive_header ).to_byte8_range() ).as_error_ref() )
+	{
+		ust::stderr_print( ust::concat( "Error reading archive header: ", ust::enum_to_string( e ), "\n" ) );
+		halt;
+	}
+
+	if( archive_header.id != ArchiveHeader::c_expected_id )
+	{
+		ust::stderr_print( ust::concat( "Unexpected file ID, expected ", ust::to_string8(ArchiveHeader::c_expected_id), ",got ", ust::to_string8(archive_header.id), "!\n" ) );
+		halt;
+	}
+
+	ust::stdout_print( ust::concat( "Has archive with ", ust::to_string8( archive_header.num_files ), " files\n" ) );
+
+	if( u64( typeinfo</ArchiveHeader/>.size_of ) + u64(archive_header.num_files) * u64( typeinfo</ArchiveFileHeader/>.size_of ) > file_size )
+	{
+		ust::stderr_print( "Entry table size is bigger than file size!\n" );
+		halt;
+	}
+
+	scoped_array ArchiveFileHeader mut archive_headers[ size_type(archive_header.num_files) ]( ust::make_zeroed</ArchiveFileHeader/>() );
+
+	if_var( e : archive_file_.read_exact( archive_headers.to_byte8_range() ).as_error_ref() )
+	{
+		ust::stderr_print( ust::concat( "Error reading archive file headers: ", ust::enum_to_string( e ), "\n" ) );
+		halt;
+	}
+
+	foreach( &file_header : archive_headers )
+	{
+		var ust::string_view8 mut name= file_header.name;
+		while( !name.empty() && name.back() == '\0' )
+		{
+			name.drop_back();
+		}
+
+		// Convert file name to uppercase, since files in the archive have sometimes mixed cases and working with mixed case is painful on case-sensetive filesystems.
+		var ust::string8 mut name_uppercase= ConvertToUppercase( name );
+
+		if( u64( file_header.offset ) + u64( file_header.size ) > file_size )
+		{
+			ust::stderr_print( ust::concat( "File \"", name_uppercase, "\" is out of bounds!\n" ) );
+			continue;
+		}
+
+		archive_entries_.insert_new( move(name_uppercase), FileEntry{ .offset= file_header.offset, .size= file_header.size } );
+	}
 }
 
 // Halts if fails.
