@@ -194,7 +194,18 @@ fn LoadZpozFile( ust::filesystem_path_view file_path ) : ust::optional</ZpozData
 {
 	result_match( ust::file_readable::open( file_path ) )
 	{
-		Ok( mut f ) -> { return LoadZpozFile( move(f) ); },
+		Ok( mut f ) ->
+		{
+			result_match( LoadZpozFile( f ) )
+			{
+				Ok( mut d ) -> { return move(d); },
+				Err( e ) ->
+				{
+					ust::stderr_print( ust::concat( "Error reading map file: ", ust::enum_to_string( e ), "\n" ) );
+					return ust::null_optional;
+				},
+			}
+		},
 		Err(e) ->
 		{
 			ust::stderr_print( ust::concat( "Error opening file: ", ust::enum_to_string( e ), "\n" ) );
@@ -203,20 +214,15 @@ fn LoadZpozFile( ust::filesystem_path_view file_path ) : ust::optional</ZpozData
 	}
 }
 
-fn LoadZpozFile( ust::file_readable mut f ) : ust::optional</ZpozData/>
+fn LoadZpozFile( ust::file_readable &mut f ) : ust::io_result</ZpozData/>
 {
 	var ZPozFileHeader mut header= zero_init;
-
-	if_var( e : f.read_exact( ust::single_element_array_view( header ).to_byte8_range() ).as_error_ref() )
-	{
-		ust::stderr_print( ust::concat( "Error reading map file: ", ust::enum_to_string( e ), "\n" ) );
-		return ust::null_optional;
-	}
+	result_check_or_return( f.read_exact( ust::single_element_array_view( header ).to_byte8_range() ) );
 
 	if( header.signature != ZPozFileHeader::c_expected_signature )
 	{
 		ust::stderr_print( ust::concat( "Unexpected file signature \"", header.signature, "\"!" ) );
-		return ust::null_optional;
+		return ust::io_error::other;
 	}
 
 	{
@@ -240,28 +246,13 @@ fn LoadZpozFile( ust::file_readable mut f ) : ust::optional</ZpozData/>
 	var ZpozData mut result;
 
 	result.entities.resize( size_type( header.num_entities ), ust::make_zeroed</ZpozEntity/>() );
-
-	if_var( e : f.read_exact( result.entities.range().to_byte8_range() ).as_error_ref() )
-	{
-		ust::stderr_print( ust::concat( "Failed to read! Error: ", ust::enum_to_string( e ), "!\n" ) );
-		return ust::null_optional;
-	}
+	result_check_or_return( f.read_exact( result.entities.range().to_byte8_range() ) );
 
 	result.structs1.resize( size_type( header.num_structs1 ), ust::make_zeroed</ZpozStruct1/>() );
-
-	if_var( e : f.read_exact( result.structs1.range().to_byte8_range() ).as_error_ref() )
-	{
-		ust::stderr_print( ust::concat( "Failed to read! Error: ", ust::enum_to_string( e ), "!\n" ) );
-		return ust::null_optional;
-	}
+	result_check_or_return( f.read_exact( result.structs1.range().to_byte8_range() ) );
 
 	var ZPozIntermediateHeader mut intermediate_header= zero_init;
-
-	if_var( e : f.read_exact( ust::single_element_array_view( intermediate_header ).to_byte8_range()  ).as_error_ref() )
-	{
-		ust::stderr_print( ust::concat( "Error reading map file: ", ust::enum_to_string( e ), "\n" ) );
-		return ust::null_optional;
-	}
+	result_check_or_return( f.read_exact( ust::single_element_array_view( intermediate_header ).to_byte8_range()  ) );
 
 	{
 		var ust::string8 mut m;
@@ -278,20 +269,10 @@ fn LoadZpozFile( ust::file_readable mut f ) : ust::optional</ZpozData/>
 	}
 
 	result.clusters.resize( size_type( intermediate_header.num_clusters ), ust::make_zeroed</ZpozCluster/>() );
-
-	if_var( e : f.read_exact( result.clusters.range().to_byte8_range() ).as_error_ref() )
-	{
-		ust::stderr_print( ust::concat( "Failed to read! Error: ", ust::enum_to_string( e ), "!\n" ) );
-		return ust::null_optional;
-	}
+	result_check_or_return( f.read_exact( result.clusters.range().to_byte8_range() ) );
 
 	result.clusters_visibility_data.resize( size_type( intermediate_header.num_clusters ), ust::make_zeroed</ZpozClusterVisibilityData/>() );
-
-	if_var( e : f.read_exact( result.clusters_visibility_data.range().to_byte8_range() ).as_error_ref() )
-	{
-		ust::stderr_print( ust::concat( "Failed to read! Error: ", ust::enum_to_string( e ), "!\n" ) );
-		return ust::null_optional;
-	}
+	result_check_or_return( f.read_exact( result.clusters_visibility_data.range().to_byte8_range() ) );
 
 	{
 		var size_type num_cluster_indices=
@@ -299,12 +280,7 @@ fn LoadZpozFile( ust::file_readable mut f ) : ust::optional</ZpozData/>
 			size_type( intermediate_header.num_clusters ) * ( typeinfo</ZpozClusterVisibilityData/>.size_of / typeinfo</u32/>.size_of );
 
 		result.cluster_indices.resize( num_cluster_indices, ust::make_zeroed</ZPozClusterIndex/>() );
-
-		if_var( e : f.read_exact( result.cluster_indices.range().to_byte8_range() ).as_error_ref() )
-		{
-			ust::stderr_print( ust::concat( "Failed to read! Error: ", ust::enum_to_string( e ), "!\n" ) );
-			return ust::null_optional;
-		}
+		result_check_or_return( f.read_exact( result.cluster_indices.range().to_byte8_range() ) );
 	}
 
 	return result;
