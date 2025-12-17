@@ -1,5 +1,4 @@
 import "/enum_string_conversions.u"
-import "/file.u"
 import "/stdout.u"
 import "/string.u"
 import "/string_conversions.u"
@@ -449,7 +448,18 @@ fn LoadMapaWayFile( ust::filesystem_path_view file_path ) : ust::optional</MapaW
 {
 	result_match( ust::file_readable::open( file_path ) )
 	{
-		Ok( mut f ) -> { return LoadMapaWayFile( move(f) ); },
+		Ok( mut f ) ->
+		{
+			result_match( LoadMapaWayFile( f ) )
+			{
+				Ok( mut d ) -> { return move(d); },
+				Err( e ) ->
+				{
+					ust::stderr_print( ust::concat( "Error reading map file: ", ust::enum_to_string( e ), "\n" ) );
+					return ust::null_optional;
+				},
+			}
+		},
 		Err(e) ->
 		{
 			ust::stderr_print( ust::concat( "Error opening file: ", ust::enum_to_string( e ), "\n" ) );
@@ -458,20 +468,16 @@ fn LoadMapaWayFile( ust::filesystem_path_view file_path ) : ust::optional</MapaW
 	}
 }
 
-fn LoadMapaWayFile( ust::file_readable mut f ) : ust::optional</MapaWayData/>
+fn LoadMapaWayFile( ust::file_readable &mut f ) : ust::io_result</MapaWayData/>
 {
 	var MapaWayFileHeader mut header= zero_init;
 
-	if_var( e : f.read_exact( ust::single_element_array_view( header ).to_byte8_range() ).as_error_ref() )
-	{
-		ust::stderr_print( ust::concat( "Error reading map file: ", ust::enum_to_string( e ), "\n" ) );
-		return ust::null_optional;
-	}
+	result_check_or_return( f.read_exact( ust::single_element_array_view( header ).to_byte8_range() ) );
 
 	if( header.signature != MapaWayFileHeader::c_expected_signature )
 	{
 		ust::stderr_print( ust::concat( "Unexpected file signature \"", header.signature, "\"!" ) );
-		return ust::null_optional;
+		return ust::io_error::other;
 	}
 
 	{
@@ -497,12 +503,7 @@ fn LoadMapaWayFile( ust::file_readable mut f ) : ust::optional</MapaWayData/>
 	var MapaWayData mut result;
 
 	result.navigation_graphs.resize( size_type( header.num_navigation_graphs ), ust::make_zeroed</MapaWayNavigationGraph/>() );
-
-	if_var( e : f.read_exact( result.navigation_graphs.range().to_byte8_range() ).as_error_ref() )
-	{
-		ust::stderr_print( ust::concat( "Failed to read! Error: ", ust::enum_to_string( e ), "!\n" ) );
-		return ust::null_optional;
-	}
+	result_check_or_return( f.read_exact( result.navigation_graphs.range().to_byte8_range() ) );
 
 	if( false )
 	{
