@@ -1,5 +1,4 @@
 import "/enum_string_conversions.u"
-import "/file.u"
 import "/stdout.u"
 import "/string.u"
 import "/string_conversions.u"
@@ -12,7 +11,18 @@ fn LoadModel( ust::filesystem_path_view file_path ) : ust::optional</ModelData/>
 {
 	result_match( ust::file_readable::open( file_path ) )
 	{
-		Ok( mut f ) -> { return LoadModel( move(f) ); },
+		Ok( mut f ) ->
+		{
+			result_match( LoadModel( f ) )
+			{
+				Ok( mut m ) -> { return move(m); },
+				Err( e ) ->
+				{
+					ust::stderr_print( ust::concat( "Error reading model file: ", ust::enum_to_string( e ), "\n" ) );
+					return ust::null_optional;
+				}
+			}
+		},
 		Err(e) ->
 		{
 			ust::stderr_print( ust::concat( "Error opening file: ", ust::enum_to_string( e ), "\n" ) );
@@ -21,34 +31,24 @@ fn LoadModel( ust::filesystem_path_view file_path ) : ust::optional</ModelData/>
 	}
 }
 
-fn LoadModel( ust::file_readable mut f ) : ust::optional</ModelData/>
+fn LoadModel( ust::file_readable &mut f ) : ust::io_result</ModelData/>
 {
 	var ObbFileHeaderBase mut header_base= zero_init;
-
-	if_var( e : f.read_exact( ust::single_element_array_view( header_base ).to_byte8_range() ).as_error_ref() )
-	{
-		ust::stderr_print( ust::concat( "Error reading model file: ", ust::enum_to_string( e ), "\n" ) );
-		return ust::null_optional;
-	}
+	result_check_or_return( f.read_exact( ust::single_element_array_view( header_base ).to_byte8_range() ) );
 
 	if( header_base.signature != ObbFileHeaderBase::c_expected_signature )
 	{
 		ust::stderr_print( ust::concat( "Unexpected file signature \"", header_base.signature, "\"!" ) );
-		return ust::null_optional;
+		return ust::io_error::other;
 	}
 
 	var ObbFileHeaderExtended mut header_extended= zero_init;
-
-	if_var( e :
+	result_check_or_return(
 		f.read_exact(
 			ust::single_element_array_view( header_extended ).to_byte8_range().subrange_end(
 				( header_base.version_number == ObbFileHeaderBase::c_version5
 					? ObbFileHeaderExtended::c_size_version5
-					: ObbFileHeaderExtended::c_size_version4 ) ) ).as_error_ref() )
-	{
-		ust::stderr_print( ust::concat( "Error reading model file: ", ust::enum_to_string( e ), "\n" ) );
-		return ust::null_optional;
-	}
+					: ObbFileHeaderExtended::c_size_version4 ) ) ) );
 
 	{
 		var ust::string8 mut m;
@@ -79,36 +79,16 @@ fn LoadModel( ust::file_readable mut f ) : ust::optional</ModelData/>
 	var size_type num_triangles( header_extended.num_triangles );
 
 	result.triangles.resize( size_type( num_triangles ), ust::make_zeroed</ObbTriangle/>() );
-
-	if_var( e : f.read_exact( result.triangles.range().to_byte8_range() ).as_error_ref() )
-	{
-		ust::stderr_print( ust::concat( "Failed to read! Error: ", ust::enum_to_string( e ), "\n" ) );
-		return ust::null_optional;
-	}
+	result_check_or_return( f.read_exact( result.triangles.range().to_byte8_range() ) );
 
 	result.texture_coordinates.resize( size_type( result.num_vertices ), ust::make_zeroed</ObbVertexTextureCoordinates/>() );
-
-	if_var( e : f.read_exact( result.texture_coordinates.range().to_byte8_range() ).as_error_ref() )
-	{
-		ust::stderr_print( ust::concat( "Failed to read! Error: ", ust::enum_to_string( e ), "\n" ) );
-		return ust::null_optional;
-	}
+	result_check_or_return( f.read_exact( result.texture_coordinates.range().to_byte8_range() ) );
 
 	result.vertex_positions_data.resize( size_type( result.num_vertices * result.num_frames ), ust::make_zeroed</ObbVertexPosition/>() );
-
-	if_var( e : f.read_exact( result.vertex_positions_data.range().to_byte8_range() ).as_error_ref() )
-	{
-		ust::stderr_print( ust::concat( "Failed to read! Error: ", ust::enum_to_string( e ), "\n" ) );
-		return ust::null_optional;
-	}
+	result_check_or_return( f.read_exact( result.vertex_positions_data.range().to_byte8_range() ) );
 
 	result.per_frame_triangle_normals.resize( num_triangles * size_type( result.num_frames ), ust::make_zeroed</ObbPerFrameTriangleNormal/>() );
-
-	if_var( e : f.read_exact( result.per_frame_triangle_normals.range().to_byte8_range() ).as_error_ref() )
-	{
-		ust::stderr_print( ust::concat( "Failed to read! Error: ", ust::enum_to_string( e ), "\n" ) );
-		return ust::null_optional;
-	}
+	result_check_or_return( f.read_exact( result.per_frame_triangle_normals.range().to_byte8_range() ) );
 
 	if( header_base.version_number == ObbFileHeaderBase::c_version5 )
 	{
@@ -116,20 +96,10 @@ fn LoadModel( ust::file_readable mut f ) : ust::optional</ModelData/>
 		// Its exact meaning is unclear.
 
 		result.some_per_triangle_ints.resize( num_triangles, 0u );
-
-		if_var( e : f.read_exact( result.some_per_triangle_ints.range().to_byte8_range() ).as_error_ref() )
-		{
-			ust::stderr_print( ust::concat( "Failed to read! Error: ", ust::enum_to_string( e ), "\n" ) );
-			return ust::null_optional;
-		}
+		result_check_or_return( f.read_exact( result.some_per_triangle_ints.range().to_byte8_range() ) );
 
 		result.some_per_vertex_ints.resize( size_type( result.num_vertices ), 0u );
-
-		if_var( e : f.read_exact( result.some_per_vertex_ints.range().to_byte8_range() ).as_error_ref() )
-		{
-			ust::stderr_print( ust::concat( "Failed to read! Error: ", ust::enum_to_string( e ), "\n" ) );
-			return ust::null_optional;
-		}
+		result_check_or_return( f.read_exact( result.some_per_vertex_ints.range().to_byte8_range() ) );
 
 		// This lods data is stored in some complex way, it's for now uncelar what it is.
 		// But analysys of this data has shown, how to extract at least number of lod0 triangles.
@@ -158,17 +128,8 @@ fn LoadModel( ust::file_readable mut f ) : ust::optional</ModelData/>
 				continue;
 			}
 
-			if_var( e : f.read_exact( texture_data.pixels_data.range().to_byte8_range() ).as_error_ref() )
-			{
-				ust::stderr_print( ust::concat( "Failed to read! Error: ", ust::enum_to_string( e ), "\n" ) );
-				return ust::null_optional;
-			}
-
-			if_var( e : f.read_exact( ust::array_view_mut</u8/>( texture_data.palette ).to_byte8_range() ).as_error_ref() )
-			{
-				ust::stderr_print( ust::concat( "Failed to read! Error: ", ust::enum_to_string( e ), "\n" ) );
-				return ust::null_optional;
-			}
+			result_check_or_return( f.read_exact( texture_data.pixels_data.range().to_byte8_range() ) );
+			result_check_or_return( f.read_exact( ust::array_view_mut</u8/>( texture_data.palette ).to_byte8_range() ) );
 		}
 
 		for( auto mut i= 0s; i < 3s; ++i )
@@ -185,17 +146,8 @@ fn LoadModel( ust::file_readable mut f ) : ust::optional</ModelData/>
 				continue;
 			}
 
-			if_var( e : f.read_exact( texture_data.pixels_data.range().to_byte8_range() ).as_error_ref() )
-			{
-				ust::stderr_print( ust::concat( "Failed to read! Error: ", ust::enum_to_string( e ), "\n" ) );
-				return ust::null_optional;
-			}
-
-			if_var( e : f.read_exact( ust::array_view_mut</u8/>( texture_data.palette ).to_byte8_range() ).as_error_ref() )
-			{
-				ust::stderr_print( ust::concat( "Failed to read! Error: ", ust::enum_to_string( e ), "\n" ) );
-				return ust::null_optional;
-			}
+			result_check_or_return( f.read_exact( texture_data.pixels_data.range().to_byte8_range() ) );
+			result_check_or_return( f.read_exact( ust::array_view_mut</u8/>( texture_data.palette ).to_byte8_range() ) );
 		}
 	}
 
