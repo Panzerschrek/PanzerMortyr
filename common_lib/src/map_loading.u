@@ -107,7 +107,18 @@ fn LoadZvoxFile( ust::filesystem_path_view file_path ) : ust::optional</ZvoxData
 {
 	result_match( ust::file_readable::open( file_path ) )
 	{
-		Ok( mut f ) -> { return LoadZvoxFile( move(f) ); },
+		Ok( mut f ) ->
+		{
+			result_match( LoadZvoxFile( f ) )
+			{
+				Ok( mut d ) -> { return move(d); },
+				Err(e) ->
+				{
+					ust::stderr_print( ust::concat( "Error reading map file: ", ust::enum_to_string( e ), "\n" ) );
+					return ust::null_optional;
+				}
+			}
+		},
 		Err(e) ->
 		{
 			ust::stderr_print( ust::concat( "Error opening file: ", ust::enum_to_string( e ), "\n" ) );
@@ -116,20 +127,15 @@ fn LoadZvoxFile( ust::filesystem_path_view file_path ) : ust::optional</ZvoxData
 	}
 }
 
-fn LoadZvoxFile( ust::file_readable mut f ) : ust::optional</ZvoxData/>
+fn LoadZvoxFile( ust::file_readable &mut f ) : ust::io_result</ZvoxData/>
 {
 	var ZVoxFileHeader mut header= zero_init;
-
-	if_var( e : f.read_exact( ust::single_element_array_view( header ).to_byte8_range() ).as_error_ref() )
-	{
-		ust::stderr_print( ust::concat( "Error reading map file: ", ust::enum_to_string( e ), "\n" ) );
-		return ust::null_optional;
-	}
+	result_check_or_return( f.read_exact( ust::single_element_array_view( header ).to_byte8_range() ) );
 
 	if( header.signature != ZVoxFileHeader::c_expected_signature )
 	{
 		ust::stderr_print( ust::concat( "Unexpected file signature \"", header.signature, "\"!" ) );
-		return ust::null_optional;
+		return ust::io_error::other;
 	}
 
 	{
@@ -153,36 +159,16 @@ fn LoadZvoxFile( ust::file_readable mut f ) : ust::optional</ZvoxData/>
 	var ZvoxData mut result;
 
 	result.structs0.resize( size_type( header.num4 ), ust::make_zeroed</ZvoxStruct0/>() );
-
-	if_var( e : f.read_exact( result.structs0.range().to_byte8_range() ).as_error_ref() )
-	{
-		ust::stderr_print( ust::concat( "Failed to read! Error: ", ust::enum_to_string( e ), "!\n" ) );
-		return ust::null_optional;
-	}
+	result_check_or_return( f.read_exact( result.structs0.range().to_byte8_range() ) );
 
 	result.structs1.resize( size_type( header.num3 ), ust::make_zeroed</ZvoxStruct1/>() );
-
-	if_var( e : f.read_exact( result.structs1.range().to_byte8_range() ).as_error_ref() )
-	{
-		ust::stderr_print( ust::concat( "Failed to read! Error: ", ust::enum_to_string( e ), "!\n" ) );
-		return ust::null_optional;
-	}
+	result_check_or_return( f.read_exact( result.structs1.range().to_byte8_range() ) );
 
 	result.clusters.resize( size_type( header.num_clusters ), ust::make_zeroed</ZvoxCluster/>() );
-
-	if_var( e : f.read_exact( result.clusters.range().to_byte8_range() ).as_error_ref() )
-	{
-		ust::stderr_print( ust::concat( "Failed to read! Error: ", ust::enum_to_string( e ), "!\n" ) );
-		return ust::null_optional;
-	}
+	result_check_or_return( f.read_exact( result.clusters.range().to_byte8_range() ) );
 
 	result.light_sources.resize( size_type( header.num_light_sources ), ust::make_zeroed</ZvoxLightSource/>() );
-
-	if_var( e : f.read_exact( result.light_sources.range().to_byte8_range() ).as_error_ref() )
-	{
-		ust::stderr_print( ust::concat( "Failed to read! Error: ", ust::enum_to_string( e ), "!\n" ) );
-		return ust::null_optional;
-	}
+	result_check_or_return( f.read_exact( result.light_sources.range().to_byte8_range() ) );
 
 	// There is at least one more data block left in this file, which size and meaning isn't known yet.
 	// But it is filled with zeros, at least in some cases.
