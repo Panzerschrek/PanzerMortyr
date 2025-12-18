@@ -29,6 +29,8 @@ fn WorldDrawer::SetMap(
 
 	foreach( &q : zmap_data.quads )
 	{
+		var size_type base_index= vertices.size();
+
 		var [ [ i32, 3 ], 4 ] shifts
 		[
 			[ (q.vertices[0][0]), (q.vertices[0][1]), (q.vertices[0][2]) ],
@@ -59,7 +61,7 @@ fn WorldDrawer::SetMap(
 			i32( q.center[2] ) - ( shifts_min[2] + shifts_max[2] ) / 2,
 		];
 
-		var Vec3f mut u_vec( 0.0f, 1.0f,  0.0f );
+		var Vec3f mut u_vec( 0.0f, 1.0f, 0.0f );
 		var Vec3f mut v_vec( 1.0f, 0.0f, 0.0f );
 
 		{
@@ -94,20 +96,14 @@ fn WorldDrawer::SetMap(
 			// Bits 9 are roughly mapped to scale 1.5.
 			//var f32 vecs_scale= ( 1.0f + f32( i32(s.texture_roll) & 15 ) / 9.6f );
 			var f32 vecs_scale= 1.0f / ust::cos( f32( i32(q.texture_roll) & 15 ) * 0.0925f );
-			u_vec.x*= vecs_scale;
-			u_vec.y*= vecs_scale;
-			u_vec.z*= vecs_scale;
-			v_vec.x*= vecs_scale;
-			v_vec.y*= vecs_scale;
-			v_vec.z*= vecs_scale;
+			u_vec*= vecs_scale;
+			v_vec*= vecs_scale;
 		}
 
 		var Vec2f tc_offset( f32( q.tc_offset[0] ), f32( q.tc_offset[1] ) );
 
 		// OpenGL uses normalized texture coordinates.
-		var f32 tc_scale= 1.0f / f32( MaterialsDescription::c_texture_size );
-
-		var size_type base_index= vertices.size();
+		var f32 constexpr tc_scale= 1.0f / f32( MaterialsDescription::c_texture_size );
 
 		var f32 mut texture_id( q.texture_id );
 
@@ -128,24 +124,34 @@ fn WorldDrawer::SetMap(
 			}
 		}
 
-		for( auto mut i= 0s; i < 4s; ++i )
+		foreach( &vertex_shift : shifts )
 		{
-			var [ f32, 4 ] position
-			[
-				f32( center[0] + shifts[i][0] ),
-				f32( center[1] + shifts[i][1] ),
-				f32( center[2] + shifts[i][2] ),
-				0.0f,
-			];
+			// Texture coordinates are calculated relative to vertex #0.
+			var Vec3f vertex_relative_shift
+			(
+				f32( vertex_shift[0] - shifts[0][0] ),
+				f32( vertex_shift[1] - shifts[0][1] ),
+				f32( vertex_shift[2] - shifts[0][2] )
+			);
 
-			var [ f32, 3 ] tc
-			[
-				tc_scale * ( f32( shifts[i][0] - shifts[0][0] ) * u_vec.x + f32( shifts[i][1] - shifts[0][1] ) * u_vec.y + f32( shifts[i][2]  - shifts[0][2] ) * u_vec.z + tc_offset.x ),
-				tc_scale * ( f32( shifts[i][0] - shifts[0][0] ) * v_vec.x + f32( shifts[i][1] - shifts[0][1] ) * v_vec.y + f32( shifts[i][2]  - shifts[0][2] ) * v_vec.z + tc_offset.y ),
-				texture_id,
-			];
-
-			vertices.push_back( MapVertex{ .position= position, .tex_coordinates= tc, .padding= zero_init } );
+			vertices.push_back(
+				MapVertex
+				{
+					.position
+					[
+						f32( center[0] + vertex_shift[0] ),
+						f32( center[1] + vertex_shift[1] ),
+						f32( center[2] + vertex_shift[2] ),
+						0.0f,
+					],
+					.tex_coordinates
+					[
+						tc_scale * ( vertex_relative_shift.Dot( u_vec ) + tc_offset.x ),
+						tc_scale * ( vertex_relative_shift.Dot( v_vec ) + tc_offset.y ),
+						texture_id,
+					],
+					.padding= zero_init
+				} );
 		}
 
 		indices.push_back( u16( base_index + 0s ) );
