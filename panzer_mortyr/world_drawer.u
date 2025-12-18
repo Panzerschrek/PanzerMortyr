@@ -1,4 +1,5 @@
 import "/enum_string_conversions.u"
+import "/scoped_array.u"
 import "/stdout.u"
 import "/string_conversions.u"
 
@@ -275,17 +276,28 @@ fn LoadTextureFile( ust::file_readable &mut f ) : ust::io_result</TextureData/>
 	var BitmapInfoHeader mut info_header= zero_init;
 	result_check_or_return( f.read_exact( ust::single_element_array_view( info_header ).to_byte8_range() ) );
 
-	var TextureData mut res{ .size[ 256u, 256u ] };
+	if( info_header.bitcount != 8u16 )
+	{
+		ust::stderr_print( ust::concat( "Unexpected bitmap bitcount \"", ust::to_string8( info_header.bitcount ), "\"!" ) );
+		return ust::io_error::other;
+	}
+
+	var u32 num_colors= ( info_header.clrused == 0u ? 256u : info_header.clrused );
+
+	var [ RGBAColor, 256 ] mut palette= zero_init;
+	result_check_or_return( f.read_exact( ust::single_element_array_view( palette ).to_byte8_range().subrange_end( size_type( num_colors * 4u ) ) ) );
+
+	var u32 area= info_header.width * info_header.height;
+
+	scoped_array u8 mut indexed_image_data[ size_type( area ) ]( 0u8 );
+	result_check_or_return( f.read_exact( indexed_image_data.to_byte8_range() ) );
+
+	var TextureData mut res{ .size[ info_header.width, info_header.height ] };
 	res.pixels.resize( 256s * 256s, ust::make_zeroed</RGBAColor/>() );
 
-	for( auto mut y= 0u; y < 256u; ++y )
+	foreach( pair : res.pixels.iter().zip( indexed_image_data.iter() ) )
 	{
-		for( auto mut x= 0u; x < 256u; ++x )
-		{
-			var size_type index( x + y * 256u );
-			res.pixels[ index ][0]= u8(x);
-			res.pixels[ index ][1]= u8(y);
-		}
+		pair.first= palette[ pair.second ];
 	}
 
 	return res;
