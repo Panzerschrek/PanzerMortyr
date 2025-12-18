@@ -1,14 +1,13 @@
 import "/enum_string_conversions.u"
-import "/scoped_array.u"
 import "/stdout.u"
 import "/string_conversions.u"
 
 import "/common_lib/materials_file.uh"
 import "/common_lib/string_utils.uh"
 
+import "image_loading.uh"
 import "math_constants.uh"
 import "vertex_formats.uh"
-import "windows_bitmap.uh"
 import "world_drawer.uh"
 
 namespace PM
@@ -224,12 +223,12 @@ fn WorldDrawer::SetMap(
 
 	for( var size_type mut t= 0s; t < materials_block.textures.size(); ++t )
 	{
-		result_match( game_filesystem.LoadFile( ConvertToUppercase( materials_block.textures[t].mips[1] ), LoadTextureFile ) )
+		result_match( game_filesystem.LoadFile( ConvertToUppercase( materials_block.textures[t].mips[1] ), LoadImageBMP ) )
 		{
-			Ok( texture_file_data ) ->
+			Ok( image_data ) ->
 			{
-				if( !(  texture_file_data.size[0] == MaterialsDescription::c_texture_size * MaterialsDescription::c_texture_file_num_tiles_x &&
-						texture_file_data.size[1] == MaterialsDescription::c_texture_size * MaterialsDescription::c_texture_file_num_tiles_y ) )
+				if( !(  image_data.size[0] == MaterialsDescription::c_texture_size * MaterialsDescription::c_texture_file_num_tiles_x &&
+						image_data.size[1] == MaterialsDescription::c_texture_size * MaterialsDescription::c_texture_file_num_tiles_y ) )
 				{
 					ust::stderr_print( "Unexpected texture size!\n" );
 					continue;
@@ -247,8 +246,8 @@ fn WorldDrawer::SetMap(
 						{
 							// Perform here vertical flipping while copying data into destination tile.
 
-							auto src_line= texture_file_data.pixels.range().subrange_start(
-								size_type( src_offset_x + ( src_offset_y + MaterialsDescription::c_texture_size - 1u - y ) * texture_file_data.size[0] ) );
+							auto src_line= image_data.pixels.range().subrange_start(
+								size_type( src_offset_x + ( src_offset_y + MaterialsDescription::c_texture_size - 1u - y ) * image_data.size[0] ) );
 
 							auto dst_line= ust::array_view_mut</RGBAColor/>( texture_data ).subrange(
 								size_type( MaterialsDescription::c_texture_size * y ),
@@ -331,67 +330,6 @@ fn WorldDrawer::Draw( mut this, Mat4f& view_matrix )
 	map_data.vertex_array_object.Bind();
 
 	unsafe( glDrawElements( GLenum( GL_TRIANGLES ), GLsizei( map_data.num_indices ), GLenum( GL_UNSIGNED_SHORT ), ust::nullptr</byte8/>() ) );
-}
-
-type RGBAColor= [ u8, 4 ];
-
-struct TextureData
-{
-	[ u32, 2 ] size;
-	ust::vector</RGBAColor/> pixels;
-}
-
-fn LoadTextureFile( ust::file_readable &mut f ) : ust::io_result</TextureData/>
-{
-	var BitmapFileHeader mut file_header= zero_init;
-	result_check_or_return( f.read_exact( ust::single_element_array_view( file_header ).to_byte8_range() ) );
-
-	if( file_header.type_ != BitmapFileHeader::c_expected_type )
-	{
-		ust::stderr_print( ust::concat( "Unexpected bitmap file type \"", ust::to_string8( file_header.type_ ), "\"!" ) );
-		return ust::io_error::other;
-	}
-
-	var BitmapInfoHeader mut info_header= zero_init;
-	result_check_or_return( f.read_exact( ust::single_element_array_view( info_header ).to_byte8_range() ) );
-
-	if( info_header.bitcount != 8u16 )
-	{
-		ust::stderr_print( ust::concat( "Unexpected bitmap bitcount \"", ust::to_string8( info_header.bitcount ), "\"!" ) );
-		return ust::io_error::other;
-	}
-
-	var u32 num_colors= ( info_header.clrused == 0u ? 256u : info_header.clrused );
-
-	var [ RGBAColor, 256 ] mut palette= zero_init;
-	auto palette_view= ust::array_view_mut</RGBAColor/>( palette ).subrange_end( size_type( num_colors ) );
-	result_check_or_return( f.read_exact( palette_view.to_byte8_range() ) );
-
-	// Swap palette colors (they are in BGRA format).
-	foreach( &mut c : palette_view )
-	{
-		auto g= c[2];
-		auto b= c[0];
-		c[0]= g;
-		c[2]= b;
-	}
-
-	var u32 area= info_header.width * info_header.height;
-
-	scoped_array u8 mut indexed_image_data[ size_type( area ) ]( 0u8 );
-	result_check_or_return( f.read_exact( indexed_image_data.to_byte8_range() ) );
-
-	return TextureData
-	{
-		.size[ info_header.width, info_header.height ],
-		.pixels=
-			ust::make_vector_from_mapped_range(
-				indexed_image_data,
-				lambda[ palette_view ]( u8 index ) : RGBAColor
-				{
-					return palette_view[ size_type( index ) ];
-				} )
-	};
 }
 
 } // namespace PM
