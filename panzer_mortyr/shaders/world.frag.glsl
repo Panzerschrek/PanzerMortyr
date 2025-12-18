@@ -1,12 +1,13 @@
 #version 330
 
-uniform vec4 fu_triangle_color= vec4( 1.0, 0.0, 1.0, 1.0 );
+uniform sampler2DArray fu_texture;
 
 in vec2 f_texture_coordinates;
+flat in float f_texture_layer;
 
 out vec4 color;
 
 void main()
 {
-	color= fu_triangle_color * ( 0.5 + 0.25 * ( step( 0.5, fract( f_texture_coordinates.x ) ) + step( 0.5, fract( f_texture_coordinates.y ) ) ) );
+	color= texture( fu_texture, vec3( f_texture_coordinates, f_texture_layer ) );
 }

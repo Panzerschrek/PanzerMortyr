@@ -1,0 +1,65 @@
+import "/scoped_array.u"
+import "/stdout.u"
+import "/string.u"
+import "/string_conversions.u"
+
+import "image_loading.uh"
+import "windows_bitmap.uh"
+
+namespace PM
+{
+
+fn LoadImageBMP( ust::file_readable &mut f ) : ust::io_result</ImageData/>
+{
+	var BitmapFileHeader mut file_header= zero_init;
+	result_check_or_return( f.read_exact( ust::single_element_array_view( file_header ).to_byte8_range() ) );
+
+	if( file_header.type_ != BitmapFileHeader::c_expected_type )
+	{
+		ust::stderr_print( ust::concat( "Unexpected bitmap file type \"", ust::to_string8( file_header.type_ ), "\"!" ) );
+		return ust::io_error::other;
+	}
+
+	var BitmapInfoHeader mut info_header= zero_init;
+	result_check_or_return( f.read_exact( ust::single_element_array_view( info_header ).to_byte8_range() ) );
+
+	if( info_header.bitcount != 8u16 )
+	{
+		ust::stderr_print( ust::concat( "Unexpected bitmap bitcount \"", ust::to_string8( info_header.bitcount ), "\"!" ) );
+		return ust::io_error::other;
+	}
+
+	var u32 num_colors= ( info_header.clrused == 0u ? 256u : info_header.clrused );
+
+	var [ RGBAColor, 256 ] mut palette= zero_init;
+	auto palette_view= ust::array_view_mut</RGBAColor/>( palette ).subrange_end( size_type( num_colors ) );
+	result_check_or_return( f.read_exact( palette_view.to_byte8_range() ) );
+
+	// Swap palette colors (they are in BGRA format).
+	foreach( &mut c : palette_view )
+	{
+		auto g= c[2];
+		auto b= c[0];
+		c[0]= g;
+		c[2]= b;
+	}
+
+	var u32 area= info_header.width * info_header.height;
+
+	scoped_array u8 mut indexed_image_data[ size_type( area ) ]( 0u8 );
+	result_check_or_return( f.read_exact( indexed_image_data.to_byte8_range() ) );
+
+	return ImageData
+	{
+		.size[ info_header.width, info_header.height ],
+		.pixels=
+			ust::make_vector_from_mapped_range(
+				indexed_image_data,
+				lambda[ palette_view ]( u8 index ) : RGBAColor
+				{
+					return palette_view[ size_type( index ) ];
+				} )
+	};
+}
+
+} // namespace PM
