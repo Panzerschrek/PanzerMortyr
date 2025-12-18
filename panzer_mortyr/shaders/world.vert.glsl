@@ -6,7 +6,7 @@ layout( location= 0 ) in vec3 v_position;
 layout( location= 1 ) in vec3 v_texture_coordinates;
 
 out vec2 f_texture_coordinates;
-out float f_texture_layer;
+flat out float f_texture_layer;
 
 void main()
 {

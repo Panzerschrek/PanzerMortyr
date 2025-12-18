@@ -3,7 +3,7 @@
 uniform sampler2DArray fu_texture;
 
 in vec2 f_texture_coordinates;
-in float f_texture_layer;
+flat in float f_texture_layer;
 
 out vec4 color;
 
