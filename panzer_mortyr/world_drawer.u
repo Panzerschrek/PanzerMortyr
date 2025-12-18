@@ -1,4 +1,8 @@
+import "/enum_string_conversions.u"
+import "/stdout.u"
+
 import "/common_lib/materials_file.uh"
+import "/common_lib/string_utils.uh"
 
 import "math_constants.uh"
 import "vertex_formats.uh"
@@ -13,7 +17,11 @@ fn WorldDrawer::constructor()
 		embed</char8/>( "shaders/world.frag.glsl" ) ) )
 {}
 
-fn WorldDrawer::SetMap( mut this,ZmapData& zmap_data, MaterialsDescription::Block& materials_block )
+fn WorldDrawer::SetMap(
+	mut this,
+	ZmapData& zmap_data,
+	MaterialsDescription::Block& materials_block,
+	GameFilesystem &mut game_filesystem )
 {
 	var ust::vector</ MapVertex /> mut vertices;
 	var ust::vector</u16/> mut indices;
@@ -168,38 +176,36 @@ fn WorldDrawer::SetMap( mut this,ZmapData& zmap_data, MaterialsDescription::Bloc
 
 	index_buffer.Bind();
 
-	var [ u8, 256 * 256 * 4 ] mut texture_data= zero_init;
-	for( auto mut y= 0u; y < 256u; ++y )
-	{
-		for( auto mut x= 0u; x < 256u; ++x )
-		{
-			texture_data[ ( x + y * 256u ) * 4u + 0u ]= u8(x);
-			texture_data[ ( x + y * 256u ) * 4u + 1u ]= u8(y);
-		}
-	}
-
-	ust::ignore_unused( materials_block ); // TODO - use it
-
 	var GLuint mut texture= zero_init;
 	unsafe( glGenTextures( 1, $<(texture) ) );
 
 	unsafe( glBindTexture( GLenum( GL_TEXTURE_2D ), texture ) );
 
-	unsafe( glTexImage2D(
-		GLenum( GL_TEXTURE_2D ),
-		0,
-		GLint( GL_RGBA8 ),
-		GLsizei( 256 ),
-		GLsizei( 256 ),
-		0,
-		GLenum( GL_RGBA ),
-		GLenum( GL_UNSIGNED_BYTE ),
-		ust::ptr_cast_to_byte8( $<( texture_data ) ) ) );
+	result_match( game_filesystem.LoadFile( ConvertToUppercase( materials_block.textures.front().mips[0] ), LoadTextureFile ) )
+	{
+		Ok( texture_file_data ) ->
+		{
+			unsafe( glTexImage2D(
+				GLenum( GL_TEXTURE_2D ),
+				0,
+				GLint( GL_RGBA8 ),
+				GLsizei( texture_file_data.size[0] ),
+				GLsizei( texture_file_data.size[1] ),
+				0,
+				GLenum( GL_RGBA ),
+				GLenum( GL_UNSIGNED_BYTE ),
+				ust::ptr_cast_to_byte8( cast_mut( texture_file_data.pixels ).data() ) ) );
 
-	unsafe( glGenerateMipmap( GLenum( GL_TEXTURE_2D ) ) );
+			unsafe( glGenerateMipmap( GLenum( GL_TEXTURE_2D ) ) );
 
-	unsafe( glTexParameteri( GLenum( GL_TEXTURE_2D ), GLenum( GL_TEXTURE_MIN_FILTER ), GLint( GL_LINEAR_MIPMAP_LINEAR ) ) );
-	unsafe( glTexParameteri( GLenum( GL_TEXTURE_2D ), GLenum( GL_TEXTURE_MAG_FILTER ), GLint( GL_LINEAR ) ) );
+			unsafe( glTexParameteri( GLenum( GL_TEXTURE_2D ), GLenum( GL_TEXTURE_MIN_FILTER ), GLint( GL_LINEAR_MIPMAP_LINEAR ) ) );
+			unsafe( glTexParameteri( GLenum( GL_TEXTURE_2D ), GLenum( GL_TEXTURE_MAG_FILTER ), GLint( GL_LINEAR ) ) );
+		},
+		Err(e) ->
+		{
+			ust::stderr_print( ust::concat( "Failed to read texture file! Error: ", ust::enum_to_string(e), "\n" ) );
+		}
+	}
 
 	map_data_.reset(
 		MapDrawData
@@ -243,6 +249,34 @@ fn WorldDrawer::Draw( mut this, Mat4f& view_matrix )
 	map_data.vertex_array_object.Bind();
 
 	unsafe( glDrawElements( GLenum( GL_TRIANGLES ), GLsizei( map_data.num_indices ), GLenum( GL_UNSIGNED_SHORT ), ust::nullptr</byte8/>() ) );
+}
+
+type RGBAColor= [ u8, 4 ];
+
+struct TextureData
+{
+	[ u32, 2 ] size;
+	ust::vector</RGBAColor/> pixels;
+}
+
+fn LoadTextureFile( ust::file_readable &mut f ) : ust::io_result</TextureData/>
+{
+	ust::ignore_unused( f ); // TODO - use it.
+
+	var TextureData mut res{ .size[ 256u, 256u ] };
+	res.pixels.resize( 256s * 256s, ust::make_zeroed</RGBAColor/>() );
+
+	for( auto mut y= 0u; y < 256u; ++y )
+	{
+		for( auto mut x= 0u; x < 256u; ++x )
+		{
+			var size_type index( x + y * 256u );
+			res.pixels[ index ][0]= u8(x);
+			res.pixels[ index ][1]= u8(y);
+		}
+	}
+
+	return res;
 }
 
 } // namespace PM
