@@ -121,10 +121,11 @@ fn WorldDrawer::SetMap(
 				0.0f,
 			];
 
-			var [ f32, 2 ] tc
+			var [ f32, 3 ] tc
 			[
 				tc_scale * ( f32( shifts[i][0] - shifts[0][0] ) * u_vec.x + f32( shifts[i][1] - shifts[0][1] ) * u_vec.y + f32( shifts[i][2]  - shifts[0][2] ) * u_vec.z + tc_offset.x ),
 				tc_scale * ( f32( shifts[i][0] - shifts[0][0] ) * v_vec.x + f32( shifts[i][1] - shifts[0][1] ) * v_vec.y + f32( shifts[i][2]  - shifts[0][2] ) * v_vec.z + tc_offset.y ),
+				f32( q.texture_id >> 2 )
 			];
 
 			vertices.push_back( MapVertex{ .position= position, .tex_coordinates= tc, .padding= zero_init } );
@@ -171,7 +172,7 @@ fn WorldDrawer::SetMap(
 
 	unsafe( glVertexAttribPointer(
 		c_texture_coordinates_attrib,
-		2,
+		3,
 		GLenum( GL_FLOAT ),
 		GLboolean(0),
 		GLsizei( typeinfo</MapVertex/>.size_of ),
@@ -184,38 +185,43 @@ fn WorldDrawer::SetMap(
 
 	unsafe( glBindTexture( GLenum( GL_TEXTURE_2D_ARRAY ), texture ) );
 
+	var size_type num_layers= materials_block.textures.size();
+
 	unsafe( glTexImage3D(
 		GLenum( GL_TEXTURE_2D_ARRAY ),
 		0,
 		GLint( GL_RGBA8 ),
 		GLsizei( MaterialsDescription::c_texture_size * 2u ),
 		GLsizei( MaterialsDescription::c_texture_size * 2u ),
-		1, // Num layers.
+		GLsizei( num_layers ),
 		0,
 		GLenum( GL_RGBA ),
 		GLenum( GL_UNSIGNED_BYTE ),
 		ust::nullptr</byte8/>() ) );
 
-	result_match( game_filesystem.LoadFile( ConvertToUppercase( materials_block.textures.front().mips[1] ), LoadTextureFile ) )
+	for( var size_type mut layer= 0s; layer < num_layers; ++layer )
 	{
-		Ok( texture_file_data ) ->
+		result_match( game_filesystem.LoadFile( ConvertToUppercase( materials_block.textures[layer].mips[1] ), LoadTextureFile ) )
 		{
-			unsafe( glTexSubImage3D(
-				GLenum( GL_TEXTURE_2D_ARRAY ),
-				0,
-				0,
-				0,
-				0,
-				GLsizei( texture_file_data.size[0] ),
-				GLsizei( texture_file_data.size[1] ),
-				1,
-				GLenum( GL_RGBA ),
-				GLenum( GL_UNSIGNED_BYTE ),
-				ust::ptr_cast_to_byte8( cast_mut( texture_file_data.pixels ).data() ) ) );
-		},
-		Err(e) ->
-		{
-			ust::stderr_print( ust::concat( "Failed to read texture file! Error: ", ust::enum_to_string(e), "\n" ) );
+			Ok( texture_file_data ) ->
+			{
+				unsafe( glTexSubImage3D(
+					GLenum( GL_TEXTURE_2D_ARRAY ),
+					0,
+					0,
+					0,
+					GLint( layer ),
+					GLsizei( texture_file_data.size[0] ),
+					GLsizei( texture_file_data.size[1] ),
+					1,
+					GLenum( GL_RGBA ),
+					GLenum( GL_UNSIGNED_BYTE ),
+					ust::ptr_cast_to_byte8( cast_mut( texture_file_data.pixels ).data() ) ) );
+			},
+			Err(e) ->
+			{
+				ust::stderr_print( ust::concat( "Failed to read texture file! Error: ", ust::enum_to_string(e), "\n" ) );
+			}
 		}
 	}
 
