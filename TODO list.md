@@ -58,7 +58,6 @@ PanzerMortyr general:
 * Allow changing controls.
 * Allow changing window size.
 * Allow setting fullscreen mode (with possible resolution changing).
-* Load OpenGL functions dynamically, which is necessary in cases where modern OpenGL functions aren't exposed from system OpenGL library.
 * Play cinematics at start.
 * Share resources (like map data, models if necessary) among server and client code.
 * Cache map files to avoid reloading them and recreating corresponding GPU resources if game is reloaded.
