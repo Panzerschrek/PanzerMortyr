@@ -1,0 +1,153 @@
+import "/scoped_array.u"
+import "/stdout.u"
+import "/string_conversions.u"
+import "gl_functions.uh"
+import "shader_program.uh"
+
+namespace PM
+{
+
+fn ShaderProgram::constructor( ust::string_view8 vertex_text, ust::string_view8 fragment_text )
+	(
+		program_= unsafe( glCreateProgram() ),
+		vertex_shader_= unsafe( glCreateShader( GLenum( GL_VERTEX_SHADER ) ) ),
+		fragment_shader_= unsafe( glCreateShader( GLenum( GL_FRAGMENT_SHADER ) ) )
+	)
+{
+	unsafe
+	{
+		CompileShader( vertex_shader_, vertex_text );
+		glAttachShader( program_, vertex_shader_ );
+	}
+
+	unsafe
+	{
+		CompileShader( fragment_shader_, fragment_text );
+		glAttachShader( program_, fragment_shader_ );
+	}
+
+	unsafe
+	{
+		glLinkProgram( program_ );
+
+		var GLint mut log_length= zero_init;
+		glGetProgramiv( program_, GLenum( GL_INFO_LOG_LENGTH ), $<( log_length ) );
+		if( log_length > 0 )
+		{
+			scoped_array char8 mut log[ size_type(log_length) ]( '\0' );
+			glGetProgramInfoLog( program_, log_length, $<(log_length), log.data() );
+
+			ust::stderr_print( ust::concat( "Shader program linking note:\n", log, "\n\n" ) );
+		}
+	}
+
+	// TODO - remove debug output.
+
+	unsafe
+	{
+		var GLint mut uniform_count= zero_init;
+		glGetProgramiv( program_, GLenum( GL_ACTIVE_UNIFORMS ), $<( uniform_count ) );
+
+		ust::stdout_print( ust::concat( "Has ", ust::to_string8(uniform_count), " uniforms\n" ) );
+
+		var GLint mut max_uniform_length= zero_init;
+		glGetProgramiv( program_, GLenum( GL_ACTIVE_UNIFORM_MAX_LENGTH ), $<( max_uniform_length ) );
+
+		scoped_array char8 mut buff[ size_type(max_uniform_length) + 1s ]( '\0' );
+
+		for( var GLint mut i(0); i < uniform_count; ++i )
+		{
+			var GLsizei mut uniform_name_length= zero_init;
+			var GLint mut uniform_size= zero_init;
+			var GLenum mut uniform_type= zero_init;
+
+			glGetActiveUniform(
+				program_,
+				GLuint(i),
+				GLsizei(buff.size()),
+				$<(uniform_name_length),
+				$<(uniform_size),
+				$<(uniform_type),
+				buff.data() );
+
+
+			buff[ size_type(uniform_name_length) ]= '\0'; // Ensure we have null-terminator.
+			var GLint location= glGetUniformLocation( program_, buff.data() );
+
+			var ust::string_view8 name_str= buff.subrange_end( size_type( uniform_name_length ) );
+			ust::stdout_print( ust::concat( "Uniform \"", name_str, "\" with size ", ust::to_string8( uniform_size ), " and location ", ust::to_string8(location), "\n" ) );
+
+			uniform_locations_.insert_new( name_str, location );
+		}
+	}
+}
+
+fn ShaderProgram::destructor()
+{
+	unsafe( glDeleteProgram( program_ ) );
+	unsafe( glDeleteShader( vertex_shader_ ) );
+	unsafe( glDeleteShader( fragment_shader_ ) );
+}
+
+fn ShaderProgram::Bind( this )
+{
+	unsafe( glUseProgram( program_ ) );
+}
+
+fn ShaderProgram::SetUniform( mut this, ust::string_view8 name, u32 i )
+{
+	var GLint location= uniform_locations_[ name ];
+
+	unsafe( glUniform1i( location, GLint(i) ) );
+}
+
+fn ShaderProgram::SetUniform( mut this, ust::string_view8 name, f32 x, f32 y, f32 z, f32 w )
+{
+	var GLint location= uniform_locations_[ name ];
+
+	unsafe( glUniform4f( location, x, y, z, w ) );
+}
+
+fn ShaderProgram::SetUniform( mut this, ust::string_view8 name, Vec3f& v )
+{
+	var GLint location= uniform_locations_[ name ];
+
+	unsafe( glUniform3f( location, v.x, v.y, v.z ) );
+}
+
+fn ShaderProgram::SetUniform( mut this, ust::string_view8 name, Mat4f& m )
+{
+	var GLint location= uniform_locations_[ name ];
+
+	unsafe( glUniformMatrix4fv(
+		location,
+		GLsizei(1),
+		GLboolean(GL_TRUE), // We need to transpose the matrix, since GLSL uses column-by-column format, but we use row-by-row format.
+		$<( cast_mut( m.values[0][0] ) ) ) );
+}
+
+// Passed shader handle should be correct.
+// Passed text may be incorrect, in such case compilation will fail.
+fn CompileShader( GLuint shader, ust::string_view8 text ) unsafe
+{
+	unsafe
+	{
+		var [ $(char8), 1 ] mut lines[ text.data() ];
+		var [ GLint, 1 ] mut line_lengths[ ( text.size() ) ];
+		glShaderSource( shader, 1, $<( lines[0] ), $<( line_lengths[0] ) );
+
+		glCompileShader( shader );
+
+		var GLint mut log_length= zero_init;
+		glGetShaderiv( shader, GLenum( GL_INFO_LOG_LENGTH ), $<( log_length ) );
+		if( log_length > 0 )
+		{
+			scoped_array char8 mut log[ size_type(log_length) ]( '\0' );
+			glGetShaderInfoLog( shader, log_length, $<(log_length), log.data() );
+
+			ust::stderr_print( ust::concat( "Shader compilation note:\n", log, "\n\n" ) );
+		}
+	}
+}
+
+} // namespace PM

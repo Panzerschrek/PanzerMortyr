@@ -1,0 +1,155 @@
+import "/enum_string_conversions.u"
+import "/main_wrapper.u"
+import "/stdout.u"
+
+import "/common_lib/map_loading.uh"
+import "/common_lib/maps_description_file.uh"
+import "/common_lib/materials_file.uh"
+import "/common_lib/string_utils.uh"
+
+import "camera_controller.uh"
+import "game_filesystem.uh"
+import "opengl_window.uh"
+import "world_drawer.uh"
+
+pretty_main
+{
+	return PM::Main( args );
+}
+
+namespace PM
+{
+
+// Place actual entry point within "PM" namespace.
+
+fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
+{
+	var GameFilesystem mut game_filesystem;
+
+	auto materials_file_contents_res= game_filesystem.LoadFileToString( c_materials_file_name );
+	if_var( e : materials_file_contents_res.as_error_ref() )
+	{
+		ust::stderr_print( ust::concat( "Failed to read materials file! Error: ", ust::enum_to_string(e), "\n" ) );
+		return -1;
+	}
+
+	var MaterialsDescription materials_description= ParseMaterialsFile( materials_file_contents_res.try_deref() );
+
+	auto maps_description_file_contents_res= game_filesystem.LoadFileToString( c_maps_description_file_name );
+
+	if_var( e : maps_description_file_contents_res.as_error_ref() )
+	{
+		ust::stderr_print( ust::concat( "Failed to read maps description file! Error: ", ust::enum_to_string(e), "\n" ) );
+		return -1;
+	}
+
+	auto maps_description_opt= ParseMapsDescriptionFile( maps_description_file_contents_res.try_deref() );
+	if( maps_description_opt.empty() )
+	{
+		ust::stderr_print( "Failed to parse maps description!\n" );
+		return -1;
+	}
+
+	var MapsDescription& maps_description= maps_description_opt.try_deref();
+
+	var MapsDescription::MapDescription& map_description= maps_description.maps[41u];
+
+	var MaterialsDescription::Block& materials_block= materials_description.blocks[ map_description.materials_block ];
+
+	var ust::string8 zmap_file_name= ConvertToUppercase( map_description.wall_files[0] );
+
+	auto zmap_data_res=
+		game_filesystem.LoadFile(
+			zmap_file_name,
+			LoadZmapFile );
+
+	if_var( e : zmap_data_res.as_error_ref() )
+	{
+		ust::stderr_print( ust::concat( "Failed to read map file! Error: ", ust::enum_to_string(e), "\n" ) );
+		return -1;
+	}
+
+	var ZmapData& zmap_data= zmap_data_res.try_deref();
+
+	var OpenGLWindow mut window;
+
+	var WorldDrawer mut world_drawer;
+
+	world_drawer.SetMap( zmap_data, materials_block, game_filesystem );
+
+	var ust::vector</bool/> mut keyboard_state;
+	var CameraController mut camera_controller( Vec3f( 0.0f, 0.0f, 0.0f ) );
+
+	var u64 system_performace_counter_frequency= ( unsafe( SDL_GetPerformanceFrequency() ) );
+
+	var u64 mut prev_frame_time_point= unsafe( SDL_GetPerformanceCounter() );
+
+	loop label main_loop
+	{
+		var SDL_Event mut event= zero_init;
+		while( unsafe( SDL_PollEvent( $<(event) ) ) != 0 )
+		{
+			var SDL_EventType t( size_type( event.union_contents[0] ) );
+			if( t == SDL_QUIT )
+			{
+				break label main_loop;
+			}
+			if( t == SDL_WINDOWEVENT )
+			{
+				// Assume we have only single window and we should quit if it closes.
+				auto& windows_event= unsafe( cast_ref_unsafe</SDL_WindowEvent/>( event ) );
+				if( SDL_WindowEventID( windows_event.event ) == SDL_WINDOWEVENT_CLOSE )
+				{
+					break label main_loop;
+				}
+			}
+			if( t == SDL_KEYDOWN )
+			{
+				// Assume we have only single window and we process only keyboard events from it.
+				auto& keyboard_event= unsafe( cast_ref_unsafe</SDL_KeyboardEvent/>( event ) );
+				if( keyboard_event.keysym.scancode == SDL_SCANCODE_ESCAPE )
+				{
+					break label main_loop;
+				}
+			}
+		}
+
+		{
+			var i32 mut key_count= 0;
+			var $(Uint8) keyboard_state_raw= unsafe( SDL_GetKeyboardState( $<( key_count ) ) );
+
+			keyboard_state.resize( size_type( key_count ), false );
+
+			for( auto mut i= 0s; i < size_type(key_count); ++i )
+			{
+				keyboard_state[i]= unsafe( $>( keyboard_state_raw + i ) ) != Uint8(0);
+			}
+		}
+
+		var u64 cur_frame_time_point=  unsafe( SDL_GetPerformanceCounter() );
+
+		var f32 time_delta_s= ( f32( cur_frame_time_point ) - f32( prev_frame_time_point ) ) / f32( system_performace_counter_frequency );
+		var f32 time_delta_s_limited= ust::min( ust::max( 0.0001f, time_delta_s ), 0.1f );
+
+		camera_controller.Update( time_delta_s_limited, keyboard_state );
+
+		auto viewport_size= window.GetViewportSize();
+
+		world_drawer.Draw( camera_controller.GetCameraMatrix( f32(viewport_size[0]) / f32(viewport_size[1]) ) );
+
+		window.SwapWindow();
+
+		// TODO - tune waiting time to avoid waiting to much or too little.
+
+		unsafe( SDL_Delay( 15u ) );
+
+		prev_frame_time_point= cur_frame_time_point;
+	}
+
+	// This should be called always.
+	unsafe( SDL_Quit() );
+
+	return 0;
+}
+
+} // namespace PM
