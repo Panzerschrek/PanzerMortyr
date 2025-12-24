@@ -15,7 +15,6 @@ Map format investigation:
 * Investigate exact meaning of many ZpozEntity fields.
 * Investigate what ZpozStruct1 is and how it may be connected with navigation graphs in "MAPA*.LEM" file.
 * Investigate what exact kind of visibility data is stored in ZPOZ file and why it seems to have 4 blocks of such data for each cluster.
-* Investigate what and how is stored in "ZMAP.LAM" files.
 * Investigate exact meaning of per-cluster sky-related data in "ZMAP.LEM" file.
 * Investigate how buttons and doors function.
 * Investigate how sky quads affect surrounding lighting.
@@ -23,6 +22,7 @@ Map format investigation:
 * Investigate how navigation graphs are used by enemies AI.
 * Investigate exact meaning of remaining fields of navigation graph structures.
 * Investigate how light shafts are represented in map data.
+* Investigate what additional contents is stored in "ZMAP.LAM" files besides tessellated quads.
 
 Textures/materials investigation:
 
@@ -31,6 +31,7 @@ Textures/materials investigation:
 * Investigate how lava texture affects lighting of surrounding geometry.
 * Investigate how water surface is drawn.
 * Investigate how underwater caustics work.
+* Investigate how surfaces with planar reflections (reflective floors) are defined.
 
 Models format investigation:
 
@@ -41,11 +42,9 @@ Models format investigation:
 
 Lighting investigation:
 
-* Investigate how light is applied on per-quad basis (is it per-vertex lighting or maybe some sort of lightmap)?
-* Investigate whether lights can cast shadows or lighting complete ignores line of sight checks.
-* Investigate how quad normals affects lighting.
-* Investigate light attenuation formula.
-* Investigate sky-related light (if it even exist).
+* Investigate how dynamic lights work (weapon flashes, alarms) - including attenuation formula, line of sight check, surface angle-related attenuation.
+* Investigate how dynamic model objects (characters, pick-ups) are lit (both by static and dynamic lights).
+* Investigate how dynamic map objects (doors, lifts, buttons) are lit (both by static and dynamic lights).
 
 PanzerMortyr general:
 
@@ -80,6 +79,8 @@ PanzerMortyr game logic:
 PanzerMortyr rendering:
 
 * Create separate sub-meshes for clusters and render world polygons per-cluster.
+* Draw tessellated geometry (from ZMAP*.LAM file) with per-vertex lighting.
+* Apply additional tessellation for tessellated polygons in order to perform smoother light values interpolation (naively triangulating them doesn't produce good result always).
 * Determine current cluster where camera is located and draw only clusters visible from it (using visibility information).
 * Draw water quads properly.
 * Draw underwater caustics properly.

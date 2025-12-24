@@ -112,8 +112,8 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 	ust::stdout_print( ust::concat( "Num zvox structs0: ", ust::to_string8( map.zvox.structs0.size() ), "\n" ) );
 	ust::stdout_print( ust::concat( "Num zvox clusters: ", ust::to_string8( map.zvox.clusters.size() ), "\n" ) );
 	ust::stdout_print( ust::concat( "Num zvox light sources: ", ust::to_string8( map.zvox.light_sources.size() ), "\n" ) );
-	ust::stdout_print( ust::concat( "Num zmap.lam structs0: ", ust::to_string8( map.zmap_lam.structs0.size() ), "\n" ) );
-	ust::stdout_print( ust::concat( "Num zmap.lam structs1: ", ust::to_string8( map.zmap_lam.structs1.size() ), "\n" ) );
+	ust::stdout_print( ust::concat( "Num zmap.lam tessellated quads: ", ust::to_string8( map.zmap_lam.tessellated_quads.size() ), "\n" ) );
+	ust::stdout_print( ust::concat( "Num zmap.lam tessellated quads data size: ", ust::to_string8( map.zmap_lam.tessellated_quads_data.size() ), "\n" ) );
 	ust::stdout_print( ust::concat( "Num zmap.lam structs2: ", ust::to_string8( map.zmap_lam.structs2.size() ), "\n" ) );
 	ust::stdout_print( ust::concat( "Num zmap.lem clusters: ", ust::to_string8( map.zmap_lem.clusters_sky_visibility_data.size() ), "\n" ) );
 	ust::stdout_print( ust::concat( "Num mapa.way navigation graphs: ", ust::to_string8( map.mapa_way.navigation_graphs.size() ), "\n" ) );
@@ -322,24 +322,29 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 	var ust::vector</f32/> mut mesh_vertices;
 	var ust::vector</f32/> mut mesh_texture_coordinates;
 	var ust::vector</u8/> mut mesh_colors;
+	var ust::vector</u16/> mut mesh_indices;
 
-	scoped_array tup[ size_type, size_type ] mut vertex_offsets_and_counts[ block_materials.size() ]( ust::make_tuple( 0s, 0s ) );
+	scoped_array MeshPart mut mesh_parts[ block_materials.size() ]( ust::make_zeroed</MeshPart/>() );
 
 	for( auto mut i= 0s; i < block_materials.size(); ++i )
 	{
-		vertex_offsets_and_counts[i][0]= mesh_vertices.size() / 3s;
+		var size_type mesh_first_vertex_index= mesh_vertices.size() / 3s;
 
-		var size_type mut num_quads_with_this_texture= 0s;
+		mesh_parts[i].first_vertex_index= mesh_first_vertex_index;
+		mesh_parts[i].first_index= mesh_indices.size();
 
-		foreach( pair : map.zmap.quads.iter().zip( map.zmap_lam.structs0.iter() ) )
+		var size_type mut num_triangles_with_this_texture= 0s;
+
+		foreach( pair : map.zmap.quads.iter().zip( map.zmap_lam.tessellated_quads.iter() ) )
 		{
-			var ZmapQuad& s= pair.first;
+			var ZmapQuad& quad= pair.first;
+			var ZmapLamTesselaltedQuad& tessellated_quad= pair.second;
 
 			// TODO - optimize this lookup, use a hash-map instead.
 			var ust::optional</size_type/> mut special_material_opt;
 			for( auto mut j= 0s; j < typeinfo</MaterialsDescription::SpecialMaterial/>.element_count; ++j )
 			{
-				if( u32( s.texture_id ) == MaterialsDescription::c_special_material_texture_indices[j] )
+				if( u32( quad.texture_id ) == MaterialsDescription::c_special_material_texture_indices[j] )
 				{
 					special_material_opt= j;
 					break;
@@ -355,191 +360,202 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 			}
 			else
 			{
-				if( size_type( s.texture_id ) != i &&
+				if( size_type( quad.texture_id ) != i &&
 					// Move quads with materials outside block materials list into the last group (with dummy material).
-					!( i == block_materials.size() - 1s && size_type( s.texture_id ) >= block_materials.size() ) )
+					!( i == block_materials.size() - 1s && size_type( quad.texture_id ) >= block_materials.size() ) )
 				{
 					continue;
 				}
 			}
 
-			var [ i32, 3 ] pos[ (s.center[0]), (s.center[1]), (s.center[2]) ];
-
-			var [ i32, 3 ] shift0[ (s.vertices[0][0]), (s.vertices[0][1]), (s.vertices[0][2]) ];
-			var [ i32, 3 ] shift1[ (s.vertices[1][0]), (s.vertices[1][1]), (s.vertices[1][2]) ];
-			var [ i32, 3 ] shift2[ (s.vertices[2][0]), (s.vertices[2][1]), (s.vertices[2][2]) ];
-			var [ i32, 3 ] shift3[ (s.vertices[3][0]), (s.vertices[3][1]), (s.vertices[3][2]) ];
+			var [ [ i32, 3 ], 4 ] shifts
+			[
+				[ (quad.vertices[0][0]), (quad.vertices[0][1]), (quad.vertices[0][2]) ],
+				[ (quad.vertices[1][0]), (quad.vertices[1][1]), (quad.vertices[1][2]) ],
+				[ (quad.vertices[2][0]), (quad.vertices[2][1]), (quad.vertices[2][2]) ],
+				[ (quad.vertices[3][0]), (quad.vertices[3][1]), (quad.vertices[3][2]) ]
+			];
 
 			var [ i32, 3 ] shifts_min
 			[
-				ust::min( ust::min(shift0[0], shift1[0]), ust::min(shift2[0], shift3[0]) ),
-				ust::min( ust::min(shift0[1], shift1[1]), ust::min(shift2[1], shift3[1]) ),
-				ust::min( ust::min(shift0[2], shift1[2]), ust::min(shift2[2], shift3[2]) ),
+				ust::min( ust::min(shifts[0][0], shifts[1][0]), ust::min(shifts[2][0], shifts[3][0]) ),
+				ust::min( ust::min(shifts[0][1], shifts[1][1]), ust::min(shifts[2][1], shifts[3][1]) ),
+				ust::min( ust::min(shifts[0][2], shifts[1][2]), ust::min(shifts[2][2], shifts[3][2]) ),
 			];
 			var [ i32, 3 ] shifts_max
 			[
-				ust::max( ust::max(shift0[0], shift1[0]), ust::max(shift2[0], shift3[0]) ),
-				ust::max( ust::max(shift0[1], shift1[1]), ust::max(shift2[1], shift3[1]) ),
-				ust::max( ust::max(shift0[2], shift1[2]), ust::max(shift2[2], shift3[2]) ),
+				ust::max( ust::max(shifts[0][0], shifts[1][0]), ust::max(shifts[2][0], shifts[3][0]) ),
+				ust::max( ust::max(shifts[0][1], shifts[1][1]), ust::max(shifts[2][1], shifts[3][1]) ),
+				ust::max( ust::max(shifts[0][2], shifts[1][2]), ust::max(shifts[2][2], shifts[3][2]) ),
 			];
 
 			var [ i32, 3 ] center
 			[
 				// Using signed integer division by two is important here.
 				// Using fractional numbers or bit-shift isn't correct, because this leads to gaps in map geometry.
-				0 + ( shifts_min[0] + shifts_max[0] ) / 2,
-				0 + ( shifts_min[1] + shifts_max[1] ) / 2,
-				0 + ( shifts_min[2] + shifts_max[2] ) / 2,
+				i32( quad.center[0] ) - ( shifts_min[0] + shifts_max[0] ) / 2,
+				i32( quad.center[1] ) - ( shifts_min[1] + shifts_max[1] ) / 2,
+				i32( quad.center[2] ) - ( shifts_min[2] + shifts_max[2] ) / 2,
 			];
 
-			var [ Color, 4 ] colors
-			[
-				{ .r(255), .g(255), .b(255), .a(255) },
-				{ .r(255), .g(255), .b(255), .a(255) },
-				{ .r(255), .g(255), .b(255), .a(255) },
-				{ .r(255), .g(255), .b(255), .a(255) },
-			];
+			var size_type first_quad_vertex_index= mesh_vertices.size() / 3s - mesh_first_vertex_index;
 
-			var Vector3 pos0{ .x( pos[0] - center[0] + shift0[0] ), .y( pos[1] - center[1] + shift0[1] ), .z( pos[2] - center[2] + shift0[2] ) };
-			var Vector3 pos1{ .x( pos[0] - center[0] + shift1[0] ), .y( pos[1] - center[1] + shift1[1] ), .z( pos[2] - center[2] + shift1[2] ) };
-			var Vector3 pos2{ .x( pos[0] - center[0] + shift2[0] ), .y( pos[1] - center[1] + shift2[1] ), .z( pos[2] - center[2] + shift2[2] ) };
-			var Vector3 pos3{ .x( pos[0] - center[0] + shift3[0] ), .y( pos[1] - center[1] + shift3[1] ), .z( pos[2] - center[2] + shift3[2] ) };
+			var size_type tessellated_vertex_count( tessellated_quad.vertex_count );
 
-			var Vector3 mut u_vec{ .x= 0.0f, .y= 1.0f, .z= 0.0f };
-			var Vector3 mut v_vec{ .x= 1.0f, .y= 0.0f, .z= 0.0f };
-
-			var f32 c_tau= 2.0f * 3.1415926535f;
-
+			if( tessellated_vertex_count == 0s )
 			{
-				// TODO - make sure it's correct to zero lower bits.
-				var f32 angle= f32( i32( s.texture_roll ) & ~15 ) * ( -c_tau / 256.0f );
-				var f32 c= ust::cos(angle);
-				var f32 s= ust::sin(angle);
+				// Fallback for cases where tessellated data isn't available - like for dynamic polygons (doors, elevators, buttons).
 
-				u_vec= Vector3{ .x= u_vec.x * c - u_vec.y * s, .y= u_vec.x * s + u_vec.y * c, .z= u_vec.z };
-				v_vec= Vector3{ .x= v_vec.x * c - v_vec.y * s, .y= v_vec.x * s + v_vec.y * c, .z= v_vec.z };
+				var [ Color, 4 ] colors
+				[
+					{ .r(255), .g(255), .b(255), .a(255) },
+					{ .r(255), .g(255), .b(255), .a(255) },
+					{ .r(255), .g(255), .b(255), .a(255) },
+					{ .r(255), .g(255), .b(255), .a(255) },
+				];
+
+				var Vector3 mut u_vec{ .x= 0.0f, .y= 1.0f, .z= 0.0f };
+				var Vector3 mut v_vec{ .x= 1.0f, .y= 0.0f, .z= 0.0f };
+
+				var f32 c_tau= 2.0f * 3.1415926535f;
+
+				{
+					// TODO - make sure it's correct to zero lower bits.
+					var f32 angle= f32( i32( quad.texture_roll ) & ~15 ) * ( -c_tau / 256.0f );
+					var f32 c= ust::cos(angle);
+					var f32 s= ust::sin(angle);
+
+					u_vec= Vector3{ .x= u_vec.x * c - u_vec.y * s, .y= u_vec.x * s + u_vec.y * c, .z= u_vec.z };
+					v_vec= Vector3{ .x= v_vec.x * c - v_vec.y * s, .y= v_vec.x * s + v_vec.y * c, .z= v_vec.z };
+				}
+				{
+					var f32 angle= ( f32( quad.normal_elevation ) + 256.0f ) * ( c_tau / 1024.0f );
+					var f32 c= ust::cos(angle);
+					var f32 s= ust::sin(angle);
+
+					u_vec= Vector3{ .x= u_vec.x * c - u_vec.z * s, .y= u_vec.y, .z= u_vec.x * s + u_vec.z * c };
+					v_vec= Vector3{ .x= v_vec.x * c - v_vec.z * s, .y= v_vec.y, .z= v_vec.x * s + v_vec.z * c };
+				}
+				{
+					var f32 angle= ( 768.0f - f32(quad.normal_azimuth) ) * ( c_tau / 1024.0f );
+					var f32 c= ust::cos(angle);
+					var f32 s= ust::sin(angle);
+
+					u_vec= Vector3{ .x= u_vec.x * c - u_vec.y * s, .y= u_vec.x * s + u_vec.y * c, .z= u_vec.z };
+					v_vec= Vector3{ .x= v_vec.x * c - v_vec.y * s, .y= v_vec.x * s + v_vec.y * c, .z= v_vec.z };
+				}
+				{
+					// Use experimentally-found factor for texture basis scaling.
+					// This code may be wrong.
+					// It should map bits 8 to scale 1.25, bits 12 to scale 2.25.
+					// Bits 9 are roughly mapped to scale 1.5.
+					//var f32 vecs_scale= ( 1.0f + f32( i32(s.texture_roll) & 15 ) / 9.6f );
+					var f32 vecs_scale= 1.0f / ust::cos( f32( i32(quad.texture_roll) & 15 ) * 0.0925f );
+					u_vec.x*= vecs_scale;
+					u_vec.y*= vecs_scale;
+					u_vec.z*= vecs_scale;
+					v_vec.x*= vecs_scale;
+					v_vec.y*= vecs_scale;
+					v_vec.z*= vecs_scale;
+				}
+
+				var Vector2 tc_offset{ .x( quad.tc_offset[0] ), .y( quad.tc_offset[1] ), 	};
+
+				// OpenGL uses normalized texture coordinates.
+				var f32 ts_scale= 1.0f / f32( MaterialsDescription::c_texture_size );
+
+				for( auto mut i= 0s; i < 4s; ++i )
+				{
+					var [ f32, 3 ] rel_shift
+					[
+						( shifts[i][0] - shifts[0][0] ),
+						( shifts[i][1] - shifts[0][1] ),
+						( shifts[i][2] - shifts[0][2] )
+					];
+
+					mesh_texture_coordinates.push_back( ( rel_shift[0] * u_vec.x + rel_shift[1] * u_vec.y + rel_shift[2] * u_vec.z + tc_offset.x ) * ts_scale );
+					mesh_texture_coordinates.push_back( ( rel_shift[0] * v_vec.x + rel_shift[1] * v_vec.y + rel_shift[2] * v_vec.z + tc_offset.y ) * ts_scale );
+					mesh_vertices.push_back( f32( center[0] + shifts[i][0] ) );
+					mesh_vertices.push_back( f32( center[1] + shifts[i][1] ) );
+					mesh_vertices.push_back( f32( center[2] + shifts[i][2] ) );
+					mesh_colors.push_back( colors[i].r );
+					mesh_colors.push_back( colors[i].g );
+					mesh_colors.push_back( colors[i].b );
+					mesh_colors.push_back( colors[i].a );
+				}
+
+				mesh_indices.push_back( u16( first_quad_vertex_index + 2s ) );
+				mesh_indices.push_back( u16( first_quad_vertex_index + 1s ) );
+				mesh_indices.push_back( u16( first_quad_vertex_index + 0s ) );
+				mesh_indices.push_back( u16( first_quad_vertex_index + 3s ) );
+				mesh_indices.push_back( u16( first_quad_vertex_index + 2s ) );
+				mesh_indices.push_back( u16( first_quad_vertex_index + 0s ) );
+
+				num_triangles_with_this_texture+= 2s;
 			}
+			else
 			{
-				var f32 angle= ( f32( s.normal_elevation ) + 256.0f ) * ( c_tau / 1024.0f );
-				var f32 c= ust::cos(angle);
-				var f32 s= ust::sin(angle);
+				var size_type tessellatted_quad_data_offset( tessellated_quad.data_offset );
 
-				u_vec= Vector3{ .x= u_vec.x * c - u_vec.z * s, .y= u_vec.y, .z= u_vec.x * s + u_vec.z * c };
-				v_vec= Vector3{ .x= v_vec.x * c - v_vec.z * s, .y= v_vec.y, .z= v_vec.x * s + v_vec.z * c };
+				var ust::array_view_imut</byte32/> vertex_data=
+					map.zmap_lam.tessellated_quads_data.range().subrange(
+						tessellatted_quad_data_offset,
+						tessellatted_quad_data_offset + tessellated_vertex_count * 6s );
+
+				for( auto mut i= 0s; i < tessellated_vertex_count; ++i )
+				{
+					var f32 x( vertex_data[ i * 6s + 0s ] );
+					var f32 y( vertex_data[ i * 6s + 1s ] );
+					var f32 z( vertex_data[ i * 6s + 2s ] );
+					var f32 u( vertex_data[ i * 6s + 3s ] );
+					var f32 v( vertex_data[ i * 6s + 4s ] );
+					var u32 c( vertex_data[ i * 6s + 5s ] );
+
+					mesh_vertices.push_back( f32( center[0] ) + x );
+					mesh_vertices.push_back( f32( center[1] ) + y );
+					mesh_vertices.push_back( f32( center[2] ) + z );
+					mesh_texture_coordinates.push_back( u );
+					mesh_texture_coordinates.push_back( v );
+					mesh_colors.push_back( u8( ( c >> 16 ) & 255u ) );
+					mesh_colors.push_back( u8( ( c >> 8 ) & 255u ) );
+					mesh_colors.push_back( u8( c & 255u ) );
+					mesh_colors.push_back( 255u8 );
+				}
+
+				var size_type polygons_data_offset= tessellatted_quad_data_offset + tessellated_vertex_count * 6s;
+
+				var size_type polygon_count( u32( map.zmap_lam.tessellated_quads_data[ polygons_data_offset ] ) );
+
+				var ust::array_view_imut</byte32/> polygons_data=
+					map.zmap_lam.tessellated_quads_data.range().subrange(
+						polygons_data_offset + 2s,
+						polygons_data_offset + 2s + polygon_count * 8s );
+
+				for( auto mut i= 0s; i < polygon_count; ++i )
+				{
+					var ust::array_view_imut</byte32/> polygon_data= polygons_data.subrange( i * 8s, i * 8s + 8s );
+
+					var size_type polygon_vertex_count( u32( polygon_data[0s] ) );
+
+					var size_type polygon_triangle_count= polygon_vertex_count - 2s;
+
+					for( auto mut j= 0s; j < polygon_triangle_count; ++j )
+					{
+						var size_type i0( u32( polygon_data[ 2s + 0s ] ) );
+						var size_type i1( u32( polygon_data[ 2s + j + 1s ] ) );
+						var size_type i2( u32( polygon_data[ 2s + j + 2s ] ) );
+
+						mesh_indices.push_back( u16( first_quad_vertex_index + i2 ) );
+						mesh_indices.push_back( u16( first_quad_vertex_index + i1 ) );
+						mesh_indices.push_back( u16( first_quad_vertex_index + i0 ) );
+					}
+
+					num_triangles_with_this_texture+= polygon_triangle_count;
+				}
 			}
-			{
-				var f32 angle= ( 768.0f - f32(s.normal_azimuth) ) * ( c_tau / 1024.0f );
-				var f32 c= ust::cos(angle);
-				var f32 s= ust::sin(angle);
-
-				u_vec= Vector3{ .x= u_vec.x * c - u_vec.y * s, .y= u_vec.x * s + u_vec.y * c, .z= u_vec.z };
-				v_vec= Vector3{ .x= v_vec.x * c - v_vec.y * s, .y= v_vec.x * s + v_vec.y * c, .z= v_vec.z };
-			}
-			{
-				// Use experimentally-found factor for texture basis scaling.
-				// This code may be wrong.
-				// It should map bits 8 to scale 1.25, bits 12 to scale 2.25.
-				// Bits 9 are roughly mapped to scale 1.5.
-				//var f32 vecs_scale= ( 1.0f + f32( i32(s.texture_roll) & 15 ) / 9.6f );
-				var f32 vecs_scale= 1.0f / ust::cos( f32( i32(s.texture_roll) & 15 ) * 0.0925f );
-				u_vec.x*= vecs_scale;
-				u_vec.y*= vecs_scale;
-				u_vec.z*= vecs_scale;
-				v_vec.x*= vecs_scale;
-				v_vec.y*= vecs_scale;
-				v_vec.z*= vecs_scale;
-			}
-
-			var Vector2 tc_offset{ .x( s.tc_offset[0] ), .y( s.tc_offset[1] ), 	};
-
-			// OpenGL uses normalized texture coordinates.
-			var f32 ts_scale= 1.0f / f32( MaterialsDescription::c_texture_size );
-
-			var Vector2 tc0
-			{
-				.x= ( f32( shift0[0] - shift0[0] ) * u_vec.x + f32(shift0[1] - shift0[1]) * u_vec.y + f32(shift0[2]  - shift0[2]) * u_vec.z + tc_offset.x ) * ts_scale,
-				.y= ( f32( shift0[0] - shift0[0] ) * v_vec.x + f32(shift0[1] - shift0[1]) * v_vec.y + f32(shift0[2]  - shift0[2]) * v_vec.z + tc_offset.y ) * ts_scale,
-			};
-			var Vector2 tc1
-			{
-				.x= ( f32( shift1[0] - shift0[0] ) * u_vec.x + f32(shift1[1] - shift0[1]) * u_vec.y + f32(shift1[2]  - shift0[2]) * u_vec.z + tc_offset.x ) * ts_scale,
-				.y= ( f32( shift1[0] - shift0[0] ) * v_vec.x + f32(shift1[1] - shift0[1]) * v_vec.y + f32(shift1[2]  - shift0[2]) * v_vec.z + tc_offset.y ) * ts_scale,
-			};
-			var Vector2 tc2
-			{
-				.x= ( f32( shift2[0] - shift0[0] ) * u_vec.x + f32(shift2[1] - shift0[1]) * u_vec.y + f32(shift2[2]  - shift0[2]) * u_vec.z + tc_offset.x ) * ts_scale,
-				.y= ( f32( shift2[0] - shift0[0] ) * v_vec.x + f32(shift2[1] - shift0[1]) * v_vec.y + f32(shift2[2]  - shift0[2]) * v_vec.z + tc_offset.y ) * ts_scale,
-			};
-			var Vector2 tc3
-			{
-				.x= ( f32( shift3[0] - shift0[0] ) * u_vec.x + f32(shift3[1] - shift0[1]) * u_vec.y + f32(shift3[2]  - shift0[2]) * u_vec.z + tc_offset.x ) * ts_scale,
-				.y= ( f32( shift3[0] - shift0[0] ) * v_vec.x + f32(shift3[1] - shift0[1]) * v_vec.y + f32(shift3[2]  - shift0[2]) * v_vec.z + tc_offset.y ) * ts_scale,
-			};
-
-			mesh_vertices.push_back( pos2.x );
-			mesh_vertices.push_back( pos2.y );
-			mesh_vertices.push_back( pos2.z );
-			mesh_texture_coordinates.push_back( tc2.x );
-			mesh_texture_coordinates.push_back( tc2.y );
-			mesh_colors.push_back( colors[2].r );
-			mesh_colors.push_back( colors[2].g );
-			mesh_colors.push_back( colors[2].b );
-			mesh_colors.push_back( colors[2].a );
-
-			mesh_vertices.push_back( pos1.x );
-			mesh_vertices.push_back( pos1.y );
-			mesh_vertices.push_back( pos1.z );
-			mesh_texture_coordinates.push_back( tc1.x );
-			mesh_texture_coordinates.push_back( tc1.y );
-			mesh_colors.push_back( colors[1].r );
-			mesh_colors.push_back( colors[1].g );
-			mesh_colors.push_back( colors[1].b );
-			mesh_colors.push_back( colors[1].a );
-
-			mesh_vertices.push_back( pos0.x );
-			mesh_vertices.push_back( pos0.y );
-			mesh_vertices.push_back( pos0.z );
-			mesh_texture_coordinates.push_back( tc0.x );
-			mesh_texture_coordinates.push_back( tc0.y );
-			mesh_colors.push_back( colors[0].r );
-			mesh_colors.push_back( colors[0].g );
-			mesh_colors.push_back( colors[0].b );
-			mesh_colors.push_back( colors[0].a );
-
-			mesh_vertices.push_back( pos3.x );
-			mesh_vertices.push_back( pos3.y );
-			mesh_vertices.push_back( pos3.z );
-			mesh_texture_coordinates.push_back( tc3.x );
-			mesh_texture_coordinates.push_back( tc3.y );
-			mesh_colors.push_back( colors[3].r );
-			mesh_colors.push_back( colors[3].g );
-			mesh_colors.push_back( colors[3].b );
-			mesh_colors.push_back( colors[3].a );
-
-			mesh_vertices.push_back( pos2.x );
-			mesh_vertices.push_back( pos2.y );
-			mesh_vertices.push_back( pos2.z );
-			mesh_texture_coordinates.push_back( tc2.x );
-			mesh_texture_coordinates.push_back( tc2.y );
-			mesh_colors.push_back( colors[2].r );
-			mesh_colors.push_back( colors[2].g );
-			mesh_colors.push_back( colors[2].b );
-			mesh_colors.push_back( colors[2].a );
-
-			mesh_vertices.push_back( pos0.x );
-			mesh_vertices.push_back( pos0.y );
-			mesh_vertices.push_back( pos0.z );
-			mesh_texture_coordinates.push_back( tc0.x );
-			mesh_texture_coordinates.push_back( tc0.y );
-			mesh_colors.push_back( colors[0].r );
-			mesh_colors.push_back( colors[0].g );
-			mesh_colors.push_back( colors[0].b );
-			mesh_colors.push_back( colors[0].a );
-
-			++num_quads_with_this_texture;
 		}
 
-		vertex_offsets_and_counts[i][1]= num_quads_with_this_texture * 6s;
+		mesh_parts[i].num_triangles= num_triangles_with_this_texture;
 	}
 
 	scoped_array Mesh mut per_texture_meshes[ block_materials.size() ]( ust::make_zeroed</Mesh/>() );
@@ -548,14 +564,16 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 	{
 		var Mesh& mut mesh= per_texture_meshes[i];
 
-		var size_type vertex_offset= vertex_offsets_and_counts[i][0];
-		var size_type num_vertices= vertex_offsets_and_counts[i][1];
+		var size_type vertex_offset= mesh_parts[i].first_vertex_index;
+		var size_type num_vertices= mesh_parts[i].num_triangles * 3s;
+		var size_type index_offset= mesh_parts[i].first_index;
 
 		mesh.vertexCount= i32( num_vertices );
 		mesh.triangleCount= i32( num_vertices / 3s );
 		mesh.vertices= unsafe( mesh_vertices.data() + vertex_offset * 3s );
 		mesh.texcoords= unsafe( mesh_texture_coordinates.data() + vertex_offset * 2s );
 		mesh.colors= unsafe( mesh_colors.data() + vertex_offset * 4s );
+		mesh.indices= unsafe( mesh_indices.data() + index_offset );
 
 		unsafe( UploadMesh( $<(mesh), false ) );
 	}
@@ -665,7 +683,7 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 		mut display_map= true,
 		mut display_bounding_boxes= false,
 		mut display_entities= true,
-		mut display_clusters= true,
+		mut display_clusters= false,
 		mut display_light_sources= true,
 		mut display_zvos_structs0= true,
 		mut display_visibility_information= false,
@@ -1117,6 +1135,13 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 	unsafe( CloseWindow() );
 
 	return 0;
+}
+
+struct MeshPart
+{
+	size_type first_vertex_index;
+	size_type first_index;
+	size_type num_triangles;
 }
 
 } // namespace PM
