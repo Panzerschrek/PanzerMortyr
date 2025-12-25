@@ -23,7 +23,6 @@ Map format investigation:
 * Investigate exact meaning of remaining fields of navigation graph structures.
 * Investigate how light shafts are represented in map data.
 * Investigate what remaining fields of "ZmapLamRainDroplet" struct mean.
-* Investigate what additional contents is stored in "ZMAP*.LAM" files besides tessellated quads and rain droplets.
 
 Textures/materials investigation:
 
