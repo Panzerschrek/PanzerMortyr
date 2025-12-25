@@ -22,7 +22,8 @@ Map format investigation:
 * Investigate how navigation graphs are used by enemies AI.
 * Investigate exact meaning of remaining fields of navigation graph structures.
 * Investigate how light shafts are represented in map data.
-* Investigate what additional contents is stored in "ZMAP.LAM" files besides tessellated quads.
+* Investigate what remaining fields of "ZmapLamRainDroplet" struct mean.
+* Investigate what additional contents is stored in "ZMAP*.LAM" files besides tessellated quads and rain droplets.
 
 Textures/materials investigation:
 
@@ -101,6 +102,7 @@ PanzerMortyr rendering:
 * Draw decals (bullet holes, blood).
 * Implement dynamic lights (gun flashes, explosions).
 * Draw weather effects (rain, snow).
+* Draw breaking window animation (with falling splinters).
 
 PanzerMortyr sound:
 
