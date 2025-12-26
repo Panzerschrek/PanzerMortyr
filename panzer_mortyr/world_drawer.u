@@ -313,37 +313,50 @@ fn WorldDrawer::Draw( mut this, Vec3f& camera_position, Mat4f& view_matrix )
 		var i32 bias= i32(map_data.zpoz_data.clusters.size()) * 4;
 
 		var ZpozClusterVisibilityData& visibility_data= map_data.zpoz_data.clusters_visibility_data[ camera_cluster_index ];
-		if( visibility_data.data[0] != -1 )
-		{
-			var size_type visibility_data_offset( visibility_data.data[2] - bias );
 
-			// We have 2 subranges for both pairs of indices.
+		// TODO - check if we should use data[2] and not data[0] or even both.
+		var i32 data_start= visibility_data.data[2];
+
+		if( data_start != -1 )
+		{
+			var size_type visibility_data_offset( data_start - bias );
+
+			// We have 2 subranges for both offsets.
+			// Since we don't know which is correct, use both of them.
 			var size_type subrange0_size( map_data.zpoz_data.cluster_indices[ visibility_data_offset  ] );
 			var size_type subrange0_start= visibility_data_offset + 8s;
 			var size_type subrange1_size( map_data.zpoz_data.cluster_indices[ subrange0_start + subrange0_size ] );
 			var size_type subrange1_start= subrange0_start + size_type(subrange0_size) + 8s;
 
-			ust::ignore_unused( subrange0_size );
-			ust::ignore_unused( subrange0_start );
-			ust::ignore_unused( subrange1_size );
-			ust::ignore_unused( subrange1_start );
+			var [ ust::array_view_imut</i32/>, 2 ] ranges
+			[
+				map_data.zpoz_data.cluster_indices.range().subrange(
+					subrange0_start,
+					subrange0_start + subrange0_size ),
+				map_data.zpoz_data.cluster_indices.range().subrange(
+					subrange1_start,
+					subrange1_start + subrange1_size )
+			];
 
-			for( auto mut i= 0s; i < subrange0_size; ++i )
+			foreach( range : ranges )
 			{
-				var size_type visible_cluster_index( map_data.zpoz_data.cluster_indices[ subrange0_start + i ] );
-
-				// Mark cluster listed in visibility data as visible.
-				visible_cluster_flags[ visible_cluster_index ]= true;
-
-				// Mark children clusters of visible cluster as also visible.
-				var ZvoxCluster& visible_cluster= map_data.zvox_data.clusters[ visible_cluster_index ];
-				if( visible_cluster.c.num_children_clusters > 0 )
+				foreach( visible_cluster_index_src : range )
 				{
-					foreach( &mut b : visible_cluster_flags.subrange(
-						visible_cluster_index + 1s,
-						visible_cluster_index + size_type( visible_cluster.c.num_children_clusters ) + 1s ) )
+					var size_type visible_cluster_index( visible_cluster_index_src );
+
+					// Mark cluster listed in visibility data as visible.
+					visible_cluster_flags[ visible_cluster_index ]= true;
+
+					// Mark children clusters of visible cluster as also visible.
+					var ZvoxCluster& visible_cluster= map_data.zvox_data.clusters[ visible_cluster_index ];
+					if( visible_cluster.c.num_children_clusters > 0 )
 					{
-						b= true;
+						foreach( &mut b : visible_cluster_flags.subrange(
+							visible_cluster_index + 1s,
+							visible_cluster_index + size_type( visible_cluster.c.num_children_clusters ) + 1s ) )
+						{
+							b= true;
+						}
 					}
 				}
 			}
