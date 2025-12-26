@@ -2,11 +2,11 @@ This list contains things to be done.
 
 Map format investigation:
 
-* Test/fix loading maps other than map 41.
 * Investigate the exact way per-quad texture scale is specified.
 * Investigate how surfaces with emissive flag work.
 * Investigate what Struct0 in "ZVOX.ANT" file actually is.
 * Investigate what Struct1 in "ZVOX.ANT" file actually is.
+* Investigate what Struct2 in "ZVOX.ANT" file actually is.
 * Investigate what remaining fields of ZvoxCluster structure mean.
 * Ensure light color is properly read from ZvoxLightSource structure.
 * Investigate what data[1] of ZvoxLightSource means.
@@ -14,6 +14,7 @@ Map format investigation:
 * Investigate how light source power is stored.
 * Investigate exact meaning of many ZpozEntity fields.
 * Investigate what ZpozStruct1 is and how it may be connected with navigation graphs in "MAPA*.LEM" file.
+* Investigate what ZpozStruct2 is.
 * Investigate what exact kind of visibility data is stored in ZPOZ file and why it seems to have 4 blocks of such data for each cluster.
 * Investigate exact meaning of per-cluster sky-related data in "ZMAP.LEM" file.
 * Investigate how buttons and doors function.
