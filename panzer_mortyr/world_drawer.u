@@ -1,4 +1,5 @@
 import "/enum_string_conversions.u"
+import "/scoped_array.u"
 import "/stdout.u"
 
 import "/common_lib/materials_file.uh"
@@ -260,7 +261,7 @@ fn WorldDrawer::Draw( mut this, Vec3f& camera_position, Mat4f& view_matrix )
 
 	var MapDrawData& map_data= map_data_.try_deref();
 
-	var ust::optional</size_type/> mut camera_cluster_index;
+	var ust::optional</size_type/> mut camera_cluster_index_opt;
 
 	for( auto mut i= 0s; i < map_data.zvox_data.clusters.size(); ++i )
 	{
@@ -285,14 +286,52 @@ fn WorldDrawer::Draw( mut this, Vec3f& camera_position, Mat4f& view_matrix )
 			camera_position.y >= mins.y && camera_position.y <= maxs.y &&
 			camera_position.z >= mins.z && camera_position.z <= maxs.z )
 		{
-			camera_cluster_index= i;
+			camera_cluster_index_opt= i;
 			break;
 		}
 	}
 
-	if( camera_cluster_index.empty() )
+	if( camera_cluster_index_opt.empty() )
 	{
 		return;
+	}
+
+	var size_type camera_cluster_index= camera_cluster_index_opt.try_deref();
+
+	scoped_array bool mut visible_cluster_flags[ map_data.zvox_data.clusters.size() ]( false );
+
+	// Mark as visible current cluster and its children.
+	var ZvoxCluster& camera_cluster= map_data.zvox_data.clusters[ camera_cluster_index ];
+	for( auto mut i= camera_cluster_index; i <= camera_cluster_index + size_type( camera_cluster.c.num_children_clusters ); ++i )
+	{
+		visible_cluster_flags[i]= true;
+	}
+
+	{
+		var i32 bias= i32(map_data.zpoz_data.clusters.size()) * 4;
+
+		var ZpozClusterVisibilityData& visibility_data= map_data.zpoz_data.clusters_visibility_data[ camera_cluster_index ];
+		if( visibility_data.data[0] != -1 )
+		{
+			var size_type some_offset( visibility_data.data[2] - bias );
+
+			// We have 2 subranges for both pairs of indices.
+			var size_type size0( map_data.zpoz_data.cluster_indices[ some_offset  ] );
+			var size_type subrange0_start= some_offset + 8s;
+			var size_type size1( map_data.zpoz_data.cluster_indices[ subrange0_start + size0 ] );
+			var size_type subrange1_start= subrange0_start + size_type(size0) + 8s;
+
+			ust::ignore_unused( size0 );
+			ust::ignore_unused( subrange0_start );
+			ust::ignore_unused( size1 );
+			ust::ignore_unused( subrange1_start );
+
+			for( auto mut i= 0s; i < size0; ++i )
+			{
+				var size_type index( map_data.zpoz_data.cluster_indices[ subrange0_start + i ] );
+				visible_cluster_flags[index]= true;
+			}
+		}
 	}
 
 	unsafe( glEnable( GLenum( GL_DEPTH_TEST ) ) );
@@ -313,10 +352,13 @@ fn WorldDrawer::Draw( mut this, Vec3f& camera_position, Mat4f& view_matrix )
 
 	map_data.vertex_array_object.Bind();
 
-	// Draw current cluster and its children.
-	var ZvoxCluster& camera_cluster= map_data.zvox_data.clusters[ camera_cluster_index.try_deref() ];
-	for( auto mut i= camera_cluster_index.try_deref(); i <= camera_cluster_index.try_deref() + size_type( camera_cluster.c.num_children_clusters ); ++i )
+	for( auto mut i= 0s; i < map_data.zvox_data.clusters.size(); ++i )
 	{
+		if( !visible_cluster_flags[i] )
+		{
+			continue;
+		}
+
 		auto& cluster_draw_data= map_data.clusters_draw_data[i];
 
 		unsafe( glDrawElementsBaseVertex(
