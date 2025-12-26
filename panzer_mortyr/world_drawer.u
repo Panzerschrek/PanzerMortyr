@@ -29,22 +29,31 @@ fn WorldDrawer::SetMap(
 	var ust::vector</ MapVertex /> mut vertices;
 	var ust::vector</u16/> mut indices;
 
-	var ust::vector</ClusterDrawData/> mut clusters_draw_data( zvox_data.clusters.size(), ClusterDrawData{ .first_vertex_index= 0s /* set later */ } );
+	var ust::vector</ClusterDrawData/> mut clusters_draw_data(
+		zvox_data.clusters.size(),
+		ClusterDrawData
+		{
+			.first_vertex_index= 0s, // Set later.
+			.first_index= 0s, // Set later.
+			.num_indices= 0s, // Set later.
+		} );
 
 	foreach( &pair : zvox_data.clusters.iter().zip( clusters_draw_data.iter() ) )
 	{
 		var ZvoxCluster& cluster= pair.first;
-		var ClusterDrawData &mut cluster_draw_data= pair.second;
 
 		var size_type cluser_first_vertex_index= vertices.size();
+		var size_type cluster_first_index= indices.size();
 
-		cluster_draw_data.first_vertex_index= cluser_first_vertex_index;
+		// For each cluster create a mesh with vertex indices starting from 0.
+		// Doing so allows performing culling (draw only visible clusters).
+		// Also it allows to avoid reaching 65536 total vertices limit (we use 16-bit indices).
 
 		foreach( &q : zmap_data.quads.range().subrange(
 			size_type( cluster.c.first_quad_index ),
-			size_type( size_type( cluster.c.first_quad_index ) + size_type( cluster.num_quads ) ) ) )
+			size_type( cluster.c.first_quad_index ) + size_type( cluster.num_quads ) ) )
 		{
-			var size_type base_index= vertices.size();
+			var size_type base_index= vertices.size() - cluser_first_vertex_index;
 
 			var [ [ i32, 3 ], 4 ] shifts
 			[
@@ -176,6 +185,12 @@ fn WorldDrawer::SetMap(
 			indices.push_back( u16( base_index + 2s ) );
 			indices.push_back( u16( base_index + 3s ) );
 		}
+
+		var ClusterDrawData &mut cluster_draw_data= pair.second;
+
+		cluster_draw_data.first_vertex_index= cluser_first_vertex_index;
+		cluster_draw_data.first_index= cluster_first_index;
+		cluster_draw_data.num_indices= indices.size() - cluster_first_index;
 	}
 
 	var BufferObject mut vertex_buffer=
@@ -225,7 +240,6 @@ fn WorldDrawer::SetMap(
 			.vertex_array_object= move(vertex_array_object),
 			.vertex_buffer= move(vertex_buffer),
 			.index_buffer= move(index_buffer),
-			.num_indices= indices.size(),
 			.map_textures_array= LoadMapTextures( materials_block, game_filesystem ),
 			.clusters_draw_data= move(clusters_draw_data),
 		} );
@@ -256,12 +270,20 @@ fn WorldDrawer::Draw( mut this, Mat4f& view_matrix )
 	map_data.map_textures_array.Bind();
 
 	map_shader_.Bind();
-	map_shader_.SetUniform( "vu_matrix",view_matrix );
+	map_shader_.SetUniform( "vu_matrix", view_matrix );
 	map_shader_.SetUniform( "fu_texture", texture_slot );
 
 	map_data.vertex_array_object.Bind();
 
-	unsafe( glDrawElements( GLenum( GL_TRIANGLES ), GLsizei( map_data.num_indices ), GLenum( GL_UNSIGNED_SHORT ), ust::nullptr</byte8/>() ) );
+	foreach( &cluster_draw_data : map_data.clusters_draw_data )
+	{
+		unsafe( glDrawElementsBaseVertex(
+			GLenum( GL_TRIANGLES ),
+			GLsizei( cluster_draw_data.num_indices ),
+			GLenum( GL_UNSIGNED_SHORT ),
+			ust::nullptr</byte8/>() + typeinfo</u16/>.size_of * cluster_draw_data.first_index,
+			GLint( cluster_draw_data.first_vertex_index ) ) );
+	}
 }
 
 fn LoadMapTextures( MaterialsDescription::Block& materials_block, GameFilesystem &mut game_filesystem ) : Texture
