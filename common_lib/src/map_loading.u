@@ -57,25 +57,34 @@ fn LoadMap(
 	auto mut zmap_lem_data= LoadZmapLemFile( zmap_lem_file_path );
 	auto mut mapa_way_data= LoadMapaWayFile( mapa_way_file_path );
 
-	if( zmap_data.empty() ||
-		zvox_data.empty() ||
-		zpoz_data.empty() ||
-		zmap_lam_data.empty() ||
-		zmap_lem_data.empty() ||
-		mapa_way_data.empty() )
+	if( zmap_data.empty() || zvox_data.empty() || zpoz_data.empty() )
 	{
 		return ust::null_optional;
 	}
 
-	return MapData
+	var MapData mut map_data
 	{
 		.zmap= zmap_data.try_take(),
 		.zvox= zvox_data.try_take(),
 		.zpoz= zpoz_data.try_take(),
-		.zmap_lam= zmap_lam_data.try_take(),
-		.zmap_lem= zmap_lem_data.try_take(),
-		.mapa_way= mapa_way_data.try_take(),
 	};
+
+	if( !zmap_lam_data.empty() )
+	{
+		map_data.zmap_lam= zmap_lam_data.try_take();
+	}
+
+	if( !zmap_lem_data.empty() )
+	{
+		map_data.zmap_lem= zmap_lem_data.try_take();
+	}
+
+	if( !mapa_way_data.empty() )
+	{
+		map_data.mapa_way= mapa_way_data.try_take();
+	}
+
+	return map_data;
 }
 
 fn LoadZmapFile( ust::filesystem_path_view file_path ) : ust::optional</ZmapData/>
@@ -284,7 +293,21 @@ fn LoadZpozFile( ust::file_readable &mut f ) : ust::io_result</ZpozData/>
 	result_check_or_return( f.read_exact( some.range().to_byte8_range() ) );
 
 	var ZPozIntermediateHeader mut intermediate_header= zero_init;
-	result_check_or_return( f.read_exact( ust::single_element_array_view( intermediate_header ).to_byte8_range()  ) );
+
+	result_match( f.read_exact( ust::single_element_array_view( intermediate_header ).to_byte8_range() ) )
+	{
+		Ok(v) -> { ust::ignore_unused(v); },
+		Err(e) ->
+		{
+			// If we got end of file - just ignore the rest.
+			// TODO - fix this in case of reading archive file.
+			if( e == ust::io_error::unexpected_end_of_file )
+			{
+				return result;
+			}
+			return e;
+		}
+	}
 
 	{
 		var ust::string8 mut m;
