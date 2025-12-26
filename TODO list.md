@@ -7,6 +7,7 @@ Map format investigation:
 * Investigate how surfaces with emissive flag work.
 * Investigate what Struct0 in "ZVOX.ANT" file actually is.
 * Investigate what Struct1 in "ZVOX.ANT" file actually is.
+* Investigate what Struct2 in "ZVOX.ANT" file actually is.
 * Investigate what remaining fields of ZvoxCluster structure mean.
 * Ensure light color is properly read from ZvoxLightSource structure.
 * Investigate what data[1] of ZvoxLightSource means.
