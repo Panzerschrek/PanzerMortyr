@@ -2,7 +2,6 @@ This list contains things to be done.
 
 Map format investigation:
 
-* Test/fix loading maps other than map 41.
 * Investigate the exact way per-quad texture scale is specified.
 * Investigate how surfaces with emissive flag work.
 * Investigate what Struct0 in "ZVOX.ANT" file actually is.
