@@ -27,12 +27,11 @@ Map format investigation:
 
 Textures/materials investigation:
 
-* Identify more special material kinds.
+* Identify remaining special material kinds.
 * Investigate how sky works on quads with sky materials and on broken glasses.
 * Investigate how lava texture affects lighting of surrounding geometry.
 * Investigate how water surface is drawn.
 * Investigate how underwater caustics work.
-* Investigate how surfaces with planar reflections (reflective floors) are defined.
 
 Models format investigation:
 
@@ -46,6 +45,14 @@ Lighting investigation:
 * Investigate how dynamic lights work (weapon flashes, alarms) - including attenuation formula, line of sight check, surface angle-related attenuation.
 * Investigate how dynamic model objects (characters, pick-ups) are lit (both by static and dynamic lights).
 * Investigate how dynamic map objects (doors, lifts, buttons) are lit (both by static and dynamic lights).
+
+Other investigation:
+
+* Investigate entities description format (config in text format).
+* Investigate save files format - it may be useful.
+* Investigate differences between regional versions.
+* Investigate how many menu pages the original game has and what state pieces are preserved in transition between menu pages.
+* Investigate how original game console works (supported commands, history).
 
 PanzerMortyr general:
 
@@ -89,6 +96,7 @@ PanzerMortyr rendering:
 * Draw fog where it should be.
 * Draw map polygons and other objects (models, sprites) requiring blending in back to front order.
 * Draw reflections in reflective surfaces (usually floors).
+* Draw polygons with animated textures (frame-based animation) properly.
 * Draw quads which are actually triangles (with pair of identical vertices) as single triangle.
 * Draw items (pick-ups).
 * Draw enemies (including animation).
