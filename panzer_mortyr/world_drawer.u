@@ -1,4 +1,5 @@
 import "/enum_string_conversions.u"
+import "/scoped_array.u"
 import "/stdout.u"
 
 import "/common_lib/materials_file.uh"
@@ -22,145 +23,176 @@ fn WorldDrawer::constructor()
 fn WorldDrawer::SetMap(
 	mut this,
 	ZmapData& zmap_data,
+	ZvoxData mut zvox_data,
+	ZpozData mut zpoz_data,
 	MaterialsDescription::Block& materials_block,
 	GameFilesystem &mut game_filesystem )
 {
 	var ust::vector</ MapVertex /> mut vertices;
 	var ust::vector</u16/> mut indices;
 
-	foreach( &q : zmap_data.quads )
+	var ust::vector</ClusterDrawData/> mut clusters_draw_data(
+		zvox_data.clusters.size(),
+		ClusterDrawData
+		{
+			.first_vertex_index= 0s, // Set later.
+			.first_index= 0s, // Set later.
+			.num_indices= 0s, // Set later.
+		} );
+
+	foreach( &pair : zvox_data.clusters.iter().zip( clusters_draw_data.iter() ) )
 	{
-		var size_type base_index= vertices.size();
+		var ZvoxCluster& cluster= pair.first;
 
-		var [ [ i32, 3 ], 4 ] shifts
-		[
-			[ (q.vertices[0][0]), (q.vertices[0][1]), (q.vertices[0][2]) ],
-			[ (q.vertices[1][0]), (q.vertices[1][1]), (q.vertices[1][2]) ],
-			[ (q.vertices[2][0]), (q.vertices[2][1]), (q.vertices[2][2]) ],
-			[ (q.vertices[3][0]), (q.vertices[3][1]), (q.vertices[3][2]) ]
-		];
+		var size_type cluser_first_vertex_index= vertices.size();
+		var size_type cluster_first_index= indices.size();
 
-		var [ i32, 3 ] shifts_min
-		[
-			ust::min( ust::min(shifts[0][0], shifts[1][0]), ust::min(shifts[2][0], shifts[3][0]) ),
-			ust::min( ust::min(shifts[0][1], shifts[1][1]), ust::min(shifts[2][1], shifts[3][1]) ),
-			ust::min( ust::min(shifts[0][2], shifts[1][2]), ust::min(shifts[2][2], shifts[3][2]) ),
-		];
-		var [ i32, 3 ] shifts_max
-		[
-			ust::max( ust::max(shifts[0][0], shifts[1][0]), ust::max(shifts[2][0], shifts[3][0]) ),
-			ust::max( ust::max(shifts[0][1], shifts[1][1]), ust::max(shifts[2][1], shifts[3][1]) ),
-			ust::max( ust::max(shifts[0][2], shifts[1][2]), ust::max(shifts[2][2], shifts[3][2]) ),
-		];
+		// For each cluster create a mesh with vertex indices starting from 0.
+		// Doing so allows performing culling (draw only visible clusters).
+		// Also it allows to avoid reaching 65536 total vertices limit (we use 16-bit indices).
 
-		var [ i32, 3 ] center
-		[
-			// Using signed integer division by two is important here.
-			// Using fractional numbers or bit-shift isn't correct, because this leads to gaps in map geometry.
-			i32( q.center[0] ) - ( shifts_min[0] + shifts_max[0] ) / 2,
-			i32( q.center[1] ) - ( shifts_min[1] + shifts_max[1] ) / 2,
-			i32( q.center[2] ) - ( shifts_min[2] + shifts_max[2] ) / 2,
-		];
-
-		var Vec3f mut u_vec( 0.0f, 1.0f, 0.0f );
-		var Vec3f mut v_vec( 1.0f, 0.0f, 0.0f );
-
+		foreach( &q : zmap_data.quads.range().subrange(
+			size_type( cluster.c.first_quad_index ),
+			size_type( cluster.c.first_quad_index ) + size_type( cluster.num_quads ) ) )
 		{
-			// TODO - make sure it's correct to zero lower bits.
-			var f32 angle= f32( i32( q.texture_roll ) & ~15 ) * ( -c_tau / 256.0f );
-			var f32 c= ust::cos(angle);
-			var f32 s= ust::sin(angle);
+			var size_type base_index= vertices.size() - cluser_first_vertex_index;
 
-			u_vec= Vec3f( u_vec.x * c - u_vec.y * s, u_vec.x * s + u_vec.y * c, u_vec.z );
-			v_vec= Vec3f( v_vec.x * c - v_vec.y * s, v_vec.x * s + v_vec.y * c, v_vec.z );
-		}
-		{
-			var f32 angle= ( f32( q.normal_elevation ) + 256.0f ) * ( c_tau / 1024.0f );
-			var f32 c= ust::cos(angle);
-			var f32 s= ust::sin(angle);
+			var [ [ i32, 3 ], 4 ] shifts
+			[
+				[ (q.vertices[0][0]), (q.vertices[0][1]), (q.vertices[0][2]) ],
+				[ (q.vertices[1][0]), (q.vertices[1][1]), (q.vertices[1][2]) ],
+				[ (q.vertices[2][0]), (q.vertices[2][1]), (q.vertices[2][2]) ],
+				[ (q.vertices[3][0]), (q.vertices[3][1]), (q.vertices[3][2]) ]
+			];
 
-			u_vec= Vec3f( u_vec.x * c - u_vec.z * s, u_vec.y, u_vec.x * s + u_vec.z * c );
-			v_vec= Vec3f( v_vec.x * c - v_vec.z * s, v_vec.y, v_vec.x * s + v_vec.z * c );
-		}
-		{
-			var f32 angle= ( 768.0f - f32(q.normal_azimuth) ) * ( c_tau / 1024.0f );
-			var f32 c= ust::cos(angle);
-			var f32 s= ust::sin(angle);
+			var [ i32, 3 ] shifts_min
+			[
+				ust::min( ust::min(shifts[0][0], shifts[1][0]), ust::min(shifts[2][0], shifts[3][0]) ),
+				ust::min( ust::min(shifts[0][1], shifts[1][1]), ust::min(shifts[2][1], shifts[3][1]) ),
+				ust::min( ust::min(shifts[0][2], shifts[1][2]), ust::min(shifts[2][2], shifts[3][2]) ),
+			];
+			var [ i32, 3 ] shifts_max
+			[
+				ust::max( ust::max(shifts[0][0], shifts[1][0]), ust::max(shifts[2][0], shifts[3][0]) ),
+				ust::max( ust::max(shifts[0][1], shifts[1][1]), ust::max(shifts[2][1], shifts[3][1]) ),
+				ust::max( ust::max(shifts[0][2], shifts[1][2]), ust::max(shifts[2][2], shifts[3][2]) ),
+			];
 
-			u_vec= Vec3f( u_vec.x * c - u_vec.y * s, u_vec.x * s + u_vec.y * c, u_vec.z );
-			v_vec= Vec3f( v_vec.x * c - v_vec.y * s, v_vec.x * s + v_vec.y * c, v_vec.z );
-		}
-		{
-			// Use experimentally-found factor for texture basis scaling.
-			// This code may be wrong.
-			// It should map bits 8 to scale 1.25, bits 12 to scale 2.25.
-			// Bits 9 are roughly mapped to scale 1.5.
-			//var f32 vecs_scale= ( 1.0f + f32( i32(s.texture_roll) & 15 ) / 9.6f );
-			var f32 vecs_scale= 1.0f / ust::cos( f32( i32(q.texture_roll) & 15 ) * 0.0925f );
-			u_vec*= vecs_scale;
-			v_vec*= vecs_scale;
-		}
+			var [ i32, 3 ] center
+			[
+				// Using signed integer division by two is important here.
+				// Using fractional numbers or bit-shift isn't correct, because this leads to gaps in map geometry.
+				i32( q.center[0] ) - ( shifts_min[0] + shifts_max[0] ) / 2,
+				i32( q.center[1] ) - ( shifts_min[1] + shifts_max[1] ) / 2,
+				i32( q.center[2] ) - ( shifts_min[2] + shifts_max[2] ) / 2,
+			];
 
-		var Vec2f tc_offset( f32( q.tc_offset[0] ), f32( q.tc_offset[1] ) );
+			var Vec3f mut u_vec( 0.0f, 1.0f, 0.0f );
+			var Vec3f mut v_vec( 1.0f, 0.0f, 0.0f );
 
-		// OpenGL uses normalized texture coordinates.
-		var f32 constexpr tc_scale= 1.0f / f32( MaterialsDescription::c_texture_size );
-
-		var f32 mut texture_id( q.texture_id );
-
-		// TODO - use speacial passes for special materials.
-
-		if( size_type( q.texture_id ) >=
-			materials_block.textures.size() * size_type( MaterialsDescription::c_texture_file_num_tiles_x * MaterialsDescription::c_texture_file_num_tiles_y ) )
-		{
-			// TODO - optimize this lookup, use a hash-map instead.
-			var ust::optional</size_type/> mut special_material_opt;
-			for( auto mut j= 0s; j < typeinfo</MaterialsDescription::SpecialMaterial/>.element_count; ++j )
 			{
-				if( u32( q.texture_id ) == MaterialsDescription::c_special_material_texture_indices[j] )
+				// TODO - make sure it's correct to zero lower bits.
+				var f32 angle= f32( i32( q.texture_roll ) & ~15 ) * ( -c_tau / 256.0f );
+				var f32 c= ust::cos(angle);
+				var f32 s= ust::sin(angle);
+
+				u_vec= Vec3f( u_vec.x * c - u_vec.y * s, u_vec.x * s + u_vec.y * c, u_vec.z );
+				v_vec= Vec3f( v_vec.x * c - v_vec.y * s, v_vec.x * s + v_vec.y * c, v_vec.z );
+			}
+			{
+				var f32 angle= ( f32( q.normal_elevation ) + 256.0f ) * ( c_tau / 1024.0f );
+				var f32 c= ust::cos(angle);
+				var f32 s= ust::sin(angle);
+
+				u_vec= Vec3f( u_vec.x * c - u_vec.z * s, u_vec.y, u_vec.x * s + u_vec.z * c );
+				v_vec= Vec3f( v_vec.x * c - v_vec.z * s, v_vec.y, v_vec.x * s + v_vec.z * c );
+			}
+			{
+				var f32 angle= ( 768.0f - f32(q.normal_azimuth) ) * ( c_tau / 1024.0f );
+				var f32 c= ust::cos(angle);
+				var f32 s= ust::sin(angle);
+
+				u_vec= Vec3f( u_vec.x * c - u_vec.y * s, u_vec.x * s + u_vec.y * c, u_vec.z );
+				v_vec= Vec3f( v_vec.x * c - v_vec.y * s, v_vec.x * s + v_vec.y * c, v_vec.z );
+			}
+			{
+				// Use experimentally-found factor for texture basis scaling.
+				// This code may be wrong.
+				// It should map bits 8 to scale 1.25, bits 12 to scale 2.25.
+				// Bits 9 are roughly mapped to scale 1.5.
+				//var f32 vecs_scale= ( 1.0f + f32( i32(s.texture_roll) & 15 ) / 9.6f );
+				var f32 vecs_scale= 1.0f / ust::cos( f32( i32(q.texture_roll) & 15 ) * 0.0925f );
+				u_vec*= vecs_scale;
+				v_vec*= vecs_scale;
+			}
+
+			var Vec2f tc_offset( f32( q.tc_offset[0] ), f32( q.tc_offset[1] ) );
+
+			// OpenGL uses normalized texture coordinates.
+			var f32 constexpr tc_scale= 1.0f / f32( MaterialsDescription::c_texture_size );
+
+			var f32 mut texture_id( q.texture_id );
+
+			// TODO - use speacial passes for special materials.
+
+			if( size_type( q.texture_id ) >=
+				materials_block.textures.size() * size_type( MaterialsDescription::c_texture_file_num_tiles_x * MaterialsDescription::c_texture_file_num_tiles_y ) )
+			{
+				// TODO - optimize this lookup, use a hash-map instead.
+				var ust::optional</size_type/> mut special_material_opt;
+				for( auto mut j= 0s; j < typeinfo</MaterialsDescription::SpecialMaterial/>.element_count; ++j )
 				{
-					texture_id= f32( materials_block.special_material_indices[j] );
-					break;
+					if( u32( q.texture_id ) == MaterialsDescription::c_special_material_texture_indices[j] )
+					{
+						texture_id= f32( materials_block.special_material_indices[j] );
+						break;
+					}
 				}
 			}
+
+			foreach( &vertex_shift : shifts )
+			{
+				// Texture coordinates are calculated relative to vertex #0.
+				var Vec3f vertex_relative_shift
+				(
+					f32( vertex_shift[0] - shifts[0][0] ),
+					f32( vertex_shift[1] - shifts[0][1] ),
+					f32( vertex_shift[2] - shifts[0][2] )
+				);
+
+				vertices.push_back(
+					MapVertex
+					{
+						.position
+						[
+							f32( center[0] + vertex_shift[0] ),
+							f32( center[1] + vertex_shift[1] ),
+							f32( center[2] + vertex_shift[2] ),
+							0.0f,
+						],
+						.tex_coordinates
+						[
+							tc_scale * ( vertex_relative_shift.Dot( u_vec ) + tc_offset.x ),
+							tc_scale * ( vertex_relative_shift.Dot( v_vec ) + tc_offset.y ),
+							texture_id,
+						],
+						.padding= zero_init
+					} );
+			}
+
+			indices.push_back( u16( base_index + 0s ) );
+			indices.push_back( u16( base_index + 1s ) );
+			indices.push_back( u16( base_index + 2s ) );
+			indices.push_back( u16( base_index + 0s ) );
+			indices.push_back( u16( base_index + 2s ) );
+			indices.push_back( u16( base_index + 3s ) );
 		}
 
-		foreach( &vertex_shift : shifts )
-		{
-			// Texture coordinates are calculated relative to vertex #0.
-			var Vec3f vertex_relative_shift
-			(
-				f32( vertex_shift[0] - shifts[0][0] ),
-				f32( vertex_shift[1] - shifts[0][1] ),
-				f32( vertex_shift[2] - shifts[0][2] )
-			);
+		var ClusterDrawData &mut cluster_draw_data= pair.second;
 
-			vertices.push_back(
-				MapVertex
-				{
-					.position
-					[
-						f32( center[0] + vertex_shift[0] ),
-						f32( center[1] + vertex_shift[1] ),
-						f32( center[2] + vertex_shift[2] ),
-						0.0f,
-					],
-					.tex_coordinates
-					[
-						tc_scale * ( vertex_relative_shift.Dot( u_vec ) + tc_offset.x ),
-						tc_scale * ( vertex_relative_shift.Dot( v_vec ) + tc_offset.y ),
-						texture_id,
-					],
-					.padding= zero_init
-				} );
-		}
-
-		indices.push_back( u16( base_index + 0s ) );
-		indices.push_back( u16( base_index + 1s ) );
-		indices.push_back( u16( base_index + 2s ) );
-		indices.push_back( u16( base_index + 0s ) );
-		indices.push_back( u16( base_index + 2s ) );
-		indices.push_back( u16( base_index + 3s ) );
+		cluster_draw_data.first_vertex_index= cluser_first_vertex_index;
+		cluster_draw_data.first_index= cluster_first_index;
+		cluster_draw_data.num_indices= indices.size() - cluster_first_index;
 	}
 
 	var BufferObject mut vertex_buffer=
@@ -207,16 +239,21 @@ fn WorldDrawer::SetMap(
 	map_data_.reset(
 		MapDrawData
 		{
+			.zvox_data= move(zvox_data),
+			.zpoz_data= move(zpoz_data),
 			.vertex_array_object= move(vertex_array_object),
 			.vertex_buffer= move(vertex_buffer),
 			.index_buffer= move(index_buffer),
-			.num_indices= indices.size(),
 			.map_textures_array= LoadMapTextures( materials_block, game_filesystem ),
+			.clusters_draw_data= move(clusters_draw_data),
 		} );
 }
 
-fn WorldDrawer::Draw( mut this, Mat4f& view_matrix )
+fn WorldDrawer::Draw( mut this, Vec3f& camera_position, Mat4f& view_matrix )
 {
+	unsafe( glClearColor( GLclampf(32.0 / 255.0), GLclampf(16.0 / 255.0), GLclampf(8.0f / 255.0f), GLclampf(1.0) ) );
+	unsafe( glClear( GLbitfield( GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT ) ) );
+
 	if( map_data_.empty() )
 	{
 		return;
@@ -224,12 +261,120 @@ fn WorldDrawer::Draw( mut this, Mat4f& view_matrix )
 
 	var MapDrawData& map_data= map_data_.try_deref();
 
-	unsafe( glClearColor( GLclampf(32.0 / 255.0), GLclampf(16.0 / 255.0), GLclampf(8.0f / 255.0f), GLclampf(1.0) ) );
-	unsafe( glClear( GLbitfield( GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT ) ) );
+	var ust::optional</size_type/> mut camera_cluster_index_opt;
+
+	for( auto mut i= 0s; i < map_data.zvox_data.clusters.size(); ++i )
+	{
+		var ZvoxCluster& cluster= map_data.zvox_data.clusters[i];
+		if( cluster.c.num_children_clusters < 0 )
+		{
+			// Do not check clusters which are located within another clusters.
+			continue;
+		}
+
+		var Vec3f mins(
+			f32( cluster.c.center[0] - cluster.c.bounding_box_half_size[0] ),
+			f32( cluster.c.center[1] - cluster.c.bounding_box_half_size[1] ),
+			f32( cluster.c.center[2] - cluster.c.bounding_box_half_size[2] ) );
+
+		var Vec3f maxs(
+			f32( cluster.c.center[0] + cluster.c.bounding_box_half_size[0] ),
+			f32( cluster.c.center[1] + cluster.c.bounding_box_half_size[1] ),
+			f32( cluster.c.center[2] + cluster.c.bounding_box_half_size[2] ) );
+
+		if( camera_position.x >= mins.x && camera_position.x <= maxs.x &&
+			camera_position.y >= mins.y && camera_position.y <= maxs.y &&
+			camera_position.z >= mins.z && camera_position.z <= maxs.z )
+		{
+			camera_cluster_index_opt= i;
+			break;
+		}
+	}
+
+	// Assume all clusters are visible if we failed to find current cluster (like in noclip mode).
+	var bool all_clusters_are_visible= camera_cluster_index_opt.empty();
+
+	// TODO - allocate it once at map start?
+	scoped_array bool mut visible_cluster_flags[ map_data.zvox_data.clusters.size() ]( all_clusters_are_visible );
+
+	if_var( camera_cluster_index : camera_cluster_index_opt )
+	{
+		// Mark as visible current cluster.
+		visible_cluster_flags[ camera_cluster_index ]= true;
+
+		{
+			// Mark as visible childen of current cluster.
+
+			var ZvoxCluster& camera_cluster= map_data.zvox_data.clusters[ camera_cluster_index ];
+			if( camera_cluster.c.num_children_clusters > 0 )
+			{
+				foreach( &mut b : visible_cluster_flags.subrange(
+					camera_cluster_index + 1s,
+					camera_cluster_index + 1s + size_type( camera_cluster.c.num_children_clusters ) ) )
+				{
+					b= true;
+				}
+			}
+		}
+
+		var i32 bias= i32( map_data.zpoz_data.clusters.size() ) * 4;
+
+		var ZpozClusterVisibilityData& visibility_data= map_data.zpoz_data.clusters_visibility_data[ camera_cluster_index ];
+
+		// TODO - check if we should use data[2] and not data[0] or even both.
+		var i32 data_start= visibility_data.data[2];
+
+		if( data_start != -1 )
+		{
+			var size_type visibility_data_offset( data_start - bias );
+
+			// We have 2 subranges for both offsets.
+			// Since we don't know which is correct, use both of them.
+			var size_type subrange0_size( map_data.zpoz_data.cluster_indices[ visibility_data_offset  ] );
+			var size_type subrange0_start= visibility_data_offset + 8s;
+			var size_type subrange1_size( map_data.zpoz_data.cluster_indices[ subrange0_start + subrange0_size ] );
+			var size_type subrange1_start= subrange0_start + size_type(subrange0_size) + 8s;
+
+			var [ ust::array_view_imut</i32/>, 2 ] ranges
+			[
+				map_data.zpoz_data.cluster_indices.range().subrange( subrange0_start, subrange0_start + subrange0_size ),
+				map_data.zpoz_data.cluster_indices.range().subrange( subrange1_start, subrange1_start + subrange1_size )
+			];
+
+			foreach( range : ranges )
+			{
+				foreach( visible_cluster_index_src : range )
+				{
+					var size_type visible_cluster_index( visible_cluster_index_src );
+
+					// Mark cluster listed in visibility data as visible.
+					visible_cluster_flags[ visible_cluster_index ]= true;
+
+					// Mark children clusters of visible cluster as also visible.
+					var ZvoxCluster& visible_cluster= map_data.zvox_data.clusters[ visible_cluster_index ];
+					if( visible_cluster.c.num_children_clusters > 0 )
+					{
+						foreach( &mut b : visible_cluster_flags.subrange(
+							visible_cluster_index + 1s,
+							visible_cluster_index + 1s + size_type( visible_cluster.c.num_children_clusters ) ) )
+						{
+							b= true;
+						}
+					}
+				}
+			}
+		}
+	}
 
 	unsafe( glEnable( GLenum( GL_DEPTH_TEST ) ) );
 	unsafe( glDepthMask( GLboolean(1) ) );
 	unsafe( glDepthFunc( GLenum( GL_LEQUAL ) ) );
+
+	if( false )
+	{
+		// Wireframe mode for debugging.
+		unsafe( glPolygonMode( GLenum( GL_FRONT_AND_BACK ), GLenum( GL_LINE ) ) );
+	}
 
 	unsafe( glEnable( GLenum( GL_CULL_FACE ) ) );
 	unsafe( glCullFace( GLenum( GL_FRONT ) ) );
@@ -240,12 +385,27 @@ fn WorldDrawer::Draw( mut this, Mat4f& view_matrix )
 	map_data.map_textures_array.Bind();
 
 	map_shader_.Bind();
-	map_shader_.SetUniform( "vu_matrix",view_matrix );
+	map_shader_.SetUniform( "vu_matrix", view_matrix );
 	map_shader_.SetUniform( "fu_texture", texture_slot );
 
 	map_data.vertex_array_object.Bind();
 
-	unsafe( glDrawElements( GLenum( GL_TRIANGLES ), GLsizei( map_data.num_indices ), GLenum( GL_UNSIGNED_SHORT ), ust::nullptr</byte8/>() ) );
+	for( auto mut i= 0s; i < map_data.zvox_data.clusters.size(); ++i )
+	{
+		if( !visible_cluster_flags[i] )
+		{
+			continue;
+		}
+
+		auto& cluster_draw_data= map_data.clusters_draw_data[i];
+
+		unsafe( glDrawElementsBaseVertex(
+			GLenum( GL_TRIANGLES ),
+			GLsizei( cluster_draw_data.num_indices ),
+			GLenum( GL_UNSIGNED_SHORT ),
+			ust::nullptr</byte8/>() + typeinfo</u16/>.size_of * cluster_draw_data.first_index,
+			GLint( cluster_draw_data.first_vertex_index ) ) );
+	}
 }
 
 fn LoadMapTextures( MaterialsDescription::Block& materials_block, GameFilesystem &mut game_filesystem ) : Texture
