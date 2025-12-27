@@ -79,10 +79,8 @@ PanzerMortyr game logic:
 
 PanzerMortyr rendering:
 
-* Create separate sub-meshes for clusters and render world polygons per-cluster.
 * Draw tessellated geometry (from ZMAP*.LAM file) with per-vertex lighting.
 * Apply additional tessellation for tessellated polygons in order to perform smoother light values interpolation (naively triangulating them doesn't produce good result always).
-* Determine current cluster where camera is located and draw only clusters visible from it (using visibility information).
 * Draw water quads properly.
 * Draw underwater caustics properly.
 * Draw sky properly where sky quads are located.
