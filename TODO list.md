@@ -79,7 +79,6 @@ PanzerMortyr game logic:
 
 PanzerMortyr rendering:
 
-* Draw tessellated geometry (from ZMAP*.LAM file) with per-vertex lighting.
 * Apply additional tessellation for tessellated polygons in order to perform smoother light values interpolation (naively triangulating them doesn't produce good result always).
 * Draw water quads properly.
 * Draw underwater caustics properly.
