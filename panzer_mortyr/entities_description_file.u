@@ -1,0 +1,506 @@
+import "/integer_parsing.u"
+import "/stdout.u"
+import "/common_lib/string_iterators.uh"
+import "entities_description_file.uh"
+
+namespace PM
+{
+
+fn ParseEntitiesDescriptionFile( ust::string_view8 file_contents ) : EntitiesDescription
+{
+	var EntitiesDescription mut entities_description;
+
+	var ust::optional</ tup[ u32, EntitiesDescription::EntityDescription ] /> mut current_entity;
+	var ust::optional</ tup[ u32, EntitiesDescription::Operation ] /> mut current_operation;
+
+	foreach( line : ust::wrap_raw_iterator( LinesRawIterator( file_contents ) ) )
+	{
+		auto mut words_it= ust::wrap_raw_iterator( WordsIterator( line ) );
+
+		auto first_word_opt= words_it.next();
+		if( first_word_opt.empty() )
+		{
+			continue;
+		}
+
+		var ust::string_view8 first_word= first_word_opt.try_deref();
+
+		if( first_word == "plik_anim" )
+		{
+			if( words_it.next() != ust::string_view8( "=" ) )
+			{
+				continue;
+			}
+
+			auto model_file_name_opt= words_it.next();
+			if( model_file_name_opt.empty() )
+			{
+				continue;
+			}
+
+			var ust::string_view8 model_file_name= model_file_name_opt.try_deref();
+
+			auto animation_number_str_opt= words_it.next();
+			if( animation_number_str_opt.empty() )
+			{
+				continue;
+			}
+
+			auto animation_number_opt= ust::parse_integer_exact</u32/>( animation_number_str_opt.try_deref() );
+			if( animation_number_opt.empty() )
+			{
+				continue;
+			}
+
+			var u32 animation_number= animation_number_opt.try_deref();
+
+			auto entity_number_str_opt= words_it.next();
+			if( entity_number_str_opt.empty() )
+			{
+				continue;
+			}
+
+			auto entity_number_opt= ust::parse_integer_exact</u32/>( entity_number_str_opt.try_deref() );
+			if( entity_number_opt.empty() )
+			{
+				continue;
+			}
+
+			var u32 entity_number= entity_number_opt.try_deref();
+
+			entities_description.animations.insert_new(
+				animation_number,
+				EntitiesDescription::AnimationDescription
+				{
+					.model_file_name= model_file_name,
+					.entity_index= entity_number,
+				} );
+		}
+		else if( first_word == "aktor" )
+		{
+			if( !current_entity.empty() )
+			{
+				auto [ id, mut entity ] = current_entity.try_take();
+
+				if( !current_operation.empty() )
+				{
+					auto [ operation_id, mut operation ]= current_operation.try_take();
+					entity.operations.insert_new( operation_id, move(operation) );
+				}
+
+				entities_description.entities.insert_new( id, move(entity) );
+			}
+
+			var u32 mut entity_index= 0u;
+
+			var EntitiesDescription::EntityDescription mut new_entity;
+
+			if_var( &num_str : words_it.next() )
+			{
+				if_var( n : ust::parse_integer_exact</u32/>( num_str ) )
+				{
+					entity_index= n;
+				}
+				else
+				{
+					continue;
+				}
+			}
+			else
+			{
+				continue;
+			}
+
+			if_var( &num_str : words_it.next() )
+			{
+				if_var( n : ust::parse_integer_exact</u32/>( num_str ) )
+				{
+					new_entity.energy= n;
+				}
+				else
+				{
+					continue;
+				}
+			}
+			else
+			{
+				continue;
+			}
+
+			if_var( &num_str : words_it.next() )
+			{
+				if_var( n : ust::parse_integer_exact</u32/>( num_str ) )
+				{
+					new_entity.aggression= n;
+				}
+				else
+				{
+					continue;
+				}
+			}
+			else
+			{
+				continue;
+			}
+
+			if_var( &num_str : words_it.next() )
+			{
+				if_var( n : ust::parse_integer_exact</u32/>( num_str ) )
+				{
+					new_entity.podatn= n;
+				}
+				else
+				{
+					continue;
+				}
+			}
+			else
+			{
+				continue;
+			}
+
+			if_var( &num_str : words_it.next() )
+			{
+				if_var( n : ust::parse_integer_exact</u32/>( num_str ) )
+				{
+					new_entity.osona= n;
+				}
+				else
+				{
+					continue;
+				}
+			}
+			else
+			{
+				continue;
+			}
+
+			if_var( &num_str : words_it.next() )
+			{
+				if_var( n : ust::parse_integer_exact</u32/>( num_str ) )
+				{
+					new_entity.mode= n;
+				}
+				else
+				{
+					continue;
+				}
+			}
+			else
+			{
+				continue;
+			}
+
+			if_var( &s : words_it.next() )
+			{
+				new_entity.name= s;
+			}
+			else
+			{
+				continue;
+			}
+
+			current_entity= ust::make_tuple( entity_index, move(new_entity) );
+		}
+		else if( first_word == "panika" )
+		{
+			if( !current_entity.empty() )
+			{
+				if_var( &num_str : words_it.next() )
+				{
+					if_var( n : ust::parse_integer_exact</u32/>( num_str ) )
+					{
+						current_entity.try_deref()[1].panic= n;
+					}
+				}
+			}
+		}
+		else if( first_word == "szukaj_apteczek" )
+		{
+			if( !current_entity.empty() )
+			{
+				if_var( &num_str : words_it.next() )
+				{
+					if_var( n : ust::parse_integer_exact</u32/>( num_str ) )
+					{
+						current_entity.try_deref()[1].search_for_health_kits= n;
+					}
+				}
+			}
+		}
+		else if( first_word == "szukaj_amunicji" )
+		{
+			if( !current_entity.empty() )
+			{
+				if_var( &num_str : words_it.next() )
+				{
+					if_var( n : ust::parse_integer_exact</u32/>( num_str ) )
+					{
+						current_entity.try_deref()[1].search_for_ammunition= n;
+					}
+				}
+			}
+		}
+		else if( first_word == "ilosc_amunicji" )
+		{
+			if( !current_entity.empty() )
+			{
+				if_var( &num_str : words_it.next() )
+				{
+					if_var( n : ust::parse_integer_exact</u32/>( num_str ) )
+					{
+						current_entity.try_deref()[1].ammunition= n;
+					}
+				}
+			}
+		}
+		else if( first_word == "losowosc_zranienia" )
+		{
+			if( !current_entity.empty() )
+			{
+				if_var( &num_str : words_it.next() )
+				{
+					if_var( n : ust::parse_integer_exact</u32/>( num_str ) )
+					{
+						current_entity.try_deref()[1].damage_randomness= n;
+					}
+				}
+			}
+		}
+		else if( first_word == "ponowny_atak" )
+		{
+			if( !current_entity.empty() )
+			{
+				if_var( &num_str : words_it.next() )
+				{
+					if_var( n : ust::parse_integer_exact</u32/>( num_str ) )
+					{
+						current_entity.try_deref()[1].another_attack= n;
+					}
+				}
+			}
+		}
+		else if( first_word == "trzymaj_dystans" )
+		{
+			if( !current_entity.empty() )
+			{
+				if_var( &num_str : words_it.next() )
+				{
+					if_var( n : ust::parse_integer_exact</u32/>( num_str ) )
+					{
+						current_entity.try_deref()[1].hold_on_distance= n;
+					}
+				}
+			}
+		}
+		else if( first_word == "zabron_redukcji" )
+		{
+			if( !current_entity.empty() )
+			{
+				if_var( &num_str : words_it.next() )
+				{
+					if_var( n : ust::parse_integer_exact</u32/>( num_str ) )
+					{
+						current_entity.try_deref()[1].disable_reduction= n;
+					}
+				}
+			}
+		}
+		else if( first_word == "standardowe_odglosy" )
+		{
+			if( !current_entity.empty() )
+			{
+				if_var( &num_str : words_it.next() )
+				{
+					if_var( n : ust::parse_integer_exact</u32/>( num_str ) )
+					{
+						current_entity.try_deref()[1].standard_sounds= n;
+					}
+				}
+			}
+		}
+		else if( first_word == "operacja" )
+		{
+			if( current_entity.empty() )
+			{
+				continue;
+			}
+
+			if( !current_operation.empty() )
+			{
+				auto [ id, mut operation ]= current_operation.try_take();
+				current_entity.try_deref()[1].operations.insert_new( id, move(operation) );
+			}
+
+			if_var( &num_str : words_it.next() )
+			{
+				if_var( n : ust::parse_integer_exact</u32/>( num_str ) )
+				{
+					current_operation= ust::make_tuple( n, EntitiesDescription::Operation{} );
+				}
+			}
+		}
+		else if( first_word == "animacja_naprzod" )
+		{
+			if( current_operation.empty() )
+			{
+				continue;
+			}
+
+			// TODO - set current operation sub-struct flag.
+		}
+		else if( first_word == "sternik" )
+		{
+			if( current_operation.empty() )
+			{
+				continue;
+			}
+
+			// TODO - set current operation sub-struct flag.
+		}
+		else if( first_word == "jesli_zyje" )
+		{
+			if( current_operation.empty() )
+			{
+				continue;
+			}
+
+			// TODO - set current operation sub-struct flag.
+		}
+		else if( first_word == "anim_nr" )
+		{
+			if( current_operation.empty() )
+			{
+				continue;
+			}
+
+			var EntitiesDescription::Operation &mut operation= current_operation.try_deref()[1];
+
+			if_var( &num_str : words_it.next() )
+			{
+				if_var( n : ust::parse_integer_exact</u32/>( num_str ) )
+				{
+					operation.forward_animation.animation_number= n;
+				}
+			}
+
+			if( words_it.next() != ust::string_view8( "start" ) )
+			{
+				continue;
+			}
+
+			if_var( &num_str : words_it.next() )
+			{
+				if_var( n : ust::parse_integer_exact</u32/>( num_str ) )
+				{
+					operation.forward_animation.start_step= n;
+				}
+			}
+
+			if( words_it.next() != ust::string_view8( "liczba_obr" ) )
+			{
+				continue;
+			}
+
+			if_var( &num_str : words_it.next() )
+			{
+				if_var( n : ust::parse_integer_exact</u32/>( num_str ) )
+				{
+					operation.forward_animation.num_steps= n;
+				}
+			}
+		}
+		else if( first_word == "add_x" )
+		{
+			if( current_operation.empty() )
+			{
+				continue;
+			}
+
+			var EntitiesDescription::Operation &mut operation= current_operation.try_deref()[1];
+
+			if_var( &num_str : words_it.next() )
+			{
+				if_var( n : ust::parse_integer_exact</i32/>( num_str ) )
+				{
+					operation.forward_animation.add_x= n;
+				}
+			}
+
+			if( words_it.next() != ust::string_view8( "add_y" ) )
+			{
+				continue;
+			}
+
+			if_var( &num_str : words_it.next() )
+			{
+				if_var( n : ust::parse_integer_exact</i32/>( num_str ) )
+				{
+					operation.forward_animation.add_y= n;
+				}
+			}
+
+			if( words_it.next() != ust::string_view8( "add_z" ) )
+			{
+				continue;
+			}
+
+			if_var( &num_str : words_it.next() )
+			{
+				if_var( n : ust::parse_integer_exact</i32/>( num_str ) )
+				{
+					operation.forward_animation.add_z= n;
+				}
+			}
+		}
+		else if( first_word == "aktywnosc" )
+		{
+			if( current_operation.empty() )
+			{
+				continue;
+			}
+
+			var EntitiesDescription::Operation &mut operation= current_operation.try_deref()[1];
+
+			if_var( &num_str : words_it.next() )
+			{
+				if_var( n : ust::parse_integer_exact</u32/>( num_str ) )
+				{
+					operation.forward_animation.activity= n;
+				}
+			}
+
+			if( words_it.next() != ust::string_view8( "maska" ) )
+			{
+				continue;
+			}
+
+			if_var( &num_str : words_it.next() )
+			{
+				if_var( n : ust::parse_integer_exact</u32/>( num_str ) )
+				{
+					operation.forward_animation.mask= n;
+				}
+			}
+		}
+
+		// TODO - parse other kinds of information from this file, especially operation sub-structs.
+	}
+
+	if( !current_entity.empty() )
+	{
+		auto [ id, mut entity ] = current_entity.try_take();
+
+		if( !current_operation.empty() )
+		{
+			auto [ operation_id, mut operation ]= current_operation.try_take();
+			entity.operations.insert_new( operation_id, move(operation) );
+		}
+
+		entities_description.entities.insert_new( id, move(entity) );
+	}
+
+	return entities_description;
+}
+
+} // namespace PM

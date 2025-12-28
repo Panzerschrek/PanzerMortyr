@@ -48,11 +48,17 @@ Lighting investigation:
 
 Other investigation:
 
+* Investigate how exactly visuals are changed when nightvision or infravision are active.
 * Investigate entities description format (config in text format).
 * Investigate save files format - it may be useful.
 * Investigate differences between regional versions.
 * Investigate how many menu pages the original game has and what state pieces are preserved in transition between menu pages.
 * Investigate how original game console works (supported commands, history).
+* Invisitage command-line options of the original game.
+
+MapViewer:
+
+* Read entities config and display bounding boxes for entities which are read from this config.
 
 PanzerMortyr general:
 
@@ -61,6 +67,7 @@ PanzerMortyr general:
 * Implement console.
 * Implement menus.
 * Implement settings (via some config file saved on-disk).
+* Implement loading screen.
 * Extend existing setting menus/add new ones for extra options specific for PanzerMortyr.
 * Allow changing controls.
 * Allow changing window size.
@@ -72,6 +79,7 @@ PanzerMortyr general:
 
 PanzerMortyr game logic:
 
+* Parse all necessary information from the entities description file.
 * Implement items which can pic picked-up.
 * Implement interactions with buttons, doors, elevators.
 * Implement enemies - including their AI, navigation, movement, death.
@@ -108,6 +116,12 @@ PanzerMortyr rendering:
 * Implement dynamic lights (gun flashes, explosions).
 * Draw weather effects (rain, snow).
 * Draw breaking window animation (with falling splinters).
+* Perform frustum culling for clusters (root ones).
+* Perform frustum culling for models.
+* Experiment with an algorithm for dynamic visible clusters search similar to one used in SquareWheel.
+* Add support for MSAA.
+* Add support for nearest textures filtration.
+* Add support for anisorhropic textures filtration.
 
 PanzerMortyr sound:
 
