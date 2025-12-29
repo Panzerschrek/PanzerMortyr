@@ -1,0 +1,125 @@
+import "/scoped_array.u"
+import "gl_functions.uh"
+import "gpu_model.uh"
+import "image_loading.uh"
+
+namespace PM
+{
+
+fn CreateGPUModel( ModelData& model_data ) : GPUModel
+{
+	var VertexArrayObject mut vertex_array_object;
+
+	var BufferObject mut texture_coordinates_buffer=
+		BufferObject::CreateStaticDrawBuffer(
+			GLenum( GL_ARRAY_BUFFER ), // Needed for a vertex attribute source.
+			model_data.texture_coordinates.range().to_byte8_range() );
+
+	var BufferObject mut positions_buffer=
+		BufferObject::CreateStaticDrawBuffer(
+			GLenum( GL_ARRAY_BUFFER ), // Needed for a vertex attribute source.
+			model_data.vertex_positions_data.range().to_byte8_range() );
+
+	// Create index buffer only for LOD0 triangles.
+	// We don't care about geometry of other LODs, even LOD0 models are pretty low-detail.
+
+	var size_type num_lod0_triangles( model_data.num_lod0_triangles );
+
+	var ust::vector</u16/> mut indices( num_lod0_triangles * 3s, 0u16 );
+
+	for( auto mut i= 0s; i < num_lod0_triangles; ++i )
+	{
+		var ObbTriangle& triangle= model_data.triangles[i];
+
+		// Original indices are multiplied by 2, divide them back.
+		indices[ i * 3s + 0s ]= u16( triangle[0] >> 1 );
+		indices[ i * 3s + 1s ]= u16( triangle[1] >> 1 );
+		indices[ i * 3s + 2s ]= u16( triangle[2] >> 1 );
+	}
+
+	var BufferObject mut index_buffer=
+		BufferObject::CreateStaticDrawBuffer(
+			GLenum( GL_ELEMENT_ARRAY_BUFFER ), // Needed for a triangle indices source.
+			indices.range().to_byte8_range() );
+
+	vertex_array_object.Bind();
+
+	texture_coordinates_buffer.Bind();
+
+	unsafe( glEnableVertexAttribArray( GPUModel::c_texture_coordinates_attrib ) );
+
+	unsafe( glVertexAttribPointer(
+		GPUModel::c_texture_coordinates_attrib,
+		2,
+		GLenum( GL_FLOAT ),
+		GLboolean(0),
+		GLsizei( typeinfo</ObbVertexTextureCoordinates/>.size_of ),
+		ust::nullptr</byte8/>() ) );
+
+	positions_buffer.Bind();
+
+	unsafe( glEnableVertexAttribArray( GPUModel::c_position_attrib ) );
+
+	unsafe( glVertexAttribPointer(
+		GPUModel::c_position_attrib,
+		3,
+		GLenum( GL_FLOAT ),
+		GLboolean(0),
+		GLsizei( typeinfo</ObbVertexPosition/>.size_of ),
+		ust::nullptr</byte8/>() ) );
+
+	index_buffer.Bind();
+
+	return GPUModel
+	{
+		.num_vertices( model_data.num_vertices ),
+		.num_triangles( model_data.num_lod0_triangles ),
+		.num_frames( model_data.num_frames ),
+		.vertex_array_object= move( vertex_array_object ),
+		.texture_coordinates_buffer= move( texture_coordinates_buffer ),
+		.positions_buffer= move( positions_buffer ),
+		.index_buffer= move( index_buffer ),
+		.textures=
+			ust::make_vector_from_mapped_range(
+				model_data.texture_collections,
+				lambda[]( ModelData::TextureCollection& c ) : Texture
+				{
+					return CreateModelTexture( c.hd_textures[0] );
+				} )
+	};
+}
+
+fn CreateModelTexture( ModelData::TextureData& texture_data ) : Texture
+{
+	var Texture texture= Texture::Create( GLenum( GL_TEXTURE_2D ) );
+	texture.Bind();
+
+	scoped_array RGBAColor rgba_pixels[ texture_data.pixels_data.size() ] (
+		texture_data.pixels_data.iter().map(
+			lambda[&p= texture_data.palette]( u8 index ) : RGBAColor
+			{
+				var size_type i(index);
+				// Fetch cikir frin palette and convert BGR to RGBA.
+				return ust::make_array( p[ i * 3s + 2s ], p[ i * 3s + 1s ], p[ i * 3s + 0s ], 255u8 );
+			} ) );
+
+	unsafe( glTexImage2D(
+		GLenum( GL_TEXTURE_2D ),
+		0,
+		GLint( GL_RGBA8 ),
+		GLsizei( texture_data.size[0] ),
+		GLsizei( texture_data.size[1] ),
+		0,
+		GLenum( GL_RGBA ),
+		GLenum( GL_UNSIGNED_BYTE ),
+		ust::ptr_cast_to_byte8( rgba_pixels.data() ) ) );
+
+	unsafe( glGenerateMipmap( GLenum( GL_TEXTURE_2D ) ) );
+
+	unsafe( glTexParameteri( GLenum( GL_TEXTURE_2D ), GLenum( GL_TEXTURE_MIN_FILTER ), GLint( GL_LINEAR_MIPMAP_LINEAR ) ) );
+	unsafe( glTexParameteri( GLenum( GL_TEXTURE_2D ), GLenum( GL_TEXTURE_MAG_FILTER ), GLint( GL_LINEAR ) ) );
+
+	return texture;
+}
+
+} // namespace PM

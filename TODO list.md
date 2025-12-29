@@ -105,11 +105,13 @@ PanzerMortyr rendering:
 * Draw map polygons and other objects (models, sprites) requiring blending in back to front order.
 * Draw reflections in reflective surfaces (usually floors).
 * Draw polygons with animated textures (frame-based animation) properly.
-* Draw quads which are actually triangles (with pair of identical vertices) as single triangle.
 * Draw items (pick-ups).
 * Draw enemies (including animation).
 * Draw first-person weapon.
 * Draw projectiles (like Panzerfaust).
+* Use smooth animation for animated models (with two or more frames interpolation).
+* Apply lighting for animated models.
+* Calculate normals for vertices of each model animation frame - original normals are sometimes broken.
 * Apply lighting to map quads.
 * Apply lighting to models.
 * Draw decals (bullet holes, blood).

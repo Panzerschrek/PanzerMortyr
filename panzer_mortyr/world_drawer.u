@@ -22,8 +22,17 @@ fn WorldDrawer::constructor(
 		caching_game_resources_loader_ptr_= move( caching_game_resources_loader ),
 		map_shader_(
 			embed</char8/>( "shaders/map.vert.glsl" ),
-			embed</char8/>( "shaders/map.frag.glsl" ) ) )
-{}
+			embed</char8/>( "shaders/map.frag.glsl" ) ),
+		model_shader_(
+			embed</char8/>( "shaders/model.vert.glsl" ),
+			embed</char8/>( "shaders/model.frag.glsl" ) ) )
+{
+	auto mut lock= game_filesystem_ptr_.lock_mut();
+
+	auto modle_load_res= lock.deref().LoadFile( "SZCZAW.OBB", ( fn( ust::file_readable &mut f ) : ust::io_result</ModelData/> )( LoadModel ) );
+
+	test_model_= CreateGPUModel( modle_load_res.try_deref() );
+}
 
 fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingViewportInfo& viewport_info )
 {
@@ -168,18 +177,19 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 	unsafe( glActiveTexture( GLenum( GL_TEXTURE0 ) + GLenum(texture_slot) ) );
 	map_data.map_textures_array.Bind();
 
-	map_shader_.Bind();
-	map_shader_.SetUniform(
-		"vu_matrix",
+	var Mat4f view_matrix=
 		CalculateCameraMatrix(
 			viewport_info.view_aspect,
 			drawing_info.camera_position,
 			drawing_info.camera_azimuth,
-			drawing_info.camera_elevation ) );
+			drawing_info.camera_elevation );
 
+	map_shader_.Bind();
+	map_shader_.SetUniform( "vu_matrix", view_matrix );
 	map_shader_.SetUniform( "fu_texture", texture_slot );
 
 	map_data.vertex_array_object.Bind();
+	map_data.index_buffer.Bind();
 
 	for( auto mut i= 0s; i < zvox_data.clusters.size(); ++i )
 	{
@@ -196,6 +206,46 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 			GLenum( GL_UNSIGNED_SHORT ),
 			ust::nullptr</byte8/>() + typeinfo</u16/>.size_of * cluster_draw_data.first_index,
 			GLint( cluster_draw_data.first_vertex_index ) ) );
+	}
+
+	if_var( &test_model : test_model_ )
+	{
+		var Mat4f model_transormation_matrix= Mat4f::MakeScale( Vec3f( 2.0f, 2.0f, 2.0f ) );
+
+		unsafe( glActiveTexture( GLenum( GL_TEXTURE0 ) + GLenum(texture_slot) ) );
+		test_model.textures.back().Bind();
+
+		model_shader_.Bind();
+		model_shader_.SetUniform( "vu_matrix", model_transormation_matrix * view_matrix );
+		model_shader_.SetUniform( "fu_texture", texture_slot );
+
+		test_model.vertex_array_object.Bind();
+
+		// TODO - use frame index from input data.
+		var size_type frame_index= 103s % test_model.num_frames;
+
+		if( test_model.num_frames > 1s )
+		{
+			// Change vertex attrib pointer for positions to draw requirest frame.
+			// TODO - move this code into a separate function?
+			test_model.positions_buffer.Bind();
+
+			unsafe( glVertexAttribPointer(
+				GPUModel::c_position_attrib,
+				3,
+				GLenum( GL_FLOAT ),
+				GLboolean(0),
+				GLsizei( typeinfo</ObbVertexPosition/>.size_of ),
+				ust::nullptr</byte8/>() + frame_index * test_model.num_vertices * typeinfo</ObbVertexPosition/>.size_of ) );
+		}
+
+		test_model.index_buffer.Bind();
+
+		unsafe( glDrawElements(
+			GLenum( GL_TRIANGLES ),
+			GLsizei( test_model.num_triangles * 3s ),
+			GLenum( GL_UNSIGNED_SHORT ),
+			ust::nullptr</byte8/>() ) );
 	}
 }
 
