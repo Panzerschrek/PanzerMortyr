@@ -2,12 +2,10 @@ import "/enum_string_conversions.u"
 import "/main_wrapper.u"
 import "/stdout.u"
 
-import "/common_lib/game_params_file.uh"
 import "/common_lib/map_loading.uh"
-import "/common_lib/maps_description_file.uh"
-import "/common_lib/materials_file.uh"
 import "/common_lib/string_utils.uh"
 
+import "cached_game_resources_loader.uh"
 import "entities_description_file.uh"
 import "game.uh"
 import "game_filesystem.uh"
@@ -28,49 +26,20 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 {
 	var GameFilesystemPtr game_filesystem_ptr( GameFilesystem() );
 
+	var CachedGameResourcesLoader mut cached_game_resources_loader( game_filesystem_ptr );
+
+	var GameResourcePtr</GameParams/> game_params_ptr= cached_game_resources_loader.LoadGameParams();
+	var GameResourcePtr</MapsDescription/> maps_description_ptr= cached_game_resources_loader.LoadMapsDescription();
+	var GameResourcePtr</MaterialsDescription/> materials_description_ptr= cached_game_resources_loader.LoadMaterialsDescription();
+
+	var u32 map_index= game_params_ptr.deref().start_map;
+
+	var MapsDescription::MapDescription& map_description= maps_description_ptr.deref().maps[map_index];
+
+	var MaterialsDescription::Block& materials_block= materials_description_ptr.deref().blocks[ map_description.materials_block ];
+
 	auto mut lock= game_filesystem_ptr.lock_mut();
 	var GameFilesystem &mut game_filesystem= lock.deref();
-
-	auto game_params_file_res= game_filesystem.LoadFileToString( c_game_params_file_name );
-	if_var( e : game_params_file_res.as_error_ref() )
-	{
-		ust::stderr_print( ust::concat( "Failed to read game params file! Error: ", ust::enum_to_string(e), "\n" ) );
-		return -1;
-	}
-
-	var GameParams game_params= ParseGameParamsFile( game_params_file_res.try_deref() );
-
-	auto materials_file_contents_res= game_filesystem.LoadFileToString( c_materials_file_name );
-	if_var( e : materials_file_contents_res.as_error_ref() )
-	{
-		ust::stderr_print( ust::concat( "Failed to read materials file! Error: ", ust::enum_to_string(e), "\n" ) );
-		return -1;
-	}
-
-	var MaterialsDescription materials_description= ParseMaterialsFile( materials_file_contents_res.try_deref() );
-
-	auto maps_description_file_contents_res= game_filesystem.LoadFileToString( c_maps_description_file_name );
-
-	if_var( e : maps_description_file_contents_res.as_error_ref() )
-	{
-		ust::stderr_print( ust::concat( "Failed to read maps description file! Error: ", ust::enum_to_string(e), "\n" ) );
-		return -1;
-	}
-
-	auto maps_description_opt= ParseMapsDescriptionFile( maps_description_file_contents_res.try_deref() );
-	if( maps_description_opt.empty() )
-	{
-		ust::stderr_print( "Failed to parse maps description!\n" );
-		return -1;
-	}
-
-	var MapsDescription& maps_description= maps_description_opt.try_deref();
-
-	var u32 map_index= game_params.start_map;
-
-	var MapsDescription::MapDescription& map_description= maps_description.maps[map_index];
-
-	var MaterialsDescription::Block& materials_block= materials_description.blocks[ map_description.materials_block ];
 
 	auto entities_description_file_contents_res=
 		game_filesystem.LoadFileToString( ConvertToUppercase( map_description.entities_info_file ) );
