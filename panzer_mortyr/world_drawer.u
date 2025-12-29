@@ -25,8 +25,196 @@ fn WorldDrawer::constructor(
 			embed</char8/>( "shaders/map.frag.glsl" ) ) )
 {}
 
+fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingViewportInfo& viewport_info )
+{
+	// Ensure we have actual map data.
+	SetMap( drawing_info.map_index );
+
+	unsafe( glClearColor( GLclampf(32.0 / 255.0), GLclampf(16.0 / 255.0), GLclampf(8.0f / 255.0f), GLclampf(1.0) ) );
+	unsafe( glClear( GLbitfield( GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT ) ) );
+
+	if( map_data_.empty() )
+	{
+		return;
+	}
+
+	var MapDrawData& map_data= map_data_.try_deref();
+
+	var ZvoxData& zvox_data= map_data.zvox_data.deref();
+	var ZpozData& zpoz_data= map_data.zpoz_data.deref();
+
+	var Vec3f& camera_position= drawing_info.camera_position;
+
+	var ust::optional</size_type/> mut camera_cluster_index_opt;
+
+	for( auto mut i= 0s; i < zvox_data.clusters.size(); ++i )
+	{
+		var ZvoxCluster& cluster= zvox_data.clusters[i];
+		if( cluster.c.num_children_clusters < 0 )
+		{
+			// Do not check clusters which are located within another clusters.
+			continue;
+		}
+
+		var Vec3f mins(
+			f32( cluster.c.center[0] - cluster.c.bounding_box_half_size[0] ),
+			f32( cluster.c.center[1] - cluster.c.bounding_box_half_size[1] ),
+			f32( cluster.c.center[2] - cluster.c.bounding_box_half_size[2] ) );
+
+		var Vec3f maxs(
+			f32( cluster.c.center[0] + cluster.c.bounding_box_half_size[0] ),
+			f32( cluster.c.center[1] + cluster.c.bounding_box_half_size[1] ),
+			f32( cluster.c.center[2] + cluster.c.bounding_box_half_size[2] ) );
+
+		if( camera_position.x >= mins.x && camera_position.x <= maxs.x &&
+			camera_position.y >= mins.y && camera_position.y <= maxs.y &&
+			camera_position.z >= mins.z && camera_position.z <= maxs.z )
+		{
+			camera_cluster_index_opt= i;
+			break;
+		}
+	}
+
+	// Assume all clusters are visible if we failed to find current cluster (like in noclip mode).
+	var bool all_clusters_are_visible= camera_cluster_index_opt.empty();
+
+	// TODO - allocate it once at map start?
+	scoped_array bool mut visible_cluster_flags[ zvox_data.clusters.size() ]( all_clusters_are_visible );
+
+	if_var( camera_cluster_index : camera_cluster_index_opt )
+	{
+		// Mark as visible current cluster.
+		visible_cluster_flags[ camera_cluster_index ]= true;
+
+		{
+			// Mark as visible childen of current cluster.
+
+			var ZvoxCluster& camera_cluster= zvox_data.clusters[ camera_cluster_index ];
+			if( camera_cluster.c.num_children_clusters > 0 )
+			{
+				foreach( &mut b : visible_cluster_flags.subrange(
+					camera_cluster_index + 1s,
+					camera_cluster_index + 1s + size_type( camera_cluster.c.num_children_clusters ) ) )
+				{
+					b= true;
+				}
+			}
+		}
+
+		var i32 bias= i32( zpoz_data.clusters.size() ) * 4;
+
+		var ZpozClusterVisibilityData& visibility_data= zpoz_data.clusters_visibility_data[ camera_cluster_index ];
+
+		// TODO - check if we should use data[2] and not data[0] or even both.
+		var i32 data_start= visibility_data.data[2];
+
+		if( data_start != -1 )
+		{
+			var size_type visibility_data_offset( data_start - bias );
+
+			// We have 2 subranges for both offsets.
+			// Since we don't know which is correct, use both of them.
+			var size_type subrange0_size( zpoz_data.cluster_indices[ visibility_data_offset  ] );
+			var size_type subrange0_start= visibility_data_offset + 8s;
+			var size_type subrange1_size( zpoz_data.cluster_indices[ subrange0_start + subrange0_size ] );
+			var size_type subrange1_start= subrange0_start + size_type(subrange0_size) + 8s;
+
+			var [ ust::array_view_imut</i32/>, 2 ] ranges
+			[
+				zpoz_data.cluster_indices.range().subrange( subrange0_start, subrange0_start + subrange0_size ),
+				zpoz_data.cluster_indices.range().subrange( subrange1_start, subrange1_start + subrange1_size )
+			];
+
+			foreach( range : ranges )
+			{
+				foreach( visible_cluster_index_src : range )
+				{
+					var size_type visible_cluster_index( visible_cluster_index_src );
+
+					// Mark cluster listed in visibility data as visible.
+					visible_cluster_flags[ visible_cluster_index ]= true;
+
+					// Mark children clusters of visible cluster as also visible.
+					var ZvoxCluster& visible_cluster= zvox_data.clusters[ visible_cluster_index ];
+					if( visible_cluster.c.num_children_clusters > 0 )
+					{
+						foreach( &mut b : visible_cluster_flags.subrange(
+							visible_cluster_index + 1s,
+							visible_cluster_index + 1s + size_type( visible_cluster.c.num_children_clusters ) ) )
+						{
+							b= true;
+						}
+					}
+				}
+			}
+		}
+	}
+
+	unsafe( glEnable( GLenum( GL_DEPTH_TEST ) ) );
+	unsafe( glDepthMask( GLboolean(1) ) );
+	unsafe( glDepthFunc( GLenum( GL_LEQUAL ) ) );
+
+	if( false )
+	{
+		// Wireframe mode for debugging.
+		unsafe( glPolygonMode( GLenum( GL_FRONT_AND_BACK ), GLenum( GL_LINE ) ) );
+	}
+
+	unsafe( glEnable( GLenum( GL_CULL_FACE ) ) );
+	unsafe( glCullFace( GLenum( GL_FRONT ) ) );
+
+	var u32 texture_slot= 0u;
+
+	unsafe( glActiveTexture( GLenum( GL_TEXTURE0 ) + GLenum(texture_slot) ) );
+	map_data.map_textures_array.Bind();
+
+	map_shader_.Bind();
+	map_shader_.SetUniform(
+		"vu_matrix",
+		CalculateCameraMatrix(
+			viewport_info.view_aspect,
+			drawing_info.camera_position,
+			drawing_info.camera_azimuth,
+			drawing_info.camera_elevation ) );
+
+	map_shader_.SetUniform( "fu_texture", texture_slot );
+
+	map_data.vertex_array_object.Bind();
+
+	for( auto mut i= 0s; i < zvox_data.clusters.size(); ++i )
+	{
+		if( !visible_cluster_flags[i] )
+		{
+			continue;
+		}
+
+		auto& cluster_draw_data= map_data.clusters_draw_data[i];
+
+		unsafe( glDrawElementsBaseVertex(
+			GLenum( GL_TRIANGLES ),
+			GLsizei( cluster_draw_data.num_indices ),
+			GLenum( GL_UNSIGNED_SHORT ),
+			ust::nullptr</byte8/>() + typeinfo</u16/>.size_of * cluster_draw_data.first_index,
+			GLint( cluster_draw_data.first_vertex_index ) ) );
+	}
+}
+
 fn WorldDrawer::SetMap( mut this, u32 map_index )
 {
+	// Check if we need to reload map first.
+	if_var( &map_data : map_data_ )
+	{
+		if( map_data.map_index == map_index )
+		{
+			return;
+		}
+	}
+
+	// Need to load map data.
+
+	// Reset previous map data first - to free used memory before allocating new memory for new map.
+	map_data_.reset();
+
 	auto mut lock= caching_game_resources_loader_ptr_.lock_mut();
 	var CachingGameResourcesLoader &mut caching_game_resources_loader= lock.deref();
 
@@ -336,6 +524,7 @@ fn WorldDrawer::SetMap( mut this, u32 map_index )
 	map_data_.reset(
 		MapDrawData
 		{
+			.map_index= map_index,
 			.zvox_data= zvox_data_ptr,
 			.zpoz_data= zpoz_data_ptr,
 			.zmap_lam_data= zmap_lam_data_ptr,
@@ -346,177 +535,6 @@ fn WorldDrawer::SetMap( mut this, u32 map_index )
 			.map_textures_array= LoadMapTextures( materials_block, game_filesystem_ptr_ ),
 			.clusters_draw_data= move(clusters_draw_data),
 		} );
-}
-
-fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingViewportInfo& viewport_info )
-{
-	unsafe( glClearColor( GLclampf(32.0 / 255.0), GLclampf(16.0 / 255.0), GLclampf(8.0f / 255.0f), GLclampf(1.0) ) );
-	unsafe( glClear( GLbitfield( GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT ) ) );
-
-	if( map_data_.empty() )
-	{
-		return;
-	}
-
-	var MapDrawData& map_data= map_data_.try_deref();
-
-	var ZvoxData& zvox_data= map_data.zvox_data.deref();
-	var ZpozData& zpoz_data= map_data.zpoz_data.deref();
-
-	var Vec3f& camera_position= drawing_info.camera_position;
-
-	var ust::optional</size_type/> mut camera_cluster_index_opt;
-
-	for( auto mut i= 0s; i < zvox_data.clusters.size(); ++i )
-	{
-		var ZvoxCluster& cluster= zvox_data.clusters[i];
-		if( cluster.c.num_children_clusters < 0 )
-		{
-			// Do not check clusters which are located within another clusters.
-			continue;
-		}
-
-		var Vec3f mins(
-			f32( cluster.c.center[0] - cluster.c.bounding_box_half_size[0] ),
-			f32( cluster.c.center[1] - cluster.c.bounding_box_half_size[1] ),
-			f32( cluster.c.center[2] - cluster.c.bounding_box_half_size[2] ) );
-
-		var Vec3f maxs(
-			f32( cluster.c.center[0] + cluster.c.bounding_box_half_size[0] ),
-			f32( cluster.c.center[1] + cluster.c.bounding_box_half_size[1] ),
-			f32( cluster.c.center[2] + cluster.c.bounding_box_half_size[2] ) );
-
-		if( camera_position.x >= mins.x && camera_position.x <= maxs.x &&
-			camera_position.y >= mins.y && camera_position.y <= maxs.y &&
-			camera_position.z >= mins.z && camera_position.z <= maxs.z )
-		{
-			camera_cluster_index_opt= i;
-			break;
-		}
-	}
-
-	// Assume all clusters are visible if we failed to find current cluster (like in noclip mode).
-	var bool all_clusters_are_visible= camera_cluster_index_opt.empty();
-
-	// TODO - allocate it once at map start?
-	scoped_array bool mut visible_cluster_flags[ zvox_data.clusters.size() ]( all_clusters_are_visible );
-
-	if_var( camera_cluster_index : camera_cluster_index_opt )
-	{
-		// Mark as visible current cluster.
-		visible_cluster_flags[ camera_cluster_index ]= true;
-
-		{
-			// Mark as visible childen of current cluster.
-
-			var ZvoxCluster& camera_cluster= zvox_data.clusters[ camera_cluster_index ];
-			if( camera_cluster.c.num_children_clusters > 0 )
-			{
-				foreach( &mut b : visible_cluster_flags.subrange(
-					camera_cluster_index + 1s,
-					camera_cluster_index + 1s + size_type( camera_cluster.c.num_children_clusters ) ) )
-				{
-					b= true;
-				}
-			}
-		}
-
-		var i32 bias= i32( zpoz_data.clusters.size() ) * 4;
-
-		var ZpozClusterVisibilityData& visibility_data= zpoz_data.clusters_visibility_data[ camera_cluster_index ];
-
-		// TODO - check if we should use data[2] and not data[0] or even both.
-		var i32 data_start= visibility_data.data[2];
-
-		if( data_start != -1 )
-		{
-			var size_type visibility_data_offset( data_start - bias );
-
-			// We have 2 subranges for both offsets.
-			// Since we don't know which is correct, use both of them.
-			var size_type subrange0_size( zpoz_data.cluster_indices[ visibility_data_offset  ] );
-			var size_type subrange0_start= visibility_data_offset + 8s;
-			var size_type subrange1_size( zpoz_data.cluster_indices[ subrange0_start + subrange0_size ] );
-			var size_type subrange1_start= subrange0_start + size_type(subrange0_size) + 8s;
-
-			var [ ust::array_view_imut</i32/>, 2 ] ranges
-			[
-				zpoz_data.cluster_indices.range().subrange( subrange0_start, subrange0_start + subrange0_size ),
-				zpoz_data.cluster_indices.range().subrange( subrange1_start, subrange1_start + subrange1_size )
-			];
-
-			foreach( range : ranges )
-			{
-				foreach( visible_cluster_index_src : range )
-				{
-					var size_type visible_cluster_index( visible_cluster_index_src );
-
-					// Mark cluster listed in visibility data as visible.
-					visible_cluster_flags[ visible_cluster_index ]= true;
-
-					// Mark children clusters of visible cluster as also visible.
-					var ZvoxCluster& visible_cluster= zvox_data.clusters[ visible_cluster_index ];
-					if( visible_cluster.c.num_children_clusters > 0 )
-					{
-						foreach( &mut b : visible_cluster_flags.subrange(
-							visible_cluster_index + 1s,
-							visible_cluster_index + 1s + size_type( visible_cluster.c.num_children_clusters ) ) )
-						{
-							b= true;
-						}
-					}
-				}
-			}
-		}
-	}
-
-	unsafe( glEnable( GLenum( GL_DEPTH_TEST ) ) );
-	unsafe( glDepthMask( GLboolean(1) ) );
-	unsafe( glDepthFunc( GLenum( GL_LEQUAL ) ) );
-
-	if( false )
-	{
-		// Wireframe mode for debugging.
-		unsafe( glPolygonMode( GLenum( GL_FRONT_AND_BACK ), GLenum( GL_LINE ) ) );
-	}
-
-	unsafe( glEnable( GLenum( GL_CULL_FACE ) ) );
-	unsafe( glCullFace( GLenum( GL_FRONT ) ) );
-
-	var u32 texture_slot= 0u;
-
-	unsafe( glActiveTexture( GLenum( GL_TEXTURE0 ) + GLenum(texture_slot) ) );
-	map_data.map_textures_array.Bind();
-
-	map_shader_.Bind();
-	map_shader_.SetUniform(
-		"vu_matrix",
-		CalculateCameraMatrix(
-			viewport_info.view_aspect,
-			drawing_info.camera_position,
-			drawing_info.camera_azimuth,
-			drawing_info.camera_elevation ) );
-
-	map_shader_.SetUniform( "fu_texture", texture_slot );
-
-	map_data.vertex_array_object.Bind();
-
-	for( auto mut i= 0s; i < zvox_data.clusters.size(); ++i )
-	{
-		if( !visible_cluster_flags[i] )
-		{
-			continue;
-		}
-
-		auto& cluster_draw_data= map_data.clusters_draw_data[i];
-
-		unsafe( glDrawElementsBaseVertex(
-			GLenum( GL_TRIANGLES ),
-			GLsizei( cluster_draw_data.num_indices ),
-			GLenum( GL_UNSIGNED_SHORT ),
-			ust::nullptr</byte8/>() + typeinfo</u16/>.size_of * cluster_draw_data.first_index,
-			GLint( cluster_draw_data.first_vertex_index ) ) );
-	}
 }
 
 fn LoadMapTextures( MaterialsDescription::Block& materials_block, GameFilesystemPtr& game_filesystem_ptr ) : Texture
