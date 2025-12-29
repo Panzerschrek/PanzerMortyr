@@ -13,6 +13,7 @@ import "/vector.u"
 
 import "/raylib_wrapper/raylib.uh"
 
+import "/common_lib/game_params_file.uh"
 import "/common_lib/map_loading.uh"
 import "/common_lib/maps_description_file.uh"
 import "/common_lib/materials_file.uh"
@@ -52,6 +53,14 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 	}
 
 	var MapsDescription& maps_description= maps_description_opt.try_deref();
+
+	auto game_params_opt = LoadGameParamsFile( maps_dir );
+	if( game_params_opt.empty() )
+	{
+		return -1;
+	}
+
+	var GameParams& game_params= game_params_opt.try_deref();
 
 	auto map_description_opt= maps_description.maps.find( map_index_opt.try_deref() );
 	if( map_description_opt.empty() )
@@ -153,59 +162,6 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 	}
 
 	var MaterialsDescription::Block& materials_block= mapterials_block_opt.try_deref();
-
-	var [ ust::vector</byte8/>, 2 ] mut palettes;
-	var [ Texture, 2 ] mut palette_textures= zero_init;
-
-	for( auto mut i= 0s; i < 2s; ++i )
-	{
-		var ust::filesystem_path palette_file_path=
-			ust::path::join(
-				maps_dir,
-				ConvertToUppercase(
-					( i == 0s ? materials_block.palette0.file_name : materials_block.palette1.file_name ) ) );
-
-		result_match( ust::read_file_to_byte8_vector( palette_file_path ) )
-		{
-			Ok( mut contents ) ->
-			{
-				if( contents.size() != 768s )
-				{
-					ust::stderr_print( ust::concat( "Invalid palette size ", ust::to_string8( contents.size() ), "!\n" ) );
-					return -1;
-				}
-				ust::stdout_print( ust::concat( "Loaded palette \"", palette_file_path, "\"\n" ) );
-				palettes[i]= move(contents);
-
-				for( auto mut j= 0s; j < 256s; ++j )
-				{
-					palettes[i].swap( j * 3s, j * 3s + 2s );
-				}
-
-				palette_textures[i]=
-					unsafe( LoadTextureFromImage(
-						Image
-						{
-							.data= palettes[i].data(),
-							.width= 16,
-							.height= 16,
-							.mipmaps= 1,
-							.format( PIXELFORMAT_UNCOMPRESSED_R8G8B8 ),
-						} ) );
-
-				if( palette_textures[i].id == 0u )
-				{
-					ust::stdout_print( "Failed to create palette texture!\n" );
-					return -1;
-				}
-			},
-			Err( e ) ->
-			{
-				ust::stderr_print( ust::concat( "Failed to load palette! Error: ", ust::enum_to_string( e ), "\n" ) );
-				return -1;
-			},
-		}
-	}
 
 	var ust::vector</Material/> mut block_materials;
 	var ust::vector</Texture/> mut block_textures;
@@ -769,9 +725,6 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 					.a(0)
 				} ) );
 
-			unsafe( DrawTextureEx( palette_textures[0], Vector2{ .x= 0.0f, .y= 0.0f }, 0.0f, 8.0f, Color{ .r(255), .g(255), .b(255), .a(255) } ) );
-			unsafe( DrawTextureEx( palette_textures[1], Vector2{ .x= 140.0f, .y= 0.0f }, 0.0f, 8.0f, Color{ .r(255), .g(255), .b(255), .a(255) } ) );
-
 			unsafe( BeginMode3D(camera) );
 			{
 				unsafe( DrawCube( Vector3{ .x(1), .y(0), .z(0) }, 2.0f, 0.2f, 0.2f, Color{ .r(255), .g(0), .b(0), .a(255) } ) );
@@ -1024,10 +977,9 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 						{
 							auto& s2= map.zvox.light_sources[ size_type( i ) ];
 
-							var u32 color_index= ( ( u32(s2.data1[0]) & ~7u ) << 1u ) & 255u;
+							auto& src_color= game_params.light_colors[ ( u32(s2.data1[0]) >> 3 ) & 31u ];
 
-							auto src_color= palettes[1].range().subrange_start( size_type( color_index ) * 3s );
-							var Color color{ .r(src_color[0s]), .g(src_color[1s]), .b(src_color[2s]), .a(255) };
+							var Color color{ .r(src_color[2s]), .g(src_color[1s]), .b(src_color[0s]), .a(255) };
 
 							var Vector3 s2_pos{ .x= f32(cluster.c.center[0] + s2.offset[0s]) * scale, .y= f32(cluster.c.center[1] + s2.offset[1s]) * scale, .z= f32(cluster.c.center[2] + s2.offset[2s]) * -scale };
 							unsafe( DrawSphereWires( s2_pos, 0.125f, 7, 9, color ) );
