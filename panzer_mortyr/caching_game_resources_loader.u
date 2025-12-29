@@ -1,0 +1,280 @@
+import "/enum_string_conversions.u"
+import "/stdout.u"
+import "/common_lib/string_utils.uh"
+import "caching_game_resources_loader.uh"
+
+namespace PM
+{
+
+fn CachingGameResourcesLoader::constructor( GameFilesystemPtr mut game_filesystem_ptr )
+	( game_filesystem_= move(game_filesystem_ptr) )
+{
+}
+
+fn CachingGameResourcesLoader::LoadGameParams( mut this ) : GameResourcePtr</GameParams/>
+{
+	if( !game_params_.empty() )
+	{
+		return game_params_.try_to_non_nullable();
+	}
+
+	auto mut lock= game_filesystem_.lock_mut();
+	var GameFilesystem &mut game_filesystem= lock.deref();
+
+	auto res= game_filesystem.LoadFileToString( c_game_params_file_name );
+	if_var( e : res.as_error_ref() )
+	{
+		ust::stderr_print( ust::concat( "Failed to read game params file! Error: ", ust::enum_to_string(e), "\n" ) );
+		halt;
+	}
+
+	var GameResourcePtr</GameParams/> game_params( ParseGameParamsFile( res.try_deref() ) );
+	game_params_= game_params;
+	return game_params;
+}
+
+fn CachingGameResourcesLoader::LoadMapsDescription( mut this ) : GameResourcePtr</MapsDescription/>
+{
+	if( !maps_description_.empty() )
+	{
+		return maps_description_.try_to_non_nullable();
+	}
+
+	auto mut lock= game_filesystem_.lock_mut();
+	var GameFilesystem &mut game_filesystem= lock.deref();
+
+	auto res= game_filesystem.LoadFileToString( c_maps_description_file_name );
+
+	if_var( e : res.as_error_ref() )
+	{
+		ust::stderr_print( ust::concat( "Failed to read maps description file! Error: ", ust::enum_to_string(e), "\n" ) );
+		halt;
+	}
+
+	auto mut maps_description_opt= ParseMapsDescriptionFile( res.try_deref() );
+	if( maps_description_opt.empty() )
+	{
+		ust::stderr_print( "Failed to parse maps description!\n" );
+		halt;
+	}
+
+	var GameResourcePtr</MapsDescription/> maps_description( maps_description_opt.try_take() );
+	maps_description_= maps_description;
+	return maps_description;
+}
+
+fn CachingGameResourcesLoader::LoadMaterialsDescription( mut this ) : GameResourcePtr</MaterialsDescription/>
+{
+	if( !materials_description_.empty() )
+	{
+		return materials_description_.try_to_non_nullable();
+	}
+
+	auto mut lock= game_filesystem_.lock_mut();
+	var GameFilesystem &mut game_filesystem= lock.deref();
+
+	auto res= game_filesystem.LoadFileToString( c_materials_file_name );
+	if_var( e : res.as_error_ref() )
+	{
+		ust::stderr_print( ust::concat( "Failed to read materials file! Error: ", ust::enum_to_string(e), "\n" ) );
+		halt;
+	}
+
+	var GameResourcePtr</MaterialsDescription/> materials_description( ParseMaterialsFile( res.try_deref() ) );
+	materials_description_= materials_description;
+	return materials_description;
+}
+
+fn CachingGameResourcesLoader::LoadEntitiesDescription( mut this, ust::filesystem_path_view file_name ) : GameResourcePtr</EntitiesDescription/>
+{
+	if_var( &v : entity_descriptions_.find( file_name ) )
+	{
+		return v;
+	}
+
+	auto mut lock= game_filesystem_.lock_mut();
+	var GameFilesystem &mut game_filesystem= lock.deref();
+
+	auto res= game_filesystem.LoadFileToString( file_name );
+	if_var( e : res.as_error_ref() )
+	{
+		ust::stderr_print( ust::concat( "Failed to read entities description file! Error: ", ust::enum_to_string(e), "\n" ) );
+		halt;
+	}
+
+	var GameResourcePtr</EntitiesDescription/> entities_description( ParseEntitiesDescriptionFile( res.try_deref() ) );
+	entity_descriptions_.insert_new( file_name, entities_description );
+	return entities_description;
+}
+
+fn CachingGameResourcesLoader::LoadZmapFile( mut this, u32 map_index ) : GameResourcePtr</ZmapData/>
+{
+	if_var( &d : zmap_data_ )
+	{
+		if( d[0] == map_index )
+		{
+			return d[1];
+		}
+	}
+
+	var GameResourcePtr</MapsDescription/> maps_description_ptr= LoadMapsDescription();
+	var MapsDescription::MapDescription& map_description= maps_description_ptr.deref().maps[ map_index ]; // Halts if no map found.
+
+	auto mut lock= game_filesystem_.lock_mut();
+	var GameFilesystem &mut game_filesystem= lock.deref();
+
+	auto mut res= game_filesystem.LoadFile( ConvertToUppercase( map_description.wall_files[0] ), PM::LoadZmapFile );
+	if_var( e : res.as_error_ref() )
+	{
+		ust::stderr_print( ust::concat( "Failed to read map file! Error: ", ust::enum_to_string(e), "\n" ) );
+		halt;
+	}
+
+	var GameResourcePtr</ZmapData/> zmap_data( move(res).try_take() );
+	zmap_data_= ust::make_tuple( map_index, zmap_data );
+	return zmap_data;
+}
+
+fn CachingGameResourcesLoader::LoadZvoxFile( mut this, u32 map_index ) : GameResourcePtr</ZvoxData/>
+{
+	if_var( &d : zvox_data_ )
+	{
+		if( d[0] == map_index )
+		{
+			return d[1];
+		}
+	}
+
+	var GameResourcePtr</MapsDescription/> maps_description_ptr= LoadMapsDescription();
+	var MapsDescription::MapDescription& map_description= maps_description_ptr.deref().maps[ map_index ]; // Halts if no map found.
+
+	auto mut lock= game_filesystem_.lock_mut();
+	var GameFilesystem &mut game_filesystem= lock.deref();
+
+	auto mut res= game_filesystem.LoadFile( ConvertToUppercase( map_description.wall_files[1] ), PM::LoadZvoxFile );
+	if_var( e : res.as_error_ref() )
+	{
+		ust::stderr_print( ust::concat( "Failed to read map file! Error: ", ust::enum_to_string(e), "\n" ) );
+		halt;
+	}
+
+	var GameResourcePtr</ZvoxData/> zvox_data( move(res).try_take() );
+	zvox_data_= ust::make_tuple( map_index, zvox_data );
+	return zvox_data;
+}
+
+fn CachingGameResourcesLoader::LoadZpozFile( mut this, u32 map_index ) : GameResourcePtr</ZpozData/>
+{
+	if_var( &d : zpoz_data_ )
+	{
+		if( d[0] == map_index )
+		{
+			return d[1];
+		}
+	}
+
+	var GameResourcePtr</MapsDescription/> maps_description_ptr= LoadMapsDescription();
+	var MapsDescription::MapDescription& map_description= maps_description_ptr.deref().maps[ map_index ]; // Halts if no map found.
+
+	auto mut lock= game_filesystem_.lock_mut();
+	var GameFilesystem &mut game_filesystem= lock.deref();
+
+	auto mut res= game_filesystem.LoadFile( ConvertToUppercase( map_description.positions_file ), PM::LoadZpozFile );
+	if_var( e : res.as_error_ref() )
+	{
+		ust::stderr_print( ust::concat( "Failed to read map file! Error: ", ust::enum_to_string(e), "\n" ) );
+		halt;
+	}
+
+	var GameResourcePtr</ZpozData/> zpoz_data( move(res).try_take() );
+	zpoz_data_= ust::make_tuple( map_index, zpoz_data );
+	return zpoz_data;
+}
+
+fn CachingGameResourcesLoader::LoadZmapLamFile( mut this, u32 map_index ) : GameResourcePtr</ZmapLamData/>
+{
+	if_var( &d : zmap_lam_data_ )
+	{
+		if( d[0] == map_index )
+		{
+			return d[1];
+		}
+	}
+
+	// Require "zvox" file to load number of clusters.
+	// it's fine to read it here, since these files are used together.
+	var GameResourcePtr</ZvoxData/> zvox_data_ptr= LoadZvoxFile( map_index );
+
+	auto mut lock= game_filesystem_.lock_mut();
+	var GameFilesystem &mut game_filesystem= lock.deref();
+
+	auto mut res=
+		game_filesystem.LoadFile(
+			GetZmapLamFileName( map_index ),
+			lambda[num_clusters= zvox_data_ptr.deref().clusters.size()] ( ust::file_readable &mut f ) : ust::io_result</ZmapLamData/>
+			{
+				return PM::LoadZmapLamFile( f, num_clusters );
+			} );
+
+	if_var( e : res.as_error_ref() )
+	{
+		ust::stderr_print( ust::concat( "Failed to read map file! Error: ", ust::enum_to_string(e), "\n" ) );
+		halt;
+	}
+
+	var GameResourcePtr</ZmapLamData/> zmap_lam_data( move(res).try_take() );
+	zmap_lam_data_= ust::make_tuple( map_index, zmap_lam_data );
+	return zmap_lam_data;
+}
+
+fn CachingGameResourcesLoader::LoadZmapLemFile( mut this, u32 map_index ) : GameResourcePtr</ZmapLemData/>
+{
+	if_var( &d : zmap_lem_data_ )
+	{
+		if( d[0] == map_index )
+		{
+			return d[1];
+		}
+	}
+
+	auto mut lock= game_filesystem_.lock_mut();
+	var GameFilesystem &mut game_filesystem= lock.deref();
+
+	auto mut res= game_filesystem.LoadFile( GetZmapLemFileName( map_index ), PM::LoadZmapLemFile );
+	if_var( e : res.as_error_ref() )
+	{
+		ust::stderr_print( ust::concat( "Failed to read map file! Error: ", ust::enum_to_string(e), "\n" ) );
+		halt;
+	}
+
+	var GameResourcePtr</ZmapLemData/> zmap_lem_data( move(res).try_take() );
+	zmap_lem_data_= ust::make_tuple( map_index, zmap_lem_data );
+	return zmap_lem_data;
+}
+
+fn CachingGameResourcesLoader::LoadMapaWayFile( mut this, u32 map_index ) : GameResourcePtr</MapaWayData/>
+{
+	if_var( &d : mapa_way_data_ )
+	{
+		if( d[0] == map_index )
+		{
+			return d[1];
+		}
+	}
+
+	auto mut lock= game_filesystem_.lock_mut();
+	var GameFilesystem &mut game_filesystem= lock.deref();
+
+	auto mut res= game_filesystem.LoadFile( GetMapaWayFileName( map_index ), PM::LoadMapaWayFile );
+	if_var( e : res.as_error_ref() )
+	{
+		ust::stderr_print( ust::concat( "Failed to read map file! Error: ", ust::enum_to_string(e), "\n" ) );
+		halt;
+	}
+
+	var GameResourcePtr</MapaWayData/> mapa_way_data( move(res).try_take() );
+	mapa_way_data_= ust::make_tuple( map_index, mapa_way_data );
+	return mapa_way_data;
+}
+
+} // namespace PM

@@ -74,8 +74,8 @@ PanzerMortyr general:
 * Allow setting fullscreen mode (with possible resolution changing).
 * Play cinematics at start.
 * Share resources (like map data, models if necessary) among server and client code.
-* Cache map files to avoid reloading them and recreating corresponding GPU resources if game is reloaded.
 * Cache or even preload weapon models to avoid reloading them after level transition.
+* Handle missing config and map files properly instead of triggering "halt".
 
 PanzerMortyr game logic:
 

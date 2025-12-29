@@ -2,15 +2,7 @@ import "/enum_string_conversions.u"
 import "/main_wrapper.u"
 import "/stdout.u"
 
-import "/common_lib/game_params_file.uh"
-import "/common_lib/map_loading.uh"
-import "/common_lib/maps_description_file.uh"
-import "/common_lib/materials_file.uh"
-import "/common_lib/string_utils.uh"
-
-import "entities_description_file.uh"
 import "game.uh"
-import "game_filesystem.uh"
 import "opengl_window.uh"
 import "world_drawer.uh"
 
@@ -26,115 +18,17 @@ namespace PM
 
 fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 {
-	var GameFilesystem mut game_filesystem;
+	var GameFilesystemPtr game_filesystem_ptr( GameFilesystem() );
 
-	auto game_params_file_res= game_filesystem.LoadFileToString( c_game_params_file_name );
-	if_var( e : game_params_file_res.as_error_ref() )
-	{
-		ust::stderr_print( ust::concat( "Failed to read game params file! Error: ", ust::enum_to_string(e), "\n" ) );
-		return -1;
-	}
+	var CachingGameResourcesLoaderPtr caching_game_resources_loader_ptr( CachingGameResourcesLoader( game_filesystem_ptr ) );
 
-	var GameParams game_params= ParseGameParamsFile( game_params_file_res.try_deref() );
-
-	auto materials_file_contents_res= game_filesystem.LoadFileToString( c_materials_file_name );
-	if_var( e : materials_file_contents_res.as_error_ref() )
-	{
-		ust::stderr_print( ust::concat( "Failed to read materials file! Error: ", ust::enum_to_string(e), "\n" ) );
-		return -1;
-	}
-
-	var MaterialsDescription materials_description= ParseMaterialsFile( materials_file_contents_res.try_deref() );
-
-	auto maps_description_file_contents_res= game_filesystem.LoadFileToString( c_maps_description_file_name );
-
-	if_var( e : maps_description_file_contents_res.as_error_ref() )
-	{
-		ust::stderr_print( ust::concat( "Failed to read maps description file! Error: ", ust::enum_to_string(e), "\n" ) );
-		return -1;
-	}
-
-	auto maps_description_opt= ParseMapsDescriptionFile( maps_description_file_contents_res.try_deref() );
-	if( maps_description_opt.empty() )
-	{
-		ust::stderr_print( "Failed to parse maps description!\n" );
-		return -1;
-	}
-
-	var MapsDescription& maps_description= maps_description_opt.try_deref();
-
-	var u32 map_index= game_params.start_map;
-
-	var MapsDescription::MapDescription& map_description= maps_description.maps[map_index];
-
-	var MaterialsDescription::Block& materials_block= materials_description.blocks[ map_description.materials_block ];
-
-	auto entities_description_file_contents_res=
-		game_filesystem.LoadFileToString( ConvertToUppercase( map_description.entities_info_file ) );
-
-	if_var( e : entities_description_file_contents_res.as_error_ref() )
-	{
-		ust::stderr_print( ust::concat( "Failed to read entities description file! Error: ", ust::enum_to_string(e), "\n" ) );
-		return -1;
-	}
-
-	var EntitiesDescription entities_description=
-		ParseEntitiesDescriptionFile( entities_description_file_contents_res.try_deref() );
-
-	auto zmap_data_res= game_filesystem.LoadFile( ConvertToUppercase( map_description.wall_files[0] ), LoadZmapFile );
-
-	if_var( e : zmap_data_res.as_error_ref() )
-	{
-		ust::stderr_print( ust::concat( "Failed to read map file! Error: ", ust::enum_to_string(e), "\n" ) );
-		return -1;
-	}
-
-	var ZmapData& zmap_data= zmap_data_res.try_deref();
-
-	auto mut zvox_data_res= game_filesystem.LoadFile( ConvertToUppercase( map_description.wall_files[1] ), LoadZvoxFile );
-
-	if_var( e : zvox_data_res.as_error_ref() )
-	{
-		ust::stderr_print( ust::concat( "Failed to read map file! Error: ", ust::enum_to_string(e), "\n" ) );
-		return -1;
-	}
-
-	auto mut zpoz_data_res= game_filesystem.LoadFile( ConvertToUppercase( map_description.positions_file ), LoadZpozFile );
-
-	if_var( e : zpoz_data_res.as_error_ref() )
-	{
-		ust::stderr_print( ust::concat( "Failed to read map file! Error: ", ust::enum_to_string(e), "\n" ) );
-		return -1;
-	}
-
-	auto mut zmap_lam_data_res=
-		game_filesystem.LoadFile(
-			GetZmapLamFileName( map_index ),
-			lambda[num_clusters= zvox_data_res.try_deref().clusters.size()] ( ust::file_readable &mut f ) : ust::io_result</ZmapLamData/>
-			{
-				return LoadZmapLamFile( f, num_clusters );
-			} );
-
-	if_var( e : zmap_lam_data_res.as_error_ref() )
-	{
-		ust::stderr_print( ust::concat( "Failed to read map file! Error: ", ust::enum_to_string(e), "\n" ) );
-		return -1;
-	}
+	var Game mut game( caching_game_resources_loader_ptr );
 
 	var OpenGLWindow mut window;
 
-	var WorldDrawer mut world_drawer;
-
-	world_drawer.SetMap(
-		zmap_data,
-		move(zvox_data_res).try_take(),
-		move(zpoz_data_res).try_take(),
-		move(zmap_lam_data_res).try_take(),
-		materials_block,
-		game_filesystem );
+	var WorldDrawer mut world_drawer( game_filesystem_ptr, caching_game_resources_loader_ptr );
 
 	var ust::vector</bool/> mut keyboard_state;
-	var Game mut game;
 
 	var u64 system_performace_counter_frequency= ( unsafe( SDL_GetPerformanceFrequency() ) );
 
