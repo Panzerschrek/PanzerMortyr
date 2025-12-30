@@ -162,6 +162,92 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 
 	var MaterialsDescription::Block& materials_block= mapterials_block_opt.try_deref();
 
+	var [ ust::vector</byte8/>, 2 ] mut palettes;
+
+	for( auto mut i= 0s; i < 2s; ++i )
+	{
+		var ust::filesystem_path palette_file_path=
+			ust::path::join(
+				maps_dir,
+				ConvertToUppercase(
+					( i == 0s ? materials_block.palette0.file_name : materials_block.palette1.file_name ) ) );
+
+		result_match( ust::read_file_to_byte8_vector( palette_file_path ) )
+		{
+			Ok( mut contents ) ->
+			{
+				if( contents.size() != 768s )
+				{
+					ust::stderr_print( ust::concat( "Invalid palette size ", ust::to_string8( contents.size() ), "!\n" ) );
+					return -1;
+				}
+				ust::stdout_print( ust::concat( "Loaded palette \"", palette_file_path, "\"\n" ) );
+				palettes[i]= move(contents);
+
+				for( auto mut j= 0s; j < 256s; ++j )
+				{
+					palettes[i].swap( j * 3s, j * 3s + 2s );
+				}
+			},
+			Err( e ) ->
+			{
+				ust::stderr_print( ust::concat( "Failed to load palette! Error: ", ust::enum_to_string( e ), "\n" ) );
+				return -1;
+			},
+		}
+	}
+
+	if( true )
+	{
+		auto mut model_file_contents= ust::read_file_to_byte8_vector( ust::path::join( maps_dir, "HORYZONT.RAW" ) ).try_take();
+		var size_type width= 512s * 3s;
+		var size_type height= ( model_file_contents.size() + ( width - 1s ) ) / width;
+
+		if( true )
+		{
+			var ust::vector</ [ u8, 3 ] /> mut data_rgb( width * height, ust::make_array( 0u8, 0u8, 0u8 ) );
+
+			for( auto mut y= 0s; y < height; ++y )
+			{
+				for( auto mut x= 0s; x < width; ++x )
+				{
+					var size_type index( u8( model_file_contents[ x + y * width ] ) );
+
+					data_rgb[ x + y * width ][0]= u8( palettes[1][ index * 3s + 0s ] );
+					data_rgb[ x + y * width ][1]= u8( palettes[1][ index * 3s + 1s ] );
+					data_rgb[ x + y * width ][2]= u8( palettes[1][ index * 3s + 2s ] );
+				}
+			}
+
+			var Image image
+			{
+				.data= unsafe( ust::ptr_cast_to_byte8( data_rgb.data() ) ),
+				.mipmaps= 1,
+				.width(width),
+				.height( height ),
+				.format( PIXELFORMAT_UNCOMPRESSED_R8G8B8 ),
+			};
+
+			unsafe( ExportImage( image, $<( cast_mut( "HORYZONT.RAW.png\0"[0] ) ) ) );
+		}
+		else
+		{
+			var size_type size_corrected= ( model_file_contents.size() + ( width - 1s ) ) / width * width;
+			model_file_contents.resize( size_corrected, byte8(0u8) );
+
+			var Image image
+			{
+				.data= unsafe( model_file_contents.data() ),
+				.mipmaps= 1,
+				.width(width),
+				.height( model_file_contents.size() / width ),
+				.format( PIXELFORMAT_UNCOMPRESSED_GRAYSCALE ),
+			};
+
+			unsafe( ExportImage( image, $<( cast_mut( "HORYZONT.RAW.png\0"[0] ) ) ) );
+		}
+	}
+
 	var ust::vector</Material/> mut block_materials;
 	var ust::vector</Texture/> mut block_textures;
 
