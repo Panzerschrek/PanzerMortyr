@@ -217,49 +217,56 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 			GLint( cluster_draw_data.first_vertex_index ) ) );
 	}
 
-	if_var( &test_model : test_model_ )
+	model_shader_.Bind();
+	model_shader_.SetUniform( "fu_texture", texture_slot );
+
+	unsafe( glActiveTexture( GLenum( GL_TEXTURE0 ) + GLenum(texture_slot) ) );
+
+	foreach( &model_object : drawing_info.model_objects )
 	{
+		var GPUModel& model=
+			models_.find_or_construct_new(
+				model_object.model_file_name,
+				lambda[ &fs= game_filesystem_ptr_, &name= model_object.model_file_name ] () : GPUModel
+				{
+					auto mut lock= fs.lock_mut();
+					auto model_load_res= lock.deref().LoadFile( ConvertToUppercase( name ), ( fn( ust::file_readable &mut f ) : ust::io_result</ModelData/> )( LoadModel ) );
+					return CreateGPUModel( model_load_res.try_deref() );
+				} );
 
-		unsafe( glActiveTexture( GLenum( GL_TEXTURE0 ) + GLenum(texture_slot) ) );
-		test_model.textures.back().Bind();
+		model.textures.back().Bind();
 
-		model_shader_.Bind();
-		model_shader_.SetUniform( "fu_texture", texture_slot );
+		model.vertex_array_object.Bind();
 
-		test_model.vertex_array_object.Bind();
+		model.index_buffer.Bind();
 
-		test_model.index_buffer.Bind();
+		// TODO - use frame index from input data.
+		var size_type frame_index= 103s % model.num_frames;
 
-		foreach( &model_object : drawing_info.model_objects )
+		if( model.num_frames > 1s )
 		{
-			// TODO - use frame index from input data.
-			var size_type frame_index= 103s % test_model.num_frames;
+			// Change vertex attrib pointer for positions to draw requirest frame.
+			// TODO - move this code into a separate function?
+			model.positions_buffer.Bind();
 
-			if( test_model.num_frames > 1s )
-			{
-				// Change vertex attrib pointer for positions to draw requirest frame.
-				// TODO - move this code into a separate function?
-				test_model.positions_buffer.Bind();
-
-				unsafe( glVertexAttribPointer(
-					GPUModel::c_position_attrib,
-					3,
-					GLenum( GL_FLOAT ),
-					GLboolean(0),
-					GLsizei( typeinfo</ObbVertexPosition/>.size_of ),
-					ust::nullptr</byte8/>() + frame_index * test_model.num_vertices * typeinfo</ObbVertexPosition/>.size_of ) );
-			}
-
-			var Mat4f model_transormation_matrix= Mat4f::MakeTranslation( model_object.position );
-
-			model_shader_.SetUniform( "vu_matrix", model_transormation_matrix * view_matrix );
-
-			unsafe( glDrawElements(
-				GLenum( GL_TRIANGLES ),
-				GLsizei( test_model.num_triangles * 3s ),
-				GLenum( GL_UNSIGNED_SHORT ),
-				ust::nullptr</byte8/>() ) );
+			unsafe( glVertexAttribPointer(
+				GPUModel::c_position_attrib,
+				3,
+				GLenum( GL_FLOAT ),
+				GLboolean(0),
+				GLsizei( typeinfo</ObbVertexPosition/>.size_of ),
+				ust::nullptr</byte8/>() + frame_index * model.num_vertices * typeinfo</ObbVertexPosition/>.size_of ) );
 		}
+
+		var Mat4f model_transormation_matrix= Mat4f::MakeTranslation( model_object.position );
+
+		model_shader_.SetUniform( "vu_matrix", model_transormation_matrix * view_matrix );
+
+		unsafe( glDrawElements(
+			GLenum( GL_TRIANGLES ),
+			GLsizei( model.num_triangles * 3s ),
+			GLenum( GL_UNSIGNED_SHORT ),
+			ust::nullptr</byte8/>() ) );
 	}
 }
 
