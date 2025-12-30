@@ -105,8 +105,7 @@ PanzerMortyr rendering:
 * Draw map polygons and other objects (models, sprites) requiring blending in back to front order.
 * Draw reflections in reflective surfaces (usually floors).
 * Draw polygons with animated textures (frame-based animation) properly.
-* Draw items (pick-ups).
-* Draw enemies (including animation).
+* Draw enemies with animation.
 * Draw first-person weapon.
 * Draw projectiles (like Panzerfaust).
 * Use smooth animation for animated models (with two or more frames interpolation).
@@ -119,7 +118,9 @@ PanzerMortyr rendering:
 * Draw weather effects (rain, snow).
 * Draw breaking window animation (with falling splinters).
 * Perform frustum culling for clusters (root ones).
-* Perform frustum culling for models.
+* Perform frustum culling for models - calculate bounding boxes or spheres for them in order to do this.
+* Perform cluster clulling for models - draw only models located at least partially within visible clusters.
+* Group model objects by model file prior to draw them - in order to minimize amount of texture and vertex buffer switches.
 * Experiment with an algorithm for dynamic visible clusters search similar to one used in SquareWheel.
 * Add support for MSAA.
 * Add support for nearest textures filtration.
