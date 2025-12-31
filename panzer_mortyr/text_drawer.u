@@ -2,7 +2,6 @@ import "/scoped_array.u"
 import "font_file.uh"
 import "gl_functions.uh"
 import "text_drawer.uh"
-import "vertex_formats.uh"
 
 namespace PM
 {
@@ -12,7 +11,8 @@ fn TextDrawer::constructor( GameFilesystemPtr& game_filesystem_ptr )
 		shader_( embed</char8/>( "shaders/text.vert.glsl" ), embed</char8/>( "shaders/text.frag.glsl" ) ),
 		vertex_buffer_= CreateTextVertexBuffer( c_max_buffer_size_glyphs ),
 		index_buffer_= CreateQuadsIndexBuffer( c_max_buffer_size_glyphs ),
-		font_texture_= CreateFontTexture( game_filesystem_ptr )
+		font_texture_= CreateFontTexture( game_filesystem_ptr ),
+		buffered_glyphs_= zero_init,
 	)
 {
 	vertex_array_object_.Bind();
@@ -41,8 +41,31 @@ fn TextDrawer::constructor( GameFilesystemPtr& game_filesystem_ptr )
 		ust::nullptr</byte8/>() + GetStructFieldOffset</ TextVertex, "tex_coordinates" />() ) );
 }
 
+fn TextDrawer::AddText( mut this, f32 x, f32 y, ust::string_view8 text )
+{
+	// TODO - do this properly.
+	ust::ignore_unused( x * y );
+	ust::ignore_unused( text );
+
+	var [ TextVertex, 4 ] &mut dst_glyph= buffered_glyphs_[ num_buffered_glyphs_ ];
+
+	dst_glyph[0]= TextVertex{ .position[ 0.0f, -1.0f ], .tex_coordinates[ 0.0f, 1.0f ] };
+	dst_glyph[1]= TextVertex{ .position[ 0.04f, -1.0f ], .tex_coordinates[ 1.0f, 1.0f ] };
+	dst_glyph[2]= TextVertex{ .position[ 0.04f,  1.0f ], .tex_coordinates[ 1.0f, 0.0f ] };
+	dst_glyph[3]= TextVertex{ .position[ 0.0f,  1.0f ], .tex_coordinates[ 0.0f, 0.0f ] };
+
+	++num_buffered_glyphs_;
+}
+
 fn TextDrawer::DrawTexts( mut this )
 {
+	{
+		vertex_buffer_.Bind();
+		auto range= ust::array_view_imut</ [ TextVertex, 4 ] />( buffered_glyphs_ ).subrange_end( num_buffered_glyphs_ ).to_byte8_range();
+		unsafe( glBufferSubData( GLenum( GL_ARRAY_BUFFER ), GLintptr(0), GLsizeiptr( range.size() ), range.data() ) );
+		num_buffered_glyphs_= 0s;
+	}
+
 	unsafe( glDisable( GLenum( GL_DEPTH_TEST ) ) );
 	unsafe( glDisable( GLenum( GL_CULL_FACE ) ) );
 
@@ -66,26 +89,10 @@ fn TextDrawer::DrawTexts( mut this )
 
 fn CreateTextVertexBuffer( size_type num_quds ) : BufferObject
 {
-	auto mut buffer=
+	return
 		BufferObject::CreateUninitializedDynamicDrawBuffer(
 			GLenum( GL_ARRAY_BUFFER ),
 			num_quds * 4s * typeinfo</TextVertex/>.size_of );
-
-
-	var [ TextVertex, 4 ] vertices
-	[
-		{ .position[ 0.0f, -1.0f ], .tex_coordinates[ 0.0f, 1.0f ] },
-		{ .position[ 0.04f, -1.0f ], .tex_coordinates[ 1.0f, 1.0f ] },
-		{ .position[ 0.04f,  1.0f ], .tex_coordinates[ 1.0f, 0.0f ] },
-		{ .position[ 0.0f,  1.0f ], .tex_coordinates[ 0.0f, 0.0f ] },
-	];
-
-	auto range= ust::array_view_imut</TextVertex/>( vertices ).to_byte8_range();
-
-	buffer.Bind();
-	unsafe( glBufferSubData( GLenum( GL_ARRAY_BUFFER ), GLintptr(0), GLsizeiptr( range.size() ), range.data() ) );
-
-	return buffer;
 }
 
 fn CreateQuadsIndexBuffer( size_type num_quds ) : BufferObject
