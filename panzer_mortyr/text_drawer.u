@@ -1,4 +1,5 @@
 import "/scoped_array.u"
+import "font_file.uh"
 import "gl_functions.uh"
 import "text_drawer.uh"
 import "vertex_formats.uh"
@@ -6,11 +7,12 @@ import "vertex_formats.uh"
 namespace PM
 {
 
-fn TextDrawer::constructor()
+fn TextDrawer::constructor( GameFilesystemPtr& game_filesystem_ptr )
 	(
 		shader_( embed</char8/>( "shaders/text.vert.glsl" ), embed</char8/>( "shaders/text.frag.glsl" ) ),
 		vertex_buffer_= CreateTextVertexBuffer(),
-		index_buffer_= CreateQuadsIndexBuffer( c_max_buffer_size_glyphs )
+		index_buffer_= CreateQuadsIndexBuffer( c_max_buffer_size_glyphs ),
+		font_texture_= CreateFontTexture( game_filesystem_ptr )
 	)
 {
 	vertex_array_object_.Bind();
@@ -86,6 +88,59 @@ fn CreateQuadsIndexBuffer( size_type num_quds ) : BufferObject
 	}
 
 	return BufferObject::CreateStaticDrawBuffer( GLenum( GL_ELEMENT_ARRAY_BUFFER ), indices.to_byte8_range() );
+}
+
+fn CreateFontTexture( GameFilesystemPtr& game_filesystem_ptr ) : Texture
+{
+	auto mut lock= game_filesystem_ptr.lock_mut();
+
+	auto font_file_res= lock.deref().LoadFileToString( c_font_file_name );
+	var ust::string8& font_file_contents= font_file_res.try_deref();
+
+	var FontData font_data= ParseFontFile( font_file_contents );
+
+	var u32 width= 8u;
+	var u32 height= 128u * 8u;
+
+	var [ u8, 8 * 128 ] mut font_texture_data= zero_init;
+
+	for( auto mut g= 0s; g < font_data.glyphs.size(); ++g )
+	{
+		for( auto mut y= 0s; y < 7s; ++y )
+		{
+			var size_type glyph_byte( font_data.glyphs[g].pixels[y] );
+
+			var size_type dst_y= y + g * 8s;
+			for( auto mut x= 0s; x < 8s; ++x )
+			{
+				if( ( glyph_byte & ( 1s << x ) ) != 0s )
+				{
+					font_texture_data[ x + dst_y ]= 255u8;
+				}
+			}
+		}
+	}
+
+	var Texture texture= Texture::Create( GLenum( GL_TEXTURE_2D ) );
+	texture.Bind();
+
+	unsafe( glTexImage2D(
+		GLenum( GL_TEXTURE_2D ),
+		0,
+		GLint( GL_R8 ),
+		GLsizei( width ),
+		GLsizei( height ),
+		0,
+		GLenum( GL_RED ),
+		GLenum( GL_UNSIGNED_BYTE ),
+		ust::ptr_cast_to_byte8( $<( font_texture_data ) ) ) );
+
+	unsafe( glGenerateMipmap( GLenum( GL_TEXTURE_2D ) ) );
+
+	unsafe( glTexParameteri( GLenum( GL_TEXTURE_2D ), GLenum( GL_TEXTURE_MIN_FILTER ), GLint( GL_LINEAR_MIPMAP_LINEAR ) ) );
+	unsafe( glTexParameteri( GLenum( GL_TEXTURE_2D ), GLenum( GL_TEXTURE_MAG_FILTER ), GLint( GL_LINEAR ) ) );
+
+	return texture;
 }
 
 } // namespace PM
