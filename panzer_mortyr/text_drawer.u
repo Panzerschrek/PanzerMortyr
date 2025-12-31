@@ -1,5 +1,4 @@
 import "/scoped_array.u"
-import "font_file.uh"
 import "gl_functions.uh"
 import "text_drawer.uh"
 
@@ -8,10 +7,11 @@ namespace PM
 
 fn TextDrawer::constructor( GameFilesystemPtr& game_filesystem_ptr )
 	(
+		font_data_= LoadAndParseFontData( game_filesystem_ptr ),
 		shader_( embed</char8/>( "shaders/text.vert.glsl" ), embed</char8/>( "shaders/text.frag.glsl" ) ),
 		vertex_buffer_= CreateTextVertexBuffer( c_max_buffer_size_glyphs ),
 		index_buffer_= CreateQuadsIndexBuffer( c_max_buffer_size_glyphs ),
-		font_texture_= CreateFontTexture( game_filesystem_ptr ),
+		font_texture_= CreateFontTexture( font_data_ ),
 		buffered_glyphs_= zero_init,
 	)
 {
@@ -43,6 +43,8 @@ fn TextDrawer::constructor( GameFilesystemPtr& game_filesystem_ptr )
 
 fn TextDrawer::AddText( mut this, f32 mut x, f32 y, ust::string_view8 text )
 {
+	var f32 glyph_tc_height= 1.0f / f32( font_data_.glyphs.size() );
+
 	foreach( c : text )
 	{
 		ust::ignore_unused(c);
@@ -50,14 +52,17 @@ fn TextDrawer::AddText( mut this, f32 mut x, f32 y, ust::string_view8 text )
 		var [ TextVertex, 4 ] &mut dst_glyph= buffered_glyphs_[ num_buffered_glyphs_ ];
 		++num_buffered_glyphs_;
 
-		dst_glyph[0]= TextVertex{ .position[ x + 0.0f, y + 0.0f ], .tex_coordinates[ 0.0f, 0.0f ] };
-		dst_glyph[1]= TextVertex{ .position[ x + 0.04f, y + 0.0f ], .tex_coordinates[ 1.0f, 0.0f ] };
-		dst_glyph[2]= TextVertex{ .position[ x + 0.04f, y + 1.06f ], .tex_coordinates[ 1.0f, 1.0f ] };
-		dst_glyph[3]= TextVertex{ .position[ x + 0.0f, y + 1.06f ], .tex_coordinates[ 0.0f, 1.0f ] };
+		var u32 glyph_position= 10u;
+
+		var f32 tc_y= f32( glyph_position ) * glyph_tc_height;
+
+		dst_glyph[0]= TextVertex{ .position[ x + 0.0f, y + 0.0f ], .tex_coordinates[ 0.0f, tc_y ] };
+		dst_glyph[1]= TextVertex{ .position[ x + 0.04f, y + 0.0f ], .tex_coordinates[ 1.0f, tc_y ] };
+		dst_glyph[2]= TextVertex{ .position[ x + 0.04f, y + 0.06f ], .tex_coordinates[ 1.0f, tc_y + glyph_tc_height ] };
+		dst_glyph[3]= TextVertex{ .position[ x + 0.0f, y + 0.06f ], .tex_coordinates[ 0.0f, tc_y + glyph_tc_height ] };
 
 		x+= 0.05f;
 	}
-
 }
 
 fn TextDrawer::DrawTexts( mut this )
@@ -117,15 +122,18 @@ fn CreateQuadsIndexBuffer( size_type num_quds ) : BufferObject
 	return BufferObject::CreateStaticDrawBuffer( GLenum( GL_ELEMENT_ARRAY_BUFFER ), indices.to_byte8_range() );
 }
 
-fn CreateFontTexture( GameFilesystemPtr& game_filesystem_ptr ) : Texture
+fn LoadAndParseFontData( GameFilesystemPtr& game_filesystem_ptr ) : FontData
 {
 	auto mut lock= game_filesystem_ptr.lock_mut();
 
 	auto font_file_res= lock.deref().LoadFileToString( c_font_file_name );
 	var ust::string8& font_file_contents= font_file_res.try_deref();
 
-	var FontData font_data= ParseFontFile( font_file_contents );
+	return ParseFontFile( font_file_contents );
+}
 
+fn CreateFontTexture( FontData& font_data ) : Texture
+{
 	var size_type glyph_width= 8s;
 	var size_type glyph_height= 8s;
 	var size_type height= font_data.glyphs.size() * glyph_height;
