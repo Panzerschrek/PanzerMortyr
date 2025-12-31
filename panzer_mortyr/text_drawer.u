@@ -10,6 +10,7 @@ fn TextDrawer::constructor( [ u32, 2 ] viewport_size, GameFilesystemPtr& game_fi
 	(
 		viewport_size_= viewport_size,
 		font_data_= LoadAndParseFontData( game_filesystem_ptr ),
+		code_point_to_glyph_position_map_= BuildCodePointToGlyphPositionMap(),
 		shader_( embed</char8/>( "shaders/text.vert.glsl" ), embed</char8/>( "shaders/text.frag.glsl" ) ),
 		vertex_buffer_= CreateTextVertexBuffer( c_max_buffer_size_glyphs ),
 		index_buffer_= CreateQuadsIndexBuffer( c_max_buffer_size_glyphs ),
@@ -80,30 +81,23 @@ fn TextDrawer::AddText( mut this, f32 x, f32 y, ust::string_view8 mut text, Sett
 
 	loop
 	{
-		var char32 mut code_point= ust::utf::extract_code_point_or_null_from_string( text );
+		var char32 code_point= ust::utf::extract_code_point_or_null_from_string( text );
 		if( code_point == '\0'c32 )
 		{
 			break;
 		}
 
-		if( code_point >= 'a'c32 && code_point <= 'z'c32 )
-		{
-			// Convert ASCII lowercase letters to uppercase, since this font doesn't support lowercase letters.
-			code_point= char32( u32(code_point) - u32('a'c32) + u32('A'c32) );
-		}
-		// TODO - convert here some lowercase polish letters.
-
 		var [ TextVertex, 4 ] &mut dst_glyph= buffered_glyphs_[ num_buffered_glyphs_ ];
 		++num_buffered_glyphs_;
 
 		var size_type mut glyph_index= 0s;
-		for( auto mut i= 0s; i < typeinfo</ typeof( FontData::c_glyphs_sequence ) />.element_count; ++i )
+		if_var( p : code_point_to_glyph_position_map_.find( code_point ) )
 		{
-			if( code_point == FontData::c_glyphs_sequence[i] )
-			{
-				glyph_index= i;
-				break;
-			}
+			glyph_index= p;
+		}
+		else
+		{
+			glyph_index= code_point_to_glyph_position_map_[ '?'c32 ];
 		}
 
 		var f32 tc_y= f32( font_data_.glyphs.size() - 1s - glyph_index ) * glyph_tc_height;
@@ -222,6 +216,29 @@ fn LoadAndParseFontData( GameFilesystemPtr& game_filesystem_ptr ) : FontData
 	var ust::string8& font_file_contents= font_file_res.try_deref();
 
 	return ParseFontFile( font_file_contents );
+}
+
+fn BuildCodePointToGlyphPositionMap() : ust::hash_map</char32, size_type/>
+{
+	var ust::hash_map</char32, size_type/> mut map;
+
+	for( auto mut i= 0s; i < typeinfo</ typeof( FontData::c_glyphs_sequence ) />.element_count; ++i )
+	{
+		var char32 code_point= FontData::c_glyphs_sequence[i];
+
+		map.insert_new( code_point, i );
+
+		if( code_point >= 'A'c32 && code_point <= 'Z'c32 )
+		{
+			// Convert ASCII lowercase letters to uppercase, since this font doesn't support lowercase letters.
+			var char32 lowercase_code_point= char32( u32(code_point) - u32('A'c32) + u32('a'c32) );
+
+			map.insert_new( lowercase_code_point, i );
+		}
+		// TODO - convert here some lowercase polish letters.
+	}
+
+	return map;
 }
 
 fn CreateFontTexture( FontData& font_data ) : Texture
