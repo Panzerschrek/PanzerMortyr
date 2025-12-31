@@ -1,0 +1,317 @@
+import "/scoped_array.u"
+import "gl_functions.uh"
+import "text_drawer.uh"
+import "/utf.u"
+
+namespace PM
+{
+
+fn TextDrawer::constructor( [ u32, 2 ] viewport_size, GameFilesystemPtr& game_filesystem_ptr )
+	(
+		viewport_size_= viewport_size,
+		font_data_= LoadAndParseFontData( game_filesystem_ptr ),
+		code_point_to_glyph_position_map_= BuildCodePointToGlyphPositionMap(),
+		shader_( embed</char8/>( "shaders/text.vert.glsl" ), embed</char8/>( "shaders/text.frag.glsl" ) ),
+		vertex_buffer_= CreateTextVertexBuffer( c_max_buffer_size_glyphs ),
+		index_buffer_= CreateQuadsIndexBuffer( c_max_buffer_size_glyphs ),
+		font_texture_= CreateFontTexture( font_data_ ),
+		buffered_glyphs_= zero_init,
+		num_buffered_glyphs_= 0s,
+	)
+{
+	vertex_array_object_.Bind();
+
+	vertex_buffer_.Bind();
+
+	var u32 c_position_attrib= 0u;
+	var u32 c_tex_coord_attrib= 1u;
+	var u32 c_foreground_color_attrib= 2u;
+	var u32 c_background_color_attrib= 3u;
+
+	unsafe( glEnableVertexAttribArray( c_position_attrib ) );
+	unsafe( glVertexAttribPointer(
+		c_position_attrib,
+		2,
+		GLenum( GL_FLOAT ),
+		GLboolean(0),
+		GLsizei( typeinfo</ TextVertex />.size_of ),
+		ust::nullptr</byte8/>() + GetStructFieldOffset</ TextVertex, "position" />() ) );
+
+	unsafe( glEnableVertexAttribArray( c_tex_coord_attrib ) );
+	unsafe( glVertexAttribPointer(
+		c_tex_coord_attrib,
+		2,
+		GLenum( GL_FLOAT ),
+		GLboolean(0),
+		GLsizei( typeinfo</ TextVertex />.size_of ),
+		ust::nullptr</byte8/>() + GetStructFieldOffset</ TextVertex, "tex_coordinates" />() ) );
+
+	unsafe( glEnableVertexAttribArray( c_foreground_color_attrib ) );
+	unsafe( glVertexAttribPointer(
+		c_foreground_color_attrib,
+		4,
+		GLenum( GL_UNSIGNED_BYTE ),
+		GLboolean(1),
+		GLsizei( typeinfo</ TextVertex />.size_of ),
+		ust::nullptr</byte8/>() + GetStructFieldOffset</ TextVertex, "foreground_color" />() ) );
+
+	unsafe( glEnableVertexAttribArray( c_background_color_attrib ) );
+	unsafe( glVertexAttribPointer(
+		c_background_color_attrib,
+		4,
+		GLenum( GL_UNSIGNED_BYTE ),
+		GLboolean(1),
+		GLsizei( typeinfo</ TextVertex />.size_of ),
+		ust::nullptr</byte8/>() + GetStructFieldOffset</ TextVertex, "background_color" />() ) );
+}
+
+fn TextDrawer::AddText( mut this, f32 x, f32 y, ust::string_view8 mut text )
+{
+	AddText( x, y, text, Settings() );
+}
+
+fn TextDrawer::AddText( mut this, f32 x, f32 y, ust::string_view8 mut text, Settings& settings )
+{
+	var f32 glyph_tc_height= 1.0f / f32( font_data_.glyphs.size() );
+
+	var f32 glyph_base_width= settings.scale * ( 8.0f * 2.0f ) / f32( viewport_size_[0] );
+	var f32 glyph_height= settings.scale * ( 8.0f * 2.0f ) / f32( viewport_size_[1] );
+
+	var f32 initial_x= x / f32( viewport_size_[0] ) * 2.0f - 1.0f;
+	var f32 mut current_x= initial_x;
+	var f32 mut current_y= y / f32( viewport_size_[1] ) * 2.0f - 1.0f;
+
+	loop
+	{
+		var char32 code_point= ust::utf::extract_code_point_or_null_from_string( text );
+		if( code_point == '\0'c32 )
+		{
+			break;
+		}
+
+		if( code_point == '\n'c32 )
+		{
+			current_x= initial_x;
+			current_y-= glyph_height;
+			continue;
+		}
+
+		var size_type mut glyph_index= 0s;
+		if_var( p : code_point_to_glyph_position_map_.find( code_point ) )
+		{
+			glyph_index= p;
+		}
+		else
+		{
+			glyph_index= code_point_to_glyph_position_map_[ '?'c32 ];
+		}
+
+		if( num_buffered_glyphs_ >= c_max_buffer_size_glyphs )
+		{
+			// Perform flushing in case of buffer overflow.
+			DrawTexts();
+		}
+
+		var [ TextVertex, 4 ] &mut dst_glyph= buffered_glyphs_[ num_buffered_glyphs_ ];
+		++num_buffered_glyphs_;
+
+		var f32 tc_y= f32( font_data_.glyphs.size() - 1s - glyph_index ) * glyph_tc_height;
+
+		var f32 glyph_relative_width= ( settings.monospace ? 1.0f : f32( font_data_.glyphs[ glyph_index ].width ) / 8.0f );
+
+		var f32 glyph_width= glyph_base_width * glyph_relative_width;
+		var f32 glyph_tc_width= glyph_relative_width;
+
+		dst_glyph[0]=
+			TextVertex
+			{
+				.position[ current_x, current_y ],
+				.tex_coordinates[ 0.0f, tc_y ],
+				.foreground_color= settings.foreground_color,
+				.background_color= settings.background_color,
+			};
+
+		dst_glyph[1]=
+			TextVertex
+			{
+				.position[ current_x + glyph_width, current_y ],
+				.tex_coordinates[ glyph_tc_width, tc_y ],
+				.foreground_color= settings.foreground_color,
+				.background_color= settings.background_color,
+			};
+
+		dst_glyph[2]=
+			TextVertex
+			{
+				.position[ current_x + glyph_width, current_y + glyph_height ],
+				.tex_coordinates[ glyph_tc_width, tc_y + glyph_tc_height ],
+				.foreground_color= settings.foreground_color,
+				.background_color= settings.background_color,
+			};
+
+		dst_glyph[3]=
+			TextVertex
+			{
+				.position[ current_x, current_y + glyph_height ],
+				.tex_coordinates[ 0.0f, tc_y + glyph_tc_height ],
+				.foreground_color= settings.foreground_color,
+				.background_color= settings.background_color,
+			};
+
+		current_x+= glyph_width;
+	}
+}
+
+fn TextDrawer::DrawTexts( mut this )
+{
+	var size_type num_glyphs_to_draw= num_buffered_glyphs_;
+
+	{
+		vertex_buffer_.Bind();
+		auto range= ust::array_view_imut</ [ TextVertex, 4 ] />( buffered_glyphs_ ).subrange_end( num_buffered_glyphs_ ).to_byte8_range();
+		unsafe( glBufferSubData( GLenum( GL_ARRAY_BUFFER ), GLintptr(0), GLsizeiptr( range.size() ), range.data() ) );
+		num_buffered_glyphs_= 0s;
+	}
+
+	unsafe( glDisable( GLenum( GL_DEPTH_TEST ) ) );
+	unsafe( glDisable( GLenum( GL_CULL_FACE ) ) );
+
+	unsafe( glEnable( GLenum( GL_BLEND ) ) );
+	unsafe( glBlendFunc( GLenum( GL_SRC_ALPHA ), GLenum( GL_ONE_MINUS_SRC_ALPHA ) ) );
+
+	var u32 texture_slot= 0u;
+
+	unsafe( glActiveTexture( GLenum( GL_TEXTURE0 ) + GLenum(texture_slot) ) );
+	font_texture_.Bind();
+
+	shader_.Bind();
+	shader_.SetUniform( "fu_texture", texture_slot );
+
+	vertex_array_object_.Bind();
+	index_buffer_.Bind();
+
+	unsafe( glDrawElements(
+		GLenum( GL_TRIANGLES ),
+		GLsizei( num_glyphs_to_draw * 6s ),
+		GLenum( GL_UNSIGNED_SHORT ),
+		ust::nullptr</byte8/>() ) );
+}
+
+fn CreateTextVertexBuffer( size_type num_quads ) : BufferObject
+{
+	return
+		BufferObject::CreateUninitializedDynamicDrawBuffer(
+			GLenum( GL_ARRAY_BUFFER ),
+			num_quads * 4s * typeinfo</TextVertex/>.size_of );
+}
+
+fn CreateQuadsIndexBuffer( size_type num_qauds ) : BufferObject
+{
+	scoped_array u16 mut indices[ num_qauds * 6s ]( 0u16 );
+
+	for( auto mut i= 0s; i < num_qauds; ++i )
+	{
+		indices[ i * 6s + 0s ]= u16( i * 4s + 0s );
+		indices[ i * 6s + 1s ]= u16( i * 4s + 1s );
+		indices[ i * 6s + 2s ]= u16( i * 4s + 2s );
+		indices[ i * 6s + 3s ]= u16( i * 4s + 0s );
+		indices[ i * 6s + 4s ]= u16( i * 4s + 2s );
+		indices[ i * 6s + 5s ]= u16( i * 4s + 3s );
+	}
+
+	return BufferObject::CreateStaticDrawBuffer( GLenum( GL_ELEMENT_ARRAY_BUFFER ), indices.to_byte8_range() );
+}
+
+fn LoadAndParseFontData( GameFilesystemPtr& game_filesystem_ptr ) : FontData
+{
+	auto mut lock= game_filesystem_ptr.lock_mut();
+
+	auto font_file_res= lock.deref().LoadFileToString( c_font_file_name );
+	var ust::string8& font_file_contents= font_file_res.try_deref(); // Halts if failed to read font file.
+
+	return ParseFontFile( font_file_contents );
+}
+
+fn BuildCodePointToGlyphPositionMap() : ust::hash_map</char32, size_type/>
+{
+	var ust::hash_map</char32, size_type/> mut map;
+
+	for( auto mut i= 0s; i < typeinfo</ typeof( FontData::c_glyphs_sequence ) />.element_count; ++i )
+	{
+		var char32 code_point= FontData::c_glyphs_sequence[i];
+
+		map.insert_new( code_point, i );
+
+		switch( code_point )
+		{
+			// Map lowercase polish letters to corresponding uppercase letters.
+			'Ą'c32 -> { map.insert_new( 'ą'c32, i ); },
+			'Ć'c32 -> { map.insert_new( 'ć'c32, i ); },
+			'Ę'c32 -> { map.insert_new( 'ę'c32, i ); },
+			'Ł'c32 -> { map.insert_new( 'ł'c32, i ); },
+			'Ń'c32 -> { map.insert_new( 'ń'c32, i ); },
+			'Ó'c32 -> { map.insert_new( 'ó'c32, i ); },
+			'Ś'c32 -> { map.insert_new( 'ś'c32, i ); },
+			'Ź'c32 -> { map.insert_new( 'ź'c32, i ); },
+			'Ż'c32 -> { map.insert_new( 'ż'c32, i ); },
+			'A'c32 ... 'Z'c32 ->
+			{
+				// Convert ASCII lowercase letters to uppercase, since the font doesn't support lowercase letters.
+				var char32 lowercase_code_point= char32( u32(code_point) - u32('A'c32) + u32('a'c32) );
+
+				map.insert_new( lowercase_code_point, i );
+			},
+			default -> {},
+		}
+	}
+
+	return map;
+}
+
+fn CreateFontTexture( FontData& font_data ) : Texture
+{
+	var size_type glyph_width= 8s;
+	var size_type glyph_height= 8s; // Original font has glyphs with height 7, we add one extra pixels line for wider padding between text lines.
+	var size_type height= font_data.glyphs.size() * glyph_height;
+
+	scoped_array u8 mut font_texture_data[ glyph_width * height ]( 0u8 );
+
+	for( auto mut g= 0s; g < font_data.glyphs.size(); ++g )
+	{
+		var FontData::Glyph& glyph= font_data.glyphs[g];
+
+		for( auto mut y= 0s; y < 7s; ++y )
+		{
+			var size_type glyph_line_byte( glyph.pixels[y] );
+
+			var size_type dst_offset= ( height - 1s - ( y + g * glyph_height ) ) * glyph_width;
+			for( auto mut x= 0s; x < 8s; ++x )
+			{
+				font_texture_data[ dst_offset + x ]= ( ( glyph_line_byte & ( 1s << ( x ^ 7s ) ) ) == 0s ? 0u8 : 255u8 );
+			}
+			font_texture_data[ dst_offset + 7s ]= 0u8;
+		}
+	}
+
+	var Texture texture= Texture::Create( GLenum( GL_TEXTURE_2D ) );
+	texture.Bind();
+
+	unsafe( glTexImage2D(
+		GLenum( GL_TEXTURE_2D ),
+		0,
+		GLint( GL_R8 ),
+		GLsizei( glyph_width ),
+		GLsizei( height ),
+		0,
+		GLenum( GL_RED ),
+		GLenum( GL_UNSIGNED_BYTE ),
+		ust::ptr_cast_to_byte8( font_texture_data.data() ) ) );
+
+	// Use nearest filtration and no mips. It's enough for such pixel font.
+	unsafe( glTexParameteri( GLenum( GL_TEXTURE_2D ), GLenum( GL_TEXTURE_MIN_FILTER ), GLint( GL_NEAREST ) ) );
+	unsafe( glTexParameteri( GLenum( GL_TEXTURE_2D ), GLenum( GL_TEXTURE_MAG_FILTER ), GLint( GL_NEAREST ) ) );
+
+	return texture;
+}
+
+} // namespace PM
