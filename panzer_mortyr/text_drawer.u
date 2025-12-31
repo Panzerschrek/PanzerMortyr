@@ -68,10 +68,10 @@ fn CreateTextVertexBuffer() : BufferObject
 {
 	var [ TextVertex, 4 ] vertices
 	[
-		{ .position[ 0.0f, 0.0f ], .tex_coordinates[ 0.0f, 0.0f ] },
-		{ .position[ 0.5f, 0.0f ], .tex_coordinates[ 1.0f, 0.0f ] },
-		{ .position[ 0.5f, 0.5f ], .tex_coordinates[ 1.0f, 1.0f ] },
-		{ .position[ 0.0f, 0.5f ], .tex_coordinates[ 0.0f, 1.0f ] },
+		{ .position[ 0.0f, -1.0f ], .tex_coordinates[ 0.0f, 1.0f ] },
+		{ .position[ 0.04f, -1.0f ], .tex_coordinates[ 1.0f, 1.0f ] },
+		{ .position[ 0.04f,  1.0f ], .tex_coordinates[ 1.0f, 0.0f ] },
+		{ .position[ 0.0f,  1.0f ], .tex_coordinates[ 0.0f, 0.0f ] },
 	];
 
 	return BufferObject::CreateDynamicDrawBuffer(
@@ -105,23 +105,26 @@ fn CreateFontTexture( GameFilesystemPtr& game_filesystem_ptr ) : Texture
 
 	var FontData font_data= ParseFontFile( font_file_contents );
 
-	var u32 width= 8u;
-	var u32 height= 128u * 8u;
+	var size_type glyph_width= 8s;
+	var size_type glyph_height= 8s;
+	var size_type height= font_data.glyphs.size() * glyph_height;
 
-	var [ u8, 8 * 128 ] mut font_texture_data= zero_init;
+	scoped_array u8 mut font_texture_data[ glyph_width * height ]( 0u8 );
 
 	for( auto mut g= 0s; g < font_data.glyphs.size(); ++g )
 	{
+		var FontData::Glyph& glyph= font_data.glyphs[g];
+
 		for( auto mut y= 0s; y < 7s; ++y )
 		{
-			var size_type glyph_byte( font_data.glyphs[g].pixels[y] );
+			var size_type glyph_line_byte( glyph.pixels[y] );
 
-			var size_type dst_y= y + g * 8s;
+			var size_type dst_y= y + g * glyph_height;
 			for( auto mut x= 0s; x < 8s; ++x )
 			{
-				if( ( glyph_byte & ( 1s << x ) ) != 0s )
+				if( ( glyph_line_byte & ( 1s << ( x ^ 7s ) ) ) != 0s )
 				{
-					font_texture_data[ x + dst_y ]= 255u8;
+					font_texture_data[ x + dst_y * glyph_width ]= 255u8;
 				}
 			}
 		}
@@ -134,17 +137,15 @@ fn CreateFontTexture( GameFilesystemPtr& game_filesystem_ptr ) : Texture
 		GLenum( GL_TEXTURE_2D ),
 		0,
 		GLint( GL_R8 ),
-		GLsizei( width ),
+		GLsizei( glyph_width ),
 		GLsizei( height ),
 		0,
 		GLenum( GL_RED ),
 		GLenum( GL_UNSIGNED_BYTE ),
-		ust::ptr_cast_to_byte8( $<( font_texture_data ) ) ) );
+		ust::ptr_cast_to_byte8( font_texture_data.data() ) ) );
 
-	unsafe( glGenerateMipmap( GLenum( GL_TEXTURE_2D ) ) );
-
-	unsafe( glTexParameteri( GLenum( GL_TEXTURE_2D ), GLenum( GL_TEXTURE_MIN_FILTER ), GLint( GL_LINEAR_MIPMAP_LINEAR ) ) );
-	unsafe( glTexParameteri( GLenum( GL_TEXTURE_2D ), GLenum( GL_TEXTURE_MAG_FILTER ), GLint( GL_LINEAR ) ) );
+	unsafe( glTexParameteri( GLenum( GL_TEXTURE_2D ), GLenum( GL_TEXTURE_MIN_FILTER ), GLint( GL_NEAREST ) ) );
+	unsafe( glTexParameteri( GLenum( GL_TEXTURE_2D ), GLenum( GL_TEXTURE_MAG_FILTER ), GLint( GL_NEAREST ) ) );
 
 	return texture;
 }
