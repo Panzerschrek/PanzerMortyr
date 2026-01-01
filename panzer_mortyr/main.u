@@ -1,10 +1,10 @@
 import "/enum_string_conversions.u"
+import "/integer_parsing.u"
 import "/main_wrapper.u"
 import "/stdout.u"
 
 import "console.uh"
 import "game.uh"
-import "host_command_processor.uh"
 import "opengl_window.uh"
 import "world_drawer.uh"
 
@@ -84,10 +84,10 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 				{
 					if( console.IsActive() )
 					{
-						var HostCommandProcessor mut command_processor{ .game_= game };
+						var HostCommandProcessor mut command_processor{ .game= game };
 						console.ProcessKeyPress( keyboard_event.keysym, command_processor );
 
-						if( command_processor.quit_requested_ )
+						if( command_processor.quit_requested )
 						{
 							break label main_loop;
 						}
@@ -188,6 +188,64 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 	unsafe( SDL_Quit() );
 
 	return 0;
+}
+
+// A helper struct for processing console commands.
+struct HostCommandProcessor
+{
+	//
+	// Own process* functions.
+	//
+
+	fn process_quit( mut this )
+	{
+		quit_requested= true;
+	}
+
+	fn process_help( this )
+	{
+	}
+
+	fn process_map( this, ust::iterator</ WordsIterator /> mut args )
+	{
+		if_var( map_name : args.next() )
+		{
+			if_var( map_index : ust::parse_integer_exact</u32/>( map_name ) )
+			{
+				game.TeleportToMap( map_index );
+			}
+		}
+	}
+
+	//
+	// Create proxies for Game::process_* methods using mixins and type information for Game class.
+	//
+
+	mixin( generate_game_processing_method_proxies() );
+
+	fn constexpr generate_game_processing_method_proxies() : [ char8, 1024s ]
+	{
+		var ust::mixin_utils::static_string</1024s/> mut s;
+
+		auto& processor_functions_prefix= "process_";
+
+		foreach( &function_info : typeinfo</Game/>.functions_list )
+		{
+			static_if( ust::constexpr_string_starts_with( function_info.name, processor_functions_prefix ) )
+			{
+				s+= "fn " + function_info.name + "( mut this ) { game. " + function_info.name + "(); }\n";
+			}
+		}
+
+		return s.buffer;
+	}
+
+	//
+	// Host members and other fields.
+	//
+
+	bool quit_requested= false;
+	Game &mut game;
 }
 
 } // namespace PM
