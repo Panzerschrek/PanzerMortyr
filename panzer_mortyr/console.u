@@ -1,0 +1,109 @@
+import "/scoped_array.u"
+import "/stdout.u"
+import "console.uh"
+
+namespace PM
+{
+
+fn Console::constructor( [ u32, 2 ] viewport_size )
+	( viewport_size_(viewport_size) )
+{}
+
+fn Console::Toggle( mut this )
+{
+	is_active_= !is_active_;
+}
+
+fn Console::IsActive( this ) : bool
+{
+	return is_active_;
+}
+
+fn Console::ProcessTextInput( mut this, SDL_TextInputEvent& text_input_event )
+{
+	var size_type mut length= 0s;
+	while( length < typeinfo</ typeof(text_input_event.text) />.element_count )
+	{
+		if( text_input_event.text[ length ] == '\0' )
+		{
+			break;
+		}
+		++length;
+	}
+
+	input_line_+= ust::string_view8( text_input_event.text ).subrange_end( length );
+}
+
+fn Console::AddTextLine( mut this, ust::string8 mut line )
+{
+	// Write the same text into stdout. It may be useful.
+	ust::stdout_print( line );
+	ust::stdout_print( "\n" );
+
+	lines_[ lines_end_ % c_max_lines_stored ]= move(line);
+	++lines_end_;
+	if( lines_end_ - lines_start_ > c_max_lines_stored )
+	{
+		lines_start_= lines_end_ - c_max_lines_stored;
+	}
+}
+
+fn Console::Update( mut this, f32 time_delta_s )
+{
+	var f32 move_speed= 4.0f;
+	var f32 delta= time_delta_s * move_speed;
+
+	if( is_active_ )
+	{
+		screen_position_+= delta;
+		ust::min_assign( screen_position_, 1.0f );
+	}
+	else
+	{
+		screen_position_-= delta;
+		ust::max_assign( screen_position_, 0.0f );
+	}
+}
+
+fn Console::Draw( this, TextDrawer &mut text_drawer )
+{
+	if( screen_position_ <= 0.0f )
+	{
+		return;
+	}
+
+	var f32 line_height= 8.0f * c_console_text_settings.scale;
+
+	var f32 mut y= f32(viewport_size_[1]) * ( 1.0f - screen_position_ * 0.5f );
+
+	{
+		// Draw input line with cursor. TODO - make it blinking.
+		scoped_array char8 input_line_with_cursor[ input_line_.size() + 1s ]( input_line_.iter().chain( ust::string_view8( "_" ).iter() ) );
+		text_drawer.AddText( 0.0f, y, input_line_with_cursor, c_console_input_line_text_settings );
+		y+= line_height;
+	}
+
+	for( auto mut i= lines_end_; i > lines_start_; --i )
+	{
+		text_drawer.AddText( 0.0f, y, lines_[ ( i - 1s ) % c_max_lines_stored ], c_console_text_settings );
+		y+= line_height;
+	}
+}
+
+var TextDrawer::Settings c_console_text_settings
+{
+	.scale= 2.0f,
+	.foreground_color[ 200u8, 200u8, 200u8, 255u8 ],
+	.background_color[ 0u8, 0u8, 0u8, 128u8 ],
+	.monospace= true,
+};
+
+var TextDrawer::Settings c_console_input_line_text_settings
+{
+	.scale= c_console_text_settings.scale,
+	.foreground_color[ 230u8, 230u8, 140u8, 255u8 ],
+	.background_color= c_console_text_settings.background_color,
+	.monospace= c_console_text_settings.monospace,
+};
+
+} // namespace PM

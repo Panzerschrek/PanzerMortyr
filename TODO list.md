@@ -76,6 +76,9 @@ PanzerMortyr general:
 * Share resources (like map data, models if necessary) among server and client code.
 * Cache or even preload weapon models to avoid reloading them after level transition.
 * Handle missing config, font, map and other files properly instead of triggering "halt".
+* Display console background image.
+* Allow changing settings from console (including auto-completion of setting keys).
+* Allow writing into console within command processing methods.
 
 PanzerMortyr game logic:
 
