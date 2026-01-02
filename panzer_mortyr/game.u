@@ -91,6 +91,7 @@ fn Game::TeleportToMap( mut this, u32 map_index )
 					.current_operation=start_operation,
 					.num_steps_since_operation_start= 0u,
 					.has_seen_player_in_current_operation= false,
+					.player_is_inside_shooting_zone= false,
 					.frame= 0u, // Set exact frame later.
 				} );
 		}
@@ -179,6 +180,14 @@ fn Game::process_trigger_player_see( mut this )
 	}
 }
 
+fn Game::process_trigger_player_in_shooting_zone( mut this )
+{
+	foreach( &mut entity : entities_ )
+	{
+		entity.player_is_inside_shooting_zone= true;
+	}
+}
+
 fn Game::ProcessStep( mut this )
 {
 	if( entities_description_.empty() )
@@ -199,32 +208,47 @@ fn Game::ProcessStep( mut this )
 		{
 			var EntitiesDescription::Operation& operation= entity_description.operations[ entity.current_operation ];
 
-			var u32 mut next_operation= 0xFFFFFFFFu;
 
 			// TODO - determine exact priorities of different operation transition conditions.
 
 			if_var( &operation_control : operation.operation_control )
 			{
-				if_var( &player_visible : operation_control.player_visible )
+				var u32 mut next_operation= 0xFFFFFFFFu;
+
 				{
-					if( entity.has_seen_player_in_current_operation )
+					if_var( &player_visible : operation_control.player_visible )
 					{
-						next_operation= u32( player_visible[2] );
+						if( entity.has_seen_player_in_current_operation )
+						{
+							next_operation= u32( player_visible[2] );
+							break label operation_transition_conditions;
+						}
 					}
-				}
-				else if_var( & timeout : operation_control.timeout )
-				{
-					if( entity.num_steps_since_operation_start >= timeout[0] )
+					if_var( &inside_shooting_zone_b : operation_control.inside_shooting_zone_b )
 					{
-						next_operation= timeout[1];
+						if( entity.player_is_inside_shooting_zone )
+						{
+							next_operation= u32( inside_shooting_zone_b[2] );
+							break label operation_transition_conditions;
+						}
 					}
-				}
+					if_var( & timeout : operation_control.timeout )
+					{
+						// Timeout should be (generally) the last checked option.
+						if( entity.num_steps_since_operation_start >= timeout[0] )
+						{
+							next_operation= timeout[1];
+							break label operation_transition_conditions;
+						}
+					}
+				} label operation_transition_conditions
 
 				if( entity_description.operations.exists( next_operation ) )
 				{
 					entity.current_operation= next_operation;
 					entity.num_steps_since_operation_start= 0u;
 					entity.has_seen_player_in_current_operation= false;
+					entity.player_is_inside_shooting_zone= false;
 				}
 			}
 		}
