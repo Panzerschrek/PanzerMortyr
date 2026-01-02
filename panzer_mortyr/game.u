@@ -95,7 +95,7 @@ fn Game::TeleportToMap( mut this, u32 map_index )
 					.has_seen_player_in_current_operation= false,
 					.player_is_inside_shooting_zone= false,
 					.lost_energy_in_current_operation= false,
-					.frame= 0u, // Set exact frame later.
+					.animation_frames= zero_init, // Set exact frames later.
 				} );
 		}
 	}
@@ -142,21 +142,33 @@ fn Game::GetWorldDrawingInfo( this ) : WorldDrawingInfo
 
 			var EntitiesDescription::Operation& operation= entity_description.operations[ entity.current_operation ];
 
-			auto animation_opt= entities_description.animations.find( operation.forward_animation.animation_number );
-			if( animation_opt.empty() )
+			foreach( pair :
+				ust::array_view_imut</EntitiesDescription::OperationAnimationDescription/>( operation.animations ).iter().zip(
+					ust::array_view_imut</u32/>( entity.animation_frames ).iter() ) )
 			{
-				continue;
-			}
-			var EntitiesDescription::AnimationDescription& animation= animation_opt.try_deref();
+				var EntitiesDescription::OperationAnimationDescription& operation_animation_description= pair.first;
 
-			model_objects.push_back(
-				WorldDrawingInfo::ModelObject
+				if( operation_animation_description.num_steps == 0u )
 				{
-					.model_file_name= animation.model_file_name,
-					.position= entity.position,
-					.azimuth= entity.azimuth,
-					.frame= entity.frame,
-				} );
+					continue;
+				}
+
+				auto animation_opt= entities_description.animations.find( operation_animation_description.animation_number );
+				if( animation_opt.empty() )
+				{
+					continue;
+				}
+				var EntitiesDescription::AnimationDescription& animation= animation_opt.try_deref();
+
+				model_objects.push_back(
+					WorldDrawingInfo::ModelObject
+					{
+						.model_file_name= animation.model_file_name,
+						.position= entity.position,
+						.azimuth= entity.azimuth,
+						.frame= pair.second,
+					} );
+				}
 		}
 	}
 
@@ -299,14 +311,22 @@ fn Game::ProcessStep( mut this )
 		}
 
 		// Calculate current frame based on animation params.
+		// TODO - perform different animation logic for different animation kinds.
 
 		var EntitiesDescription::Operation& operation= entities_description.entities[ entity.kind ].operations[ entity.current_operation ];
 
-		var u32 animation_step=
-			operation.forward_animation.start_step +
-			entity.num_steps_since_operation_start % ust::max( 1u, operation.forward_animation.num_steps );
+		foreach( pair :
+			ust::array_view_imut</EntitiesDescription::OperationAnimationDescription/>( operation.animations ).iter().zip(
+				ust::array_view_mut</u32/>( entity.animation_frames ).iter() ) )
+		{
+			var EntitiesDescription::OperationAnimationDescription& operation_animation_description= pair.first;
 
-		entity.frame= animation_step / c_num_steps_per_animation_frame;
+			var u32 animation_step=
+				operation_animation_description.start_step +
+				entity.num_steps_since_operation_start % ust::max( 1u, operation_animation_description.num_steps );
+
+			pair.second= animation_step / c_num_steps_per_animation_frame;
+		}
 	}
 }
 
