@@ -90,6 +90,7 @@ fn Game::TeleportToMap( mut this, u32 map_index )
 					.azimuth( f32( in_entity.data[4] ) * ( -c_tau / 1024.0f ) ),
 					.current_operation=start_operation,
 					.num_steps_since_operation_start= 0u,
+					.has_seen_player_in_current_operation= false,
 					.frame= 0u, // Set exact frame later.
 				} );
 		}
@@ -170,6 +171,14 @@ fn Game::process_reset_position( mut this )
 	camera_controller_= CameraController( Vec3f( 0.0f, 0.0f, 0.0f ) );
 }
 
+fn Game::process_trigger_player_see( mut this )
+{
+	foreach( &mut entity : entities_ )
+	{
+		entity.has_seen_player_in_current_operation= true;
+	}
+}
+
 fn Game::ProcessStep( mut this )
 {
 	if( entities_description_.empty() )
@@ -182,6 +191,28 @@ fn Game::ProcessStep( mut this )
 	foreach( &mut entity : entities_ )
 	{
 		++entity.num_steps_since_operation_start;
+
+		var EntitiesDescription::EntityDescription& entity_description= entities_description.entities[ entity.kind ];
+
+		{
+			var EntitiesDescription::Operation& operation= entity_description.operations[ entity.current_operation ];
+			if_var( &operation_control : operation.operation_control )
+			{
+				if_var( &player_visible : operation_control.player_visible )
+				{
+					if( entity.has_seen_player_in_current_operation )
+					{
+						var u32 next_operation= u32( player_visible[2] );
+						if( entity_description.operations.exists( next_operation ) )
+						{
+							entity.current_operation= next_operation;
+							entity.num_steps_since_operation_start= 0u;
+							entity.has_seen_player_in_current_operation= false;
+						}
+					}
+				}
+			}
+		}
 
 		var EntitiesDescription::Operation& operation= entities_description.entities[ entity.kind ].operations[ entity.current_operation ];
 		var u32 start_frame= operation.forward_animation.start_step / c_num_animation_frames_per_step;
