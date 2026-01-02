@@ -33,7 +33,6 @@ fn Game::TeleportToMap( mut this, u32 map_index )
 	}
 
 	entities_description_.reset();
-	zpoz_data_.reset();
 
 	auto mut lock= caching_game_resources_loader_ptr_.lock_mut();
 	var CachingGameResourcesLoader &mut caching_game_resources_loader= lock.deref();
@@ -53,7 +52,43 @@ fn Game::TeleportToMap( mut this, u32 map_index )
 
 	entities_description_= caching_game_resources_loader.LoadEntitiesDescription( entities_info_file );
 
-	zpoz_data_= caching_game_resources_loader.LoadZpozFile( current_map_index_ );
+	var GameResourcePtr</ZpozData/> zpoz_data= caching_game_resources_loader.LoadZpozFile( current_map_index_ );
+
+	entities_.clear();
+
+	if_var( &entities_description : entities_description_ )
+	{
+		foreach( &in_entity : zpoz_data.deref().entities )
+		{
+			if( in_entity.alive_flag == 0u16 )
+			{
+				continue;
+			}
+
+			var u32 start_operation= 0u;  // Start with operation 0.
+			if_var( &entity_description : entities_description.entities.find( u32( in_entity.kind ) ) )
+			{
+				if( !entity_description.operations.exists( start_operation ) )
+				{
+					continue;
+				}
+			}
+			else
+			{
+				continue;
+			}
+
+			entities_.push_back(
+				EntityState
+				{
+					.kind( in_entity.kind ),
+					.position( f32( in_entity.position[0] ), f32( in_entity.position[1] ), f32( in_entity.position[2] ) ),
+					.azimuth( f32( in_entity.data[4] ) * ( -c_tau / 1024.0f ) ),
+					.current_operation=start_operation,
+					.frame= 0u, // Set exact frame later.
+				} );
+		}
+	}
 }
 
 fn Game::Update( mut this, f32 time_delta_s, ust::array_view_imut</bool/> keyboard_state )
@@ -65,31 +100,21 @@ fn Game::GetWorldDrawingInfo( this ) : WorldDrawingInfo
 {
 	var ust::vector</WorldDrawingInfo::ModelObject/> mut model_objects;
 
-	if( !zpoz_data_.empty() && !entities_description_.empty() )
+	if( !entities_description_.empty() )
 	{
 		var EntitiesDescription& entities_description= entities_description_.try_deref();
 
-		foreach( &entity : zpoz_data_.try_deref().entities )
+		foreach( &entity : entities_ )
 		{
-			if( entity.alive_flag == 0u16 )
-			{
-				continue;
-			}
+			var EntitiesDescription::EntityDescription& entity_description= entities_description.entities[ entity.kind ];
 
-			auto entity_description_opt= entities_description.entities.find( u32( entity.kind ) );
-			if( entity_description_opt.empty() )
-			{
-				continue;
-			}
-			var EntitiesDescription::EntityDescription& entity_description= entity_description_opt.try_deref();
-
-			auto operation_opt= entity_description.operations.find( 0u );
+			auto operation_opt= entity_description.operations.find( entity.current_operation );
 			if( operation_opt.empty() )
 			{
 				continue;
 			}
 
-			var EntitiesDescription::Operation& operation= operation_opt.try_deref();
+			var EntitiesDescription::Operation& operation= entity_description.operations[ entity.current_operation ];
 
 			auto animation_opt= entities_description.animations.find( operation.forward_animation.animation_number );
 			if( animation_opt.empty() )
@@ -102,9 +127,9 @@ fn Game::GetWorldDrawingInfo( this ) : WorldDrawingInfo
 				WorldDrawingInfo::ModelObject
 				{
 					.model_file_name= animation.model_file_name,
-					.position( f32( entity.position[0] ), f32( entity.position[1] ), f32( entity.position[2] ) ),
-					.azimuth= f32( entity.data[4] ) * ( -c_tau / 1024.0f ),
-					.frame= 103u, // Some dummy value.
+					.position= entity.position,
+					.azimuth= entity.azimuth,
+					.frame= entity.frame,
 				} );
 		}
 	}
