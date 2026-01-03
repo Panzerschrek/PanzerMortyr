@@ -14,6 +14,7 @@ fn ParseEntitiesDescriptionFile( ust::string_view8 file_contents ) : EntitiesDes
 	var ust::optional</ tup[ u32, EntitiesDescription::Operation ] /> mut current_operation;
 	var ust::optional</ EntitiesDescription::Operation::AnimationKind /> mut current_operation_animation_kind;
 	var CurrentOperationStructCzas mut current_operation_struct_czas= CurrentOperationStructCzas::None;
+	var CurrentOperationStructPrzedmiot mut current_operation_struct_przedmiot= CurrentOperationStructPrzedmiot::None;
 
 	foreach( line : ust::wrap_raw_iterator( LinesRawIterator( file_contents ) ) )
 	{
@@ -341,6 +342,7 @@ fn ParseEntitiesDescriptionFile( ust::string_view8 file_contents ) : EntitiesDes
 					current_operation= ust::make_tuple( n, EntitiesDescription::Operation{} );
 					current_operation_animation_kind= ust::null_optional;
 					current_operation_struct_czas= CurrentOperationStructCzas::None;
+					current_operation_struct_przedmiot= CurrentOperationStructPrzedmiot::None;
 				}
 			}
 		}
@@ -406,6 +408,7 @@ fn ParseEntitiesDescriptionFile( ust::string_view8 file_contents ) : EntitiesDes
 			}
 
 			current_operation.try_deref()[1].operation_control= EntitiesDescription::OperationControl{};
+			current_operation_struct_przedmiot= CurrentOperationStructPrzedmiot::OperationControl;
 		}
 		else if( first_word == "jesli_zyje" )
 		{
@@ -436,6 +439,16 @@ fn ParseEntitiesDescriptionFile( ust::string_view8 file_contents ) : EntitiesDes
 
 			current_operation.try_deref()[1].supply_drop= EntitiesDescription::SupplyDrop{};
 			current_operation_struct_czas= CurrentOperationStructCzas::SupplyDrop;
+		}
+		else if( first_word == "zawartosc_skrzynki" )
+		{
+				if( current_operation.empty() )
+			{
+				continue;
+			}
+
+			current_operation.try_deref()[1].zawartosc_skrzynki= EntitiesDescription::ZawartoscSkrzynki{};
+			current_operation_struct_przedmiot= CurrentOperationStructPrzedmiot::ZawartoscSkrzynki;
 		}
 		else if( first_word == "anim_nr" )
 		{
@@ -667,25 +680,6 @@ fn ParseEntitiesDescriptionFile( ust::string_view8 file_contents ) : EntitiesDes
 				}
 			}
 		}
-		else if( first_word == "przedmiot" )
-		{
-			if_var( &mut o : current_operation )
-			{
-				if_var( &mut operation_control : o[1].operation_control )
-				{
-					for( auto mut i= 0s; i < 5s; ++i )
-					{
-						if_var( &s : words_it.next() )
-						{
-							if_var( n : ust::parse_integer_exact</i32/>( s ) )
-							{
-								operation_control.item[i]= n;
-							}
-						}
-					}
-				}
-			}
-		}
 		else if( first_word == "w_zasiegu_strzalu_b" )
 		{
 			if_var( &mut o : current_operation )
@@ -828,6 +822,44 @@ fn ParseEntitiesDescriptionFile( ust::string_view8 file_contents ) : EntitiesDes
 				},
 			}
 		}
+		else if( first_word == "przedmiot" )
+		{
+			if( current_operation.empty() )
+			{
+				continue;
+			}
+
+			switch( current_operation_struct_przedmiot )
+			{
+				CurrentOperationStructPrzedmiot::None -> {},
+				CurrentOperationStructPrzedmiot::OperationControl ->
+				{
+					if_var( &mut operation_control : current_operation.try_deref()[1].operation_control )
+					{
+						foreach( &mut item_num : operation_control.item )
+						{
+							if_var( &s : words_it.next() )
+							{
+								if_var( n : ust::parse_integer_exact</i32/>( s ) )
+								{
+									item_num= n;
+								}
+							}
+						}
+					}
+				},
+				CurrentOperationStructPrzedmiot::ZawartoscSkrzynki ->
+				{
+					if_var( &mut zawartosc_skrzynki : current_operation.try_deref()[1].zawartosc_skrzynki )
+					{
+						if_var( &s : words_it.next() )
+						{
+							zawartosc_skrzynki.przedmiot= s;
+						}
+					}
+				}
+			}
+		}
 		else if( first_word == "ob_specjalny" )
 		{
 			if_var( &mut operation : current_operation )
@@ -839,6 +871,100 @@ fn ParseEntitiesDescriptionFile( ust::string_view8 file_contents ) : EntitiesDes
 						if_var( n : ust::parse_integer_exact</u32/>( s ) )
 						{
 							supply_drop.special_object= n;
+						}
+					}
+				}
+			}
+		}
+		else if( first_word == "ilosc" )
+		{
+			// TODO - handle this word in different contexts.
+
+			if_var( &mut operation : current_operation )
+			{
+				if_var( &mut zawartosc_skrzynki : operation[1].zawartosc_skrzynki )
+				{
+					if_var( &s : words_it.next() )
+					{
+						if_var( n : ust::parse_integer_exact</u32/>( s ) )
+						{
+							zawartosc_skrzynki.ilosc= n;
+						}
+					}
+				}
+			}
+		}
+		else if( first_word == "aktywizacja" )
+		{
+			if_var( &mut operation : current_operation )
+			{
+				if_var( &mut zawartosc_skrzynki : operation[1].zawartosc_skrzynki )
+				{
+					if_var( &s : words_it.next() )
+					{
+						if_var( n : ust::parse_integer_exact</u32/>( s ) )
+						{
+							zawartosc_skrzynki.aktywizacja= n;
+						}
+					}
+
+					if( words_it.next() == ust::string_view8( "ammotyp" ) )
+					{
+						if_var( &s : words_it.next() )
+						{
+							if_var( n : ust::parse_integer_exact</i32/>( s ) )
+							{
+								zawartosc_skrzynki.ammotyp= n;
+							}
+						}
+					}
+				}
+			}
+		}
+		else if( first_word == "ammo" )
+		{
+			if_var( &mut operation : current_operation )
+			{
+				if_var( &mut zawartosc_skrzynki : operation[1].zawartosc_skrzynki )
+				{
+					if_var( &s : words_it.next() )
+					{
+						if_var( n : ust::parse_integer_exact</u32/>( s ) )
+						{
+							zawartosc_skrzynki.ammo= n;
+						}
+					}
+
+					if( words_it.next() == ust::string_view8( "efekt" ) )
+					{
+						if_var( &s : words_it.next() )
+						{
+							if_var( n : ust::parse_integer_exact</u32/>( s ) )
+							{
+								zawartosc_skrzynki.efekt= n;
+							}
+						}
+					}
+
+					if( words_it.next() == ust::string_view8( "klucz" ) )
+					{
+						if_var( &s : words_it.next() )
+						{
+							if_var( n : ust::parse_integer_exact</u32/>( s ) )
+							{
+								zawartosc_skrzynki.klucz= n;
+							}
+						}
+					}
+
+					if( words_it.next() == ust::string_view8( "zapas" ) )
+					{
+						if_var( &s : words_it.next() )
+						{
+							if_var( n : ust::parse_integer_exact</u32/>( s ) )
+							{
+								zawartosc_skrzynki.zapas= n;
+							}
 						}
 					}
 				}
@@ -870,6 +996,13 @@ enum CurrentOperationStructCzas
 	IfAlive,
 	Stopper,
 	SupplyDrop,
+}
+
+enum CurrentOperationStructPrzedmiot
+{
+	None,
+	OperationControl,
+	ZawartoscSkrzynki,
 }
 
 } // namespace PM
