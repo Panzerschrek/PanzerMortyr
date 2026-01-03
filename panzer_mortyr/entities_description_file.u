@@ -10,14 +10,24 @@ fn ParseEntitiesDescriptionFile( ust::string_view8 file_contents ) : EntitiesDes
 {
 	var EntitiesDescription mut entities_description;
 
-	var ust::optional</ tup[ u32, EntitiesDescription::EntityDescription ] /> mut current_entity;
-	var ust::optional</ tup[ u32, EntitiesDescription::Operation ] /> mut current_operation;
-	var ust::optional</ EntitiesDescription::Operation::AnimationKind /> mut current_operation_animation_kind;
-	var CurrentOperationStructCzas mut current_operation_struct_czas= CurrentOperationStructCzas::None;
-	var CurrentOperationStructPrzedmiot mut current_operation_struct_przedmiot= CurrentOperationStructPrzedmiot::None;
-
-	foreach( line : ust::wrap_raw_iterator( LinesRawIterator( file_contents ) ) )
+	var ParsingState mut parsing_state
 	{
+		.it= ust::wrap_raw_iterator( LinesRawIterator( file_contents ) ),
+	};
+
+	parsing_state.current_line= parsing_state.it.next().deref_or( ust::string_view8() );
+
+	loop
+	{
+		auto line_opt= parsing_state.it.next();
+		if( line_opt.empty() )
+		{
+			break;
+		}
+
+		var ust::string_view8 line= line_opt.try_deref();
+		parsing_state.current_line= line;
+
 		auto mut words_it= ust::wrap_raw_iterator( WordsIterator( line ) );
 
 		auto first_word_opt= words_it.next();
@@ -30,979 +40,17 @@ fn ParseEntitiesDescriptionFile( ust::string_view8 file_contents ) : EntitiesDes
 
 		if( first_word == "plik_anim" )
 		{
-			if( words_it.next() != ust::string_view8( "=" ) )
-			{
-				continue;
-			}
-
-			auto model_file_name_opt= words_it.next();
-			if( model_file_name_opt.empty() )
-			{
-				continue;
-			}
-
-			var ust::string_view8 model_file_name= model_file_name_opt.try_deref();
-
-			auto animation_number_str_opt= words_it.next();
-			if( animation_number_str_opt.empty() )
-			{
-				continue;
-			}
-
-			auto animation_number_opt= ust::parse_integer_exact</u32/>( animation_number_str_opt.try_deref() );
-			if( animation_number_opt.empty() )
-			{
-				continue;
-			}
-
-			var u32 animation_number= animation_number_opt.try_deref();
-
-			auto entity_number_str_opt= words_it.next();
-			if( entity_number_str_opt.empty() )
-			{
-				continue;
-			}
-
-			auto entity_number_opt= ust::parse_integer_exact</i32/>( entity_number_str_opt.try_deref() );
-			if( entity_number_opt.empty() )
-			{
-				continue;
-			}
-
-			var i32 entity_number= entity_number_opt.try_deref();
-
-			entities_description.animations.insert_new(
-				animation_number,
-				EntitiesDescription::AnimationDescription
-				{
-					.model_file_name= ConvertStringToResourceString( model_file_name ),
-					.entity_index= entity_number,
-				} );
+			auto [ animation_index, mut animation ]= ParseAnimation( parsing_state );
+			entities_description.animations.insert_new( animation_index, move( animation ) );
 		}
 		else if( first_word == "aktor" )
 		{
-			if( !current_entity.empty() )
-			{
-				auto [ id, mut entity ] = current_entity.try_take();
-
-				if( !current_operation.empty() )
-				{
-					auto [ operation_id, mut operation ]= current_operation.try_take();
-					entity.operations.insert_new( operation_id, move(operation) );
-				}
-
-				entities_description.entities.insert_new( id, move(entity) );
-			}
-
-			var u32 mut entity_index= 0u;
-
-			var EntitiesDescription::EntityDescription mut new_entity;
-
-			if_var( &num_str : words_it.next() )
-			{
-				if_var( n : ust::parse_integer_exact</u32/>( num_str ) )
-				{
-					entity_index= n;
-				}
-				else
-				{
-					continue;
-				}
-			}
-			else
-			{
-				continue;
-			}
-
-			if_var( &num_str : words_it.next() )
-			{
-				if_var( n : ust::parse_integer_exact</u32/>( num_str ) )
-				{
-					new_entity.energy= n;
-				}
-				else
-				{
-					continue;
-				}
-			}
-			else
-			{
-				continue;
-			}
-
-			if_var( &num_str : words_it.next() )
-			{
-				if_var( n : ust::parse_integer_exact</u32/>( num_str ) )
-				{
-					new_entity.aggression= n;
-				}
-				else
-				{
-					continue;
-				}
-			}
-			else
-			{
-				continue;
-			}
-
-			if_var( &num_str : words_it.next() )
-			{
-				if_var( n : ust::parse_integer_exact</u32/>( num_str ) )
-				{
-					new_entity.podatn= n;
-				}
-				else
-				{
-					continue;
-				}
-			}
-			else
-			{
-				continue;
-			}
-
-			if_var( &num_str : words_it.next() )
-			{
-				if_var( n : ust::parse_integer_exact</u32/>( num_str ) )
-				{
-					new_entity.osona= n;
-				}
-				else
-				{
-					continue;
-				}
-			}
-			else
-			{
-				continue;
-			}
-
-			if_var( &num_str : words_it.next() )
-			{
-				if_var( n : ust::parse_integer_exact</u32/>( num_str ) )
-				{
-					new_entity.mode= n;
-				}
-				else
-				{
-					continue;
-				}
-			}
-			else
-			{
-				continue;
-			}
-
-			if_var( &s : words_it.next() )
-			{
-				new_entity.name= s;
-			}
-			else
-			{
-				continue;
-			}
-
-			current_entity= ust::make_tuple( entity_index, move(new_entity) );
+			auto [ entity_index, mut entity_description ]= ParseEntity( parsing_state );
+			entities_description.entities.insert_new( entity_index, move( entity_description ) );
 		}
-		else if( first_word == "panika" )
-		{
-			if( !current_entity.empty() )
-			{
-				if_var( &num_str : words_it.next() )
-				{
-					if_var( n : ust::parse_integer_exact</u32/>( num_str ) )
-					{
-						current_entity.try_deref()[1].panic= n;
-					}
-				}
-			}
-		}
-		else if( first_word == "szukaj_apteczek" )
-		{
-			if( !current_entity.empty() )
-			{
-				if_var( &num_str : words_it.next() )
-				{
-					if_var( n : ust::parse_integer_exact</u32/>( num_str ) )
-					{
-						current_entity.try_deref()[1].search_for_health_kits= n;
-					}
-				}
-			}
-		}
-		else if( first_word == "szukaj_amunicji" )
-		{
-			if( !current_entity.empty() )
-			{
-				if_var( &num_str : words_it.next() )
-				{
-					if_var( n : ust::parse_integer_exact</u32/>( num_str ) )
-					{
-						current_entity.try_deref()[1].search_for_ammunition= n;
-					}
-				}
-			}
-		}
-		else if( first_word == "ilosc_amunicji" )
-		{
-			if( !current_entity.empty() )
-			{
-				if_var( &num_str : words_it.next() )
-				{
-					if_var( n : ust::parse_integer_exact</u32/>( num_str ) )
-					{
-						current_entity.try_deref()[1].ammunition= n;
-					}
-				}
-			}
-		}
-		else if( first_word == "losowosc_zranienia" )
-		{
-			if( !current_entity.empty() )
-			{
-				if_var( &num_str : words_it.next() )
-				{
-					if_var( n : ust::parse_integer_exact</u32/>( num_str ) )
-					{
-						current_entity.try_deref()[1].damage_randomness= n;
-					}
-				}
-			}
-		}
-		else if( first_word == "ponowny_atak" )
-		{
-			if( !current_entity.empty() )
-			{
-				if_var( &num_str : words_it.next() )
-				{
-					if_var( n : ust::parse_integer_exact</u32/>( num_str ) )
-					{
-						current_entity.try_deref()[1].another_attack= n;
-					}
-				}
-			}
-		}
-		else if( first_word == "trzymaj_dystans" )
-		{
-			if( !current_entity.empty() )
-			{
-				if_var( &num_str : words_it.next() )
-				{
-					if_var( n : ust::parse_integer_exact</u32/>( num_str ) )
-					{
-						current_entity.try_deref()[1].hold_on_distance= n;
-					}
-				}
-			}
-		}
-		else if( first_word == "zabron_redukcji" )
-		{
-			if( !current_entity.empty() )
-			{
-				if_var( &num_str : words_it.next() )
-				{
-					if_var( n : ust::parse_integer_exact</u32/>( num_str ) )
-					{
-						current_entity.try_deref()[1].disable_reduction= n;
-					}
-				}
-			}
-		}
-		else if( first_word == "standardowe_odglosy" )
-		{
-			if( !current_entity.empty() )
-			{
-				if_var( &num_str : words_it.next() )
-				{
-					if_var( n : ust::parse_integer_exact</u32/>( num_str ) )
-					{
-						current_entity.try_deref()[1].standard_sounds= n;
-					}
-				}
-			}
-		}
-		else if( first_word == "operacja" )
-		{
-			if( current_entity.empty() )
-			{
-				continue;
-			}
-
-			if( !current_operation.empty() )
-			{
-				auto [ id, mut operation ]= current_operation.try_take();
-				current_entity.try_deref()[1].operations.insert_new( id, move(operation) );
-			}
-
-			if_var( &num_str : words_it.next() )
-			{
-				if_var( n : ust::parse_integer_exact</u32/>( num_str ) )
-				{
-					current_operation= ust::make_tuple( n, EntitiesDescription::Operation{} );
-					current_operation_animation_kind= ust::null_optional;
-					current_operation_struct_czas= CurrentOperationStructCzas::None;
-					current_operation_struct_przedmiot= CurrentOperationStructPrzedmiot::None;
-				}
-			}
-		}
-		else if( first_word == "animacja_naprzod" )
-		{
-			if( current_operation.empty() )
-			{
-				continue;
-			}
-
-			current_operation_animation_kind= EntitiesDescription::Operation::AnimationKind::Forward;
-		}
-		else if( first_word == "animacja_kierunkowa" )
-		{
-			if( current_operation.empty() )
-			{
-				continue;
-			}
-
-			current_operation_animation_kind= EntitiesDescription::Operation::AnimationKind::Rotation;
-		}
-		else if( first_word == "animacja_beczki" )
-		{
-			if( current_operation.empty() )
-			{
-				continue;
-			}
-
-			current_operation_animation_kind= EntitiesDescription::Operation::AnimationKind::Barrel;
-		}
-		else if( first_word == "animacja_szkielka" )
-		{
-			if( current_operation.empty() )
-			{
-				continue;
-			}
-
-			current_operation_animation_kind= EntitiesDescription::Operation::AnimationKind::Slide;
-		}
-		else if( first_word == "animacja_ikony" )
-		{
-			if( current_operation.empty() )
-			{
-				continue;
-			}
-
-			current_operation_animation_kind= EntitiesDescription::Operation::AnimationKind::Icon;
-		}
-		else if( first_word == "krajobraz" )
-		{
-			if( current_operation.empty() )
-			{
-				continue;
-			}
-
-			current_operation_animation_kind= EntitiesDescription::Operation::AnimationKind::Landscape;
-		}
-		else if( first_word == "sternik" )
-		{
-			if( current_operation.empty() )
-			{
-				continue;
-			}
-
-			current_operation.try_deref()[1].operation_control= EntitiesDescription::OperationControl{};
-			current_operation_struct_przedmiot= CurrentOperationStructPrzedmiot::OperationControl;
-		}
-		else if( first_word == "jesli_zyje" )
-		{
-			if( current_operation.empty() )
-			{
-				continue;
-			}
-
-			current_operation.try_deref()[1].if_alive= EntitiesDescription::IfAlive{};
-			current_operation_struct_czas= CurrentOperationStructCzas::IfAlive;
-		}
-		else if( first_word == "stoper" )
-		{
-			if( current_operation.empty() )
-			{
-				continue;
-			}
-
-			current_operation.try_deref()[1].stopper= EntitiesDescription::Stopper{};
-			current_operation_struct_czas= CurrentOperationStructCzas::Stopper;
-		}
-		else if( first_word == "emisja_zapasow" )
-		{
-			if( current_operation.empty() )
-			{
-				continue;
-			}
-
-			current_operation.try_deref()[1].supply_drop= EntitiesDescription::SupplyDrop{};
-			current_operation_struct_czas= CurrentOperationStructCzas::SupplyDrop;
-		}
-		else if( first_word == "zawartosc_skrzynki" )
-		{
-			if( current_operation.empty() )
-			{
-				continue;
-			}
-
-			current_operation.try_deref()[1].box_contents= EntitiesDescription::BoxContents{};
-			current_operation_struct_przedmiot= CurrentOperationStructPrzedmiot::BoxContents;
-		}
-		else if( first_word == "anim_nr" )
-		{
-			if( current_operation.empty() || current_operation_animation_kind.empty() )
-			{
-				continue;
-			}
-
-			var EntitiesDescription::OperationAnimationDescription &mut operation_animation=
-				current_operation.try_deref()[1].animations[ size_type( current_operation_animation_kind.try_deref() ) ];
-
-			if_var( &num_str : words_it.next() )
-			{
-				if_var( n : ust::parse_integer_exact</u32/>( num_str ) )
-				{
-					operation_animation.animation_number= n;
-				}
-			}
-
-			if( words_it.next() != ust::string_view8( "start" ) )
-			{
-				continue;
-			}
-
-			if_var( &num_str : words_it.next() )
-			{
-				if_var( n : ust::parse_integer_exact</u32/>( num_str ) )
-				{
-					operation_animation.start_step= n;
-				}
-			}
-
-			if( words_it.next() != ust::string_view8( "liczba_obr" ) )
-			{
-				continue;
-			}
-
-			if_var( &num_str : words_it.next() )
-			{
-				if_var( n : ust::parse_integer_exact</u32/>( num_str ) )
-				{
-					operation_animation.num_steps= n;
-				}
-			}
-		}
-		else if( first_word == "add_x" )
-		{
-			if( current_operation.empty() || current_operation_animation_kind.empty() )
-			{
-				continue;
-			}
-
-			var EntitiesDescription::OperationAnimationDescription &mut operation_animation=
-				current_operation.try_deref()[1].animations[ size_type( current_operation_animation_kind.try_deref() ) ];
-
-			if_var( &num_str : words_it.next() )
-			{
-				if_var( n : ust::parse_integer_exact</i32/>( num_str ) )
-				{
-					operation_animation.add_x= n;
-				}
-			}
-
-			if( words_it.next() != ust::string_view8( "add_y" ) )
-			{
-				continue;
-			}
-
-			if_var( &num_str : words_it.next() )
-			{
-				if_var( n : ust::parse_integer_exact</i32/>( num_str ) )
-				{
-					operation_animation.add_y= n;
-				}
-			}
-
-			if( words_it.next() != ust::string_view8( "add_z" ) )
-			{
-				continue;
-			}
-
-			if_var( &num_str : words_it.next() )
-			{
-				if_var( n : ust::parse_integer_exact</i32/>( num_str ) )
-				{
-					operation_animation.add_z= n;
-				}
-			}
-		}
-		else if( first_word == "aktywnosc" )
-		{
-			if( current_operation.empty() || current_operation_animation_kind.empty() )
-			{
-				continue;
-			}
-
-			var EntitiesDescription::OperationAnimationDescription &mut operation_animation=
-				current_operation.try_deref()[1].animations[ size_type( current_operation_animation_kind.try_deref() ) ];
-
-			if_var( &num_str : words_it.next() )
-			{
-				if_var( n : ust::parse_integer_exact</u32/>( num_str ) )
-				{
-					operation_animation.activity= n;
-				}
-			}
-
-			if( words_it.next() != ust::string_view8( "maska" ) )
-			{
-				continue;
-			}
-
-			if_var( &num_str : words_it.next() )
-			{
-				if_var( n : ust::parse_integer_exact</u32/>( num_str ) )
-				{
-					operation_animation.mask= n;
-				}
-			}
-		}
-		else if( first_word == "tryb_pracy" )
-		{
-			if_var( &mut o : current_operation )
-			{
-				if_var( &mut operation_control : o[1].operation_control )
-				{
-					if_var( &s : words_it.next() )
-					{
-						if_var( n : ust::parse_integer_exact</u32/>( s ) )
-						{
-							operation_control.functioning_mode= n;
-						}
-					}
-				}
-			}
-		}
-		else if( first_word == "szybkosc" )
-		{
-			if_var( &mut o : current_operation )
-			{
-				if_var( &mut operation_control : o[1].operation_control )
-				{
-					if_var( &s : words_it.next() )
-					{
-						if_var( n : ust::parse_integer_exact</i32/>( s ) )
-						{
-							operation_control.speed= n;
-						}
-					}
-				}
-			}
-		}
-		else if( first_word == "obrot" )
-		{
-			if_var( &mut o : current_operation )
-			{
-				if_var( &mut operation_control : o[1].operation_control )
-				{
-					if_var( &s : words_it.next() )
-					{
-						if_var( n : ust::parse_integer_exact</u32/>( s ) )
-						{
-							operation_control.rotation= n;
-						}
-					}
-				}
-			}
-		}
-		else if( first_word == "gracz_widoczny" )
-		{
-			if_var( &mut o : current_operation )
-			{
-				if_var( &mut operation_control : o[1].operation_control )
-				{
-					var [ i32, 3 ] mut player_visible= zero_init;
-					for( auto mut i= 0s; i < 3s; ++i )
-					{
-						if_var( &s : words_it.next() )
-						{
-							if_var( n : ust::parse_integer_exact</i32/>( s ) )
-							{
-								player_visible[i]= n;
-							}
-						}
-					}
-					operation_control.player_visible= player_visible;
-				}
-			}
-		}
-		else if( first_word == "utrata_energi" )
-		{
-			if_var( &mut o : current_operation )
-			{
-				if_var( &mut operation_control : o[1].operation_control )
-				{
-					var [ i32, 3 ] mut energy_loss= zero_init;
-					for( auto mut i= 0s; i < 3s; ++i )
-					{
-						if_var( &s : words_it.next() )
-						{
-							if_var( n : ust::parse_integer_exact</i32/>( s ) )
-							{
-								energy_loss[i]= n;
-							}
-						}
-					}
-					operation_control.energy_loss= energy_loss;
-				}
-			}
-		}
-		else if( first_word == "timeout" )
-		{
-			if_var( &mut o : current_operation )
-			{
-				if_var( &mut operation_control : o[1].operation_control )
-				{
-					var [ u32, 2 ] mut timeout= zero_init;
-					for( auto mut i= 0s; i < 2s; ++i )
-					{
-						if_var( &s : words_it.next() )
-						{
-							if_var( n : ust::parse_integer_exact</u32/>( s ) )
-							{
-								timeout[i]= n;
-							}
-						}
-					}
-					operation_control.timeout= timeout;
-				}
-			}
-		}
-		else if( first_word == "w_zasiegu_strzalu_b" )
-		{
-			if_var( &mut o : current_operation )
-			{
-				if_var( &mut operation_control : o[1].operation_control )
-				{
-					var [ u32, 3 ] mut inside_shooting_zone_b= zero_init;
-					for( auto mut i= 0s; i < 3s; ++i )
-					{
-						if_var( &s : words_it.next() )
-						{
-							if_var( n : ust::parse_integer_exact</u32/>( s ) )
-							{
-								inside_shooting_zone_b[i]= n;
-							}
-						}
-					}
-					operation_control.inside_shooting_zone_b= inside_shooting_zone_b;
-				}
-			}
-		}
-		else if( first_word == "obrot_obiektu" )
-		{
-			if_var( &mut o : current_operation )
-			{
-				o[1].object_rotation= EntitiesDescription::ObjectRotation{};
-			}
-		}
-		else if( first_word == "rotacja" )
-		{
-			if_var( &mut o : current_operation )
-			{
-				if_var( &mut r : o[1].object_rotation )
-				{
-
-					if_var( &s : words_it.next() )
-					{
-						if_var( n : ust::parse_integer_exact</u32/>( s ) )
-						{
-							r.rotation= n;
-						}
-					}
-
-					if( words_it.next() == ust::string_view8( "czas" ) )
-					{
-						if_var( &s : words_it.next() )
-						{
-							if_var( n : ust::parse_integer_exact</u32/>( s ) )
-							{
-								r.time= n;
-							}
-						}
-					}
-					if( words_it.next() == ust::string_view8( "nowa_op" ) )
-					{
-						if_var( &s : words_it.next() )
-						{
-							if_var( n : ust::parse_integer_exact</u32/>( s ) )
-							{
-								r.new_operation= n;
-							}
-						}
-					}
-				}
-			}
-		}
-		else if( first_word == "czas" )
-		{
-			if( current_operation.empty() )
-			{
-				continue;
-			}
-
-			switch( current_operation_struct_czas )
-			{
-				CurrentOperationStructCzas::None -> {},
-				CurrentOperationStructCzas::IfAlive ->
-				{
-					if_var( &mut if_alive : current_operation.try_deref()[1].if_alive )
-					{
-						if_var( &s : words_it.next() )
-						{
-							if_var( n : ust::parse_integer_exact</u32/>( s ) )
-							{
-								if_alive.time= n;
-							}
-						}
-
-						foreach( &mut new_operation : if_alive.new_operation )
-						{
-							if( words_it.next() == ust::string_view8( "nowa_op" ) )
-							{
-								if_var( &s : words_it.next() )
-								{
-									if_var( n : ust::parse_integer_exact</u32/>( s ) )
-									{
-										new_operation= n;
-									}
-								}
-							}
-						}
-					}
-				},
-				CurrentOperationStructCzas::Stopper ->
-				{
-					if_var( &mut stopper : current_operation.try_deref()[1].stopper )
-					{
-						if_var( &s : words_it.next() )
-						{
-							if_var( n : ust::parse_integer_exact</u32/>( s ) )
-							{
-								stopper.time= n;
-							}
-						}
-
-						if( words_it.next() == ust::string_view8( "nowa_op" ) )
-						{
-							if_var( &s : words_it.next() )
-							{
-								if_var( n : ust::parse_integer_exact</u32/>( s ) )
-								{
-									stopper.new_operation= n;
-								}
-							}
-						}
-					}
-				},
-				CurrentOperationStructCzas::SupplyDrop ->
-				{
-					if_var( &mut supply_drop : current_operation.try_deref()[1].supply_drop )
-					{
-						if_var( &s : words_it.next() )
-						{
-							if_var( n : ust::parse_integer_exact</u32/>( s ) )
-							{
-								supply_drop.time= n;
-							}
-						}
-					}
-				},
-			}
-		}
-		else if( first_word == "przedmiot" )
-		{
-			if( current_operation.empty() )
-			{
-				continue;
-			}
-
-			switch( current_operation_struct_przedmiot )
-			{
-				CurrentOperationStructPrzedmiot::None -> {},
-				CurrentOperationStructPrzedmiot::OperationControl ->
-				{
-					if_var( &mut operation_control : current_operation.try_deref()[1].operation_control )
-					{
-						foreach( &mut item_num : operation_control.item )
-						{
-							if_var( &s : words_it.next() )
-							{
-								if_var( n : ust::parse_integer_exact</i32/>( s ) )
-								{
-									item_num= n;
-								}
-							}
-						}
-					}
-				},
-				CurrentOperationStructPrzedmiot::BoxContents ->
-				{
-					if_var( &mut box_contents : current_operation.try_deref()[1].box_contents )
-					{
-						if_var( &s : words_it.next() )
-						{
-							box_contents.item= s;
-						}
-					}
-				}
-			}
-		}
-		else if( first_word == "ob_specjalny" )
-		{
-			if_var( &mut operation : current_operation )
-			{
-				if_var( &mut supply_drop : operation[1].supply_drop )
-				{
-					if_var( &s : words_it.next() )
-					{
-						if_var( n : ust::parse_integer_exact</u32/>( s ) )
-						{
-							supply_drop.special_object= n;
-						}
-					}
-				}
-			}
-		}
-		else if( first_word == "ilosc" )
-		{
-			// TODO - handle this word in different contexts.
-
-			if_var( &mut operation : current_operation )
-			{
-				if_var( &mut box_contents : operation[1].box_contents )
-				{
-					if_var( &s : words_it.next() )
-					{
-						if_var( n : ust::parse_integer_exact</u32/>( s ) )
-						{
-							box_contents.amount= n;
-						}
-					}
-				}
-			}
-		}
-		else if( first_word == "aktywizacja" )
-		{
-			if_var( &mut operation : current_operation )
-			{
-				if_var( &mut box_contents : operation[1].box_contents )
-				{
-					if_var( &s : words_it.next() )
-					{
-						if_var( n : ust::parse_integer_exact</u32/>( s ) )
-						{
-							box_contents.activation= n;
-						}
-					}
-
-					if( words_it.next() == ust::string_view8( "ammotyp" ) )
-					{
-						if_var( &s : words_it.next() )
-						{
-							if_var( n : ust::parse_integer_exact</i32/>( s ) )
-							{
-								box_contents.ammo_type= n;
-							}
-						}
-					}
-				}
-			}
-		}
-		else if( first_word == "ammo" )
-		{
-			if_var( &mut operation : current_operation )
-			{
-				if_var( &mut box_contents : operation[1].box_contents )
-				{
-					if_var( &s : words_it.next() )
-					{
-						if_var( n : ust::parse_integer_exact</u32/>( s ) )
-						{
-							box_contents.ammo= n;
-						}
-					}
-
-					if( words_it.next() == ust::string_view8( "efekt" ) )
-					{
-						if_var( &s : words_it.next() )
-						{
-							if_var( n : ust::parse_integer_exact</u32/>( s ) )
-							{
-								box_contents.effect= n;
-							}
-						}
-					}
-
-					if( words_it.next() == ust::string_view8( "klucz" ) )
-					{
-						if_var( &s : words_it.next() )
-						{
-							if_var( n : ust::parse_integer_exact</u32/>( s ) )
-							{
-								box_contents.key= n;
-							}
-						}
-					}
-
-					if( words_it.next() == ust::string_view8( "zapas" ) )
-					{
-						if_var( &s : words_it.next() )
-						{
-							if_var( n : ust::parse_integer_exact</u32/>( s ) )
-							{
-								box_contents.stock= n;
-							}
-						}
-					}
-				}
-			}
-		}
-
-		// TODO - parse other kinds of information from this file, especially operation sub-structs.
-	}
-
-	if( !current_entity.empty() )
-	{
-		auto [ id, mut entity ] = current_entity.try_take();
-
-		if( !current_operation.empty() )
-		{
-			auto [ operation_id, mut operation ]= current_operation.try_take();
-			entity.operations.insert_new( operation_id, move(operation) );
-		}
-
-		entities_description.entities.insert_new( id, move(entity) );
 	}
 
 	return entities_description;
-}
-
-enum CurrentOperationStructCzas
-{
-	None,
-	IfAlive,
-	Stopper,
-	SupplyDrop,
-}
-
-enum CurrentOperationStructPrzedmiot
-{
-	None,
-	OperationControl,
-	BoxContents,
 }
 
 struct ParsingState
@@ -1019,7 +67,7 @@ fn ParseAnimation( ParsingState &mut parsing_state ) : tup[ u32, EntitiesDescrip
 
 	auto mut words_it= ust::wrap_raw_iterator( WordsIterator( parsing_state.current_line ) );
 
-	if( words_it.next() == ust::string_view8( "=" ) )
+	if( words_it.next() == ust::string_view8( "plik_anim" ) && words_it.next() == ust::string_view8( "=" ) )
 	{
 		if_var( s : words_it.next() )
 		{
@@ -1057,57 +105,60 @@ fn ParseEntity( ParsingState &mut parsing_state ) : tup[ u32, EntitiesDescriptio
 	{
 		auto mut words_it= ust::wrap_raw_iterator( WordsIterator( parsing_state.current_line ) );
 
-		if_var( &num_str : words_it.next() )
+		if( words_it.next() == ust::string_view8( "aktor" ) )
 		{
-			if_var( n : ust::parse_integer_exact</u32/>( num_str ) )
+			if_var( &num_str : words_it.next() )
 			{
-				entity_index= n;
+				if_var( n : ust::parse_integer_exact</u32/>( num_str ) )
+				{
+					entity_index= n;
+				}
 			}
-		}
 
-		if_var( &num_str : words_it.next() )
-		{
-			if_var( n : ust::parse_integer_exact</u32/>( num_str ) )
+			if_var( &num_str : words_it.next() )
 			{
-				entity_description.energy= n;
+				if_var( n : ust::parse_integer_exact</u32/>( num_str ) )
+				{
+					entity_description.energy= n;
+				}
 			}
-		}
 
-		if_var( &num_str : words_it.next() )
-		{
-			if_var( n : ust::parse_integer_exact</u32/>( num_str ) )
+			if_var( &num_str : words_it.next() )
 			{
-				entity_description.aggression= n;
+				if_var( n : ust::parse_integer_exact</u32/>( num_str ) )
+				{
+					entity_description.aggression= n;
+				}
 			}
-		}
 
-		if_var( &num_str : words_it.next() )
-		{
-			if_var( n : ust::parse_integer_exact</u32/>( num_str ) )
+			if_var( &num_str : words_it.next() )
 			{
-				entity_description.podatn= n;
+				if_var( n : ust::parse_integer_exact</u32/>( num_str ) )
+				{
+					entity_description.podatn= n;
+				}
 			}
-		}
 
-		if_var( &num_str : words_it.next() )
-		{
-			if_var( n : ust::parse_integer_exact</u32/>( num_str ) )
+			if_var( &num_str : words_it.next() )
 			{
-				entity_description.osona= n;
+				if_var( n : ust::parse_integer_exact</u32/>( num_str ) )
+				{
+					entity_description.osona= n;
+				}
 			}
-		}
 
-		if_var( &num_str : words_it.next() )
-		{
-			if_var( n : ust::parse_integer_exact</u32/>( num_str ) )
+			if_var( &num_str : words_it.next() )
 			{
-				entity_description.mode= n;
+				if_var( n : ust::parse_integer_exact</u32/>( num_str ) )
+				{
+					entity_description.mode= n;
+				}
 			}
-		}
 
-		if_var( &s : words_it.next() )
-		{
-			entity_description.name= s;
+			if_var( &s : words_it.next() )
+			{
+				entity_description.name= s;
+			}
 		}
 	}
 
