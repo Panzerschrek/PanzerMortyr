@@ -69,10 +69,9 @@ fn Game::TeleportToMap( mut this, u32 map_index )
 				continue;
 			}
 
-			var u32 start_operation= 0u; // Start with operation 0.
 			if_var( &entity_description : entities_description.entities.find( u32( in_entity.kind ) ) )
 			{
-				if( !entity_description.operations.exists( start_operation ) )
+				if( !entity_description.operations.exists( c_start_operation ) )
 				{
 					continue;
 				}
@@ -88,7 +87,7 @@ fn Game::TeleportToMap( mut this, u32 map_index )
 					.kind( in_entity.kind ),
 					.position( f32( in_entity.position[0] ), f32( in_entity.position[1] ), f32( in_entity.position[2] ) ),
 					.azimuth( Convert1024Angle( f32( in_entity.data[4] ) ) ),
-					.current_operation= start_operation,
+					.current_operation= c_start_operation,
 					.next_operation= ~0u,
 					.num_steps_since_operation_start= 0u,
 					.num_steps_left_to_next_operation= ~0u,
@@ -324,6 +323,38 @@ fn Game::ProcessStep( mut this )
 				// TODO - handle here possible operation transition.
 			}
 
+			if_var( &supply_drop : operation.supply_drop )
+			{
+				// Emit new entity if it's dropped.
+				// This will increase the total amout of entities, but it's not a big deal,
+				// since (generally) items are dropped only once and dropped items can't drop other items.
+
+				if( entity.num_steps_since_operation_start == supply_drop.time )
+				{
+					if_var( &new_entity_description : entities_description.entities.find( supply_drop.special_object ) )
+					{
+						if( new_entity_description.operations.exists( c_start_operation ) )
+						{
+							new_entities_.push_back(
+								EntityState
+								{
+									.kind= supply_drop.special_object,
+									.position= entity.position,
+									.azimuth= entity.azimuth,
+									.current_operation= c_start_operation,
+									.next_operation= ~0u,
+									.num_steps_since_operation_start= 0u,
+									.num_steps_left_to_next_operation= ~0u,
+									.has_seen_player_in_current_operation= false,
+									.player_is_inside_shooting_zone= false,
+									.lost_energy_in_current_operation= false,
+									.animation_frames= zero_init, // Set exact frames later.
+								} );
+						}
+					}
+				}
+			}
+
 			// TODO - handle transition to non-existing operation.
 			// They are sometimes used for destroyed entities.
 			if( entity.next_operation != ~0u &&
@@ -358,6 +389,12 @@ fn Game::ProcessStep( mut this )
 			pair.second= animation_step / c_num_steps_per_animation_frame;
 		}
 	}
+
+	// Put new entities into entities container.
+	while( !new_entities_.empty() )
+	{
+		entities_.push_back( new_entities_.pop_back() );
+	}
 }
 
 // The origina game uses angles in range 0 to 1024 mapped to 0 to tau and with negative sign.
@@ -370,5 +407,7 @@ fn Convert1024Angle( f32 a ) : f32
 var f32 c_steps_per_second= 30.0f;
 
 var u32 c_num_steps_per_animation_frame= 2u;
+
+var u32 c_start_operation= 0u; // Start with operation 0.
 
 } // namespace PM
