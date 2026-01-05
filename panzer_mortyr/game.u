@@ -8,7 +8,9 @@ fn Game::constructor( CachingGameResourcesLoaderPtr mut caching_game_resources_l
 	(
 		caching_game_resources_loader_ptr_= move( caching_game_resources_loader_ptr ),
 		current_map_index_= 0u, // Set later.
-		camera_controller_( Vec3f( 0.0f, 0.0f, 0.0f ) ) )
+		camera_controller_( Vec3f( 0.0f, 0.0f, 0.0f ) ),
+		prev_time_steps_= 0.0,
+	)
 {
 	var u32 mut start_map_= 0u;
 
@@ -33,7 +35,6 @@ fn Game::TeleportToMap( mut this, u32 map_index )
 	}
 
 	entities_description_.reset();
-	zpoz_data_.reset();
 
 	auto mut lock= caching_game_resources_loader_ptr_.lock_mut();
 	var CachingGameResourcesLoader &mut caching_game_resources_loader= lock.deref();
@@ -53,59 +54,129 @@ fn Game::TeleportToMap( mut this, u32 map_index )
 
 	entities_description_= caching_game_resources_loader.LoadEntitiesDescription( entities_info_file );
 
-	zpoz_data_= caching_game_resources_loader.LoadZpozFile( current_map_index_ );
+	var GameResourcePtr</ZpozData/> zpoz_data= caching_game_resources_loader.LoadZpozFile( current_map_index_ );
+
+	prev_time_steps_= 0.0;
+
+	random_= PseudoRandomGenerator( 0u ); // TODO - tweak seed?
+
+	entities_.clear();
+
+	if_var( &entities_description : entities_description_ )
+	{
+		foreach( &in_entity : zpoz_data.deref().entities )
+		{
+			if( in_entity.alive_flag == 0u16 )
+			{
+				continue;
+			}
+
+			if_var( &entity_description : entities_description.entities.find( u32( in_entity.kind ) ) )
+			{
+				if( !entity_description.operations.exists( c_start_operation ) )
+				{
+					continue;
+				}
+			}
+			else
+			{
+				continue;
+			}
+
+			entities_.push_back(
+				EntityState
+				{
+					.kind( in_entity.kind ),
+					.position( f32( in_entity.position[0] ), f32( in_entity.position[1] ), f32( in_entity.position[2] ) ),
+					.azimuth( Convert1024Angle( f32( in_entity.data[4] ) ) ),
+					.current_operation= c_start_operation,
+					.next_operation= ~0u,
+					.num_steps_since_operation_start= 0u,
+					.num_steps_left_to_next_operation= ~0u,
+					.has_seen_player_in_current_operation= false,
+					.player_is_inside_shooting_zone= false,
+					.lost_energy_in_current_operation= false,
+					.animation_frames= zero_init, // Set exact frames later.
+				} );
+		}
+	}
 }
 
 fn Game::Update( mut this, f32 time_delta_s, ust::array_view_imut</bool/> keyboard_state )
 {
 	camera_controller_.Update( time_delta_s, keyboard_state );
+
+	// Process game logic in fixed time steps.
+
+	var f64 cur_time_steps= prev_time_steps_ + f64( time_delta_s * c_steps_per_second );
+
+	var u32 prev_step= u32( prev_time_steps_ );
+	var u32 cur_step= u32( cur_time_steps );
+	// Avoid processing too much steps at once (in case of process topeed via debugger).
+	var u32 num_steps_to_process= ust::min( 5u, cur_step - prev_step );
+
+	for( auto mut i= 0u; i < num_steps_to_process; ++i )
+	{
+		ProcessStep();
+	}
+
+	prev_time_steps_= cur_time_steps;
 }
 
 fn Game::GetWorldDrawingInfo( this ) : WorldDrawingInfo
 {
 	var ust::vector</WorldDrawingInfo::ModelObject/> mut model_objects;
 
-	if( !zpoz_data_.empty() && !entities_description_.empty() )
+	if( !entities_description_.empty() )
 	{
 		var EntitiesDescription& entities_description= entities_description_.try_deref();
 
-		foreach( &entity : zpoz_data_.try_deref().entities )
+		foreach( &entity_opt : entities_ )
 		{
-			if( entity.alive_flag == 0u16 )
+			if( entity_opt.empty() )
 			{
 				continue;
 			}
 
-			auto entity_description_opt= entities_description.entities.find( u32( entity.kind ) );
-			if( entity_description_opt.empty() )
-			{
-				continue;
-			}
-			var EntitiesDescription::EntityDescription& entity_description= entity_description_opt.try_deref();
+			var EntityState& entity= entity_opt.try_deref();
 
-			auto operation_opt= entity_description.operations.find( 0u );
+			var EntitiesDescription::EntityDescription& entity_description= entities_description.entities[ entity.kind ];
+
+			auto operation_opt= entity_description.operations.find( entity.current_operation );
 			if( operation_opt.empty() )
 			{
 				continue;
 			}
 
-			var EntitiesDescription::Operation& operation= operation_opt.try_deref();
+			var EntitiesDescription::Operation& operation= entity_description.operations[ entity.current_operation ];
 
-			auto animation_opt= entities_description.animations.find( operation.forward_animation.animation_number );
-			if( animation_opt.empty() )
+			foreach( pair :
+				ust::array_view_imut</EntitiesDescription::OperationAnimationDescription/>( operation.animations ).iter().zip(
+					ust::array_view_imut</u32/>( entity.animation_frames ).iter() ) )
 			{
-				continue;
-			}
-			var EntitiesDescription::AnimationDescription& animation= animation_opt.try_deref();
+				var EntitiesDescription::OperationAnimationDescription& operation_animation_description= pair.first;
 
-			model_objects.push_back(
-				WorldDrawingInfo::ModelObject
+				if( operation_animation_description.num_steps == 0u )
 				{
-					.model_file_name= animation.model_file_name,
-					.position( f32( entity.position[0] ), f32( entity.position[1] ), f32( entity.position[2] ) ),
-					.azimuth= f32( entity.data[4] ) * ( -c_tau / 1024.0f ),
-					.frame= 103u, // Some dummy value.
-				} );
+					continue;
+				}
+
+				auto animation_opt= entities_description.animations.find( operation_animation_description.animation_number );
+				if( animation_opt.empty() )
+				{
+					continue;
+				}
+				var EntitiesDescription::AnimationDescription& animation= animation_opt.try_deref();
+
+				model_objects.push_back(
+					WorldDrawingInfo::ModelObject
+					{
+						.model_file_name= animation.model_file_name,
+						.position= entity.position,
+						.azimuth= entity.azimuth,
+						.frame= pair.second,
+					} );
+				}
 		}
 	}
 
@@ -123,5 +194,344 @@ fn Game::process_reset_position( mut this )
 {
 	camera_controller_= CameraController( Vec3f( 0.0f, 0.0f, 0.0f ) );
 }
+
+fn Game::process_trigger_player_see( mut this )
+{
+	var Vec3f pos= camera_controller_.GetPos();
+	if_var( &mut entity : GetNearestEntity( pos ) )
+	{
+		entity.has_seen_player_in_current_operation= true;
+	}
+}
+
+fn Game::process_trigger_player_in_shooting_zone( mut this )
+{
+	var Vec3f pos= camera_controller_.GetPos();
+	if_var( &mut entity : GetNearestEntity( pos ) )
+	{
+		entity.player_is_inside_shooting_zone= true;
+	}
+}
+
+fn Game::process_trigger_energy_loss( mut this )
+{
+	var Vec3f pos= camera_controller_.GetPos();
+	if_var( &mut entity : GetNearestEntity( pos ) )
+	{
+		entity.lost_energy_in_current_operation= true;
+	}
+}
+
+fn Game::ProcessStep( mut this )
+{
+	if( entities_description_.empty() )
+	{
+		return;
+	}
+
+	var EntitiesDescription& entities_description= entities_description_.try_deref();
+
+	// Use index-based loop to be able to insert entities.
+	for( auto mut entity_index= 0s; entity_index < entities_.size(); ++entity_index )
+	{
+		if( entities_[entity_index].empty() )
+		{
+			continue;
+		}
+
+		var bool mut need_to_remove_entity= false;
+		var ust::optional</EntityState/> mut new_spawned_entity;
+
+		{
+			var EntityState &mut entity= entities_[entity_index].try_deref();
+
+			var EntitiesDescription::EntityDescription& entity_description= entities_description.entities[ entity.kind ];
+
+			// Perform operation transition (if necessary).
+
+			{
+				var EntitiesDescription::Operation& operation= entity_description.operations[ entity.current_operation ];
+
+				// TODO - determine exact priorities of different operation transition conditions.
+
+				if_var( &operation_control : operation.operation_control )
+				{
+					// Always check if killed.
+					if_var( &energy_loss : operation_control.energy_loss )
+					{
+						// Killed. Keep it first here (killed enemies should die).
+						if( entity.lost_energy_in_current_operation )
+						{
+							entity.next_operation= u32( energy_loss[2] );
+							entity.num_steps_left_to_next_operation= 0u;
+						}
+					}
+
+					if( entity.next_operation == ~0u )
+					{
+						if_var( &player_visible : operation_control.player_visible )
+						{
+							if( entity.has_seen_player_in_current_operation )
+							{
+								entity.next_operation= u32( player_visible[2] );
+								if( player_visible[1] < 0 )
+								{
+									entity.num_steps_left_to_next_operation= 0u;
+								}
+								else
+								{
+									var u32 period( player_visible[1] );
+									entity.num_steps_left_to_next_operation= ( period - entity.num_steps_since_operation_start % period ) % period;
+								}
+							}
+						}
+					}
+					if( entity.next_operation == ~0u )
+					{
+						if_var( &inside_shooting_zone_b : operation_control.inside_shooting_zone_b )
+						{
+							if( entity.player_is_inside_shooting_zone )
+							{
+								entity.next_operation= u32( inside_shooting_zone_b[2] );
+
+								var u32 period( inside_shooting_zone_b[0] );
+								entity.num_steps_left_to_next_operation= ( period - entity.num_steps_since_operation_start % period ) % period;
+							}
+						}
+					}
+					if( entity.next_operation == ~0u )
+					{
+						if_var( &convenient_position : operation_control.convenient_position )
+						{
+							if( entity.player_is_inside_shooting_zone )
+							{
+								entity.next_operation= u32( convenient_position[1] );
+
+								var u32 period( convenient_position[0] );
+								entity.num_steps_left_to_next_operation= ( period - entity.num_steps_since_operation_start % period ) % period;
+							}
+						}
+					}
+					if( entity.next_operation == ~0u )
+					{
+						if_var( &randomness : operation_control.randomness )
+						{
+							// Random state transition.
+							var u32 period( randomness[0] );
+							if( entity.num_steps_since_operation_start == period )
+							{
+								if( randomness[2] >= 0 && random_.Next() % 100u <= u32(randomness[1]) )
+								{
+									entity.next_operation= u32( randomness[2] );
+									entity.num_steps_left_to_next_operation= 0u;
+								}
+								else if( randomness[4] >= 0 && random_.Next() % 100u <= u32(randomness[3]) )
+								{
+									entity.next_operation= u32( randomness[4] );
+									entity.num_steps_left_to_next_operation= 0u;
+								}
+							}
+						}
+					}
+					if( entity.next_operation == ~0u )
+					{
+						if_var( & timeout : operation_control.timeout )
+						{
+							// Timeout should be (generally) the last checked option.
+							if( entity.num_steps_since_operation_start >= timeout[0] )
+							{
+								entity.next_operation= u32( timeout[1] );
+								entity.num_steps_left_to_next_operation= 0u;
+							}
+						}
+					}
+				}
+
+				if_var( &if_alive : operation.if_alive )
+				{
+					if( if_alive.time != 0u &&
+						entity.num_steps_since_operation_start % if_alive.time == 0u )
+					{
+						entity.next_operation= ( entity.lost_energy_in_current_operation ? if_alive.new_operation[1] : if_alive.new_operation[0] );
+						entity.num_steps_left_to_next_operation= 0u;
+					}
+				}
+
+				if_var( &stopper : operation.stopper )
+				{
+					if( stopper.time != 0u &&
+						entity.num_steps_since_operation_start % stopper.time == 0u )
+					{
+						entity.next_operation= stopper.new_operation;
+						entity.num_steps_left_to_next_operation= 0u;
+					}
+				}
+
+				if_var( &object_rotation : operation.object_rotation )
+				{
+					// Perform rotation.
+					entity.azimuth= Convert1024Angle( f32( object_rotation.rotation ) ) * f32( entity.num_steps_since_operation_start );
+
+					// It looks like object rotation also includes tomeout-based state transition.
+					if( entity.next_operation == ~0u )
+					{
+						if( entity.num_steps_since_operation_start == object_rotation.time )
+						{
+							entity.next_operation= object_rotation.new_operation;
+							entity.num_steps_left_to_next_operation= 0u;
+						}
+					}
+				}
+
+				if_var( &supply_drop : operation.supply_drop )
+				{
+					// Emit new entity if it's dropped.
+					// This will increase the total amout of entities, but it's not a big deal,
+					// since (generally) items are dropped only once and dropped items can't drop other items.
+
+					if( entity.num_steps_since_operation_start == supply_drop.time )
+					{
+						if_var( &new_entity_description : entities_description.entities.find( supply_drop.special_object ) )
+						{
+							if( new_entity_description.operations.exists( c_start_operation ) )
+							{
+								new_spawned_entity.reset(
+									EntityState
+									{
+										.kind= supply_drop.special_object,
+										.position= entity.position,
+										.azimuth= entity.azimuth,
+										.current_operation= c_start_operation,
+										.next_operation= ~0u,
+										.num_steps_since_operation_start= 0u,
+										.num_steps_left_to_next_operation= ~0u,
+										.has_seen_player_in_current_operation= false,
+										.player_is_inside_shooting_zone= false,
+										.lost_energy_in_current_operation= false,
+										.animation_frames= zero_init, // Set exact frames later.
+									} );
+							}
+						}
+					}
+				}
+
+				if( !operation.box_contents.empty() )
+				{
+					// This entity can be picked-up.
+					// TODO - identify exact radius and center.
+					var f32 c_pickup_distance= 48.0f;
+					var f32 square_distance= ( camera_controller_.GetPos() - entity.position ).SquareLength();
+					if( square_distance < c_pickup_distance * c_pickup_distance )
+					{
+						// Despawn this entity, since it was picked-up.
+						// TODO - give the picked-up item to the player.
+						// TODO - avoid picking-up if player has maximum number of items provided by this entity.
+						// TODO - handle regenerating entities in multiplayer.
+						need_to_remove_entity= true;
+					}
+				}
+
+				if( entity.next_operation != ~0u && entity.num_steps_left_to_next_operation == 0u )
+				{
+					if( entity_description.operations.exists( entity.next_operation ) )
+					{
+						entity.current_operation= entity.next_operation;
+						entity.next_operation= ~0u;
+						entity.num_steps_since_operation_start= 0u;
+						entity.num_steps_left_to_next_operation= ~0u;
+						entity.has_seen_player_in_current_operation= false;
+						entity.player_is_inside_shooting_zone= false;
+						entity.lost_energy_in_current_operation= false;
+					}
+					else
+					{
+						// Remove this entity if non-existing operation is specified.
+						// This is used by some entities which should be completely destroyed.
+						need_to_remove_entity= true;
+					}
+				}
+			}
+
+			// Calculate current frame based on animation params.
+			// TODO - perform different animation logic for different animation kinds.
+
+			var EntitiesDescription::Operation& operation= entity_description.operations[ entity.current_operation ];
+
+			foreach( pair :
+				ust::array_view_imut</EntitiesDescription::OperationAnimationDescription/>( operation.animations ).iter().zip(
+					ust::array_view_mut</u32/>( entity.animation_frames ).iter() ) )
+			{
+				var EntitiesDescription::OperationAnimationDescription& operation_animation_description= pair.first;
+
+				var u32 animation_step=
+					operation_animation_description.start_step +
+					entity.num_steps_since_operation_start % ust::max( 1u, operation_animation_description.num_steps );
+
+				pair.second= animation_step / c_num_steps_per_animation_frame;
+			}
+
+			// Increase/decrease step counters after doing any other logic.
+			// It's needed in order to make results (like animation frame) of step #0 observable.
+
+			++entity.num_steps_since_operation_start;
+			if( entity.num_steps_left_to_next_operation > 0u )
+			{
+				--entity.num_steps_left_to_next_operation;
+			}
+		}
+
+		if( need_to_remove_entity )
+		{
+			entities_[ entity_index ].reset();
+		}
+
+		// Push new entity into the container.
+		// It's necessary to process it later (within current update step).
+		if( !new_spawned_entity.empty() )
+		{
+			entities_.push_back( new_spawned_entity.try_take() );
+		}
+	}
+}
+
+fn Game::GetNearestEntity( mut this, Vec3f& pos ) : ust::optional_ref_mut</EntityState/> @( ust::reference_notation::return_inner_references::param0 )
+{
+	var size_type mut nearest_index= entities_.size();
+	var f32 mut min_square_distance= 1.0e64f;
+
+	for( auto mut i= 0s; i < entities_.size(); ++i )
+	{
+		if_var( &entity : entities_[i] )
+		{
+			var f32 square_distace= ( pos - entity.position ).SquareLength();
+			if( square_distace < min_square_distance )
+			{
+				min_square_distance= square_distace;
+				nearest_index= i;
+			}
+		}
+	}
+
+	if( nearest_index >= entities_.size() )
+	{
+		return ust::null_optional_ref;
+	}
+
+	return entities_[ nearest_index ].as_ref();
+}
+
+// The original game uses angles in range 0 to 1024 mapped to 0 to tau and with negative sign.
+fn Convert1024Angle( f32 a ) : f32
+{
+	return a * ( c_tau / -1024.0f );
+}
+
+// TODO - investigate exact step rate in the original game.
+var f32 c_steps_per_second= 30.0f;
+
+// Model animation frames are sparce - for each 2 logic steps there is only one frame.
+var u32 c_num_steps_per_animation_frame= 2u;
+
+var u32 c_start_operation= 0u; // Start with operation 0.
 
 } // namespace PM
