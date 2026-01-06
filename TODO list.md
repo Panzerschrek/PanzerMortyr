@@ -6,7 +6,7 @@ Map format investigation:
 * Investigate how surfaces with emissive flag work.
 * Investigate meaning of remaining fields of "ZvoxFogVolume" struct.
 * Investigate meaning of remaining fields of "ZvoxTriggerVolume" struct.
-* Investigate what Struct1 in "ZVOX.ANT" file actually is.
+* Investigate meaning of remaining fields of "ZpozEntityNavigationInfo" struct.
 * Investigate what remaining fields of ZvoxCluster structure mean.
 * Ensure light color is properly read from ZvoxLightSource structure.
 * Investigate what data[1] of ZvoxLightSource means.
@@ -122,6 +122,7 @@ PanzerMortyr game logic:
 * Consider using fixed point arithmetic for game calculations in order to make game logic deterministic (across different machines) and thus allowing multiplayer mode with client-side game logic calculations.
 * Implement birds.
 * Implement rats.
+* Spawn enemies having trigger box only when player touches this box (usually behind his back).
 
 PanzerMortyr rendering:
 
@@ -161,7 +162,7 @@ PanzerMortyr rendering:
 PanzerMortyr sound:
 
 * Play event sounds - shots, footsteps, enemy sounds.
-* Play main character speech (he says something sometimes).
+* Play main character speech (he says something at some specific map places).
 * Play ambient sounds.
 * Play CD music and/or music files ripped from the original CD.
 * Implement 3D sounds - with distance-based attenuation and separate volume for left and right channel depending on head orientation.
