@@ -102,6 +102,8 @@ fn Game::TeleportToMap( mut this, u32 map_index )
 					.next_operation= ~0u,
 					.num_steps_since_operation_start= 0u,
 					.num_steps_left_to_next_operation= ~0u,
+					.navigation_info_index( in_entity.data[16] ),
+					.target_navigation_graph_node= ~0u,
 					.has_seen_player_in_current_operation= false,
 					.player_is_inside_shooting_zone= false,
 					.lost_energy_in_current_operation= false,
@@ -233,12 +235,14 @@ fn Game::process_trigger_energy_loss( mut this )
 
 fn Game::ProcessStep( mut this )
 {
-	if( entities_description_.empty() )
+	if( entities_description_.empty() || mapa_way_data_.empty() )
 	{
 		return;
 	}
 
 	var EntitiesDescription& entities_description= entities_description_.try_deref();
+
+	var MapaWayData& mapa_way_data= mapa_way_data_.try_deref();
 
 	// Use index-based loop to be able to insert entities.
 	for( auto mut entity_index= 0s; entity_index < entities_.size(); ++entity_index )
@@ -265,15 +269,70 @@ fn Game::ProcessStep( mut this )
 
 				if_var( &operation_control : operation.operation_control )
 				{
-					if( operation_control.speed > 0 )
+					if( operation_control.speed > 0  &&
+						size_type( entity.navigation_info_index ) < mapa_way_data.navigation_graphs.size() )
 					{
-						// Move entity.
-						// TODO - change movement direction if necessary.
+						var MapaWayNavigationGraph& navigation_graph= mapa_way_data.navigation_graphs[ size_type( entity.navigation_info_index ) ];
 
-						var Vec3f direction_vector( -ust::sin(entity.azimuth), ust::cos(entity.azimuth), 0.0f );
-						var f32 moved_distance= f32( operation_control.speed ) * c_entity_speed_scale;
+						if( entity.target_navigation_graph_node == ~0u )
+						{
+							for( auto mut i= 0u; i < navigation_graph.num_nodes; ++i )
+							{
+								if( navigation_graph.nodes[i].unknown3 == -1 )
+								{
+									entity.target_navigation_graph_node= i;
+									break;
+								}
+							}
+						}
 
-						entity.position+= direction_vector * moved_distance;
+						if( entity.target_navigation_graph_node != ~0u )
+						{
+							var MapaWayNavigationGraphNode& node= navigation_graph.nodes[ entity.target_navigation_graph_node ];
+
+							var Vec3f vec_to_target= entity.position- Vec3f( f32( node.position[0] ), f32( node.position[1] ), f32( node.position[2] ) );
+							var f32 square_distance_to_target= vec_to_target.SquareLength();
+							if( square_distance_to_target != 0.0f )
+							{
+								entity.azimuth= ust::atan2( vec_to_target.x, -vec_to_target.y );
+							}
+
+							// Move entity.
+							// TODO - change movement direction if necessary.
+
+							var Vec3f direction_vector( -ust::sin(entity.azimuth), ust::cos(entity.azimuth), 0.0f );
+							var f32 moved_distance= f32( operation_control.speed ) * c_entity_speed_scale;
+
+							entity.position+= direction_vector * moved_distance;
+
+							if( moved_distance * moved_distance >= square_distance_to_target )
+							{
+								// Select next patrooling point.
+								var u32 mut next_node_index= ~0u;
+								for( auto mut i= entity.target_navigation_graph_node + 1u; i < navigation_graph.num_nodes; ++i )
+								{
+									if( navigation_graph.nodes[i].unknown3 == -1 )
+									{
+										next_node_index= i;
+										break;
+									}
+								}
+
+								if( next_node_index == 0u )
+								{
+									for( auto mut i= 0u; i < navigation_graph.num_nodes; ++i )
+									{
+										if( navigation_graph.nodes[i].unknown3 == -1 )
+										{
+											next_node_index= i;
+											break;
+										}
+									}
+								}
+
+								entity.target_navigation_graph_node= next_node_index;
+							}
+						}
 					}
 
 					// Always check if killed.
@@ -425,6 +484,8 @@ fn Game::ProcessStep( mut this )
 										.next_operation= ~0u,
 										.num_steps_since_operation_start= 0u,
 										.num_steps_left_to_next_operation= ~0u,
+										.navigation_info_index= ~0u,
+										.target_navigation_graph_node= ~0u,
 										.has_seen_player_in_current_operation= false,
 										.player_is_inside_shooting_zone= false,
 										.lost_energy_in_current_operation= false,
