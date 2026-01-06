@@ -113,7 +113,7 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 	ust::stdout_print( "\n" );
 	ust::stdout_print( ust::concat( "Num zmap quads: ", ust::to_string8( map.zmap.quads.size() ), "\n" ) );
 	ust::stdout_print( ust::concat( "Num zpoz entities: ", ust::to_string8( map.zpoz.entities.size() ), "\n" ) );
-	ust::stdout_print( ust::concat( "Num zpoz structs1: ", ust::to_string8( map.zpoz.structs1.size() ), "\n" ) );
+	ust::stdout_print( ust::concat( "Num zpoz entity navigation infos: ", ust::to_string8( map.zpoz.entity_navigation_infos.size() ), "\n" ) );
 	ust::stdout_print( ust::concat( "Num zpoz multiplayer spawn points: ", ust::to_string8( map.zpoz.multiplayer_spawn_points.size() ), "\n" ) );
 	ust::stdout_print( ust::concat( "Num zpoz clusters: ", ust::to_string8( map.zpoz.clusters.size() ), "\n" ) );
 	ust::stdout_print( ust::concat( "Num zpoz cluster indices: ", ust::to_string8( map.zpoz.cluster_indices.size() ), "\n" ) );
@@ -1033,6 +1033,60 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 						unsafe( DrawCube( pos, 0.4f, 0.4f, 0.6f, color ) );
 
 						unsafe( draw_number( i32( entity.kind ), Vector3{ .x(entity.position[0s]), .y(entity.position[1s]), .z( i32(entity.position[2s]) - 24 ) } ) );
+
+						var size_type navigation_info_index( entity.data[16] );
+						if( navigation_info_index < map.zpoz.entity_navigation_infos.size() )
+						{
+							var ZpozEntityNavigationInfo& navigation_info= map.zpoz.entity_navigation_infos[ navigation_info_index ];
+
+							if( navigation_info.num_patrolling_points > 0u )
+							{
+								var Color point_color{ .r( u32(color.r) >> 2 ), .g( u32(color.g) >> 2 ), .b( u32(color.b) >> 2 ), .a= color.a };
+
+								var u32 last_point_index= navigation_info.num_patrolling_points - 1u;
+								var Vector3 mut prev_point_pos
+								{
+									.x= f32(navigation_info.patrolling_point_coords[last_point_index +  0u]) * scale,
+									.y= f32(navigation_info.patrolling_point_coords[last_point_index + 16u]) * scale,
+									.z= f32(navigation_info.patrolling_point_coords[last_point_index + 32u]) * -scale
+								};
+
+								for( auto mut point_index= 0u; point_index < navigation_info.num_patrolling_points; ++point_index )
+								{
+									var Vector3 point_pos
+									{
+										.x= f32(navigation_info.patrolling_point_coords[point_index +  0u]) * scale,
+										.y= f32(navigation_info.patrolling_point_coords[point_index + 16u]) * scale,
+										.z= f32(navigation_info.patrolling_point_coords[point_index + 32u]) * -scale
+									};
+
+									unsafe( DrawCube( point_pos, 0.2f, 0.2f, 0.2f, point_color ) );
+
+									unsafe( DrawLine3D( prev_point_pos, point_pos, point_color ) );
+
+									prev_point_pos= point_pos;
+								}
+							}
+
+							if( navigation_info.spawn_trigger_is_present != 0u )
+							{
+								var Vector3 box_center
+								{
+									.x= f32(navigation_info.spawn_trigger_box_center[0]) * scale,
+									.y= f32(navigation_info.spawn_trigger_box_center[1]) * scale,
+									.z= f32(navigation_info.spawn_trigger_box_center[2]) * -scale
+								};
+
+								unsafe( DrawCubeWires(
+									box_center,
+									f32(navigation_info.spawn_trigger_box_half_size[0]) * scale * 2.0f,
+									f32(navigation_info.spawn_trigger_box_half_size[1]) * scale * 2.0f,
+									f32(navigation_info.spawn_trigger_box_half_size[2]) * scale * 2.0f,
+									color ) );
+
+								unsafe( DrawLine3D( pos, box_center, color ) );
+							}
+						}
 					}
 				}
 
@@ -1060,9 +1114,10 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 							pos,
 							2.0f * f32(s.bounding_box_half_size[0]) * scale,
 							2.0f * f32(s.bounding_box_half_size[1]) * scale,
-							2.0f * f32(s.bounding_box_half_size[2]) * -scale, color ) );
+							2.0f * f32(s.bounding_box_half_size[2]) * -scale,
+							color ) );
 
-						unsafe( draw_number( i32( s.unknown8 ), Vector3{ .x(s.center[0]), .y(s.center[1]), .z( i32(s.center[2]) ) } ) );
+						unsafe( draw_number( i32( s.trigger_param ), Vector3{ .x(s.center[0]), .y(s.center[1]), .z( i32(s.center[2]) ) } ) );
 					}
 				}
 
@@ -1078,18 +1133,6 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 							2.0f * f32(s.bounding_box_half_size[0]) * scale,
 							2.0f * f32(s.bounding_box_half_size[1]) * scale,
 							2.0f * f32(s.bounding_box_half_size[2]) * -scale, color ) );
-					}
-				}
-
-				if( false )
-				{
-					foreach( &s : map.zpoz.structs1 )
-					{
-						var Color color{ .r(0), .g(255), .b(0), .a(255) };
-
-						var Vector3 pos{ .x= f32(s.data[0s + offset]) * scale, .y= f32(s.data[1s + offset]) * scale, .z= f32(s.data[2s + offset]) * -scale };
-
-						unsafe( DrawCube( pos, 0.2f, 0.2f, 0.2f, color ) );
 					}
 				}
 
@@ -1158,6 +1201,11 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 							var Vector3 pos{ .x= f32(node.position[0]) * scale, .y= f32(node.position[1]) * scale, .z= f32(node.position[2]) * -scale };
 
 							unsafe( DrawCube( pos, 0.2f, 0.2f, 0.2f, color ) );
+
+							if( node.unknown3 != 0 )
+							{
+								unsafe( draw_number( node.unknown3, Vector3{ .x(node.position[0]), .y(node.position[1] ), .z( i32(node.position[2]) - 9 ) } ) );
+							}
 
 							for( auto mut k= 0s; k < size_type( graph.num_nodes ); ++k )
 							{

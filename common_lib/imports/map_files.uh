@@ -75,10 +75,8 @@ struct ZVoxFileHeader ordered
 
 static_assert( typeinfo</ZVoxFileHeader/>.size_of == 32s );
 
-// Some sort of box-shaped invisible entity.
-// Maybe it's a trigger?
-// There are usually only few of them and one of them is placed where level ends.
-// Multiplayer maps have no such entities.
+// Trigger volume.
+// It's used for map exits, secrets, crow and rat spawns, triggers of player speech.
 struct ZvoxTriggerVolume ordered
 {
 	[ i32, 3 ] center;
@@ -86,13 +84,23 @@ struct ZvoxTriggerVolume ordered
 	// Represents a box around this trigger.
 	[ i32, 3 ] bounding_box_half_size;
 
+	// Seems to be always -1.
 	i32 unknown6;
 	i32 unknown7;
 
 	// For map end triggers it represents next map number.
-	i32 unknown8;
+	// For player speech triggers it represents sound number (as defined in GLOS.STD file).
+	i32 trigger_param;
 
-	i32 unknown9;
+	// -1 if unused.
+	// 1 for map end triggers.
+	// 2 for secret area triggers.
+	// 4 for crow triggers.
+	// 6 for rat triggers.
+	// 12 and 14 for triggers on the CTF map.
+	// 16 for speech triggers.
+	// 18 for the last map end trigger (activating final cinematic).
+	i32 trigger_type;
 }
 
 static_assert( typeinfo</ZvoxTriggerVolume/>.size_of == 40s );
@@ -202,7 +210,7 @@ struct ZPozFileHeader ordered
 
 	[ char8, 4 ] signature;
 	u32 num_entities;
-	u32 num_structs1; // Seems to be equal to number of structs in "MAPA*.WAY" file. Or is it just a coincidence?
+	u32 num_entity_navigation_infos; // Is equal to number of navigation graphs in "MAPA*.WAY" file.
 	u32 num_multiplayer_spawn_points;
 
 	[ u32, 3 ] data;
@@ -234,36 +242,28 @@ struct ZpozEntity ordered
 
 static_assert( typeinfo</ZpozEntity/>.size_of == 64s );
 
-// For now an unknown struct.
-// It seems to contain no positions.
-struct ZpozStruct1 ordered
+// Extra data for enemy entities navigation.
+struct ZpozEntityNavigationInfo ordered
 {
-	// data[0] is small positive integer (like 2 or 3).
-	// data[2] contains integers in range -5456 to 2936.
-	// data[3] contains integers in range -5456 to 2936.
-	// data[2] and data[3] are near to each other (difference may be positive or negative).
-	// data[4] contains integers in range -3296 to 0.
-	// data[18] contains integers in range -3200 to -32.
-	// data[19] contains integers in range -3200 to -16.
-	// data[18] and data[19] are near to each other (difference may be positive or negative).
-	// data[20] contains integers in range -256 to 0.
-	// data[34] contains integers in range -800 to 1920.
-	// data[35] contains integers in range -800 to 1920.
-	// data[34] and data[35] are always equal to each other.
-	// data[36] contains integers in range 0 to 192.
-	// data[50] contains integers in range -3104 to 0.
-	// data[51] contains integers in range -192 to 0.
-	// data[52] contains integers in range 0 to 32.
-	// data[53] contains integers in range 0 to 160.
-	// data[54] contains integers in range 0 to 160.
-	// data[55] contains integers in range 0 to 160.
-	// data[53], data[54], data[55], are equal to each other. data[52] with rare exceptions equal to data[53].
-	// data[56] contains integers in range 0 to 1.
-	// Other fields are zeros.
-	[ i32, 82 ] data;
+	u32 num_patrolling_points;
+
+	 // Some unknown number. It's mostly zero, but for some entities on rare maps (like 10 or 34) it's a small positive value like 4 or 5.
+	 // It does'n look like number of points.
+	u32 num1;
+
+	// Coordinates are interleaved - first Xs are stored, then Ys, then Zs.
+	[ i32, 16 * 3 ] patrolling_point_coords;
+
+	[ i32, 3 ] spawn_trigger_box_center;
+	[ i32, 3 ] spawn_trigger_box_half_size;
+
+	// Non-zero if has spawn trigger.
+	u32 spawn_trigger_is_present;
+
+	[ u32, 25 ] unknown_data;
 }
 
-static_assert( typeinfo</ZpozStruct1/>.size_of == 328s );
+static_assert( typeinfo</ZpozEntityNavigationInfo/>.size_of == 328s );
 
 // Some sort of multiplayer spawn point.
 // It's present almost only on multiplayer maps.
@@ -508,8 +508,17 @@ struct MapaWayNavigationGraphNode ordered
 	// Absolute world position of this node.
 	[ i32, 3 ] position;
 
-	i32 unknown3; // Is in range -1 to 34. It's mostly 0, sometimes -1 (where a corresponding enemy is placed), sometimes is a positive values near some pick-ups.
-	i32 unknown4; // Is in range 0 to 29. it's almost always 0 except a couple of cases with values like 4, 5, 29.
+	// It's mostly 0, sometimes -1 (where a corresponding enemy is placed), sometimes is a positive value near some pick-ups.
+	//
+	// It looks like points with -1 represent points in the patrolling route.
+	// These points are stored in patrolling order and usually (but it's not fully clear) patrolling points are first N points and N is usually at least 2.
+	//
+	// If it's not 0 or -1, it contains index of an entity located near this node, but only for health box and armor entities.
+	i32 unknown3;
+
+	// If it's not 0, it contains index of an entity located near this node, but only for ammo entities of type which can be used by this entity (enemy) type.
+	i32 unknown4;
+
 	i32 unknown5; // Is always 0.
 	i32 unknown6; // Is always 0.
 	i32 unknown7; // Is always 0.
