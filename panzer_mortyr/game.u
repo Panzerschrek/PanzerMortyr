@@ -286,18 +286,39 @@ fn Game::ProcessStep( mut this )
 							}
 						}
 
-						if( entity.target_navigation_graph_node != ~0u )
+						if( entity.target_navigation_graph_node != ~0u && navigation_graph.num_nodes > 0u )
 						{
-							var MapaWayNavigationGraphNode& node= navigation_graph.nodes[ entity.target_navigation_graph_node ];
-
-							var Vec3f vec_to_target= entity.position- Vec3f( f32( node.position[0] ), f32( node.position[1] ), f32( node.position[2] ) );
-							var f32 square_distance_to_target= vec_to_target.SquareLength();
-							if( square_distance_to_target != 0.0f )
+							// Find nearest graph node to current position.
+							// This node is assumed to be current one where this entity is located.
+							var u32 mut nearest_node_index= ~0u;
+							var f32 mut nearest_node_square_distance= 1.0e64f;
+							for( auto mut i= 0u; i < navigation_graph.num_nodes; ++i )
 							{
-								// Perform smooth turn towards target.
-								// TODO - make sure this code works fine even if azimuth isn't normalized.
+								var MapaWayNavigationGraphNode& node= navigation_graph.nodes[i];
+								var Vec3f vec_to_node= entity.position - Vec3f( f32( node.position[0] ), f32( node.position[1] ), f32( node.position[2] ) );
+								var f32 square_distance_to_node= vec_to_node.SquareLength();
+								if( square_distance_to_node < nearest_node_square_distance )
+								{
+									nearest_node_square_distance= square_distance_to_node;
+									nearest_node_index= i;
+								}
+							}
 
-								var f32 target_azimuth= ust::atan2( vec_to_target.x, -vec_to_target.y );
+							// Perform lookup from routing matrix to find next waypoint node which will eventually lead to the target node.
+							var u32 next_waypoint_node_index=
+								( nearest_node_index == entity.target_navigation_graph_node
+									? entity.target_navigation_graph_node
+									: u32 ( navigation_graph.routing_matrix[ nearest_node_index ][ entity.target_navigation_graph_node ] ) );
+
+							var MapaWayNavigationGraphNode& waypoint_node= navigation_graph.nodes[ next_waypoint_node_index ];
+
+							var Vec3f vec_to_waypoint= entity.position - Vec3f( f32( waypoint_node.position[0] ), f32( waypoint_node.position[1] ), f32( waypoint_node.position[2] ) );
+							var f32 square_distance_to_waypoint= vec_to_waypoint.SquareLength();
+							if( square_distance_to_waypoint != 0.0f )
+							{
+								// Perform smooth turn towards the waypoint node.
+
+								var f32 target_azimuth= ust::atan2( vec_to_waypoint.x, -vec_to_waypoint.y );
 
 								var f32 mut angle_delta= ( ( entity.azimuth - target_azimuth ) % c_tau + c_tau ) % c_tau;
 								if( angle_delta > c_tau * 0.5f )
@@ -319,17 +340,17 @@ fn Game::ProcessStep( mut this )
 								}
 							}
 
-							// Move entity.
-							// TODO - change movement direction if necessary.
-
+							/// Perform movement towards current direction.
 							var Vec3f direction_vector( -ust::sin(entity.azimuth), ust::cos(entity.azimuth), 0.0f );
 							var f32 moved_distance= f32( operation_control.speed ) * c_entity_speed_scale;
-
 							entity.position+= direction_vector * moved_distance;
 
-							if( moved_distance * moved_distance >= square_distance_to_target )
+							if( moved_distance * moved_distance >= square_distance_to_waypoint &&
+								next_waypoint_node_index == entity.target_navigation_graph_node )
 							{
-								// Select next patrooling point.
+								// Moved distance towards the waypoint is bigger then distance to it and this waypoint is equal to target.
+								// In such case select next target node (next patrolling point).
+
 								var u32 mut next_node_index= ~0u;
 								for( auto mut i= entity.target_navigation_graph_node + 1u; i < navigation_graph.num_nodes; ++i )
 								{
@@ -354,6 +375,7 @@ fn Game::ProcessStep( mut this )
 
 								entity.target_navigation_graph_node= next_node_index;
 							}
+
 						}
 					}
 
