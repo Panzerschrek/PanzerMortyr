@@ -104,6 +104,7 @@ fn Game::TeleportToMap( mut this, u32 map_index )
 					.num_steps_left_to_next_operation= ~0u,
 					.navigation_info_index( in_entity.data[16] ),
 					.target_navigation_graph_node= ~0u,
+					.current_navigation_graph_node= ~0u,
 					.has_seen_player_in_current_operation= false,
 					.player_is_inside_shooting_zone= false,
 					.lost_energy_in_current_operation= false,
@@ -288,29 +289,33 @@ fn Game::ProcessStep( mut this )
 
 						if( entity.target_navigation_graph_node != ~0u && navigation_graph.num_nodes > 0u )
 						{
-							// Find nearest graph node to current position.
-							// This node is assumed to be current one where this entity is located.
-							var u32 mut nearest_node_index= ~0u;
-							var f32 mut nearest_node_square_distance= 1.0e64f;
-							for( auto mut i= 0u; i < navigation_graph.num_nodes; ++i )
+							if( entity.current_navigation_graph_node == ~0u )
 							{
-								var MapaWayNavigationGraphNode& node= navigation_graph.nodes[i];
-								var Vec3f vec_to_node= entity.position - Vec3f( f32( node.position[0] ), f32( node.position[1] ), f32( node.position[2] ) );
-								var f32 square_distance_to_node= vec_to_node.SquareLength();
-								if( square_distance_to_node < nearest_node_square_distance )
+								// Attach to the navigation graph if has no current node.
+								// TODO - maybe do this in cases where current position is way too far away from the current node?
+								var u32 mut nearest_node_index= ~0u;
+								var f32 mut nearest_node_square_distance= 1.0e64f;
+								for( auto mut i= 0u; i < navigation_graph.num_nodes; ++i )
 								{
-									nearest_node_square_distance= square_distance_to_node;
-									nearest_node_index= i;
+									var MapaWayNavigationGraphNode& node= navigation_graph.nodes[i];
+									var Vec3f vec_to_node= entity.position - Vec3f( f32( node.position[0] ), f32( node.position[1] ), f32( node.position[2] ) );
+									var f32 square_distance_to_node= vec_to_node.SquareLength();
+									if( square_distance_to_node < nearest_node_square_distance )
+									{
+										nearest_node_square_distance= square_distance_to_node;
+										nearest_node_index= i;
+									}
 								}
+								entity.current_navigation_graph_node= nearest_node_index;
 							}
 
 							// Perform lookup from routing matrix to find next waypoint node which will eventually lead to the target node.
-							var u32 next_waypoint_node_index=
-								( nearest_node_index == entity.target_navigation_graph_node
+							var u32 waypoint_node_index=
+								( entity.current_navigation_graph_node == entity.target_navigation_graph_node
 									? entity.target_navigation_graph_node
-									: u32 ( navigation_graph.routing_matrix[ nearest_node_index ][ entity.target_navigation_graph_node ] ) );
+									: u32 ( navigation_graph.routing_matrix[ entity.current_navigation_graph_node ][ entity.target_navigation_graph_node ] ) );
 
-							var MapaWayNavigationGraphNode& waypoint_node= navigation_graph.nodes[ next_waypoint_node_index ];
+							var MapaWayNavigationGraphNode& waypoint_node= navigation_graph.nodes[ waypoint_node_index ];
 
 							var Vec3f vec_to_waypoint= entity.position - Vec3f( f32( waypoint_node.position[0] ), f32( waypoint_node.position[1] ), f32( waypoint_node.position[2] ) );
 							var f32 square_distance_to_waypoint= vec_to_waypoint.SquareLength();
@@ -345,25 +350,18 @@ fn Game::ProcessStep( mut this )
 							var f32 moved_distance= f32( operation_control.speed ) * c_entity_speed_scale;
 							entity.position+= direction_vector * moved_distance;
 
-							if( moved_distance * moved_distance >= square_distance_to_waypoint &&
-								next_waypoint_node_index == entity.target_navigation_graph_node )
+							if( moved_distance * moved_distance >= square_distance_to_waypoint )
 							{
-								// Moved distance towards the waypoint is bigger then distance to it and this waypoint is equal to target.
-								// In such case select next target node (next patrolling point).
+								// Reached the waypoint.
+								// Mark is at current node.
+								entity.current_navigation_graph_node= waypoint_node_index;
 
-								var u32 mut next_node_index= ~0u;
-								for( auto mut i= entity.target_navigation_graph_node + 1u; i < navigation_graph.num_nodes; ++i )
+								if( waypoint_node_index == entity.target_navigation_graph_node )
 								{
-									if( navigation_graph.nodes[i].unknown3 == -1 )
-									{
-										next_node_index= i;
-										break;
-									}
-								}
+									// Reached the target node - select new one.
 
-								if( next_node_index == ~0u )
-								{
-									for( auto mut i= 0u; i < navigation_graph.num_nodes; ++i )
+									var u32 mut next_node_index= ~0u;
+									for( auto mut i= entity.target_navigation_graph_node + 1u; i < navigation_graph.num_nodes; ++i )
 									{
 										if( navigation_graph.nodes[i].unknown3 == -1 )
 										{
@@ -371,9 +369,21 @@ fn Game::ProcessStep( mut this )
 											break;
 										}
 									}
-								}
 
-								entity.target_navigation_graph_node= next_node_index;
+									if( next_node_index == ~0u )
+									{
+										for( auto mut i= 0u; i < navigation_graph.num_nodes; ++i )
+										{
+											if( navigation_graph.nodes[i].unknown3 == -1 )
+											{
+												next_node_index= i;
+												break;
+											}
+										}
+									}
+
+									entity.target_navigation_graph_node= next_node_index;
+								}
 							}
 
 						}
@@ -530,6 +540,7 @@ fn Game::ProcessStep( mut this )
 										.num_steps_left_to_next_operation= ~0u,
 										.navigation_info_index= ~0u,
 										.target_navigation_graph_node= ~0u,
+										.current_navigation_graph_node= ~0u,
 										.has_seen_player_in_current_operation= false,
 										.player_is_inside_shooting_zone= false,
 										.lost_energy_in_current_operation= false,
