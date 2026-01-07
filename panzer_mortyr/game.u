@@ -317,6 +317,8 @@ fn Game::ProcessStep( mut this )
 
 							var MapaWayNavigationGraphNode& waypoint_node= navigation_graph.nodes[ waypoint_node_index ];
 
+							var f32 mut move_fraction= 1.0f;
+
 							var Vec3f vec_to_waypoint= entity.position - Vec3f( f32( waypoint_node.position[0] ), f32( waypoint_node.position[1] ), f32( waypoint_node.position[2] ) );
 							var f32 square_distance_to_waypoint= vec_to_waypoint.SquareLength();
 							if( square_distance_to_waypoint != 0.0f )
@@ -326,36 +328,41 @@ fn Game::ProcessStep( mut this )
 								var f32 target_azimuth= ust::atan2( vec_to_waypoint.x, -vec_to_waypoint.y );
 
 								var f32 mut angle_delta= ( ( entity.azimuth - target_azimuth ) % c_tau + c_tau ) % c_tau;
-								if( angle_delta > c_tau * 0.5f )
+
+								// Prefer shortest turn, but but slightly biased, in order to avoid some nasty behavior with constantly changing turning direction.
+								if( angle_delta > c_tau * 0.55f )
 								{
 									angle_delta -= c_tau;
 								}
 
 								if( angle_delta < -c_entity_turn_speed )
 								{
+									move_fraction= 0.0f; // Don't move if turn.
 									entity.azimuth+= c_entity_turn_speed;
 								}
 								else if( angle_delta > c_entity_turn_speed )
 								{
+									move_fraction= 0.0f; // Don't move if turn.
 									entity.azimuth-= c_entity_turn_speed;
 								}
 								else
 								{
+									move_fraction= 1.0f - ust::abs( angle_delta ) / c_entity_turn_speed;
 									entity.azimuth= target_azimuth;
 								}
 							}
 
+							var f32 base_move_distance= f32( operation_control.speed ) * c_entity_speed_scale;
+
+							// If we perform a turn don't move. We should move only directly towards the target, otherwise we can enount various problems with target reaching.
+							var f32 move_distance= base_move_distance * move_fraction;
+
 							// Perform movement towards current direction.
 							var Vec3f direction_vector( -ust::sin(entity.azimuth), ust::cos(entity.azimuth), 0.0f );
-							var f32 moved_distance= f32( operation_control.speed ) * c_entity_speed_scale;
-							entity.position+= direction_vector * moved_distance;
 
-							// HACK!
-							// Since we use constant speed and angular speed it may happen that an entity makes circles around the waypoit node without reaching it.
-							// In order to prevent it use reach distance equal to orbiting radius.
-							var f32 orbiting_radius= 1.01f * moved_distance / c_entity_turn_speed;
+							entity.position+= direction_vector * move_distance;
 
-							if( ust::max( orbiting_radius * orbiting_radius, moved_distance * moved_distance ) >= square_distance_to_waypoint )
+							if( square_distance_to_waypoint <= base_move_distance * base_move_distance )
 							{
 								// Reached the waypoint.
 								// Mark is at current node.
@@ -681,6 +688,6 @@ var u32 c_start_operation= 0u; // Start with operation 0.
 var f32 c_entity_speed_scale= 1.0f / 4.0f;
 
 // TODO - found how it's exactly specified. Maybe it depends on current speed?
-var f32 c_entity_turn_speed= c_tau / 48.0f;
+var f32 c_entity_turn_speed= c_tau / 30.0f;
 
 } // namespace PM
