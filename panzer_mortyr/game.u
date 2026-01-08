@@ -55,6 +55,7 @@ fn Game::TeleportToMap( mut this, u32 map_index )
 	entities_description_= caching_game_resources_loader.LoadEntitiesDescription( entities_info_file );
 
 	var GameResourcePtr</ZpozData/> zpoz_data= caching_game_resources_loader.LoadZpozFile( current_map_index_ );
+	mapa_way_data_= caching_game_resources_loader.LoadMapaWayFile( current_map_index_ );
 
 	prev_time_steps_= 0.0;
 
@@ -64,8 +65,16 @@ fn Game::TeleportToMap( mut this, u32 map_index )
 
 	if_var( &entities_description : entities_description_ )
 	{
-		foreach( &in_entity : zpoz_data.deref().entities )
+		auto& zpoz_entities= zpoz_data.deref().entities;
+
+		// Map source entities 1 to 1 to runtime entities. It's needed for index stability.
+
+		entities_.resize( zpoz_entities.size() );
+
+		foreach( pair : zpoz_entities.iter().zip( entities_.iter() ) )
 		{
+			var ZpozEntity& in_entity= pair.first;
+
 			if( in_entity.alive_flag == 0u16 )
 			{
 				continue;
@@ -83,7 +92,7 @@ fn Game::TeleportToMap( mut this, u32 map_index )
 				continue;
 			}
 
-			entities_.push_back(
+			pair.second=
 				EntityState
 				{
 					.kind( in_entity.kind ),
@@ -93,11 +102,14 @@ fn Game::TeleportToMap( mut this, u32 map_index )
 					.next_operation= ~0u,
 					.num_steps_since_operation_start= 0u,
 					.num_steps_left_to_next_operation= ~0u,
+					.navigation_info_index( in_entity.data[16] ),
+					.target_navigation_graph_node= ~0u,
+					.current_navigation_graph_node= ~0u,
 					.has_seen_player_in_current_operation= false,
 					.player_is_inside_shooting_zone= false,
 					.lost_energy_in_current_operation= false,
 					.animation_frames= zero_init, // Set exact frames later.
-				} );
+				};
 		}
 	}
 }
@@ -224,12 +236,14 @@ fn Game::process_trigger_energy_loss( mut this )
 
 fn Game::ProcessStep( mut this )
 {
-	if( entities_description_.empty() )
+	if( entities_description_.empty() || mapa_way_data_.empty() )
 	{
 		return;
 	}
 
 	var EntitiesDescription& entities_description= entities_description_.try_deref();
+
+	var MapaWayData& mapa_way_data= mapa_way_data_.try_deref();
 
 	// Use index-based loop to be able to insert entities.
 	for( auto mut entity_index= 0s; entity_index < entities_.size(); ++entity_index )
@@ -256,6 +270,8 @@ fn Game::ProcessStep( mut this )
 
 				if_var( &operation_control : operation.operation_control )
 				{
+					MoveEntity( entity, operation_control, mapa_way_data );
+
 					// Always check if killed.
 					if_var( &energy_loss : operation_control.energy_loss )
 					{
@@ -405,6 +421,9 @@ fn Game::ProcessStep( mut this )
 										.next_operation= ~0u,
 										.num_steps_since_operation_start= 0u,
 										.num_steps_left_to_next_operation= ~0u,
+										.navigation_info_index= ~0u,
+										.target_navigation_graph_node= ~0u,
+										.current_navigation_graph_node= ~0u,
 										.has_seen_player_in_current_operation= false,
 										.player_is_inside_shooting_zone= false,
 										.lost_energy_in_current_operation= false,
@@ -520,6 +539,161 @@ fn Game::GetNearestEntity( mut this, Vec3f& pos ) : ust::optional_ref_mut</Entit
 	return entities_[ nearest_index ].as_ref();
 }
 
+fn MoveEntity(
+	EntityState &mut entity,
+	EntitiesDescription::OperationControl& operation_control,
+	MapaWayData& mapa_way_data )
+{
+	if( operation_control.speed == 0u )
+	{
+		// Do not move if has zero speed. TODO - maybe still allow rotation?
+		return;
+	}
+
+	if( size_type( entity.navigation_info_index ) >= mapa_way_data.navigation_graphs.size() )
+	{
+		return;
+	}
+
+	var MapaWayNavigationGraph& navigation_graph= mapa_way_data.navigation_graphs[ size_type( entity.navigation_info_index ) ];
+
+	if( navigation_graph.num_nodes == 0u )
+	{
+		return;
+	}
+
+	if( entity.target_navigation_graph_node == ~0u )
+	{
+		// Select a target if has no one.
+		// TODO - perform target selection depending on movement mode.
+		for( auto mut i= 0u; i < navigation_graph.num_nodes; ++i )
+		{
+			if( navigation_graph.nodes[i].unknown3 == -1 )
+			{
+				entity.target_navigation_graph_node= i;
+				break;
+			}
+		}
+	}
+
+	if( entity.target_navigation_graph_node == ~0u )
+	{
+		return;
+	}
+
+	if( entity.current_navigation_graph_node == ~0u )
+	{
+		// Attach to the navigation graph if has no current node.
+		// TODO - maybe do this in cases where current position is way too far away from the current node?
+		var u32 mut nearest_node_index= ~0u;
+		var f32 mut nearest_node_square_distance= 1.0e64f;
+		for( auto mut i= 0u; i < navigation_graph.num_nodes; ++i )
+		{
+			var MapaWayNavigationGraphNode& node= navigation_graph.nodes[i];
+			var Vec3f vec_to_node= entity.position - Vec3f( f32( node.position[0] ), f32( node.position[1] ), f32( node.position[2] ) );
+			var f32 square_distance_to_node= vec_to_node.SquareLength();
+			if( square_distance_to_node < nearest_node_square_distance )
+			{
+				nearest_node_square_distance= square_distance_to_node;
+				nearest_node_index= i;
+			}
+		}
+		entity.current_navigation_graph_node= nearest_node_index;
+	}
+
+	// Perform lookup from routing matrix to find next waypoint node which will eventually lead to the target node.
+	var u32 waypoint_node_index=
+		( entity.current_navigation_graph_node == entity.target_navigation_graph_node
+			? entity.target_navigation_graph_node
+			: u32 ( navigation_graph.routing_matrix[ entity.current_navigation_graph_node ][ entity.target_navigation_graph_node ] ) );
+
+	var MapaWayNavigationGraphNode& waypoint_node= navigation_graph.nodes[ waypoint_node_index ];
+
+	var f32 mut move_fraction= 1.0f;
+
+	// Use 2d calculation for vector to waypoint - ignore some Z difference.
+	var Vec2f vec_to_waypoint= entity.position.xy() - Vec2f( f32( waypoint_node.position[0] ), f32( waypoint_node.position[1] ) );
+	var f32 square_distance_to_waypoint= vec_to_waypoint.SquareLength();
+
+	if( square_distance_to_waypoint != 0.0f )
+	{
+		// Perform smooth turn towards the waypoint node.
+
+		var f32 target_azimuth= ust::atan2( vec_to_waypoint.x, -vec_to_waypoint.y );
+
+		var f32 mut angle_delta= ( ( entity.azimuth - target_azimuth ) % c_tau + c_tau ) % c_tau;
+
+		// Prefer shortest turn, but slightly biased, in order to avoid some nasty behavior with constantly changing turning direction.
+		if( angle_delta > c_tau * 0.55f )
+		{
+			angle_delta -= c_tau;
+		}
+
+		if( angle_delta < -c_entity_turn_speed )
+		{
+			move_fraction= 0.0f; // Don't move if turn.
+			entity.azimuth+= c_entity_turn_speed;
+		}
+		else if( angle_delta > c_entity_turn_speed )
+		{
+			move_fraction= 0.0f; // Don't move if turn.
+			entity.azimuth-= c_entity_turn_speed;
+		}
+		else
+		{
+			move_fraction= 1.0f - ust::abs( angle_delta ) / c_entity_turn_speed;
+			entity.azimuth= target_azimuth;
+		}
+	}
+
+	var f32 base_move_distance= f32( operation_control.speed ) * c_entity_speed_scale;
+
+	// If we perform a turn don't move.
+	// We should move only directly towards the target, otherwise we can encount various problems with target reaching.
+	var f32 move_distance= base_move_distance * move_fraction;
+
+	// Perform movement towards current direction.
+	var Vec3f direction_vector( -ust::sin(entity.azimuth), ust::cos(entity.azimuth), 0.0f );
+	entity.position+= direction_vector * move_distance;
+
+	if( square_distance_to_waypoint <= base_move_distance * base_move_distance )
+	{
+		// Reached the waypoint.
+		// Mark it as current node.
+		entity.current_navigation_graph_node= waypoint_node_index;
+
+		if( waypoint_node_index == entity.target_navigation_graph_node )
+		{
+			// Reached the target node - select new one.
+			// TODO - perform target selection depending on movement mode.
+
+			var u32 mut next_node_index= ~0u;
+			for( auto mut i= entity.target_navigation_graph_node + 1u; i < navigation_graph.num_nodes; ++i )
+			{
+				if( navigation_graph.nodes[i].unknown3 == -1 )
+				{
+					next_node_index= i;
+					break;
+				}
+			}
+
+			if( next_node_index == ~0u )
+			{
+				for( auto mut i= 0u; i < navigation_graph.num_nodes; ++i )
+				{
+					if( navigation_graph.nodes[i].unknown3 == -1 )
+					{
+						next_node_index= i;
+						break;
+					}
+				}
+			}
+
+			entity.target_navigation_graph_node= next_node_index;
+		}
+	}
+}
+
 // The original game uses angles in range 0 to 1024 mapped to 0 to tau and with negative sign.
 fn Convert1024Angle( f32 a ) : f32
 {
@@ -533,5 +707,14 @@ var f32 c_steps_per_second= 30.0f;
 var u32 c_num_steps_per_animation_frame= 2u;
 
 var u32 c_start_operation= 0u; // Start with operation 0.
+
+// Speed values for entities are somewhat scaled. Scale them down.
+// This value is experementally-found.
+// TODO - check if it's really correct.
+var f32 c_entity_speed_scale= 1.0f / 4.0f;
+
+// Experimental value.
+// TODO - fiund how it's exactly specified. Maybe it depends on current speed?
+var f32 c_entity_turn_speed= c_tau / 30.0f;
 
 } // namespace PM
