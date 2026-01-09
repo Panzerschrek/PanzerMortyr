@@ -22,7 +22,6 @@ Map format investigation:
 * Investigate whether there is ambient light value stored somewhere on per-quad or per-cluster basis.
 * Investigate how navigation graphs are used by enemies AI.
 * Investigate exact meaning of remaining fields of navigation graph structures.
-* Investigate how light shafts are represented in map data.
 * Investigate what remaining fields of "ZmapLamRainDroplet" struct mean.
 
 Textures/materials investigation:
@@ -159,6 +158,7 @@ PanzerMortyr rendering:
 * Support rendering texts with shadow.
 * Implement all smoke effects.
 * Implement all flame effects.
+* Draw light shafts - with colored gradient, some underlying texture and additive blending.
 * Draw game HUD - health, ammo, current weapon, current item, active items, etc.
 
 PanzerMortyr sound:
