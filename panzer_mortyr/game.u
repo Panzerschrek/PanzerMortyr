@@ -1,12 +1,16 @@
+import "/string_conversions.u"
 import "game.uh"
 import "math_constants.uh"
 
 namespace PM
 {
 
-fn Game::constructor( CachingGameResourcesLoaderPtr mut caching_game_resources_loader_ptr )
+fn Game::constructor(
+	CachingGameResourcesLoaderPtr mut caching_game_resources_loader_ptr,
+	ConsoleOutPtr mut console_out )
 	(
 		caching_game_resources_loader_ptr_= move( caching_game_resources_loader_ptr ),
+		console_out_= move(console_out),
 		current_map_index_= 0u, // Set later.
 		camera_controller_( Vec3f( 0.0f, 0.0f, 0.0f ) ),
 		prev_time_steps_= 0.0,
@@ -29,6 +33,12 @@ fn Game::GetCurrentMapIndex( this ) : u32
 
 fn Game::TeleportToMap( mut this, u32 map_index )
 {
+	if( map_index == 0u )
+	{
+		ConsoleOutAddTextLine( console_out_, ust::concat( "Can't go to map 0!" ) );
+		return;
+	}
+
 	if( map_index == current_map_index_ )
 	{
 		return;
@@ -39,12 +49,20 @@ fn Game::TeleportToMap( mut this, u32 map_index )
 	auto mut lock= caching_game_resources_loader_ptr_.lock_mut();
 	var CachingGameResourcesLoader &mut caching_game_resources_loader= lock.deref();
 
-	current_map_index_= map_index;
-
 	var GameResourcePtr</MapsDescription/> maps_description_ptr= caching_game_resources_loader.LoadMapsDescription();
-	var MapsDescription::MapDescription& map_description= maps_description_ptr.deref().maps[ current_map_index_ ]; // Halts if no map found.
 
-	// Some maps doesn't specify entities description file name.
+	var ust::optional_ref_imut</MapsDescription::MapDescription/> map_description_opt=
+		maps_description_ptr.deref().maps.find( map_index );
+
+	if( map_description_opt.empty() )
+	{
+		ConsoleOutAddTextLine( console_out_, ust::concat( "Map with index ", ust::to_string8( map_index ), " not found!" ) );
+		return;
+	}
+
+	var MapsDescription::MapDescription& map_description= map_description_opt.try_deref();
+
+	// Some maps don't specify entities description file name.
 	// In such case use some default value.
 	// TODO - check if it's correct to use this name.
 	var ResourceString& entities_info_file=
@@ -54,8 +72,9 @@ fn Game::TeleportToMap( mut this, u32 map_index )
 
 	entities_description_= caching_game_resources_loader.LoadEntitiesDescription( entities_info_file );
 
-	var GameResourcePtr</ZpozData/> zpoz_data= caching_game_resources_loader.LoadZpozFile( current_map_index_ );
-	mapa_way_data_= caching_game_resources_loader.LoadMapaWayFile( current_map_index_ );
+	var GameResourceNullablePtr</ZpozData/> zpoz_data_nullable= caching_game_resources_loader.LoadZpozFile( map_index );
+
+	mapa_way_data_= caching_game_resources_loader.LoadMapaWayFile( map_index );
 
 	prev_time_steps_= 0.0;
 
@@ -63,9 +82,11 @@ fn Game::TeleportToMap( mut this, u32 map_index )
 
 	entities_.clear();
 
-	if_var( &entities_description : entities_description_ )
+	if( !zpoz_data_nullable.empty() && !entities_description_.empty() )
 	{
-		auto& zpoz_entities= zpoz_data.deref().entities;
+		auto& zpoz_entities= zpoz_data_nullable.try_deref().entities;
+
+		auto& entities_description= entities_description_.try_deref();
 
 		// Map source entities 1 to 1 to runtime entities. It's needed for index stability.
 
@@ -112,6 +133,8 @@ fn Game::TeleportToMap( mut this, u32 map_index )
 				};
 		}
 	}
+
+	current_map_index_= map_index;
 }
 
 fn Game::Update( mut this, f32 time_delta_s, ust::array_view_imut</bool/> keyboard_state )

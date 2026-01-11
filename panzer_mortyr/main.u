@@ -20,21 +20,37 @@ namespace PM
 
 fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 {
-	var GameFilesystemPtr game_filesystem_ptr( GameFilesystem() );
+	// Create console out as first step - in order to have proper logging.
 
-	var CachingGameResourcesLoaderPtr caching_game_resources_loader_ptr( CachingGameResourcesLoader( game_filesystem_ptr ) );
+	var ConsoleOutPtr console_out_ptr( ConsoleOut() );
 
-	var Game mut game( caching_game_resources_loader_ptr );
+	ConsoleOutAddTextLine( console_out_ptr, "PanzerMortyr initializing..." );
 
-	var OpenGLWindow mut window;
+	var GameFilesystemNullablePtr game_filesystem_nullable_ptr= GameFilesystem::Create( console_out_ptr );
+	if( game_filesystem_nullable_ptr.empty() )
+	{
+		return -1;
+	}
 
-	var Console mut console( window.GetViewportSize() );
+	var GameFilesystemPtr game_filesystem_ptr= game_filesystem_nullable_ptr.try_to_non_nullable();
 
-	console.AddTextLine( "PanzerMortyr initializing..." );
+	var CachingGameResourcesLoaderPtr caching_game_resources_loader_ptr(
+		CachingGameResourcesLoader( game_filesystem_ptr, console_out_ptr ) );
 
-	var TextDrawer mut text_drawer( window.GetViewportSize(), game_filesystem_ptr );
+	var Game mut game( caching_game_resources_loader_ptr, console_out_ptr );
 
-	var WorldDrawer mut world_drawer( game_filesystem_ptr, caching_game_resources_loader_ptr );
+	var OpenGLWindow mut window( console_out_ptr );
+
+	// Create classes requiring OpenGL context after OpenGL window creation.
+
+	var Console mut console( console_out_ptr, window.GetViewportSize() );
+
+	var TextDrawer mut text_drawer( window.GetViewportSize(), game_filesystem_ptr, console_out_ptr );
+
+	var WorldDrawer mut world_drawer(
+		game_filesystem_ptr,
+		caching_game_resources_loader_ptr,
+		console_out_ptr );
 
 	var ust::vector</bool/> mut keyboard_state;
 
@@ -42,7 +58,7 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 
 	var u64 mut prev_frame_time_point= unsafe( SDL_GetPerformanceCounter() );
 
-	console.AddTextLine( "PanzerMortyr initialized!" );
+	ConsoleOutAddTextLine( console_out_ptr, "PanzerMortyr initialized!" );
 
 	loop label main_loop
 	{
@@ -85,7 +101,7 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 				{
 					if( console.IsActive() )
 					{
-						var HostCommandProcessor mut command_processor{ .game= game };
+						var HostCommandProcessor mut command_processor{ .game= game, .console_out_ptr= console_out_ptr };
 						console.ProcessKeyPress( keyboard_event.keysym, command_processor );
 
 						if( command_processor.quit_requested )
@@ -212,6 +228,14 @@ struct HostCommandProcessor
 			{
 				game.TeleportToMap( map_index );
 			}
+			else
+			{
+				ConsoleOutAddTextLine( console_out_ptr, "Failed to parse map index!" );
+			}
+		}
+		else
+		{
+			ConsoleOutAddTextLine( console_out_ptr, "Expected map index." );
 		}
 	}
 
@@ -243,7 +267,8 @@ struct HostCommandProcessor
 	//
 
 	bool quit_requested= false;
-	Game &mut game;
+	Game &mut @('a') game;
+	ConsoleOutPtr& @('b') console_out_ptr;
 }
 
 } // namespace PM
