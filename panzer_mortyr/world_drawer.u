@@ -227,19 +227,38 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 
 		var ResourceString& file_name= model_object.model_file_name;
 
-		var GPUModel& model=
+		var ust::optional</GPUModel/>& model_opt=
 			models_.find_or_construct_new(
 				file_name,
-				lambda[ &fs= game_filesystem_ptr_, &file_name ] () : GPUModel
+				lambda[ &fs= game_filesystem_ptr_, &file_name, &co= console_out_ ] () : ust::optional</GPUModel/>
 				{
 					auto mut lock= fs.lock_mut();
-					auto model_load_res=
+					result_match(
 						lock.deref().LoadFile(
 							file_name,
-							( fn( ust::file_readable &mut f ) : ust::io_result</ModelData/> )( LoadModel ) );
-					// TODO - handle cases with missing models?
-					return CreateGPUModel( model_load_res.try_deref() );
+							( fn( ust::file_readable &mut f ) : ust::io_result</ModelData/> )( LoadModel ) ) )
+					{
+						Ok(m) -> { return CreateGPUModel( m ); },
+						Err(e) ->
+						{
+							ConsoleOutAddTextLine(
+								co,
+								ust::concat(
+									"Failed to load model file \"",
+									ConvertResourceStringToStringView( file_name ),
+									"\"! Error: ",
+									ust::enum_to_string( e ) ) );
+							return ust::null_optional;
+						},
+					}
 				} );
+
+		if( model_opt.empty() )
+		{
+			continue;
+		}
+
+		var GPUModel& model= model_opt.try_deref();
 
 		model.textures.back().Bind();
 
