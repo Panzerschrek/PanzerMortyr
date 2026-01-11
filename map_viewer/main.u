@@ -119,7 +119,7 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 	ust::stdout_print( ust::concat( "Num zpoz clusters: ", ust::to_string8( map.zpoz.clusters.size() ), "\n" ) );
 	ust::stdout_print( ust::concat( "Num zpoz cluster indices: ", ust::to_string8( map.zpoz.cluster_indices.size() ), "\n" ) );
 	ust::stdout_print( ust::concat( "Num zvox trigger volumes: ", ust::to_string8( map.zvox.trigger_volumes.size() ), "\n" ) );
-	ust::stdout_print( ust::concat( "Num zvox structs1: ", ust::to_string8( map.zvox.structs1.size() ), "\n" ) );
+	ust::stdout_print( ust::concat( "Num zvox dynamic cluster extra infos: ", ust::to_string8( map.zvox.dynamic_cluster_extra_infos.size() ), "\n" ) );
 	ust::stdout_print( ust::concat( "Num zvox fog volumes: ", ust::to_string8( map.zvox.fog_volumes.size() ), "\n" ) );
 	ust::stdout_print( ust::concat( "Num zvox clusters: ", ust::to_string8( map.zvox.clusters.size() ), "\n" ) );
 	ust::stdout_print( ust::concat( "Num zvox light sources: ", ust::to_string8( map.zvox.light_sources.size() ), "\n" ) );
@@ -537,6 +537,19 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 		unsafe( UploadMesh( $<(mesh), false ) );
 	}
 
+	scoped_array ust::vector</u32/> mut dynamic_cluster_extra_info_clusters[ map.zvox.dynamic_cluster_extra_infos.size() ];
+
+	for( auto mut cluster_index= 0s; cluster_index < map.zvox.clusters.size(); ++cluster_index )
+	{
+		var i32 dynamic_cluster_extra_info_index= map.zvox.clusters[ cluster_index ].dynamic_cluster_extra_info_index;
+		if( dynamic_cluster_extra_info_index >= 0 && size_type(dynamic_cluster_extra_info_index) < dynamic_cluster_extra_info_clusters.size() )
+		{
+			dynamic_cluster_extra_info_clusters[ size_type(dynamic_cluster_extra_info_index) ].push_back( u32(cluster_index) );
+		}
+	}
+
+	var ust::hash_map</u32, Texture/> mut note_textures;
+
 	auto mut digits_dexture_file_nt= ust::path::join( maps_dir, "PANBL.BMP" );
 	digits_dexture_file_nt+= "\0";
 	var Texture digits_dexture= unsafe( LoadTexture( digits_dexture_file_nt.data() ) );
@@ -651,7 +664,8 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 		mut display_rain= false,
 		mut display_fog_volumes= true,
 		mut display_multiplayer_spawn_points= true,
-		mut display_light_shaft_boxes= true;
+		mut display_light_shaft_boxes= true,
+		mut display_dynamic_clusters= true;
 
 	while( ! unsafe( WindowShouldClose() ) )
 	{
@@ -708,6 +722,10 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 		if( unsafe( IsKeyPressed( i32( 'I' ) ) ) )
 		{
 			display_light_shaft_boxes= !display_light_shaft_boxes;
+		}
+		if( unsafe( IsKeyPressed( i32( 'X' ) ) ) )
+		{
+			display_dynamic_clusters= !display_dynamic_clusters;
 		}
 
 		if( unsafe( IsKeyPressed( i32( 'Z' ) ) ) )
@@ -860,6 +878,125 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 						}
 
 						unsafe( draw_number( i32( q.texture_roll ), Vector3{ .x(q.center[0s]), .y(q.center[1s]), .z( i32(q.center[2s]) - 1 ) } ) );
+					}
+				}
+
+				if( display_dynamic_clusters )
+				{
+					for( auto mut cluster_index= 0s; cluster_index < map.zvox.clusters.size(); ++cluster_index )
+					{
+						var ZvoxCluster& cluster= map.zvox.clusters[ cluster_index ];
+
+						if( cluster.cluster_type == 0u8 )
+						{
+							continue;
+						}
+
+						var Vector3 pos{ .x= f32(cluster.c.center[0s]) * scale, .y= f32(cluster.c.center[1s]) * scale, .z= f32(cluster.c.center[2s]) * -scale };
+
+						if( cluster.cluster_type == 82u8 )
+						{
+							// A note.
+							var u32 note_index( cluster.light_sources_begin );
+
+							var Texture& texture=
+								note_textures.find_or_construct_new(
+									note_index,
+									lambda[&]() : Texture
+									{
+										auto mut name= "NOTE000.BMP\0"; // It's null terminated to be able to pass it to C function.
+										name[4]= char8( u32('0') + note_index / 100u % 10u );
+										name[5]= char8( u32('0') + note_index /  10u % 10u );
+										name[6]= char8( u32('0') + note_index /   1u % 10u );
+										var ust::filesystem_path mut p= ust::path::join( maps_dir, name );
+										return unsafe( LoadTexture( p.data() ) );
+									} );
+
+							unsafe( DrawBillboardPro(
+								camera,
+								texture,
+								Rectangle{ .x(0), .y(0), .width(texture.width), .height(texture.height) },
+								pos,
+								Vector3{ .x= 0.0f, .y= 0.0f, .z= 1.0f },
+								Vector2{ .x= 1.0f, .y=  f32(texture.height) / f32(texture.width) },
+								Vector2{ .x= 0.5f, .y= -0.5f },
+								0.0f,
+								Color{ .r(255), .g(255), .b(255), .a(200) } ) );
+						}
+						else
+						{
+							var Color color{ .r(u32(cluster_index) * 37u), .g(u32(cluster_index) * 1179u), .b(u32(cluster_index) * 5423u), .a(255) };
+
+							unsafe( DrawCubeWires(
+								pos,
+								f32(cluster.c.bounding_box_half_size[0]) * scale * 2.0f,
+								f32(cluster.c.bounding_box_half_size[1]) * scale * 2.0f,
+								f32(cluster.c.bounding_box_half_size[2]) * scale * 2.0f,
+								color ) );
+
+							var Vector3 direction_vec= GetDynamicClustertMovementDirection( u32( cluster.cluster_type ) );
+
+							var f32 move_dinstance= f32(cluster.light_sources_begin) * scale;
+
+							unsafe( DrawLine3D(
+								Vector3
+								{
+									.x= pos.x + direction_vec.x * ( f32(cluster.c.bounding_box_half_size[0]) * scale ),
+									.y= pos.y + direction_vec.y * ( f32(cluster.c.bounding_box_half_size[1]) * scale ),
+									.z= pos.z + direction_vec.z * ( f32(cluster.c.bounding_box_half_size[2]) * scale ),
+								},
+								Vector3
+								{
+									.x= pos.x + direction_vec.x * ( f32(cluster.c.bounding_box_half_size[0]) * scale + move_dinstance ),
+									.y= pos.y + direction_vec.y * ( f32(cluster.c.bounding_box_half_size[1]) * scale + move_dinstance ),
+									.z= pos.z + direction_vec.z * ( f32(cluster.c.bounding_box_half_size[2]) * scale + move_dinstance ),
+								},
+								color ) );
+
+							unsafe( draw_number( i32( cluster.cluster_type ), Vector3{ .x(cluster.c.center[0s]), .y(cluster.c.center[1s]), .z( i32(cluster.c.center[2s] - 32 ) ) } ) );
+						}
+					}
+
+					// Display links between dynamic clusters.
+
+					var ust::array_view_imut</ ust::vector</u32/> /> dynamic_cluster_extra_info_clusters_ref= dynamic_cluster_extra_info_clusters;
+
+					for( auto mut dynamic_cluster_extra_info_index= 0s;
+						dynamic_cluster_extra_info_index < dynamic_cluster_extra_info_clusters_ref.size();
+						++dynamic_cluster_extra_info_index )
+					{
+						var ZvoxDynamicClusterExtraInfo& info= map.zvox.dynamic_cluster_extra_infos[ dynamic_cluster_extra_info_index ];
+
+						if( info.other_info_index >= 0 &&
+							size_type(info.other_info_index) < dynamic_cluster_extra_info_clusters_ref.size() )
+						{
+							foreach( cluster_index : dynamic_cluster_extra_info_clusters_ref[ dynamic_cluster_extra_info_index ] )
+							{
+								var Color color{ .r(u32(cluster_index) * 37u), .g(u32(cluster_index) * 1179u), .b(u32(cluster_index) * 5423u), .a(255) };
+
+								var ZvoxCluster& cluster= map.zvox.clusters[ size_type(cluster_index) ];
+
+								var Vector3 pos{ .x= f32(cluster.c.center[0s]) * scale, .y= f32(cluster.c.center[1s]) * scale, .z= f32(cluster.c.center[2s]) * -scale };
+
+								if( size_type(info.other_info_index) == dynamic_cluster_extra_info_index )
+								{
+									// Self-reference.
+									// But it looks like there is no such self-references in the original game - all doors and platforms require a button to operate.
+									unsafe( DrawCube( pos, 0.05f, 0.05f, 0.05f, color ) );
+								}
+								else
+								{
+									foreach( other_cluster_index : dynamic_cluster_extra_info_clusters_ref[ size_type(info.other_info_index) ] )
+									{
+										var ZvoxCluster& other_cluster= map.zvox.clusters[ size_type(other_cluster_index) ];
+
+										var Vector3 other_pos{ .x= f32(other_cluster.c.center[0s]) * scale, .y= f32(other_cluster.c.center[1s]) * scale, .z= f32(other_cluster.c.center[2s]) * -scale };
+
+										unsafe( DrawLine3D( pos, other_pos, color ) );
+									}
+								}
+							}
+						}
 					}
 				}
 
@@ -1335,6 +1472,21 @@ struct MeshPart
 	size_type first_index;
 	size_type num_triangles;
 	size_type num_vertices;
+}
+
+fn GetDynamicClustertMovementDirection( u32 cluster_type ) : Vector3
+{
+	// These values are experimentally-found.
+	switch( cluster_type )
+	{
+		      58u, 74u -> { return Vector3{ .x= 1.0f, .y= 0.0f, .z= 0.0f }; },
+		44u,  62u, 78u -> { return Vector3{ .x= -1.0f, .y= 0.0f, .z= 0.0f }; },
+		38u,  56u, 72u -> { return Vector3{ .x= 0.0f, .y= 1.0f, .z= 0.0f }; },
+		34u,  52u, 68u -> { return Vector3{ .x= 0.0f, .y= -1.0f, .z= 0.0f }; },
+		16u, 26u, 30u -> { return Vector3{ .x= 0.0f, .y= 0.0f, .z= 1.0f }; },
+		24u, 28u -> { return Vector3{ .x= 0.0f, .y= 0.0f, .z= -1.0f }; },
+		default -> { return Vector3{ .x= 0.0f, .y= 0.0f, .z= 0.0f }; },
+	}
 }
 
 } // namespace PM
