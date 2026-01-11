@@ -32,8 +32,15 @@ It's also possible to implement a software renderer or a renderer using some oth
 ### Game data is trusted
 
 It should be expected that original game data is trusted - is generally correct and not malicious.
-If something is broken, it's fine to trigger a graceful crash of the game, but not to trigger undefined behavior.
+If something is broken, it's fine to trigger a graceful crash of the game, but not to trigger undefined behavior (via unsafe code).
 Some investigation of original game files should be done in order to determine what is correct (what are limitations and special cases in original data).
+
+
+### User input isn't trusted
+
+It should be considered that users (players) can interact with *PanzerMortyr* in any practically-achievable way.
+This includes usual in-game input, changes done menu, commands typed into the console and changes in the config file.
+Thus such inputs should be sanitized to not cause a crash.
 
 
 ### Client-server architecture
@@ -41,6 +48,9 @@ Some investigation of original game files should be done in order to determine w
 Since the original game has multiplayer support, *PanzerMortyr* should have multiplayer support too.
 This may be achieved by using client-server architecture, where one game instance works like a server (performs all game logic calculations) and all clients connected to it display results of these calculations.
 Singleplayer code should be implemented in the client-sever way too, in order to simplify its code (avoid writing the same logic twice) and allow to play cooperative mode.
+
+It should be also considered to implement client-side game logic calculation - where the server only distributes player inputs and game logic is calculated based on these inputs on each machine.
+This approach requires implementing game logic in a deterministic way, which may require extra caution.
 
 
 ### No undefined behavior in safe code
