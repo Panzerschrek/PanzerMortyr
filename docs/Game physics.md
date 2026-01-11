@@ -64,6 +64,17 @@ Typical collision resoulution for an entity should work in the following way:
 Additionally some tricky cases should be solved.
 This includes the case when an entity is for some reason slightly inside a collider (like due to numerical errors) and cases where it was inside and moved outside.
 
+### Possible solution for pushers
+
+Pushers are dynamic clusters (doors, elevators, buttons) for the player and enemies and the player for pushable entities (like crates).
+Pusher physic objects may be processed in some different way compared to regular ones.
+
+One of the possible ways is to allow pushing other objects while processing logic for a pusher object.
+But this pushing should check if a pushed object can be pushed.
+This check may be performed recursively (up to some depth) in order to be able to push one pushable object via another one.
+If it's possible to push the whole chain of objects - a push should be performed, otherwise the current pusher should stop.
+This logic may be useful for elevators - when the players stays in an elevator shaft and the elevator travels down its movement should be stopped in order to prevent crushing the player.
+
 
 ### Performance considerations
 
