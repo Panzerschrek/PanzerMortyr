@@ -72,6 +72,8 @@ fn Game::TeleportToMap( mut this, u32 map_index )
 
 	entities_description_= caching_game_resources_loader.LoadEntitiesDescription( entities_info_file );
 
+	zmap_data_= caching_game_resources_loader.LoadZmapFile( map_index );
+
 	var GameResourceNullablePtr</ZpozData/> zpoz_data_nullable= caching_game_resources_loader.LoadZpozFile( map_index );
 
 	mapa_way_data_= caching_game_resources_loader.LoadMapaWayFile( map_index );
@@ -169,9 +171,97 @@ fn Game::ProcessMouseButtonPress( mut this, u32 button_index )
 		var f32 elevation_sin= ust::sin(elevation);
 
 		var Vec3f direction_vector( -ust::sin(azimuth) * elevation_cos, ust::cos(azimuth) * elevation_cos, elevation_sin );
-		var f32 distance= 64.0f;
 
-		test_bullet_holes_.push_back( camera_controller_.GetPos() + direction_vector * distance );
+		var Vec3f ray_start= camera_controller_.GetPos();
+		var Vec3f ray_end= ray_start + direction_vector;
+
+		if( zmap_data_.empty() )
+		{
+			return;
+		}
+
+		var f32 mut closest_distance= 10000.0f;
+		var Vec3f mut closest_intersection_point= ray_start + closest_distance * direction_vector;
+
+		foreach( &quad : zmap_data_.try_deref().quads )
+		{
+			var [ [ i32, 3 ], 4 ] shifts
+			[
+				[ (quad.vertices[0][0]), (quad.vertices[0][1]), (quad.vertices[0][2]) ],
+				[ (quad.vertices[1][0]), (quad.vertices[1][1]), (quad.vertices[1][2]) ],
+				[ (quad.vertices[2][0]), (quad.vertices[2][1]), (quad.vertices[2][2]) ],
+				[ (quad.vertices[3][0]), (quad.vertices[3][1]), (quad.vertices[3][2]) ]
+			];
+
+			var [ i32, 3 ] shifts_min
+			[
+				ust::min( ust::min(shifts[0][0], shifts[1][0]), ust::min(shifts[2][0], shifts[3][0]) ),
+				ust::min( ust::min(shifts[0][1], shifts[1][1]), ust::min(shifts[2][1], shifts[3][1]) ),
+				ust::min( ust::min(shifts[0][2], shifts[1][2]), ust::min(shifts[2][2], shifts[3][2]) ),
+			];
+			var [ i32, 3 ] shifts_max
+			[
+				ust::max( ust::max(shifts[0][0], shifts[1][0]), ust::max(shifts[2][0], shifts[3][0]) ),
+				ust::max( ust::max(shifts[0][1], shifts[1][1]), ust::max(shifts[2][1], shifts[3][1]) ),
+				ust::max( ust::max(shifts[0][2], shifts[1][2]), ust::max(shifts[2][2], shifts[3][2]) ),
+			];
+
+			var [ i32, 3 ] center
+			[
+				// Using signed integer division by two is important here.
+				// Using fractional numbers or bit-shift isn't correct, because this leads to gaps in map geometry.
+				i32( quad.center[0] ) - ( shifts_min[0] + shifts_max[0] ) / 2,
+				i32( quad.center[1] ) - ( shifts_min[1] + shifts_max[1] ) / 2,
+				i32( quad.center[2] ) - ( shifts_min[2] + shifts_max[2] ) / 2,
+			];
+
+			var [ Vec3f, 4 ] vertices
+			[
+				Vec3f( f32( center[0] + shifts[0][0] ), f32( center[1] + shifts[0][1] ), f32( center[2] + shifts[0][2] ) ),
+				Vec3f( f32( center[0] + shifts[1][0] ), f32( center[1] + shifts[1][1] ), f32( center[2] + shifts[1][2] ) ),
+				Vec3f( f32( center[0] + shifts[2][0] ), f32( center[1] + shifts[2][1] ), f32( center[2] + shifts[2][2] ) ),
+				Vec3f( f32( center[0] + shifts[3][0] ), f32( center[1] + shifts[3][1] ), f32( center[2] + shifts[3][2] ) ),
+			];
+
+			for( auto mut quad_triangle_index= 0s; quad_triangle_index < 2s; ++quad_triangle_index )
+			{
+				var Vec3f& v0= vertices[0];
+				var Vec3f& v1= vertices[quad_triangle_index + 1s];
+				var Vec3f& v2= vertices[quad_triangle_index + 2s];
+
+				if( v0 == v1 || v0 == v2 || v1 == v2 )
+				{
+					continue;
+				}
+
+				var Vec3f plane_normal= ( v1 - v0 ).Cross( v2 - v0 );
+				var f32 plane_distance= -v0.Dot( plane_normal );
+
+				var f32 dist0 = ray_start.Dot( plane_normal ) + plane_distance;
+				var f32 dist1 = ray_end.Dot( plane_normal ) + plane_distance;
+				var f32 dist_sum = dist1 - dist0;
+				if( dist_sum != 0.0f )
+				{
+					var f32 k0 = dist0 / dist_sum;
+					var f32 k1 = dist1 / dist_sum;
+					var Vec3f intersection_point= ray_start * k1 - ray_end * k0;
+
+					if( ( v1 - v0 ).Cross( intersection_point - v0 ).Dot( plane_normal ) >= 0.0f &&
+						( v2 - v1 ).Cross( intersection_point - v1 ).Dot( plane_normal ) >= 0.0f &&
+						( v0 - v2 ).Cross( intersection_point - v2 ).Dot( plane_normal ) >= 0.0f )
+					{
+						var f32 signed_distance_to_intersection_point= ( intersection_point - ray_start ).Dot( direction_vector );
+						if( signed_distance_to_intersection_point > 0.0f && signed_distance_to_intersection_point < closest_distance )
+						{
+							closest_distance= signed_distance_to_intersection_point;
+							closest_intersection_point= intersection_point;
+						}
+					}
+				}
+			}
+		}
+
+		test_bullet_holes_.push_back( closest_intersection_point );
 	}
 }
 
