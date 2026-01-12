@@ -73,6 +73,7 @@ fn Game::TeleportToMap( mut this, u32 map_index )
 	entities_description_= caching_game_resources_loader.LoadEntitiesDescription( entities_info_file );
 
 	zmap_data_= caching_game_resources_loader.LoadZmapFile( map_index );
+	zvox_data_= caching_game_resources_loader.LoadZvoxFile( map_index );
 
 	var GameResourceNullablePtr</ZpozData/> zpoz_data_nullable= caching_game_resources_loader.LoadZpozFile( map_index );
 
@@ -175,7 +176,7 @@ fn Game::ProcessMouseButtonPress( mut this, u32 button_index )
 		var Vec3f ray_start= camera_controller_.GetPos();
 		var Vec3f ray_end= ray_start + direction_vector;
 
-		if( zmap_data_.empty() )
+		if( zmap_data_.empty() || zvox_data_.empty() )
 		{
 			return;
 		}
@@ -185,89 +186,71 @@ fn Game::ProcessMouseButtonPress( mut this, u32 button_index )
 
 		// Search for intersection with map geometry.
 
-		// TODO - speed-up this, iterate over clusters and process only quads withing clusters where intersection is possible.
+		var ZmapData& zmap_data= zmap_data_.try_deref();
+		var ZvoxData& zvox_data= zvox_data_.try_deref();
 
-		// TODO - ignore quads with materials transparent for bullets (like water).
-
-		foreach( &quad : zmap_data_.try_deref().quads )
+		foreach( &cluster : zvox_data.clusters )
 		{
-			var [ [ i32, 3 ], 4 ] shifts
-			[
-				[ (quad.vertices[0][0]), (quad.vertices[0][1]), (quad.vertices[0][2]) ],
-				[ (quad.vertices[1][0]), (quad.vertices[1][1]), (quad.vertices[1][2]) ],
-				[ (quad.vertices[2][0]), (quad.vertices[2][1]), (quad.vertices[2][2]) ],
-				[ (quad.vertices[3][0]), (quad.vertices[3][1]), (quad.vertices[3][2]) ]
-			];
+			// TODO - speed-up this,  process only clusters where intersection is possible.
 
-			var [ i32, 3 ] shifts_min
-			[
-				ust::min( ust::min(shifts[0][0], shifts[1][0]), ust::min(shifts[2][0], shifts[3][0]) ),
-				ust::min( ust::min(shifts[0][1], shifts[1][1]), ust::min(shifts[2][1], shifts[3][1]) ),
-				ust::min( ust::min(shifts[0][2], shifts[1][2]), ust::min(shifts[2][2], shifts[3][2]) ),
-			];
-			var [ i32, 3 ] shifts_max
-			[
-				ust::max( ust::max(shifts[0][0], shifts[1][0]), ust::max(shifts[2][0], shifts[3][0]) ),
-				ust::max( ust::max(shifts[0][1], shifts[1][1]), ust::max(shifts[2][1], shifts[3][1]) ),
-				ust::max( ust::max(shifts[0][2], shifts[1][2]), ust::max(shifts[2][2], shifts[3][2]) ),
-			];
-
-			var [ i32, 3 ] center
-			[
-				// Using signed integer division by two is important here.
-				// Using fractional numbers or bit-shift isn't correct, because this leads to gaps in map geometry.
-				i32( quad.center[0] ) - ( shifts_min[0] + shifts_max[0] ) / 2,
-				i32( quad.center[1] ) - ( shifts_min[1] + shifts_max[1] ) / 2,
-				i32( quad.center[2] ) - ( shifts_min[2] + shifts_max[2] ) / 2,
-			];
-
-			var [ Vec3f, 4 ] vertices
-			[
-				Vec3f( f32( center[0] + shifts[0][0] ), f32( center[1] + shifts[0][1] ), f32( center[2] + shifts[0][2] ) ),
-				Vec3f( f32( center[0] + shifts[1][0] ), f32( center[1] + shifts[1][1] ), f32( center[2] + shifts[1][2] ) ),
-				Vec3f( f32( center[0] + shifts[2][0] ), f32( center[1] + shifts[2][1] ), f32( center[2] + shifts[2][2] ) ),
-				Vec3f( f32( center[0] + shifts[3][0] ), f32( center[1] + shifts[3][1] ), f32( center[2] + shifts[3][2] ) ),
-			];
-
-			// Process each triangle of a quad separately - in case if due to precision errors quads aren't planar.
-			// TODO - simplify this code for the majority of the cases with planar quads.
-
-			for( auto mut quad_triangle_index= 0s; quad_triangle_index < 2s; ++quad_triangle_index )
+			foreach( &quad : zmap_data.quads.range().subrange(
+				size_type( cluster.c.first_quad_index ),
+				size_type( cluster.c.first_quad_index ) + size_type( cluster.num_quads ) ) )
 			{
-				var Vec3f& v0= vertices[0];
-				var Vec3f& v1= vertices[quad_triangle_index + 1s];
-				var Vec3f& v2= vertices[quad_triangle_index + 2s];
+				// TODO - ignore quads with materials transparent for bullets (like water).
 
-				if( v0 == v1 || v0 == v2 || v1 == v2 )
+				auto& center= cluster.c.center;
+				auto& in_vertices= quad.vertices;
+
+				var [ Vec3f, 4 ] vertices
+				[
+					Vec3f( f32( center[0] + i32( in_vertices[0][0] ) ), f32( center[1] + i32( in_vertices[0][1] ) ), f32( center[2] + i32( in_vertices[0][2] ) ) ),
+					Vec3f( f32( center[0] + i32( in_vertices[1][0] ) ), f32( center[1] + i32( in_vertices[1][1] ) ), f32( center[2] + i32( in_vertices[1][2] ) ) ),
+					Vec3f( f32( center[0] + i32( in_vertices[2][0] ) ), f32( center[1] + i32( in_vertices[2][1] ) ), f32( center[2] + i32( in_vertices[2][2] ) ) ),
+					Vec3f( f32( center[0] + i32( in_vertices[3][0] ) ), f32( center[1] + i32( in_vertices[3][1] ) ), f32( center[2] + i32( in_vertices[3][2] ) ) ),
+				];
+
+				// Process each triangle of a quad separately - in case if due to precision errors quads aren't planar.
+				// TODO - simplify this code for the majority of the cases with planar quads.
+
+				for( auto mut quad_triangle_index= 0s; quad_triangle_index < 2s; ++quad_triangle_index )
 				{
-					continue;
-				}
+					var Vec3f& v0= vertices[0];
+					var Vec3f& v1= vertices[quad_triangle_index + 1s];
+					var Vec3f& v2= vertices[quad_triangle_index + 2s];
 
-				var Vec3f plane_normal= ( v1 - v0 ).Cross( v2 - v0 );
-				var f32 plane_distance= -v0.Dot( plane_normal );
-
-				var f32 point0_distance_to_plane= ray_start.Dot( plane_normal ) + plane_distance;
-				var f32 point1_distance_to_plane= ray_end.Dot( plane_normal ) + plane_distance;
-				var f32 distance_difference= point1_distance_to_plane - point0_distance_to_plane;
-				if( distance_difference != 0.0f )
-				{
-					var f32 k0= point0_distance_to_plane / distance_difference;
-					var f32 k1= point1_distance_to_plane / distance_difference;
-					var Vec3f intersection_point= ray_start * k1 - ray_end * k0;
-
-					// This distance is negative for intersection points behind current ray.
-					var f32 signed_distance_to_intersection_point= ( intersection_point - ray_start ).Dot( direction_vector );
-
-					if( signed_distance_to_intersection_point > 0.0f && // Process intersections only at the front of the ray.
-						signed_distance_to_intersection_point < closest_distance ) // Find the smallest positive distance.
+					// Don't process degenerate triangles, they are sometimes possible.
+					if( v0 == v1 || v0 == v2 || v1 == v2 )
 					{
-						// Check if ray-plane intersection lies within the triangle.
-						if( ( v1 - v0 ).Cross( intersection_point - v0 ).Dot( plane_normal ) >= 0.0f &&
-							( v2 - v1 ).Cross( intersection_point - v1 ).Dot( plane_normal ) >= 0.0f &&
-							( v0 - v2 ).Cross( intersection_point - v2 ).Dot( plane_normal ) >= 0.0f )
+						continue;
+					}
+
+					var Vec3f plane_normal= ( v1 - v0 ).Cross( v2 - v0 );
+					var f32 plane_distance= -v0.Dot( plane_normal );
+
+					var f32 point0_distance_to_plane= ray_start.Dot( plane_normal ) + plane_distance;
+					var f32 point1_distance_to_plane= ray_end.Dot( plane_normal ) + plane_distance;
+					var f32 distance_difference= point1_distance_to_plane - point0_distance_to_plane;
+					if( distance_difference != 0.0f )
+					{
+						var f32 k0= point0_distance_to_plane / distance_difference;
+						var f32 k1= point1_distance_to_plane / distance_difference;
+						var Vec3f intersection_point= ray_start * k1 - ray_end * k0;
+
+						// This distance is negative for intersection points behind current ray.
+						var f32 signed_distance_to_intersection_point= ( intersection_point - ray_start ).Dot( direction_vector );
+
+						if( signed_distance_to_intersection_point > 0.0f && // Process intersections only at the front of the ray.
+							signed_distance_to_intersection_point < closest_distance ) // Find the smallest positive distance.
 						{
-							closest_distance= signed_distance_to_intersection_point;
-							closest_intersection_point= intersection_point;
+							// Check if ray-plane intersection lies within the triangle.
+							if( ( v1 - v0 ).Cross( intersection_point - v0 ).Dot( plane_normal ) >= 0.0f &&
+								( v2 - v1 ).Cross( intersection_point - v1 ).Dot( plane_normal ) >= 0.0f &&
+								( v0 - v2 ).Cross( intersection_point - v2 ).Dot( plane_normal ) >= 0.0f )
+							{
+								closest_distance= signed_distance_to_intersection_point;
+								closest_intersection_point= intersection_point;
+							}
 						}
 					}
 				}
