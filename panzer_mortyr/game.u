@@ -183,6 +183,12 @@ fn Game::ProcessMouseButtonPress( mut this, u32 button_index )
 		var f32 mut closest_distance= 10000.0f;
 		var Vec3f mut closest_intersection_point= ray_start + closest_distance * direction_vector;
 
+		// Search for intersection with map geometry.
+
+		// TODO - speed-up this, iterate over clusters and process only quads withing clusters where intersection is possible.
+
+		// TODO - ignore quads with materials transparent for bullets (like water).
+
 		foreach( &quad : zmap_data_.try_deref().quads )
 		{
 			var [ [ i32, 3 ], 4 ] shifts
@@ -223,6 +229,9 @@ fn Game::ProcessMouseButtonPress( mut this, u32 button_index )
 				Vec3f( f32( center[0] + shifts[3][0] ), f32( center[1] + shifts[3][1] ), f32( center[2] + shifts[3][2] ) ),
 			];
 
+			// Process each triangle of a quad separately - in case if due to precision errors quads aren't planar.
+			// TODO - simplify this code for the majority of the cases with planar quads.
+
 			for( auto mut quad_triangle_index= 0s; quad_triangle_index < 2s; ++quad_triangle_index )
 			{
 				var Vec3f& v0= vertices[0];
@@ -237,21 +246,25 @@ fn Game::ProcessMouseButtonPress( mut this, u32 button_index )
 				var Vec3f plane_normal= ( v1 - v0 ).Cross( v2 - v0 );
 				var f32 plane_distance= -v0.Dot( plane_normal );
 
-				var f32 dist0 = ray_start.Dot( plane_normal ) + plane_distance;
-				var f32 dist1 = ray_end.Dot( plane_normal ) + plane_distance;
-				var f32 dist_sum = dist1 - dist0;
-				if( dist_sum != 0.0f )
+				var f32 point0_distance_to_plane= ray_start.Dot( plane_normal ) + plane_distance;
+				var f32 point1_distance_to_plane= ray_end.Dot( plane_normal ) + plane_distance;
+				var f32 distance_difference= point1_distance_to_plane - point0_distance_to_plane;
+				if( distance_difference != 0.0f )
 				{
-					var f32 k0 = dist0 / dist_sum;
-					var f32 k1 = dist1 / dist_sum;
+					var f32 k0= point0_distance_to_plane / distance_difference;
+					var f32 k1= point1_distance_to_plane / distance_difference;
 					var Vec3f intersection_point= ray_start * k1 - ray_end * k0;
 
-					if( ( v1 - v0 ).Cross( intersection_point - v0 ).Dot( plane_normal ) >= 0.0f &&
-						( v2 - v1 ).Cross( intersection_point - v1 ).Dot( plane_normal ) >= 0.0f &&
-						( v0 - v2 ).Cross( intersection_point - v2 ).Dot( plane_normal ) >= 0.0f )
+					// This distance is negative for intersection points behind current ray.
+					var f32 signed_distance_to_intersection_point= ( intersection_point - ray_start ).Dot( direction_vector );
+
+					if( signed_distance_to_intersection_point > 0.0f && // Process intersections only at the front of the ray.
+						signed_distance_to_intersection_point < closest_distance ) // Find the smallest positive distance.
 					{
-						var f32 signed_distance_to_intersection_point= ( intersection_point - ray_start ).Dot( direction_vector );
-						if( signed_distance_to_intersection_point > 0.0f && signed_distance_to_intersection_point < closest_distance )
+						// Check if ray-plane intersection lies within the triangle.
+						if( ( v1 - v0 ).Cross( intersection_point - v0 ).Dot( plane_normal ) >= 0.0f &&
+							( v2 - v1 ).Cross( intersection_point - v1 ).Dot( plane_normal ) >= 0.0f &&
+							( v0 - v2 ).Cross( intersection_point - v2 ).Dot( plane_normal ) >= 0.0f )
 						{
 							closest_distance= signed_distance_to_intersection_point;
 							closest_intersection_point= intersection_point;
