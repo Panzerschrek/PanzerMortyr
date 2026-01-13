@@ -1,0 +1,73 @@
+import "geometry_utils.uh"
+
+namespace PM
+{
+
+fn FindRayPolyhedronIntersection(
+	Vec3f& ray_start,
+	Vec3f& ray_direction,
+	ust::array_view_imut</Planef/> polyhedron_planes ) : ust::optional</RayPolyhedronIntersectionResult/>
+{
+	// Use here ray-convex polyhedron intersection algorithm invented by Eric Haines,.
+
+	var f32 constexpr max_float= 1.0e38f;
+
+	var f32 mut near_distance= max_float, mut far_distance= -max_float;
+	var size_type mut near_index= ~0s, mut far_index= ~0s;
+
+	for( auto mut i= 0s; i < polyhedron_planes.size(); ++i )
+	{
+		var Planef& plane= polyhedron_planes[i];
+
+		var f32 direction_vector_plane_normal_dot= ray_direction.Dot( plane.normal );
+		var f32 ray_start_distance_to_plane= plane.GetDistanceForPoint( ray_start );
+
+		if( direction_vector_plane_normal_dot > 0.0f )
+		{
+			var f32 signed_distance_to_intersection_point= -ray_start_distance_to_plane / direction_vector_plane_normal_dot;
+			if( signed_distance_to_intersection_point > far_distance )
+			{
+				far_distance= signed_distance_to_intersection_point;
+				far_index= i;
+			}
+		}
+		else if( direction_vector_plane_normal_dot < 0.0f )
+		{
+			var f32 signed_distance_to_intersection_point= -ray_start_distance_to_plane / direction_vector_plane_normal_dot;
+			if( signed_distance_to_intersection_point < near_distance )
+			{
+				near_distance= signed_distance_to_intersection_point;
+				near_index= i;
+			}
+		}
+		else
+		{
+			// Ray parallel to the plane. Check if ray start is outside this plane and if so - return empty result since no intersection is possible.
+			if( ray_start_distance_to_plane > 0.0f )
+			{
+				return ust::null_optional;
+			}
+		}
+	}
+
+	if( near_distance > far_distance )
+	{
+		// No intersection.
+		return ust::null_optional;
+	}
+	if( near_index >= polyhedron_planes.size() || far_index >= polyhedron_planes.size() )
+	{
+		// Something went wrong.
+		return ust::null_optional;
+	}
+
+	return RayPolyhedronIntersectionResult
+	{
+		.near_point_distance= near_distance,
+		.near_plane_index( near_index ),
+		.far_point_distance= far_distance,
+		.far_point_index( far_index ),
+	};
+}
+
+} // namespace PM
