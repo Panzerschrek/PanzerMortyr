@@ -542,9 +542,12 @@ fn Game::MovePlayer( mut this, f32 time_delta_s, ust::array_view_imut</bool/> ke
 		var Vec3f movement_vector= new_position - old_position; // Non-normalized.
 
 		// Distance in movement length units.
-		var f32 mut clipped_move_distance= 10000000.0f;
+		var f32 mut clipped_move_distance= 1.0f;
 
 		var Vec3f mut collision_point_normal( 0.0f, 0.0f, 0.0f );
+
+		// Needed for pushing out of colliders if it happens to be the case.
+		var Vec3f mut extra_push( 0.0f, 0.0f, 0.0f );
 
 		foreach( &cluster : zvox_data.clusters )
 		{
@@ -588,7 +591,7 @@ fn Game::MovePlayer( mut this, f32 time_delta_s, ust::array_view_imut</bool/> ke
 
 				if_var( intersection : FindRayPolyhedronIntersection( old_position, movement_vector, quad_polyhedron ) )
 				{
-					if( intersection.near_point_distance >= 0.0f && intersection.far_point_distance >= 0.0f )
+					if( intersection.near_point_distance > 0.0f )
 					{
 						// Is outside and moving towards the quad volume.
 						// Clip movement by distance to the near intersection point.
@@ -598,7 +601,7 @@ fn Game::MovePlayer( mut this, f32 time_delta_s, ust::array_view_imut</bool/> ke
 							collision_point_normal= quad_polyhedron[ intersection.near_plane_index ].normal;
 						}
 					}
-					else if( intersection.near_point_distance <= 0.0f && intersection.far_point_distance <= 0.0f )
+					else if( intersection.far_point_distance < 0.0f )
 					{
 						// Is outside and moving from the quad volume.
 						// Nothing to do here.
@@ -606,29 +609,36 @@ fn Game::MovePlayer( mut this, f32 time_delta_s, ust::array_view_imut</bool/> ke
 					else
 					{
 						// Is inside.
-						var f32 near_point_absolute_distance= ust::abs( intersection.near_point_distance );
-						var f32 far_point_absolute_distance= ust::abs( intersection.far_point_distance );
+						// Apply extra push towards nearest plane of the bounding volume.
 
-						if( near_point_absolute_distance <= far_point_absolute_distance )
+						var f32 mut smallest_push_distance= 10000000000.0f;
+						var Vec3f mut smallest_push_plane_normal( 0.0f, 0.0f, 0.0f );
+
+						foreach( &plane : quad_polyhedron )
 						{
-							// Moving deeper into the volume. Push back.
-							// TODO - fix this. We should push towards nearest plane, not towards nearest plane along movement direction.
-							if( intersection.near_point_distance < clipped_move_distance )
+							var f32 push_distance= -plane.GetDistanceForPoint( new_position ) / plane.normal.Length();
+							if( push_distance < smallest_push_distance )
 							{
-								clipped_move_distance= intersection.near_point_distance;
-								collision_point_normal= quad_polyhedron[ intersection.near_plane_index ].normal;
+								smallest_push_distance= push_distance;
+								smallest_push_plane_normal= plane.normal;
 							}
 						}
-						else
+
+						// Apply extra push with the largest magnitude.
+						if( smallest_push_distance * smallest_push_distance > extra_push.SquareLength() )
 						{
-							// Moving out of the volume. Allow this, do nothing.
+							extra_push= smallest_push_distance * smallest_push_plane_normal;
 						}
 					}
 				}
 			}
 		}
 
-		var Vec3f mut new_position_clipped= old_position + movement_vector * ust::min( 1.0f, clipped_move_distance );
+		var Vec3f mut new_position_clipped=
+			old_position +
+			extra_push +
+			movement_vector * ust::min( 1.0f, clipped_move_distance );
+
 		if( clipped_move_distance < 1.0f )
 		{
 			var f32 normal_square_length= collision_point_normal.SquareLength();
