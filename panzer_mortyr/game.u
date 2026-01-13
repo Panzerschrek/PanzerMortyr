@@ -13,7 +13,7 @@ fn Game::constructor(
 		caching_game_resources_loader_ptr_= move( caching_game_resources_loader_ptr ),
 		console_out_= move(console_out),
 		current_map_index_= 0u, // Set later.
-		camera_controller_( Vec3f( 0.0f, 0.0f, 0.0f ), 0.0f ),
+		player_controller_( Vec3f( 0.0f, 0.0f, 0.0f ), 0.0f ),
 		prev_time_steps_= 0.0,
 	)
 {
@@ -147,8 +147,8 @@ fn Game::TeleportToMap( mut this, u32 map_index )
 
 			if( u32( entity.kind ) == c_player_entity_index )
 			{
-				camera_controller_=
-					CameraController(
+				player_controller_=
+					PlayerController(
 						Vec3f( f32( entity.position[0] ), f32( entity.position[1] ), f32( entity.position[2] ) ),
 						Convert1024Angle( f32( entity.data[4] ) ) );
 				break;
@@ -161,7 +161,7 @@ fn Game::TeleportToMap( mut this, u32 map_index )
 
 fn Game::Update( mut this, f32 time_delta_s, ust::array_view_imut</bool/> keyboard_state )
 {
-	camera_controller_.Update( time_delta_s, keyboard_state );
+	player_controller_.Update( time_delta_s, keyboard_state );
 
 	// Process game logic in fixed time steps.
 
@@ -184,15 +184,15 @@ fn Game::ProcessMouseButtonPress( mut this, u32 button_index )
 {
 	if( button_index == 1u )
 	{
-		var f32 azimuth= camera_controller_.GetAzimuth();
-		var f32 elevation= camera_controller_.GetElevation();
+		var f32 azimuth= player_controller_.GetAzimuth();
+		var f32 elevation= player_controller_.GetElevation();
 
 		var f32 elevation_cos= ust::cos(elevation);
 		var f32 elevation_sin= ust::sin(elevation);
 
 		var Vec3f direction_vector( -ust::sin(azimuth) * elevation_cos, ust::cos(azimuth) * elevation_cos, elevation_sin );
 
-		var Vec3f ray_start= camera_controller_.GetPos();
+		var Vec3f ray_start= player_controller_.GetPos();
 
 		if( zmap_data_.empty() || zvox_data_.empty() )
 		{
@@ -338,9 +338,9 @@ fn Game::GetWorldDrawingInfo( this ) : WorldDrawingInfo
 		.map_index= current_map_index_,
 		// Offset camera slightly relative to the player's position.
 		// TODO - use also slight horisontal shift as the original game does.
-		.camera_position= camera_controller_.GetPos() + Vec3f( 0.0f, 0.0f, c_camera_z_offset ),
-		.camera_azimuth= camera_controller_.GetAzimuth(),
-		.camera_elevation= camera_controller_.GetElevation(),
+		.camera_position= player_controller_.GetPos() + Vec3f( 0.0f, 0.0f, c_camera_z_offset ),
+		.camera_azimuth= player_controller_.GetAzimuth(),
+		.camera_elevation= player_controller_.GetElevation(),
 		.model_objects= move(model_objects),
 		.test_sprites= test_bullet_holes_,
 	};
@@ -348,12 +348,12 @@ fn Game::GetWorldDrawingInfo( this ) : WorldDrawingInfo
 
 fn Game::process_reset_position( mut this )
 {
-	camera_controller_= CameraController( Vec3f( 0.0f, 0.0f, 0.0f ), 0.0f );
+	player_controller_= PlayerController( Vec3f( 0.0f, 0.0f, 0.0f ), 0.0f );
 }
 
 fn Game::process_trigger_player_see( mut this )
 {
-	var Vec3f pos= camera_controller_.GetPos();
+	var Vec3f pos= player_controller_.GetPos();
 	if_var( &mut entity : GetNearestEntity( pos ) )
 	{
 		entity.has_seen_player_in_current_operation= true;
@@ -362,7 +362,7 @@ fn Game::process_trigger_player_see( mut this )
 
 fn Game::process_trigger_player_in_shooting_zone( mut this )
 {
-	var Vec3f pos= camera_controller_.GetPos();
+	var Vec3f pos= player_controller_.GetPos();
 	if_var( &mut entity : GetNearestEntity( pos ) )
 	{
 		entity.player_is_inside_shooting_zone= true;
@@ -371,7 +371,7 @@ fn Game::process_trigger_player_in_shooting_zone( mut this )
 
 fn Game::process_trigger_energy_loss( mut this )
 {
-	var Vec3f pos= camera_controller_.GetPos();
+	var Vec3f pos= player_controller_.GetPos();
 	if_var( &mut entity : GetNearestEntity( pos ) )
 	{
 		entity.lost_energy_in_current_operation= true;
@@ -583,7 +583,7 @@ fn Game::ProcessStep( mut this )
 					// This entity can be picked-up.
 					// TODO - identify exact radius and center.
 					var f32 c_pickup_distance= 48.0f;
-					var f32 square_distance= ( camera_controller_.GetPos() - entity.position ).SquareLength();
+					var f32 square_distance= ( player_controller_.GetPos() - entity.position ).SquareLength();
 					if( square_distance < c_pickup_distance * c_pickup_distance )
 					{
 						// Despawn this entity, since it was picked-up.
