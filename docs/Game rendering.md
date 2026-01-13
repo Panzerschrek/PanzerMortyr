@@ -8,6 +8,12 @@ No blending or other tricks are necessary.
 
 Map geometry should be generally clipped - by using frustum culling and clusters visibility information.
 
+### Map polygons with animation
+
+There are a couple of special materials enabling frame-based texture animation.
+Map polygons having these materials should be properly processed (animated).
+They may require CPU-side texture coordinates update and separate draw pass.
+
 
 ### Dynamic map clusters
 
@@ -113,6 +119,13 @@ Alternatively light information can be fetched from map geometry where a decal i
 Injured enemies are drawn with blood spots on their bodies.
 This can be achieved by rendering a model with extra texture layer containing blood drawn directly into this texture.
 This can be done by creating a separate shader for models using blood layer or by drawing blood layers in a separate step (with equal depth test).
+
+
+### Bullets
+
+The original game shows bullets as linear fast traveling objects.
+They should be drawn somehow, presumably as quads elongated along travel direction.
+They seems to require to lighting (they are always fullbright).
 
 
 ### Dynamic lights
