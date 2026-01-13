@@ -30,9 +30,42 @@ fn WorldDrawer::constructor(
 		test_sprite_shader_(
 			embed</char8/>( "shaders/test_sprite.vert.glsl" ),
 			embed</char8/>( "shaders/test_sprite.frag.glsl" ) ),
+		test_triangle_shader_(
+			embed</char8/>( "shaders/test_triangle.vert.glsl" ),
+			embed</char8/>( "shaders/test_triangle.frag.glsl" ) ),
+		test_trianlge_vertex_buffer_object_=
+			BufferObject::CreateUninitializedDynamicDrawBuffer(
+				GLenum( GL_ARRAY_BUFFER ),
+				c_max_test_triagle_vertices * typeinfo</TestTriangleVertex/>.size_of ),
 		map_index_= 0u,
 	)
 {
+	test_trianlge_vertex_array_object_.Bind();
+	test_trianlge_vertex_buffer_object_.Bind();
+
+	// These constants should match locations in the shader!
+	var u32 c_test_triangle_position_attrib= 0u;
+	var u32 c_test_triangle_color_attrib= 1u;
+
+	unsafe( glEnableVertexAttribArray( c_test_triangle_position_attrib ) );
+
+	unsafe( glVertexAttribPointer(
+		c_test_triangle_position_attrib,
+		3,
+		GLenum( GL_FLOAT ),
+		GLboolean(0),
+		GLsizei( typeinfo</TestTriangleVertex/>.size_of ),
+		ust::nullptr</byte8/>() + GetStructFieldOffset</ TestTriangleVertex, "position" />() ) );
+
+	unsafe( glEnableVertexAttribArray( c_test_triangle_color_attrib ) );
+
+	unsafe( glVertexAttribPointer(
+		c_test_triangle_color_attrib,
+		3,
+		GLenum( GL_UNSIGNED_BYTE ),
+		GLboolean(1),
+		GLsizei( typeinfo</TestTriangleVertex/>.size_of ),
+		ust::nullptr</byte8/>() + GetStructFieldOffset</ TestTriangleVertex, "color" />() ) );
 }
 
 fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingViewportInfo& viewport_info )
@@ -316,6 +349,40 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 		}
 
 		unsafe( glPointSize( 1.0f ) );
+	}
+
+	// Draw test triangles.
+	if( !drawing_info.test_triangles.empty() )
+	{
+		test_trianlge_vertex_array_object_.Bind();
+		test_trianlge_vertex_buffer_object_.Bind();
+
+		scoped_array TestTriangleVertex mut vertices[ drawing_info.test_triangles.size() * 3s ]( ust::make_zeroed</TestTriangleVertex/>() );
+
+		for( auto mut i= 0s; i < drawing_info.test_triangles.size(); ++i )
+		{
+			var WorldDrawingInfo::TestTriangle& triangle= drawing_info.test_triangles[i];
+
+			for( auto mut j= 0s; j < 3s; ++j )
+			{
+				var TestTriangleVertex &mut v= vertices[ i * 3s + j ];
+				var Vec3f& pos= triangle.vertices[j];
+				v.position[0]= pos.x;
+				v.position[1]= pos.y;
+				v.position[2]= pos.z;
+				v.color= triangle.color;
+			}
+		}
+
+		var ust::array_view_imut</TestTriangleVertex/> vertices_imut= vertices.subrange_end( c_max_test_triagle_vertices );
+
+		auto range= vertices_imut.to_byte8_range();
+		unsafe( glBufferSubData( GLenum( GL_ARRAY_BUFFER ), GLintptr(0), GLsizeiptr( range.size() ), range.data() ) );
+
+		test_triangle_shader_.Bind();
+		test_sprite_shader_.SetUniform( "vu_matrix", view_matrix );
+
+		unsafe( glDrawArrays( GLenum( GL_TRIANGLES ), GLint(0), GLint( vertices_imut.size() ) ) );
 	}
 }
 
@@ -779,5 +846,7 @@ fn CalculateCameraMatrix( f32 aspect, Vec3f& camera_position, f32 camera_azimuth
 
 	return translate_matrix * rotation_matrix * perspective_matrix;
 }
+
+var size_type c_max_test_triagle_vertices= 1024s;
 
 } // namespace PM
