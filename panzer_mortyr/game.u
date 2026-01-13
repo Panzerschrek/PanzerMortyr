@@ -521,7 +521,9 @@ fn Game::MovePlayer( mut this, f32 time_delta_s, ust::array_view_imut</bool/> ke
 	var Vec3f movement_vector= new_position - old_position; // Non-normalized.
 	var f32 movement_length= movement_vector.Length();
 
-	var f32 mut clipped_move_distance= movement_length;
+	var f32 mut clipped_move_distance= 10000000.0f;
+
+	var Vec3f mut collision_point_normal( 0.0f, 0.0f, 0.0f );
 
 	if( zmap_data_.empty() || zvox_data_.empty() )
 	{
@@ -584,7 +586,11 @@ fn Game::MovePlayer( mut this, f32 time_delta_s, ust::array_view_imut</bool/> ke
 				{
 					// Is outside and moving towards the quad volume.
 					// Clip movement by distance to the near point.
-					ust::min_assign( clipped_move_distance, intersection.near_point_distance );
+					if( intersection.near_point_distance < clipped_move_distance )
+					{
+						clipped_move_distance= intersection.near_point_distance;
+						collision_point_normal= quad_polyhedron[ intersection.near_plane_index ].normal;
+					}
 				}
 				else if( intersection.near_point_distance <= 0.0f && intersection.far_point_distance <= 0.0f )
 				{
@@ -600,7 +606,11 @@ fn Game::MovePlayer( mut this, f32 time_delta_s, ust::array_view_imut</bool/> ke
 					if( near_point_absolute_distance <= far_point_absolute_distance )
 					{
 						// Moving deeper into the volume. Push back.
-						ust::min_assign( clipped_move_distance, intersection.near_point_distance );
+						if( intersection.near_point_distance < clipped_move_distance )
+						{
+							clipped_move_distance= intersection.near_point_distance;
+							collision_point_normal= quad_polyhedron[ intersection.near_plane_index ].normal;
+						}
 					}
 					else
 					{
@@ -611,7 +621,19 @@ fn Game::MovePlayer( mut this, f32 time_delta_s, ust::array_view_imut</bool/> ke
 		}
 	}
 
-	var Vec3f new_position_clipped= old_position + movement_vector * ( clipped_move_distance / movement_length );
+	var Vec3f mut new_position_clipped= old_position + movement_vector * ust::min( 1.0f, clipped_move_distance / movement_length );
+	if( clipped_move_distance < movement_length )
+	{
+		var f32 normal_square_length= collision_point_normal.SquareLength();
+		if( normal_square_length > 0.0f )
+		{
+			var f32 remaining_movement_fration= ( movement_length - clipped_move_distance ) / movement_length;
+			var Vec3f remaining_movement_vector= movement_vector * remaining_movement_fration;
+			new_position_clipped+=
+				remaining_movement_vector -
+				collision_point_normal * ( remaining_movement_vector.Dot( collision_point_normal ) / normal_square_length );
+		}
+	}
 
 	player_controller_.SetPos( new_position_clipped );
 }
