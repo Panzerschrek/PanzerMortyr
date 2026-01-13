@@ -510,21 +510,6 @@ fn Game::MovePlayer( mut this, f32 time_delta_s, ust::array_view_imut</bool/> ke
 		return;
 	}
 
-	var Vec3f new_position= player_controller_.GetPos();
-
-	if( new_position == old_position )
-	{
-		// TODO - still process movement, move out of colliders if necessary.
-		return;
-	}
-
-	var Vec3f movement_vector= new_position - old_position; // Non-normalized.
-	var f32 movement_length= movement_vector.Length();
-
-	var f32 mut clipped_move_distance= 10000000.0f;
-
-	var Vec3f mut collision_point_normal( 0.0f, 0.0f, 0.0f );
-
 	if( zmap_data_.empty() || zvox_data_.empty() )
 	{
 		return;
@@ -540,102 +525,126 @@ fn Game::MovePlayer( mut this, f32 time_delta_s, ust::array_view_imut</bool/> ke
 		.max(  14.0f,  14.0f, 64.0f ),
 	};
 
-	foreach( &cluster : zvox_data.clusters )
+	var Vec3f mut new_position= player_controller_.GetPos();
+
+	// Perform several position correctness steps in order to correct position properly in corners.
+	// We require at least 2 steps to resolve collisions in 90 degree corners.
+	// Sharper corners require more iterations,
+	// a 45 degree corner for example requires 2 iterations to correct position by half distance from the current to proper one.
+	for( auto mut position_correction_step= 0s; position_correction_step < 4s; ++position_correction_step )
 	{
-		// TODO - speed-up this, process only clusters where intersection is possible.
-
-		foreach( &quad : zmap_data.quads.range().subrange(
-			size_type( cluster.c.first_quad_index ),
-			size_type( cluster.c.first_quad_index ) + size_type( cluster.num_quads ) ) )
+		if( new_position == old_position )
 		{
-			// TODO - ignore quads with materials passable by player (like water).
+			// TODO - still process movement, move out of colliders if necessary.
+			break;
+		}
 
-			auto& center= cluster.c.center;
-			auto& in_vertices= quad.vertices;
+		var Vec3f movement_vector= new_position - old_position; // Non-normalized.
+		var f32 movement_length= movement_vector.Length();
 
-			var [ Vec3f, 4 ] vertices
-			[
-				Vec3f( f32( center[0] + i32( in_vertices[0][0] ) ), f32( center[1] + i32( in_vertices[0][1] ) ), f32( center[2] + i32( in_vertices[0][2] ) ) ),
-				Vec3f( f32( center[0] + i32( in_vertices[1][0] ) ), f32( center[1] + i32( in_vertices[1][1] ) ), f32( center[2] + i32( in_vertices[1][2] ) ) ),
-				Vec3f( f32( center[0] + i32( in_vertices[2][0] ) ), f32( center[1] + i32( in_vertices[2][1] ) ), f32( center[2] + i32( in_vertices[2][2] ) ) ),
-				Vec3f( f32( center[0] + i32( in_vertices[3][0] ) ), f32( center[1] + i32( in_vertices[3][1] ) ), f32( center[2] + i32( in_vertices[3][2] ) ) ),
-			];
+		var f32 mut clipped_move_distance= 10000000.0f;
 
-			// TODO - build proper Minkowski sum of player's bounding box with quad geometry.
-			// But box volume still can be used for simple case.
+		var Vec3f mut collision_point_normal( 0.0f, 0.0f, 0.0f );
 
-			var BBox3f quad_bbox
+		foreach( &cluster : zvox_data.clusters )
+		{
+			// TODO - speed-up this, process only clusters where intersection is possible.
+
+			foreach( &quad : zmap_data.quads.range().subrange(
+				size_type( cluster.c.first_quad_index ),
+				size_type( cluster.c.first_quad_index ) + size_type( cluster.num_quads ) ) )
 			{
-				.min= player_bbox.min +
-					Vec3f(
-						ust::min( ust::min( vertices[0].x, vertices[1].x ), ust::min( vertices[2].x, vertices[3].x ) ),
-						ust::min( ust::min( vertices[0].y, vertices[1].y ), ust::min( vertices[2].y, vertices[3].y ) ),
-						ust::min( ust::min( vertices[0].z, vertices[1].z ), ust::min( vertices[2].z, vertices[3].z ) ) ),
-				.max= player_bbox.max +
-					Vec3f(
-						ust::max( ust::max( vertices[0].x, vertices[1].x ), ust::max( vertices[2].x, vertices[3].x ) ),
-						ust::max( ust::max( vertices[0].y, vertices[1].y ), ust::max( vertices[2].y, vertices[3].y ) ),
-						ust::max( ust::max( vertices[0].z, vertices[1].z ), ust::max( vertices[2].z, vertices[3].z ) ) ),
-			};
+				// TODO - ignore quads with materials passable by player (like water).
 
-			auto quad_polyhedron= CreateBBoxPlanes( quad_bbox );
+				auto& center= cluster.c.center;
+				auto& in_vertices= quad.vertices;
 
-			if_var( intersection : FindRayPolyhedronIntersection( old_position, movement_vector, quad_polyhedron ) )
-			{
-				if( intersection.near_point_distance >= 0.0f && intersection.far_point_distance >= 0.0f )
+				var [ Vec3f, 4 ] vertices
+				[
+					Vec3f( f32( center[0] + i32( in_vertices[0][0] ) ), f32( center[1] + i32( in_vertices[0][1] ) ), f32( center[2] + i32( in_vertices[0][2] ) ) ),
+					Vec3f( f32( center[0] + i32( in_vertices[1][0] ) ), f32( center[1] + i32( in_vertices[1][1] ) ), f32( center[2] + i32( in_vertices[1][2] ) ) ),
+					Vec3f( f32( center[0] + i32( in_vertices[2][0] ) ), f32( center[1] + i32( in_vertices[2][1] ) ), f32( center[2] + i32( in_vertices[2][2] ) ) ),
+					Vec3f( f32( center[0] + i32( in_vertices[3][0] ) ), f32( center[1] + i32( in_vertices[3][1] ) ), f32( center[2] + i32( in_vertices[3][2] ) ) ),
+				];
+
+				// TODO - build proper Minkowski sum of player's bounding box with quad geometry.
+				// But box volume still can be used for simple case.
+
+				var BBox3f quad_bbox
 				{
-					// Is outside and moving towards the quad volume.
-					// Clip movement by distance to the near point.
-					if( intersection.near_point_distance < clipped_move_distance )
+					.min= player_bbox.min +
+						Vec3f(
+							ust::min( ust::min( vertices[0].x, vertices[1].x ), ust::min( vertices[2].x, vertices[3].x ) ),
+							ust::min( ust::min( vertices[0].y, vertices[1].y ), ust::min( vertices[2].y, vertices[3].y ) ),
+							ust::min( ust::min( vertices[0].z, vertices[1].z ), ust::min( vertices[2].z, vertices[3].z ) ) ),
+					.max= player_bbox.max +
+						Vec3f(
+							ust::max( ust::max( vertices[0].x, vertices[1].x ), ust::max( vertices[2].x, vertices[3].x ) ),
+							ust::max( ust::max( vertices[0].y, vertices[1].y ), ust::max( vertices[2].y, vertices[3].y ) ),
+							ust::max( ust::max( vertices[0].z, vertices[1].z ), ust::max( vertices[2].z, vertices[3].z ) ) ),
+				};
+
+				auto quad_polyhedron= CreateBBoxPlanes( quad_bbox );
+
+				if_var( intersection : FindRayPolyhedronIntersection( old_position, movement_vector, quad_polyhedron ) )
+				{
+					if( intersection.near_point_distance >= 0.0f && intersection.far_point_distance >= 0.0f )
 					{
-						clipped_move_distance= intersection.near_point_distance;
-						collision_point_normal= quad_polyhedron[ intersection.near_plane_index ].normal;
-					}
-				}
-				else if( intersection.near_point_distance <= 0.0f && intersection.far_point_distance <= 0.0f )
-				{
-					// Is outside and moving from the quad volume.
-					// Nothing to do here.
-				}
-				else
-				{
-					// Is inside.
-					var f32 near_point_absolute_distance= ust::abs( intersection.near_point_distance );
-					var f32 far_point_absolute_distance= ust::abs( intersection.far_point_distance );
-
-					if( near_point_absolute_distance <= far_point_absolute_distance )
-					{
-						// Moving deeper into the volume. Push back.
+						// Is outside and moving towards the quad volume.
+						// Clip movement by distance to the near point.
 						if( intersection.near_point_distance < clipped_move_distance )
 						{
 							clipped_move_distance= intersection.near_point_distance;
 							collision_point_normal= quad_polyhedron[ intersection.near_plane_index ].normal;
 						}
 					}
+					else if( intersection.near_point_distance <= 0.0f && intersection.far_point_distance <= 0.0f )
+					{
+						// Is outside and moving from the quad volume.
+						// Nothing to do here.
+					}
 					else
 					{
-						// Moving out of the volume. Allow this, do nothing.
+						// Is inside.
+						var f32 near_point_absolute_distance= ust::abs( intersection.near_point_distance );
+						var f32 far_point_absolute_distance= ust::abs( intersection.far_point_distance );
+
+						if( near_point_absolute_distance <= far_point_absolute_distance )
+						{
+							// Moving deeper into the volume. Push back.
+							if( intersection.near_point_distance < clipped_move_distance )
+							{
+								clipped_move_distance= intersection.near_point_distance;
+								collision_point_normal= quad_polyhedron[ intersection.near_plane_index ].normal;
+							}
+						}
+						else
+						{
+							// Moving out of the volume. Allow this, do nothing.
+						}
 					}
 				}
 			}
 		}
-	}
 
-	var Vec3f mut new_position_clipped= old_position + movement_vector * ust::min( 1.0f, clipped_move_distance / movement_length );
-	if( clipped_move_distance < movement_length )
-	{
-		var f32 normal_square_length= collision_point_normal.SquareLength();
-		if( normal_square_length > 0.0f )
+		var Vec3f mut new_position_clipped= old_position + movement_vector * ust::min( 1.0f, clipped_move_distance / movement_length );
+		if( clipped_move_distance < movement_length )
 		{
-			var f32 remaining_movement_fration= ( movement_length - clipped_move_distance ) / movement_length;
-			var Vec3f remaining_movement_vector= movement_vector * remaining_movement_fration;
-			new_position_clipped+=
-				remaining_movement_vector -
-				collision_point_normal * ( remaining_movement_vector.Dot( collision_point_normal ) / normal_square_length );
+			var f32 normal_square_length= collision_point_normal.SquareLength();
+			if( normal_square_length > 0.0f )
+			{
+				var f32 remaining_movement_fration= ( movement_length - clipped_move_distance ) / movement_length;
+				var Vec3f remaining_movement_vector= movement_vector * remaining_movement_fration;
+				new_position_clipped+=
+					remaining_movement_vector -
+					collision_point_normal * ( remaining_movement_vector.Dot( collision_point_normal ) / normal_square_length );
+			}
 		}
+
+		new_position= new_position_clipped;
 	}
 
-	player_controller_.SetPos( new_position_clipped );
+	player_controller_.SetPos( new_position );
 }
 
 fn Game::ProcessStep( mut this )
