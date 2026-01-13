@@ -505,7 +505,23 @@ fn Game::MovePlayer( mut this, f32 time_delta_s, ust::array_view_imut</bool/> ke
 
 	player_controller_.Update( time_delta_s, keyboard_state );
 
+	if( noclip_mode_active_ )
+	{
+		return;
+	}
+
 	var Vec3f new_position= player_controller_.GetPos();
+
+	if( new_position == old_position )
+	{
+		// TODO - still process movement, move out of colliders if necessary.
+		return;
+	}
+
+	var Vec3f movement_vector= new_position - old_position; // Non-normalized.
+	var f32 movement_length= movement_vector.Length();
+
+	var f32 mut clipped_move_distance= movement_length;
 
 	if( zmap_data_.empty() || zvox_data_.empty() )
 	{
@@ -521,8 +537,6 @@ fn Game::MovePlayer( mut this, f32 time_delta_s, ust::array_view_imut</bool/> ke
 		.min( -14.0f, -14.0f,  0.0f ),
 		.max(  14.0f,  14.0f, 64.0f ),
 	};
-
-	var bool mut stuck= false;
 
 	foreach( &cluster : zvox_data.clusters )
 	{
@@ -562,14 +576,44 @@ fn Game::MovePlayer( mut this, f32 time_delta_s, ust::array_view_imut</bool/> ke
 						ust::max( ust::max( vertices[0].z, vertices[1].z ), ust::max( vertices[2].z, vertices[3].z ) ) ),
 			};
 
-			stuck |= quad_bbox.PointIsInside( new_position );
+			auto quad_polyhedron= CreateBBoxPlanes( quad_bbox );
+
+			if_var( intersection : FindRayPolyhedronIntersection( old_position, movement_vector, quad_polyhedron ) )
+			{
+				if( intersection.near_point_distance >= 0.0f && intersection.far_point_distance >= 0.0f )
+				{
+					// Is outside and moving towards the quad volume.
+					// Clip movement by distance to the near point.
+					ust::min_assign( clipped_move_distance, intersection.near_point_distance );
+				}
+				else if( intersection.near_point_distance <= 0.0f && intersection.far_point_distance <= 0.0f )
+				{
+					// Is outside and moving from the quad volume.
+					// Nothing to do here.
+				}
+				else
+				{
+					// Is inside.
+					var f32 near_point_absolute_distance= ust::abs( intersection.near_point_distance );
+					var f32 far_point_absolute_distance= ust::abs( intersection.far_point_distance );
+
+					if( near_point_absolute_distance <= far_point_absolute_distance )
+					{
+						// Moving deeper into the volume. Push back.
+						ust::min_assign( clipped_move_distance, intersection.near_point_distance );
+					}
+					else
+					{
+						// Moving out of the volume. Allow this, do nothing.
+					}
+				}
+			}
 		}
 	}
 
-	if( stuck && ! noclip_mode_active_ )
-	{
-		player_controller_.SetPos( old_position );
-	}
+	var Vec3f new_position_clipped= old_position + movement_vector * ( clipped_move_distance / movement_length );
+
+	player_controller_.SetPos( new_position_clipped );
 }
 
 fn Game::ProcessStep( mut this )
