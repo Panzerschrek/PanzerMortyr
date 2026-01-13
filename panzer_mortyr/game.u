@@ -547,7 +547,7 @@ fn Game::MovePlayer( mut this, f32 time_delta_s, ust::array_view_imut</bool/> ke
 		var Vec3f mut collision_point_normal( 0.0f, 0.0f, 0.0f );
 
 		// Needed for pushing out of colliders if it happens to be the case.
-		var Vec3f mut extra_push( 0.0f, 0.0f, 0.0f );
+		var ust::optional</Vec3f/> mut extra_push;
 
 		foreach( &cluster : zvox_data.clusters )
 		{
@@ -589,6 +589,59 @@ fn Game::MovePlayer( mut this, f32 time_delta_s, ust::array_view_imut</bool/> ke
 
 				auto quad_polyhedron= CreateBBoxPlanes( quad_bbox );
 
+				// Calculate quad normal. All these checks are necessary to skip degenerate triagles with zero-length normal.
+				var Vec3f mut quad_normal( 0.0f, 0.0f, 0.0f );
+				if( vertices[1] != vertices[2] && vertices[2] != vertices[3] )
+				{
+					quad_normal= ( vertices[3] - vertices[2] ).Cross( vertices[2] - vertices[1] );
+				}
+				else if( vertices[0] != vertices[2] && vertices[2] != vertices[3] )
+				{
+					quad_normal= ( vertices[3] - vertices[2] ).Cross( vertices[2] - vertices[0] );
+				}
+				else if( vertices[0] != vertices[1] && vertices[1] != vertices[3] )
+				{
+					quad_normal= ( vertices[3] - vertices[1] ).Cross( vertices[1] - vertices[0] );
+				}
+				else if( vertices[0] != vertices[1] && vertices[1] != vertices[2] )
+				{
+					quad_normal= ( vertices[2] - vertices[1] ).Cross( vertices[1] - vertices[0] );
+				}
+
+				if( quad_normal.SquareLength() == 0.0f )
+				{
+					continue;
+				}
+
+				quad_normal= -quad_normal;
+
+				// Determine quad plane index. This hacky way works for now only for axis-aligned quads.
+				var size_type mut quad_plane_index= 0s;
+				if( quad_normal.x < 0.0f )
+				{
+					quad_plane_index= 0s;
+				}
+				else if( quad_normal.x > 0.0f )
+				{
+					quad_plane_index= 1s;
+				}
+				else if( quad_normal.y < 0.0f )
+				{
+					quad_plane_index= 2s;
+				}
+				else if( quad_normal.y > 0.0f )
+				{
+					quad_plane_index= 3s;
+				}
+				else if( quad_normal.z < 0.0f )
+				{
+					quad_plane_index= 4s;
+				}
+				else if( quad_normal.z > 0.0f )
+				{
+					quad_plane_index= 5s;
+				}
+
 				if_var( intersection : FindRayPolyhedronIntersection( old_position, movement_vector, quad_polyhedron ) )
 				{
 					if( intersection.near_point_distance > 0.0f )
@@ -609,25 +662,25 @@ fn Game::MovePlayer( mut this, f32 time_delta_s, ust::array_view_imut</bool/> ke
 					else
 					{
 						// Is inside.
-						// Apply extra push towards nearest plane of the bounding volume.
+						// Apply extra push towards quad plane.
+						// This is necessary if due to numerical errors or some other reasons we still somehow get inside a collider.
 
-						var f32 mut smallest_push_distance= 10000000000.0f;
-						var Vec3f mut smallest_push_plane_normal( 0.0f, 0.0f, 0.0f );
+						// This piece of shit doesn't work properly if player goes towards 270 degree corner.
+						// The player is pushed backwards in an unnatural way.
 
-						foreach( &plane : quad_polyhedron )
+						var Planef& push_plane= quad_polyhedron[ quad_plane_index ];
+
+						// TODO - handle cases with old position inside and new position outside.
+						var f32 distance= quad_polyhedron[ quad_plane_index ].GetDistanceForPoint( new_position );
+						if( distance < 0.0f )
 						{
-							var f32 push_distance= -plane.GetDistanceForPoint( new_position ) / plane.normal.Length();
-							if( push_distance < smallest_push_distance )
+							var Vec3f this_quad_push= push_plane.normal * ( -distance / push_plane.normal.SquareLength() );
+							if( extra_push.empty() ||
+								// Select smallest push of such kind.
+								this_quad_push.SquareLength() < extra_push.try_deref().SquareLength() )
 							{
-								smallest_push_distance= push_distance;
-								smallest_push_plane_normal= plane.normal;
+								extra_push= this_quad_push;
 							}
-						}
-
-						// Apply extra push with the largest magnitude.
-						if( smallest_push_distance * smallest_push_distance > extra_push.SquareLength() )
-						{
-							extra_push= smallest_push_distance * smallest_push_plane_normal;
 						}
 					}
 				}
@@ -636,7 +689,6 @@ fn Game::MovePlayer( mut this, f32 time_delta_s, ust::array_view_imut</bool/> ke
 
 		var Vec3f mut new_position_clipped=
 			old_position +
-			extra_push +
 			movement_vector * ust::min( 1.0f, clipped_move_distance );
 
 		if( clipped_move_distance < 1.0f )
@@ -650,6 +702,11 @@ fn Game::MovePlayer( mut this, f32 time_delta_s, ust::array_view_imut</bool/> ke
 					remaining_movement_vector -
 					collision_point_normal * ( remaining_movement_vector.Dot( collision_point_normal ) / normal_square_length );
 			}
+		}
+
+		if_var( &v : extra_push )
+		{
+			new_position_clipped+= v;
 		}
 
 		new_position= new_position_clipped;
