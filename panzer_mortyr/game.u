@@ -525,20 +525,29 @@ fn Game::MovePlayer( mut this, f32 time_delta_s, ust::array_view_imut</bool/> ke
 		.max(  14.0f,  14.0f, 64.0f ),
 	};
 
-	var Vec3f mut new_position= player_controller_.GetPos();
+	var Vec3f new_position= player_controller_.GetPos();
 
-	// Perform several position correctness steps in order to correct position properly in corners.
-	// We require at least 2 steps to resolve collisions in 90 degree corners.
-	// Sharper corners require more iterations,
-	// a 45 degree corner for example requires 2 iterations to correct position by half distance from the current to proper one.
-	for( auto mut position_correction_step= 0s; position_correction_step < 1s; ++position_correction_step )
+	var Vec3f mut position_clipped_to_movement= old_position;
+	var Vec3f mut position_clipped_to_movement_and_slided= old_position;
+
+	// Make first trace to clip movement to nearest collision point and slide sideways parallel to the collision plane (if necessary).
+
+	if( new_position != old_position )
 	{
 		var Vec3f movement_vector= new_position - old_position;
 		var TraceResult trace_result= CollisionTrace( zmap_data, zvox_data, player_bbox, old_position, movement_vector );
 
-		var Vec3f mut new_position_clipped=
+		position_clipped_to_movement=
 			old_position +
 			movement_vector * ust::min( 1.0f, trace_result.clipped_move_distance );
+
+		// Apply extra push if has one and only if has no clip by some other plane.
+		if( !trace_result.extra_push.empty() && trace_result.clipped_move_distance >= 1.0f )
+		{
+			position_clipped_to_movement+= trace_result.extra_push.try_deref();
+		}
+
+		position_clipped_to_movement_and_slided= position_clipped_to_movement;
 
 		if( trace_result.clipped_move_distance < 1.0f )
 		{
@@ -547,22 +556,36 @@ fn Game::MovePlayer( mut this, f32 time_delta_s, ust::array_view_imut</bool/> ke
 			{
 				var f32 remaining_movement_fration= 1.0f - trace_result.clipped_move_distance;
 				var Vec3f remaining_movement_vector= movement_vector * remaining_movement_fration;
-				new_position_clipped+=
+
+				position_clipped_to_movement_and_slided+=
 					remaining_movement_vector -
 					trace_result.collision_point_normal * ( remaining_movement_vector.Dot( trace_result.collision_point_normal ) / normal_square_length );
 			}
 		}
+	}
+
+	// Make second trace to clip sideways sliding.
+	// This is necessary to resolve collisions while moving towards a corner.
+
+	var Vec3f mut new_position_corrected= position_clipped_to_movement;
+
+	if( position_clipped_to_movement_and_slided != position_clipped_to_movement )
+	{
+		var Vec3f movement_vector= position_clipped_to_movement_and_slided - position_clipped_to_movement;
+		var TraceResult trace_result= CollisionTrace( zmap_data, zvox_data, player_bbox, position_clipped_to_movement, movement_vector );
+
+		new_position_corrected=
+			position_clipped_to_movement +
+			movement_vector * ust::min( 1.0f, trace_result.clipped_move_distance );
 
 		// Apply extra push if has one and only if has no clip by some other plane.
 		if( !trace_result.extra_push.empty() && trace_result.clipped_move_distance >= 1.0f )
 		{
-			new_position_clipped+= trace_result.extra_push.try_deref();
+			new_position_corrected+= trace_result.extra_push.try_deref();
 		}
-
-		new_position= new_position_clipped;
 	}
 
-	player_controller_.SetPos( new_position );
+	player_controller_.SetPos( new_position_corrected );
 }
 
 fn Game::ProcessStep( mut this )
