@@ -6,7 +6,7 @@ namespace PM
 {
 
 fn PlayerController::constructor( Vec3f& pos, f32 azimuth )
-	( pos_= pos, azimuth_= azimuth )
+	( pos_= pos, azimuth_= azimuth, velocity_( 0.0f, 0.0f, 0.0f ) )
 {}
 
 fn PlayerController::GetPos(this) : Vec3f
@@ -38,47 +38,89 @@ fn PlayerController::Update( mut this, f32 time_delta_s, ust::array_view_imut</b
 		key_turn_up(SDL_SCANCODE_UP),
 		key_turn_down(SDL_SCANCODE_DOWN);
 
-	var f32 speed= 256.0f;
-	var f32 vertical_speed= speed;
+	// TODO - tune max speed or even read it from entities description config.
+	var f32 max_horizontal_speed= 320.0f;
+	var f32 max_vertical_speed= 1024.0f;
+
+	var f32 time_to_max_speed_s= 0.3f;
+
+	// Acceleration is twice as big as deceleration, it's needed because deceleration is always applied.
+	var f32 horizontal_acceleration= max_horizontal_speed / time_to_max_speed_s * 2.0f;
+	var f32 horizontal_deceleation= max_horizontal_speed / time_to_max_speed_s;
+
+	var f32 vertical_acceleration= horizontal_acceleration;
+	var f32 vertical_deceleration= horizontal_deceleation;
+
 	var f32 angle_speed= 2.0f;
 	var f32 max_elevation= c_tau / 4.0f;
 
 	var Vec3f forward_vector( -ust::sin(azimuth_), ust::cos(azimuth_), 0.0f );
 	var Vec3f right_vector( ust::cos(azimuth_), ust::sin(azimuth_), 0.0f );
 
-	var Vec3f mut move_vector(0.0f, 0.0f, 0.0f);
+	var Vec3f mut move_wish_direction(0.0f, 0.0f, 0.0f);
 
 	if( key_move_forward < keyboard_state.size() && keyboard_state[ key_move_forward ] )
 	{
-		move_vector+= forward_vector;
+		move_wish_direction+= forward_vector;
 	}
 	if( key_move_backward < keyboard_state.size() && keyboard_state[ key_move_backward ] )
 	{
-		move_vector-= forward_vector;
+		move_wish_direction-= forward_vector;
 	}
 	if( key_move_left < keyboard_state.size() && keyboard_state[ key_move_left ] )
 	{
-		move_vector-= right_vector;
+		move_wish_direction-= right_vector;
 	}
 	if( key_move_right < keyboard_state.size() && keyboard_state[ key_move_right ] )
 	{
-		move_vector+= right_vector;
+		move_wish_direction+= right_vector;
 	}
 
-	var f32 move_vector_length= move_vector.Length();
-	if(move_vector_length > 0.0f)
 	{
-		pos_+= move_vector * (time_delta_s * speed / move_vector_length);
+		var f32 move_wish_direction_length= move_wish_direction.Length();
+		if(move_wish_direction_length > 0.0f)
+		{
+			velocity_+= move_wish_direction * ( time_delta_s * horizontal_acceleration / move_wish_direction_length );
+		}
 	}
 
 	if( key_move_up < keyboard_state.size() && keyboard_state[ key_move_up ] )
 	{
-		pos_.z-= vertical_speed * time_delta_s;
+		velocity_.z-= vertical_acceleration * time_delta_s;
 	}
 	if( key_move_down < keyboard_state.size() && keyboard_state[ key_move_down ] )
 	{
-		pos_.z+= vertical_speed * time_delta_s;
+		velocity_.z+= vertical_acceleration * time_delta_s;
 	}
+
+	{
+		// Apply horizontal deceleration and limit horizontal speed if necessary.
+		// TODO - apply friction depending on current state (on ground/in air).
+		var Vec2f mut horizontal_velocity= velocity_.xy();
+		var f32 speed= horizontal_velocity.Length();
+		if( speed > 0.0f )
+		{
+			var f32 new_speed= speed - horizontal_deceleation * time_delta_s;
+			var f32 new_speed_clamped= ust::max( 0.0f, ust::min( new_speed, max_horizontal_speed ) );
+			horizontal_velocity= horizontal_velocity * ( new_speed_clamped / speed );
+			velocity_.x= horizontal_velocity.x;
+			velocity_.y= horizontal_velocity.y;
+		}
+	}
+
+	{
+		// Apply vertical deceleration and limit vertical speed if necessary.
+		// TODO - use vertical deceleration only in noclip mode, in normal case use only gravity.
+		var f32 speed= ust::abs( velocity_.z );
+		if( speed > 0.0f )
+		{
+			var f32 new_speed= speed - vertical_deceleration * time_delta_s;
+			var f32 new_speed_clamped= ust::max( 0.0f, ust::min( new_speed, max_vertical_speed ) );
+			velocity_.z= velocity_.z * (new_speed_clamped / speed);
+		}
+	}
+
+	pos_+= velocity_ * time_delta_s;
 
 	if( key_turn_left < keyboard_state.size() && keyboard_state[ key_turn_left ] )
 	{
