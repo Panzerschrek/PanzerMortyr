@@ -533,193 +533,30 @@ fn Game::MovePlayer( mut this, f32 time_delta_s, ust::array_view_imut</bool/> ke
 	// a 45 degree corner for example requires 2 iterations to correct position by half distance from the current to proper one.
 	for( auto mut position_correction_step= 0s; position_correction_step < 1s; ++position_correction_step )
 	{
-		if( new_position == old_position )
-		{
-			// TODO - still process movement, move out of colliders if necessary.
-			break;
-		}
-
-		var Vec3f movement_vector= new_position - old_position; // Non-normalized.
-
-		// Distance in movement length units.
-		var f32 mut clipped_move_distance= 1.0f;
-
-		var Vec3f mut collision_point_normal( 0.0f, 0.0f, 0.0f );
-
-		// Needed for pushing out of colliders if it happens to be the case.
-		var ust::optional</Vec3f/> mut extra_push;
-
-		foreach( &cluster : zvox_data.clusters )
-		{
-			// TODO - speed-up this, process only clusters where intersection is possible.
-
-			foreach( &quad : zmap_data.quads.range().subrange(
-				size_type( cluster.c.first_quad_index ),
-				size_type( cluster.c.first_quad_index ) + size_type( cluster.num_quads ) ) )
-			{
-				// TODO - ignore quads with materials passable by player (like water).
-
-				auto& center= cluster.c.center;
-				auto& in_vertices= quad.vertices;
-
-				var [ Vec3f, 4 ] vertices
-				[
-					Vec3f( f32( center[0] + i32( in_vertices[0][0] ) ), f32( center[1] + i32( in_vertices[0][1] ) ), f32( center[2] + i32( in_vertices[0][2] ) ) ),
-					Vec3f( f32( center[0] + i32( in_vertices[1][0] ) ), f32( center[1] + i32( in_vertices[1][1] ) ), f32( center[2] + i32( in_vertices[1][2] ) ) ),
-					Vec3f( f32( center[0] + i32( in_vertices[2][0] ) ), f32( center[1] + i32( in_vertices[2][1] ) ), f32( center[2] + i32( in_vertices[2][2] ) ) ),
-					Vec3f( f32( center[0] + i32( in_vertices[3][0] ) ), f32( center[1] + i32( in_vertices[3][1] ) ), f32( center[2] + i32( in_vertices[3][2] ) ) ),
-				];
-
-				// TODO - build proper Minkowski sum of player's bounding box with quad geometry.
-				// But box volume still can be used for simple case.
-
-				var BBox3f quad_bbox
-				{
-					.min= player_bbox.min +
-						Vec3f(
-							ust::min( ust::min( vertices[0].x, vertices[1].x ), ust::min( vertices[2].x, vertices[3].x ) ),
-							ust::min( ust::min( vertices[0].y, vertices[1].y ), ust::min( vertices[2].y, vertices[3].y ) ),
-							ust::min( ust::min( vertices[0].z, vertices[1].z ), ust::min( vertices[2].z, vertices[3].z ) ) ),
-					.max= player_bbox.max +
-						Vec3f(
-							ust::max( ust::max( vertices[0].x, vertices[1].x ), ust::max( vertices[2].x, vertices[3].x ) ),
-							ust::max( ust::max( vertices[0].y, vertices[1].y ), ust::max( vertices[2].y, vertices[3].y ) ),
-							ust::max( ust::max( vertices[0].z, vertices[1].z ), ust::max( vertices[2].z, vertices[3].z ) ) ),
-				};
-
-				auto quad_polyhedron= CreateBBoxPlanes( quad_bbox );
-
-				// Calculate quad normal. All these checks are necessary to skip degenerate triagles with zero-length normal.
-				var Vec3f mut quad_normal( 0.0f, 0.0f, 0.0f );
-				if( vertices[1] != vertices[2] && vertices[2] != vertices[3] )
-				{
-					quad_normal= ( vertices[3] - vertices[2] ).Cross( vertices[2] - vertices[1] );
-				}
-				else if( vertices[0] != vertices[2] && vertices[2] != vertices[3] )
-				{
-					quad_normal= ( vertices[3] - vertices[2] ).Cross( vertices[2] - vertices[0] );
-				}
-				else if( vertices[0] != vertices[1] && vertices[1] != vertices[3] )
-				{
-					quad_normal= ( vertices[3] - vertices[1] ).Cross( vertices[1] - vertices[0] );
-				}
-				else if( vertices[0] != vertices[1] && vertices[1] != vertices[2] )
-				{
-					quad_normal= ( vertices[2] - vertices[1] ).Cross( vertices[1] - vertices[0] );
-				}
-
-				if( quad_normal.SquareLength() == 0.0f )
-				{
-					continue;
-				}
-
-				quad_normal= -quad_normal;
-
-				// Determine quad plane index. This hacky way works for now only for axis-aligned quads.
-				var size_type mut quad_plane_index= 0s;
-				if( quad_normal.x < 0.0f )
-				{
-					quad_plane_index= 0s;
-				}
-				else if( quad_normal.x > 0.0f )
-				{
-					quad_plane_index= 1s;
-				}
-				else if( quad_normal.y < 0.0f )
-				{
-					quad_plane_index= 2s;
-				}
-				else if( quad_normal.y > 0.0f )
-				{
-					quad_plane_index= 3s;
-				}
-				else if( quad_normal.z < 0.0f )
-				{
-					quad_plane_index= 4s;
-				}
-				else if( quad_normal.z > 0.0f )
-				{
-					quad_plane_index= 5s;
-				}
-
-				if_var( intersection : FindRayPolyhedronIntersection( old_position, movement_vector, quad_polyhedron ) )
-				{
-					if( intersection.near_point_distance > 0.0f )
-					{
-						// Is outside and moving towards the quad volume.
-						// Clip movement by distance to the near intersection point.
-						if( intersection.near_point_distance < clipped_move_distance )
-						{
-							clipped_move_distance= intersection.near_point_distance;
-							collision_point_normal= quad_polyhedron[ intersection.near_plane_index ].normal;
-						}
-					}
-					else if( intersection.far_point_distance < 0.0f )
-					{
-						// Is outside and moving from the quad volume.
-						// Nothing to do here.
-					}
-					else
-					{
-						// Is inside.
-						if( size_type( intersection.near_plane_index ) == quad_plane_index )
-						{
-							// Moving from quad plane - push to it as usual (with sligtly negative distance).
-							if( intersection.near_point_distance < clipped_move_distance )
-							{
-								clipped_move_distance= intersection.near_point_distance;
-								collision_point_normal= quad_polyhedron[ intersection.near_plane_index ].normal;
-							}
-						}
-						else if( size_type( intersection.far_point_index ) == quad_plane_index )
-						{
-							// Moving out - don't prevent it.
-						}
-						else
-						{
-							// Apply extra push towards quad plane.
-							// This is necessary if due to numerical errors or some other reasons we still somehow get inside a collider.
-
-							var Planef& push_plane= quad_polyhedron[ quad_plane_index ];
-
-							var f32 distance= quad_polyhedron[ quad_plane_index ].GetDistanceForPoint( new_position );
-							if( distance < 0.0f )
-							{
-								var Vec3f this_quad_push= push_plane.normal * ( -distance / push_plane.normal.SquareLength() );
-								if( extra_push.empty() ||
-									// Select smallest push of such kind.
-									this_quad_push.SquareLength() < extra_push.try_deref().SquareLength() )
-								{
-									extra_push= this_quad_push;
-								}
-							}
-						}
-					}
-				}
-			}
-		}
+		var Vec3f movement_vector= new_position - old_position;
+		var TraceResult trace_result= CollisionTrace( zmap_data, zvox_data, player_bbox, old_position, movement_vector );
 
 		var Vec3f mut new_position_clipped=
 			old_position +
-			movement_vector * ust::min( 1.0f, clipped_move_distance );
+			movement_vector * ust::min( 1.0f, trace_result.clipped_move_distance );
 
-		if( clipped_move_distance < 1.0f )
+		if( trace_result.clipped_move_distance < 1.0f )
 		{
-			var f32 normal_square_length= collision_point_normal.SquareLength();
+			var f32 normal_square_length= trace_result.collision_point_normal.SquareLength();
 			if( normal_square_length > 0.0f )
 			{
-				var f32 remaining_movement_fration= 1.0f - clipped_move_distance;
+				var f32 remaining_movement_fration= 1.0f - trace_result.clipped_move_distance;
 				var Vec3f remaining_movement_vector= movement_vector * remaining_movement_fration;
 				new_position_clipped+=
 					remaining_movement_vector -
-					collision_point_normal * ( remaining_movement_vector.Dot( collision_point_normal ) / normal_square_length );
+					trace_result.collision_point_normal * ( remaining_movement_vector.Dot( trace_result.collision_point_normal ) / normal_square_length );
 			}
 		}
 
 		// Apply extra push if has one and only if has no clip by some other plane.
-		if( !extra_push.empty() && clipped_move_distance >= 1.0f )
+		if( !trace_result.extra_push.empty() && trace_result.clipped_move_distance >= 1.0f )
 		{
-			new_position_clipped+= extra_push.try_deref();
+			new_position_clipped+= trace_result.extra_push.try_deref();
 		}
 
 		new_position= new_position_clipped;
@@ -1208,6 +1045,193 @@ fn GetTestColliderBBox() : BBox3f
 		.min( -20.0f, -300.0f, -120.0f ),
 		.max( 70.0f, 123.0f, 54.0f ),
 	};
+}
+
+struct TraceResult
+{
+	// Distance in move vector units.
+	// Is 1 if has no collision.
+	f32 clipped_move_distance;
+
+	// Normal of collision point.
+	// Isn't generally normalized.
+	// Is zero if has no collision.
+	Vec3f collision_point_normal;
+
+	// Extra push if need one.
+	// Apply it only if has no collision.
+	ust::optional</Vec3f/> extra_push;
+}
+
+fn CollisionTrace(
+	ZmapData& zmap_data,
+	ZvoxData& zvox_data,
+	BBox3f& bbox,
+	Vec3f& old_position,
+	Vec3f& movement_vector ) : TraceResult
+{
+	var TraceResult mut trace_result
+	{
+		.clipped_move_distance= 1.0f,
+		.collision_point_normal( 0.0f, 0.0f, 0.0f ),
+	};
+
+	if( movement_vector.SquareLength() == 0.0f )
+	{
+		return trace_result;
+	}
+
+	foreach( &cluster : zvox_data.clusters )
+	{
+		// TODO - speed-up this, process only clusters where intersection is possible.
+
+		foreach( &quad : zmap_data.quads.range().subrange(
+			size_type( cluster.c.first_quad_index ),
+			size_type( cluster.c.first_quad_index ) + size_type( cluster.num_quads ) ) )
+		{
+			// TODO - ignore quads with materials passable by player (like water).
+
+			auto& center= cluster.c.center;
+			auto& in_vertices= quad.vertices;
+
+			var [ Vec3f, 4 ] vertices
+			[
+				Vec3f( f32( center[0] + i32( in_vertices[0][0] ) ), f32( center[1] + i32( in_vertices[0][1] ) ), f32( center[2] + i32( in_vertices[0][2] ) ) ),
+				Vec3f( f32( center[0] + i32( in_vertices[1][0] ) ), f32( center[1] + i32( in_vertices[1][1] ) ), f32( center[2] + i32( in_vertices[1][2] ) ) ),
+				Vec3f( f32( center[0] + i32( in_vertices[2][0] ) ), f32( center[1] + i32( in_vertices[2][1] ) ), f32( center[2] + i32( in_vertices[2][2] ) ) ),
+				Vec3f( f32( center[0] + i32( in_vertices[3][0] ) ), f32( center[1] + i32( in_vertices[3][1] ) ), f32( center[2] + i32( in_vertices[3][2] ) ) ),
+			];
+
+			// TODO - build proper Minkowski sum of player's bounding box with quad geometry.
+			// But box volume still can be used for simple case.
+
+			var BBox3f quad_bbox
+			{
+				.min= bbox.min +
+					Vec3f(
+						ust::min( ust::min( vertices[0].x, vertices[1].x ), ust::min( vertices[2].x, vertices[3].x ) ),
+						ust::min( ust::min( vertices[0].y, vertices[1].y ), ust::min( vertices[2].y, vertices[3].y ) ),
+						ust::min( ust::min( vertices[0].z, vertices[1].z ), ust::min( vertices[2].z, vertices[3].z ) ) ),
+				.max= bbox.max +
+					Vec3f(
+						ust::max( ust::max( vertices[0].x, vertices[1].x ), ust::max( vertices[2].x, vertices[3].x ) ),
+						ust::max( ust::max( vertices[0].y, vertices[1].y ), ust::max( vertices[2].y, vertices[3].y ) ),
+						ust::max( ust::max( vertices[0].z, vertices[1].z ), ust::max( vertices[2].z, vertices[3].z ) ) ),
+			};
+
+			auto quad_polyhedron= CreateBBoxPlanes( quad_bbox );
+
+			// Calculate quad normal. All these checks are necessary to skip degenerate triagles with zero-length normal.
+			var Vec3f mut quad_normal( 0.0f, 0.0f, 0.0f );
+			if( vertices[1] != vertices[2] && vertices[2] != vertices[3] )
+			{
+				quad_normal= ( vertices[3] - vertices[2] ).Cross( vertices[2] - vertices[1] );
+			}
+			else if( vertices[0] != vertices[2] && vertices[2] != vertices[3] )
+			{
+				quad_normal= ( vertices[3] - vertices[2] ).Cross( vertices[2] - vertices[0] );
+			}
+			else if( vertices[0] != vertices[1] && vertices[1] != vertices[3] )
+			{
+				quad_normal= ( vertices[3] - vertices[1] ).Cross( vertices[1] - vertices[0] );
+			}
+			else if( vertices[0] != vertices[1] && vertices[1] != vertices[2] )
+			{
+				quad_normal= ( vertices[2] - vertices[1] ).Cross( vertices[1] - vertices[0] );
+			}
+
+			if( quad_normal.SquareLength() == 0.0f )
+			{
+				continue;
+			}
+
+			quad_normal= -quad_normal;
+
+			// Determine quad plane index. This hacky way works for now only for axis-aligned quads.
+			var size_type mut quad_plane_index= 0s;
+			if( quad_normal.x < 0.0f )
+			{
+				quad_plane_index= 0s;
+			}
+			else if( quad_normal.x > 0.0f )
+			{
+				quad_plane_index= 1s;
+			}
+			else if( quad_normal.y < 0.0f )
+			{
+				quad_plane_index= 2s;
+			}
+			else if( quad_normal.y > 0.0f )
+			{
+				quad_plane_index= 3s;
+			}
+			else if( quad_normal.z < 0.0f )
+			{
+				quad_plane_index= 4s;
+			}
+			else if( quad_normal.z > 0.0f )
+			{
+				quad_plane_index= 5s;
+			}
+
+			if_var( intersection : FindRayPolyhedronIntersection( old_position, movement_vector, quad_polyhedron ) )
+			{
+				if( intersection.near_point_distance > 0.0f )
+				{
+					// Is outside and moving towards the quad volume.
+					// Clip movement by distance to the near intersection point.
+					if( intersection.near_point_distance < trace_result.clipped_move_distance )
+					{
+						trace_result.clipped_move_distance= intersection.near_point_distance;
+						trace_result.collision_point_normal= quad_polyhedron[ intersection.near_plane_index ].normal;
+					}
+				}
+				else if( intersection.far_point_distance < 0.0f )
+				{
+					// Is outside and moving from the quad volume.
+					// Nothing to do here.
+				}
+				else
+				{
+					// Is inside.
+					if( size_type( intersection.near_plane_index ) == quad_plane_index )
+					{
+						// Moving from quad plane - push to it as usual (with sligtly negative distance).
+						if( intersection.near_point_distance < trace_result.clipped_move_distance )
+						{
+							trace_result.clipped_move_distance= intersection.near_point_distance;
+							trace_result.collision_point_normal= quad_polyhedron[ intersection.near_plane_index ].normal;
+						}
+					}
+					else if( size_type( intersection.far_point_index ) == quad_plane_index )
+					{
+						// Moving out - don't prevent it.
+					}
+					else
+					{
+						// Apply extra push towards quad plane.
+						// This is necessary if due to numerical errors or some other reasons we still somehow get inside a collider.
+
+						var Planef& push_plane= quad_polyhedron[ quad_plane_index ];
+
+						var f32 distance= quad_polyhedron[ quad_plane_index ].GetDistanceForPoint( old_position + movement_vector );
+						if( distance < 0.0f )
+						{
+							var Vec3f this_quad_push= push_plane.normal * ( -distance / push_plane.normal.SquareLength() );
+							if( trace_result.extra_push.empty() ||
+								// Select smallest push of such kind.
+								this_quad_push.SquareLength() < trace_result.extra_push.try_deref().SquareLength() )
+							{
+								trace_result.extra_push= this_quad_push;
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
+	return trace_result;
 }
 
 // TODO - investigate exact step rate in the original game.
