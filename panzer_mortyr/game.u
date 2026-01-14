@@ -531,7 +531,7 @@ fn Game::MovePlayer( mut this, f32 time_delta_s, ust::array_view_imut</bool/> ke
 	// We require at least 2 steps to resolve collisions in 90 degree corners.
 	// Sharper corners require more iterations,
 	// a 45 degree corner for example requires 2 iterations to correct position by half distance from the current to proper one.
-	for( auto mut position_correction_step= 0s; position_correction_step < 4s; ++position_correction_step )
+	for( auto mut position_correction_step= 0s; position_correction_step < 1s; ++position_correction_step )
 	{
 		if( new_position == old_position )
 		{
@@ -662,24 +662,36 @@ fn Game::MovePlayer( mut this, f32 time_delta_s, ust::array_view_imut</bool/> ke
 					else
 					{
 						// Is inside.
-						// Apply extra push towards quad plane.
-						// This is necessary if due to numerical errors or some other reasons we still somehow get inside a collider.
-
-						// This piece of shit doesn't work properly if player goes towards 270 degree corner.
-						// The player is pushed backwards in an unnatural way.
-
-						var Planef& push_plane= quad_polyhedron[ quad_plane_index ];
-
-						// TODO - handle cases with old position inside and new position outside.
-						var f32 distance= quad_polyhedron[ quad_plane_index ].GetDistanceForPoint( new_position );
-						if( distance < 0.0f )
+						if( size_type( intersection.near_plane_index ) == quad_plane_index )
 						{
-							var Vec3f this_quad_push= push_plane.normal * ( -distance / push_plane.normal.SquareLength() );
-							if( extra_push.empty() ||
-								// Select smallest push of such kind.
-								this_quad_push.SquareLength() < extra_push.try_deref().SquareLength() )
+							// Moving from quad plane - push to it as usual (with sligtly negative distance).
+							if( intersection.near_point_distance < clipped_move_distance )
 							{
-								extra_push= this_quad_push;
+								clipped_move_distance= intersection.near_point_distance;
+								collision_point_normal= quad_polyhedron[ intersection.near_plane_index ].normal;
+							}
+						}
+						else if( size_type( intersection.far_point_index ) == quad_plane_index )
+						{
+							// Moving out - don't prevent it.
+						}
+						else
+						{
+							// Apply extra push towards quad plane.
+							// This is necessary if due to numerical errors or some other reasons we still somehow get inside a collider.
+
+							var Planef& push_plane= quad_polyhedron[ quad_plane_index ];
+
+							var f32 distance= quad_polyhedron[ quad_plane_index ].GetDistanceForPoint( new_position );
+							if( distance < 0.0f )
+							{
+								var Vec3f this_quad_push= push_plane.normal * ( -distance / push_plane.normal.SquareLength() );
+								if( extra_push.empty() ||
+									// Select smallest push of such kind.
+									this_quad_push.SquareLength() < extra_push.try_deref().SquareLength() )
+								{
+									extra_push= this_quad_push;
+								}
 							}
 						}
 					}
@@ -704,9 +716,10 @@ fn Game::MovePlayer( mut this, f32 time_delta_s, ust::array_view_imut</bool/> ke
 			}
 		}
 
-		if_var( &v : extra_push )
+		// Apply extra push if has one and only if has no clip by some other plane.
+		if( !extra_push.empty() && clipped_move_distance >= 1.0f )
 		{
-			new_position_clipped+= v;
+			new_position_clipped+= extra_push.try_deref();
 		}
 
 		new_position= new_position_clipped;
