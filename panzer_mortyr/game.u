@@ -436,215 +436,69 @@ fn Game::ProcessMouseButtonPress( mut this, u32 button_index )
 					( player_bbox.max.x, player_bbox.max.y, player_bbox.max.z ),
 				];
 
-				// TODO - order them somehow?
-				var [ [ u32, 2 ], 12 ] player_box_edges
-				[
-					[ 0u, 1u ], [ 2u, 3u ], [ 0u, 2u ], [ 1u, 3u ],
-					[ 4u, 5u ], [ 6u, 7u ], [ 4u, 6u ], [ 5u, 7u ],
-					[ 0u, 4u ], [ 2u, 6u ], [ 1u, 5u ], [ 3u, 7u ],
-				];
+				var BBox3f quad_extended_bbox
+				{
+					.min= player_bbox.min +
+						Vec3f(
+							ust::min( ust::min( vertices[0].x, vertices[1].x ), ust::min( vertices[2].x, vertices[3].x ) ),
+							ust::min( ust::min( vertices[0].y, vertices[1].y ), ust::min( vertices[2].y, vertices[3].y ) ),
+							ust::min( ust::min( vertices[0].z, vertices[1].z ), ust::min( vertices[2].z, vertices[3].z ) ) ),
+					.max= player_bbox.max +
+						Vec3f(
+							ust::max( ust::max( vertices[0].x, vertices[1].x ), ust::max( vertices[2].x, vertices[3].x ) ),
+							ust::max( ust::max( vertices[0].y, vertices[1].y ), ust::max( vertices[2].y, vertices[3].y ) ),
+							ust::max( ust::max( vertices[0].z, vertices[1].z ), ust::max( vertices[2].z, vertices[3].z ) ) ),
+				};
+
+				var ust::vector</Planef/> mut volume_planes;
+
+				// Add all bounding box planes to the volume.
+				foreach( &plane : CreateBBoxPlanes( quad_extended_bbox ) )
+				{
+					volume_planes.push_back( plane );
+				}
+
+				var bool quad_plane_is_axis_aligned=
+					( quad_normal.x == 0.0f && quad_normal.y == 0.0f ) ||
+					( quad_normal.x == 0.0f && quad_normal.z == 0.0f ) ||
+					( quad_normal.y == 0.0f && quad_normal.z == 0.0f );
+
+				// Add front and back planes of the quad, but only if a plane is't one of axis planes.
+				if( !quad_plane_is_axis_aligned )
+				{
+					{
+						var f32 mut max_dist= -1.0e38f;
+						foreach( &v : player_box_vertices )
+						{
+							var f32 dist= quad_normal.Dot( v );
+							if( dist > max_dist )
+							{
+								max_dist= dist;
+							}
+						}
+
+						volume_planes.push_back( Planef{ .normal= quad_normal, .distance= -max_dist - quad_normal.Dot( vertices[0] ) } );
+					}
+					{
+						var Vec3f inverted_quad_normal= -quad_normal;
+
+						var f32 mut max_dist= -1.0e38f;
+						foreach( &v : player_box_vertices )
+						{
+							var f32 dist= inverted_quad_normal.Dot( v );
+							if( dist > max_dist )
+							{
+								max_dist= dist;
+							}
+						}
+
+						volume_planes.push_back( Planef{ .normal= inverted_quad_normal, .distance= -max_dist - inverted_quad_normal.Dot( vertices[0] ) } );
+					}
+				}
 
 				test_triangles_.clear();
 
-				// Offset quad plane forward using player's bounding box.
-				{
-					var f32 mut max_dist= 0.0f;
-					var Vec3f mut most_distance_vertex= player_box_vertices[0];
-					foreach( &v : player_box_vertices )
-					{
-						var f32 dist= quad_normal.Dot( v );
-						if( dist > max_dist )
-						{
-							max_dist= dist;
-							most_distance_vertex= v;
-						}
-					}
-
-					test_triangles_.push_back(
-						WorldDrawingInfo::TestTriangle
-						{
-							.vertices[ most_distance_vertex + vertices[0], most_distance_vertex + vertices[1], most_distance_vertex + vertices[2] ],
-							.color[ (255), (255), (255) ]
-						} );
-
-					test_triangles_.push_back(
-						WorldDrawingInfo::TestTriangle
-						{
-							.vertices[ most_distance_vertex + vertices[0], most_distance_vertex + vertices[2], most_distance_vertex + vertices[3] ],
-							.color[ (255), (255), (255) ]
-						} );
-				}
-				// Offset quad plane forward using player's bounding box.
-				{
-					var Vec3f quad_back_normal= -quad_normal;
-
-					var f32 mut max_dist= 0.0f;
-					var Vec3f mut most_distance_vertex= player_box_vertices[0];
-
-					foreach( &v : player_box_vertices )
-					{
-						var f32 dist= quad_back_normal.Dot( v );
-						if( dist > max_dist )
-						{
-							max_dist= dist;
-							most_distance_vertex= v;
-						}
-					}
-
-					test_triangles_.push_back(
-						WorldDrawingInfo::TestTriangle
-						{
-							.vertices[ most_distance_vertex + vertices[2], most_distance_vertex + vertices[1], most_distance_vertex + vertices[0] ],
-							.color[ (128), (128), (128) ]
-						} );
-
-					test_triangles_.push_back(
-						WorldDrawingInfo::TestTriangle
-						{
-							.vertices[ most_distance_vertex + vertices[3], most_distance_vertex + vertices[2], most_distance_vertex + vertices[0] ],
-							.color[ (128), (128), (128) ]
-						} );
-				}
-				// Offet box planes.
-				{
-					var BBox3f quad_extended_bbox
-					{
-						.min= player_bbox.min +
-							Vec3f(
-								ust::min( ust::min( vertices[0].x, vertices[1].x ), ust::min( vertices[2].x, vertices[3].x ) ),
-								ust::min( ust::min( vertices[0].y, vertices[1].y ), ust::min( vertices[2].y, vertices[3].y ) ),
-								ust::min( ust::min( vertices[0].z, vertices[1].z ), ust::min( vertices[2].z, vertices[3].z ) ) ),
-						.max= player_bbox.max +
-							Vec3f(
-								ust::max( ust::max( vertices[0].x, vertices[1].x ), ust::max( vertices[2].x, vertices[3].x ) ),
-								ust::max( ust::max( vertices[0].y, vertices[1].y ), ust::max( vertices[2].y, vertices[3].y ) ),
-								ust::max( ust::max( vertices[0].z, vertices[1].z ), ust::max( vertices[2].z, vertices[3].z ) ) ),
-					};
-
-					var [ Vec3f, 8 ] box_vertices
-					[
-						( quad_extended_bbox.min.x, quad_extended_bbox.min.y, quad_extended_bbox.min.z ),
-						( quad_extended_bbox.max.x, quad_extended_bbox.min.y, quad_extended_bbox.min.z ),
-						( quad_extended_bbox.min.x, quad_extended_bbox.max.y, quad_extended_bbox.min.z ),
-						( quad_extended_bbox.max.x, quad_extended_bbox.max.y, quad_extended_bbox.min.z ),
-						( quad_extended_bbox.min.x, quad_extended_bbox.min.y, quad_extended_bbox.max.z ),
-						( quad_extended_bbox.max.x, quad_extended_bbox.min.y, quad_extended_bbox.max.z ),
-						( quad_extended_bbox.min.x, quad_extended_bbox.max.y, quad_extended_bbox.max.z ),
-						( quad_extended_bbox.max.x, quad_extended_bbox.max.y, quad_extended_bbox.max.z ),
-					];
-
-					test_triangles_.push_back(
-						WorldDrawingInfo::TestTriangle
-						{
-							.vertices[ box_vertices[0], box_vertices[4], box_vertices[2] ],
-							.color[ (128), (0), (0) ],
-						} );
-					test_triangles_.push_back(
-						WorldDrawingInfo::TestTriangle
-						{
-							.vertices[ box_vertices[2], box_vertices[4], box_vertices[6] ],
-							.color[ (128), (0), (0) ],
-						} );
-
-					test_triangles_.push_back(
-						WorldDrawingInfo::TestTriangle
-						{
-							.vertices[ box_vertices[1], box_vertices[3], box_vertices[5] ],
-							.color[ (255), (0), (0) ],
-						} );
-					test_triangles_.push_back(
-						WorldDrawingInfo::TestTriangle
-						{
-							.vertices[ box_vertices[3], box_vertices[7], box_vertices[5] ],
-							.color[ (255), (0), (0) ],
-						} );
-
-					test_triangles_.push_back(
-						WorldDrawingInfo::TestTriangle
-						{
-							.vertices[ box_vertices[0], box_vertices[1], box_vertices[4] ],
-							.color[ (0), (128), (0) ],
-						} );
-					test_triangles_.push_back(
-						WorldDrawingInfo::TestTriangle
-						{
-							.vertices[ box_vertices[1], box_vertices[5], box_vertices[4] ],
-							.color[ (0), (128), (0) ],
-						} );
-
-					test_triangles_.push_back(
-						WorldDrawingInfo::TestTriangle
-						{
-							.vertices[ box_vertices[2], box_vertices[6], box_vertices[3] ],
-							.color[ (0), (255), (0) ],
-						} );
-					test_triangles_.push_back(
-						WorldDrawingInfo::TestTriangle
-						{
-							.vertices[ box_vertices[3], box_vertices[6], box_vertices[7] ],
-							.color[ (0), (255), (0) ],
-						} );
-
-					test_triangles_.push_back(
-						WorldDrawingInfo::TestTriangle
-						{
-							.vertices[ box_vertices[0], box_vertices[2], box_vertices[1] ],
-							.color[ (0), (0), (128) ],
-						} );
-					test_triangles_.push_back(
-						WorldDrawingInfo::TestTriangle
-						{
-							.vertices[ box_vertices[1], box_vertices[2], box_vertices[3] ],
-							.color[ (0), (0), (128) ],
-						} );
-
-					test_triangles_.push_back(
-						WorldDrawingInfo::TestTriangle
-						{
-							.vertices[ box_vertices[4], box_vertices[5], box_vertices[6] ],
-							.color[ (0), (0), (255) ],
-						} );
-					test_triangles_.push_back(
-						WorldDrawingInfo::TestTriangle
-						{
-							.vertices[ box_vertices[5], box_vertices[7], box_vertices[6] ],
-							.color[ (0), (0), (255) ],
-						} );
-				}
-
-				// Edge products.
-				for( auto mut i= 0u; i < 12u; ++i )
-				{
-					var Vec3f& player_box_v0= player_box_vertices[ player_box_edges[i][0] ];
-					var Vec3f& player_box_v1= player_box_vertices[ player_box_edges[i][1] ];
-
-					var Vec3f mut prev_v= vertices[3];
-					foreach( &v : vertices )
-					{
-						var Vec3f product_v0= player_box_v0 + prev_v;
-						var Vec3f product_v1= player_box_v1 + prev_v;
-						var Vec3f product_v2= player_box_v0 + v;
-						var Vec3f product_v3= player_box_v1 + v;
-
-						// TODO - reject planes which doesn't lay on Minkowski sum of box and quad.
-
-						test_triangles_.push_back(
-							WorldDrawingInfo::TestTriangle
-							{
-								.vertices[ product_v0, product_v1, product_v2 ],
-								.color[ (i * 965u), (i * 37u), (i * 751u) ],
-							} );
-
-						test_triangles_.push_back(
-							WorldDrawingInfo::TestTriangle
-							{
-								.vertices[ product_v1, product_v3, product_v2 ],
-								.color[ (i * 965u), (i * 37u), (i * 751u) ],
-							} );
-
-						prev_v= v;
-					}
-				}
+				PolygonizePolyhedron( volume_planes, test_triangles_ );
 			}
 		}
 	}
