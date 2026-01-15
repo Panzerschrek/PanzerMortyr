@@ -131,6 +131,18 @@ fn CreateBBoxAndQuadMinkowskiSum( BBox3f& bbox, [ Vec3f, 4 ]& quad_vertices ) : 
 				ust::max( ust::max( quad_vertices[0].z, quad_vertices[1].z ), ust::max( quad_vertices[2].z, quad_vertices[3].z ) ) ),
 	};
 
+	var [ Vec3f, 8 ] bbox_vertices
+	[
+		( bbox.min.x, bbox.min.y, bbox.min.z ),
+		( bbox.max.x, bbox.min.y, bbox.min.z ),
+		( bbox.min.x, bbox.max.y, bbox.min.z ),
+		( bbox.max.x, bbox.max.y, bbox.min.z ),
+		( bbox.min.x, bbox.min.y, bbox.max.z ),
+		( bbox.max.x, bbox.min.y, bbox.max.z ),
+		( bbox.min.x, bbox.max.y, bbox.max.z ),
+		( bbox.max.x, bbox.max.y, bbox.max.z ),
+	];
+
 	// Add all bounding box planes to the volume.
 	foreach( &plane : CreateBBoxPlanes( quad_extended_bbox ) )
 	{
@@ -145,18 +157,6 @@ fn CreateBBoxAndQuadMinkowskiSum( BBox3f& bbox, [ Vec3f, 4 ]& quad_vertices ) : 
 	// Add front and back planes of the quad, but only if a plane is't one of axis planes.
 	if( !quad_plane_is_axis_aligned )
 	{
-		var [ Vec3f, 8 ] bbox_vertices
-		[
-			( bbox.min.x, bbox.min.y, bbox.min.z ),
-			( bbox.max.x, bbox.min.y, bbox.min.z ),
-			( bbox.min.x, bbox.max.y, bbox.min.z ),
-			( bbox.max.x, bbox.max.y, bbox.min.z ),
-			( bbox.min.x, bbox.min.y, bbox.max.z ),
-			( bbox.max.x, bbox.min.y, bbox.max.z ),
-			( bbox.min.x, bbox.max.y, bbox.max.z ),
-			( bbox.max.x, bbox.max.y, bbox.max.z ),
-		];
-
 		{
 			var f32 mut max_dist= -1.0e38f;
 			foreach( &v : bbox_vertices )
@@ -197,7 +197,67 @@ fn CreateBBoxAndQuadMinkowskiSum( BBox3f& bbox, [ Vec3f, 4 ]& quad_vertices ) : 
 		}
 	}
 
-	// TODO - create here edge product planes.
+	var [ Planef, 6 ] bbox_planes= CreateBBoxPlanes( bbox );
+
+	// plane0 index, plane1 index, vertex index.
+	// TODO - add more edges.
+	var [ [ u32, 3 ], 1 ] box_edges
+	[
+		[ 0u, 2u, 0u ],
+	];
+
+	// Iterate over all box edges and create product planes.
+	// TODO - check if it's correct.
+	foreach( mut box_edge : ust::array_view_imut</ [ u32, 3 ] />( box_edges ) )
+	{
+		var Planef mut plane0= bbox_planes[ box_edge[0] ];
+		var Planef mut plane1= bbox_planes[ box_edge[1] ];
+
+		var Vec3f mut box_edge_vec= plane0.normal.Cross( plane1.normal );
+
+		var f32 edge_quad_normal_dot= box_edge_vec.Dot( quad_normal );
+		if( edge_quad_normal_dot == 0.0f )
+		{
+			continue;
+		}
+
+		if( edge_quad_normal_dot < 0.0f )
+		{
+			// Invert edge if it's directed from quad's plane.
+			box_edge_vec= -box_edge_vec;
+
+			var Planef tmp= plane0;
+			plane0= plane1;
+			plane1= tmp;
+		}
+
+		// Iterate over all quad edges.
+		var Vec3f mut prev_v= quad_vertices[3];
+		foreach( &v : quad_vertices )
+		{
+			var Vec3f quad_edge_v0= prev_v;
+			var Vec3f quad_edge_v1= v;
+			prev_v= v;
+
+			var Vec3f quad_edge_vec= quad_edge_v1 - quad_edge_v0;
+
+			var Vec3f product_plane_normal= box_edge_vec.Cross( quad_edge_vec );
+
+			if( product_plane_normal.SquareLength() == 0.0f )
+			{
+				// This quad edge is parallel to current box edge.
+				continue;
+			}
+
+			var f32 plane0_product= product_plane_normal.Cross( plane0.normal ).Dot( box_edge_vec );
+			var f32 plane1_product= product_plane_normal.Cross( plane1.normal ).Dot( box_edge_vec );
+			if( plane0_product > 0.0f && plane1_product < 0.0f )
+			{
+				var Vec3f sample_point= quad_edge_v0 + bbox_vertices[ box_edge[1] ];
+				result_planes.push_back( Planef::CreateFromNormalAndPoint( product_plane_normal, sample_point ) );
+			}
+		}
+	}
 
 	return result_planes;
 }
