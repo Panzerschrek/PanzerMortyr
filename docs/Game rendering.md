@@ -30,8 +30,9 @@ Dynamic clusters should be culled, but it looks like they can't use clusters vis
 Polygons with glass material (and other semitransparent materials) should be drawn with alpha-blending.
 This may require sorting - in order to ensure correct back-to-front blending order and not only for such polygons, but for all objects with blending.
 
-Semitransparent polygons may also require tweaked lighting.
-it looks like original light for such polygons is always constant.
+Semitransparent polygons seems to have no lighting.
+It looks like original light for such polygons is always constant.
+And they aren't affected by dynamic lights (like flashlight).
 
 
 ### Breakable world polygons
@@ -44,9 +45,9 @@ Such polygons can be also semitransparent, which makes things even more complex.
 
 ### Map water polygons
 
-Water polygons require alpha-blending and maybe some other effects.
-Additionally they may require lighting tweaks, since it looks like original lighting information for them is garbage.
-Lastly they may require some special effects, like vertex wave animation or texture coordinates animation.
+Water polygons require alpha-blending.
+They have no lighting (use only constant light), even from dynamic sources.
+Additionally water polygons use texture coordinates animation which shifts coordinates using some kind of sinwave pattern.
 
 
 ### Underwater caustics
