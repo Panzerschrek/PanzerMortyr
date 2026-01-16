@@ -85,12 +85,14 @@ fn CreateBBoxPlanes( BBox3f& bbox ) : [ Planef, 6 ]
 	return planes;
 }
 
-fn CreateBBoxAndQuadMinkowskiSum( BBox3f& bbox, [ Vec3f, 4 ]& quad_vertices ) : ust::vector</Planef/>
+fn CreateBBoxAndQuadMinkowskiSum( BBox3f& bbox, [ Vec3f, 4 ]& quad_vertices, CompactPolyhedron &mut result )
 {
-	var ust::vector</Planef/> mut result_planes;
+	static_assert( CompactPolyhedron::c_max_planes >= 8u ); // Should have at least enough planes for box sides and polygon front/back faces.
+
+	result.num_planes= 0u;
 
 	// Calculate quad normal. All these checks are necessary to skip degenerate triagles with zero-length normal.
-	var Vec3f mut quad_normal( 0.0f, 0.0f, 0.0f );
+	var Vec3f mut quad_normal= Vec3f::MakeZero();
 	if( quad_vertices[1] != quad_vertices[2] && quad_vertices[2] != quad_vertices[3] )
 	{
 		quad_normal= ( quad_vertices[2] - quad_vertices[1] ).Cross( quad_vertices[3] - quad_vertices[2] );
@@ -109,12 +111,12 @@ fn CreateBBoxAndQuadMinkowskiSum( BBox3f& bbox, [ Vec3f, 4 ]& quad_vertices ) : 
 	}
 	else
 	{
-		return result_planes;
+		return;
 	}
 
 	if( quad_normal.SquareLength() == 0.0f )
 	{
-		return result_planes;
+		return;
 	}
 
 	var [ Vec3f, 8 ] bbox_vertices
@@ -145,10 +147,12 @@ fn CreateBBoxAndQuadMinkowskiSum( BBox3f& bbox, [ Vec3f, 4 ]& quad_vertices ) : 
 		};
 
 		// Add all bounding box planes to the volume.
-		foreach( &plane : CreateBBoxPlanes( quad_extended_bbox ) )
+		var [ Planef, 6 ] bbox_planes= CreateBBoxPlanes( quad_extended_bbox );
+		for( auto mut i= 0s; i < 6s; ++i )
 		{
-			result_planes.push_back( plane );
+			result.planes[i]= bbox_planes[i];
 		}
+		result.num_planes= 6u;
 	}
 
 	var bool quad_plane_is_axis_aligned=
@@ -170,12 +174,13 @@ fn CreateBBoxAndQuadMinkowskiSum( BBox3f& bbox, [ Vec3f, 4 ]& quad_vertices ) : 
 				}
 			}
 
-			result_planes.push_back(
+			result.planes[ result.num_planes ]=
 				Planef
 				{
 					.normal= quad_normal,
 					.distance= -max_dist - quad_normal.Dot( quad_vertices[0] )
-				} );
+				};
+			++result.num_planes; // Up to 7 planes at this moment.
 		}
 		{
 			var Vec3f inverted_quad_normal= -quad_normal;
@@ -190,12 +195,13 @@ fn CreateBBoxAndQuadMinkowskiSum( BBox3f& bbox, [ Vec3f, 4 ]& quad_vertices ) : 
 				}
 			}
 
-			result_planes.push_back(
+			result.planes[ result.num_planes ]=
 				Planef
 				{
 					.normal= inverted_quad_normal,
 					.distance= -max_dist - inverted_quad_normal.Dot( quad_vertices[0] )
-				} );
+				};
+			++result.num_planes; // Up to 9 planes at this moment.
 		}
 	}
 
@@ -272,12 +278,16 @@ fn CreateBBoxAndQuadMinkowskiSum( BBox3f& bbox, [ Vec3f, 4 ]& quad_vertices ) : 
 			if( plane0_product < 0.0f && plane1_product > 0.0f )
 			{
 				var Vec3f sample_point= quad_edge_v0 + box_edge_vertex;
-				result_planes.push_back( Planef::CreateFromNormalAndPoint( product_plane_normal, sample_point ) );
+				result.planes[ result.num_planes]= Planef::CreateFromNormalAndPoint( product_plane_normal, sample_point );
+				++result.num_planes;
+
+				if( result.num_planes >= CompactPolyhedron::c_max_planes )
+				{
+					return;
+				}
 			}
 		}
 	}
-
-	return result_planes;
 }
 
 } // namespace PM
