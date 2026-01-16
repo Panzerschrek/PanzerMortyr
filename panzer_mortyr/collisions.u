@@ -4,6 +4,99 @@ import "geometry_utils.uh"
 namespace PM
 {
 
+fn RayTrace(
+	ZmapData& zmap_data,
+	ZvoxData& zvox_data,
+	Vec3f& ray_start,
+	Vec3f& direction_vector ) : ust::optional</RayTraceResult/>
+{
+	var f32 mut closest_distance= 1.0e38f;
+
+	var size_type mut hit_quad_index= ~0s, mut hit_quad_cluster_index= ~0s;
+
+	// Search for intersection with map geometry.
+
+	for( var size_type mut c= 0s; c < zvox_data.clusters.size(); ++c )
+	{
+		var ZvoxCluster& cluster= zvox_data.clusters[c];
+		// TODO - speed-up this, process only clusters where intersection is possible.
+
+		for( var size_type mut q( cluster.c.first_quad_index ), q_end= size_type( cluster.c.first_quad_index ) + size_type( cluster.num_quads );
+			q < q_end;
+			++q )
+		{
+			var ZmapQuad& quad= zmap_data.quads[q];
+			// TODO - ignore quads with materials transparent for bullets (like water).
+
+			auto& center= cluster.c.center;
+			auto& in_vertices= quad.vertices;
+
+			var [ Vec3f, 4 ] vertices
+			[
+				Vec3f( f32( center[0] + i32( in_vertices[0][0] ) ), f32( center[1] + i32( in_vertices[0][1] ) ), f32( center[2] + i32( in_vertices[0][2] ) ) ),
+				Vec3f( f32( center[0] + i32( in_vertices[1][0] ) ), f32( center[1] + i32( in_vertices[1][1] ) ), f32( center[2] + i32( in_vertices[1][2] ) ) ),
+				Vec3f( f32( center[0] + i32( in_vertices[2][0] ) ), f32( center[1] + i32( in_vertices[2][1] ) ), f32( center[2] + i32( in_vertices[2][2] ) ) ),
+				Vec3f( f32( center[0] + i32( in_vertices[3][0] ) ), f32( center[1] + i32( in_vertices[3][1] ) ), f32( center[2] + i32( in_vertices[3][2] ) ) ),
+			];
+
+			// Process each triangle of a quad separately - in case if due to precision errors quads aren't planar.
+			// TODO - simplify this code for the majority of the cases with planar quads.
+
+			for( auto mut quad_triangle_index= 0s; quad_triangle_index < 2s; ++quad_triangle_index )
+			{
+				var Vec3f& v0= vertices[0];
+				var Vec3f& v1= vertices[quad_triangle_index + 1s];
+				var Vec3f& v2= vertices[quad_triangle_index + 2s];
+
+				// Don't process degenerate triangles, they are sometimes possible.
+				if( v0 == v1 || v0 == v2 || v1 == v2 )
+				{
+					continue;
+				}
+
+				var Planef plane= Planef::CreateFromNormalAndPoint( ( v1 - v0 ).Cross( v2 - v0 ), v0 );
+
+				var f32 direction_vector_plane_normal_dot= direction_vector.Dot( plane.normal );
+				if( direction_vector_plane_normal_dot != 0.0f )
+				{
+					var f32 ray_start_distance_to_plane= plane.GetDistanceForPoint( ray_start );
+
+					// This distance is negative for intersection points behind current ray.
+					var f32 signed_distance_to_intersection_point= -ray_start_distance_to_plane / direction_vector_plane_normal_dot;
+
+					if( signed_distance_to_intersection_point > 0.0f && // Process intersections only at the front of the ray.
+						signed_distance_to_intersection_point < closest_distance ) // Find the smallest positive distance.
+					{
+						var Vec3f intersection_point= ray_start + direction_vector * signed_distance_to_intersection_point;
+
+						// Check if ray-plane intersection lies within the triangle.
+						if( ( v1 - v0 ).Cross( intersection_point - v0 ).Dot( plane.normal ) >= 0.0f &&
+							( v2 - v1 ).Cross( intersection_point - v1 ).Dot( plane.normal ) >= 0.0f &&
+							( v0 - v2 ).Cross( intersection_point - v2 ).Dot( plane.normal ) >= 0.0f )
+						{
+							closest_distance= signed_distance_to_intersection_point;
+							hit_quad_index= q;
+							hit_quad_cluster_index= c;
+						}
+					}
+				}
+			}
+		}
+	}
+
+	if( hit_quad_index < zmap_data.quads.size() && hit_quad_cluster_index < zvox_data.clusters.size() )
+	{
+		return RayTraceResult
+		{
+			.quad_index( hit_quad_index ),
+			.cluster_index( hit_quad_cluster_index ),
+			.distance= closest_distance,
+		};
+	}
+
+	return ust::null_optional;
+}
+
 fn CollisionTrace(
 	ZmapData& zmap_data,
 	ZvoxData& zvox_data,
