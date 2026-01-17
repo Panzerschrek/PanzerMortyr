@@ -15,7 +15,8 @@ fn Game::constructor(
 		caching_game_resources_loader_ptr_= move( caching_game_resources_loader_ptr ),
 		console_out_= move(console_out),
 		current_map_index_= 0u, // Set later.
-		player_controller_( Vec3f( 0.0f, 0.0f, 0.0f ), 0.0f ),
+		player_state_{ .position( 0.0f, 0.0f, 0.0f ), .velocity( 0.0f, 0.0f, 0.0f ) },
+		camera_rotation_controller_( 0.0f ),
 		prev_time_steps_= 0.0,
 	)
 {
@@ -155,10 +156,17 @@ fn Game::TeleportToMap( mut this, u32 map_index )
 
 			if( u32( entity.kind ) == c_player_entity_index )
 			{
-				player_controller_=
-					PlayerController(
-						Vec3f( f32( entity.position[0] ), f32( entity.position[1] ), f32( entity.position[2] ) ),
-						Convert1024Angle( f32( entity.data[4] ) ) );
+				player_state_=
+				PlayerState
+				{
+					.position( f32( entity.position[0] ), f32( entity.position[1] ), f32( entity.position[2] ) ),
+					.velocity( 0.0f, 0.0f, 0.0f )
+				};
+
+				camera_rotation_controller_= CameraRotationController( 0.0f );
+
+				// TODO - reset player controller?
+
 				break;
 			}
 		}
@@ -170,7 +178,10 @@ fn Game::TeleportToMap( mut this, u32 map_index )
 fn Game::Update( mut this, f32 time_delta_s, ust::array_view_imut</bool/> keyboard_state )
 {
 	// Rotate camera each frame.
-	player_controller_.UpdateCameraRotation( time_delta_s, keyboard_state );
+	camera_rotation_controller_.Update( time_delta_s, keyboard_state );
+
+	// Accumulate movement input each frame.
+	player_controller_.Update(  time_delta_s, keyboard_state );
 
 	// TODO - accumulate player movement commands each frame.
 	// TODO - accumulate shoot commands each frame in order to shoot exactly in the direction where camera sees.
@@ -184,10 +195,15 @@ fn Game::Update( mut this, f32 time_delta_s, ust::array_view_imut</bool/> keyboa
 	// Avoid processing too much steps at once (in case of process topeed via debugger).
 	var u32 num_steps_to_process= ust::min( 5u, cur_step - prev_step );
 
-	for( auto mut i= 0u; i < num_steps_to_process; ++i )
+	if( num_steps_to_process > 0u )
 	{
-		MovePlayer( 1.0f / c_steps_per_second, keyboard_state );
-		ProcessStep();
+		for( auto mut i= 0u; i < num_steps_to_process; ++i )
+		{
+			MovePlayer( 1.0f / c_steps_per_second, keyboard_state );
+			ProcessStep();
+		}
+
+		player_controller_.Reset();
 	}
 
 	prev_time_steps_= cur_time_steps;
@@ -197,15 +213,15 @@ fn Game::ProcessMouseButtonPress( mut this, u32 button_index )
 {
 	if( button_index == 1u )
 	{
-		var f32 azimuth= player_controller_.GetAzimuth();
-		var f32 elevation= player_controller_.GetElevation();
+		var f32 azimuth= camera_rotation_controller_.GetAzimuth();
+		var f32 elevation= camera_rotation_controller_.GetElevation();
 
 		var f32 elevation_cos= ust::cos(elevation);
 		var f32 elevation_sin= ust::sin(elevation);
 
 		var Vec3f direction_vector( -ust::sin(azimuth) * elevation_cos, ust::cos(azimuth) * elevation_cos, elevation_sin );
 
-		var Vec3f ray_start= GetCameraPositionForPlayer( player_controller_ );
+		var Vec3f ray_start= GetCameraPositionForPlayer( player_state_ );
 
 		if( zmap_data_.empty() || zvox_data_.empty() )
 		{
@@ -333,9 +349,9 @@ fn Game::GetWorldDrawingInfo( this ) : WorldDrawingInfo
 	return WorldDrawingInfo
 	{
 		.map_index= current_map_index_,
-		.camera_position= GetCameraPositionForPlayer( player_controller_ ),
-		.camera_azimuth= player_controller_.GetAzimuth(),
-		.camera_elevation= player_controller_.GetElevation(),
+		.camera_position= GetCameraPositionForPlayer( player_state_ ),
+		.camera_azimuth= camera_rotation_controller_.GetAzimuth(),
+		.camera_elevation= camera_rotation_controller_.GetElevation(),
 		.model_objects= move(model_objects),
 		.test_sprites= test_bullet_holes_,
 		.test_triangles= test_triangles_,
@@ -351,12 +367,16 @@ fn Game::process_noclip( mut this )
 
 fn Game::process_reset_position( mut this )
 {
-	player_controller_= PlayerController( Vec3f( 0.0f, 0.0f, 0.0f ), 0.0f );
+	player_state_.position= Vec3f( 0.0f, 0.0f, 0.0f );
+	player_state_.velocity= Vec3f( 0.0f, 0.0f, 0.0f );
+	camera_rotation_controller_= CameraRotationController( 0.0f );
+
+	// TODO - reset player controller?
 }
 
 fn Game::process_trigger_player_see( mut this )
 {
-	var Vec3f pos= player_controller_.GetPos();
+	var Vec3f pos= player_state_.position;
 	if_var( &mut entity : GetNearestEntity( pos ) )
 	{
 		entity.has_seen_player_in_current_operation= true;
@@ -365,7 +385,7 @@ fn Game::process_trigger_player_see( mut this )
 
 fn Game::process_trigger_player_in_shooting_zone( mut this )
 {
-	var Vec3f pos= player_controller_.GetPos();
+	var Vec3f pos= player_state_.position;
 	if_var( &mut entity : GetNearestEntity( pos ) )
 	{
 		entity.player_is_inside_shooting_zone= true;
@@ -374,7 +394,7 @@ fn Game::process_trigger_player_in_shooting_zone( mut this )
 
 fn Game::process_trigger_energy_loss( mut this )
 {
-	var Vec3f pos= player_controller_.GetPos();
+	var Vec3f pos= player_state_.position;
 	if_var( &mut entity : GetNearestEntity( pos ) )
 	{
 		entity.lost_energy_in_current_operation= true;
@@ -383,7 +403,13 @@ fn Game::process_trigger_energy_loss( mut this )
 
 fn Game::MovePlayer( mut this, f32 time_delta_s, ust::array_view_imut</bool/> keyboard_state )
 {
-	var Vec3f old_position= player_controller_.GetPos();
+	var Vec3f old_position= player_state_.position;
+
+	ApplyPlayerMovement(
+		time_delta_s,
+		player_state_,
+		camera_rotation_controller_.GetAzimuth(),
+		player_controller_.GetAccumulatedMoveWishVector() );
 
 	player_controller_.Update( time_delta_s, keyboard_state );
 
@@ -405,7 +431,7 @@ fn Game::MovePlayer( mut this, f32 time_delta_s, ust::array_view_imut</bool/> ke
 
 	var f32 c_push_eps= 1.0f / 32.0f;
 
-	var Vec3f new_position= player_controller_.GetPos();
+	var Vec3f new_position= player_state_.position;
 
 	var Vec3f mut position_clipped_to_movement= old_position;
 	var Vec3f mut position_clipped_to_movement_and_slided= old_position;
@@ -450,7 +476,7 @@ fn Game::MovePlayer( mut this, f32 time_delta_s, ust::array_view_imut</bool/> ke
 					remaining_movement_vector -
 					trace_result.collision_point_normal * ( remaining_movement_vector.Dot( trace_result.collision_point_normal ) / normal_square_length );
 			}
-			player_controller_.ClampVelocity( trace_result.collision_point_normal );
+			// player_controller_.ClampVelocity( trace_result.collision_point_normal );
 		}
 	}
 
@@ -485,11 +511,11 @@ fn Game::MovePlayer( mut this, f32 time_delta_s, ust::array_view_imut</bool/> ke
 					trace_result.collision_point_normal * ( c_push_eps / ust::sqrt( normal_square_length ) );
 			}
 
-			player_controller_.ClampVelocity( trace_result.collision_point_normal );
+			// player_controller_.ClampVelocity( trace_result.collision_point_normal );
 		}
 	}
 
-	player_controller_.SetPos( new_position_corrected );
+	player_state_.position= new_position_corrected;
 }
 
 fn Game::ProcessStep( mut this )
@@ -697,7 +723,7 @@ fn Game::ProcessStep( mut this )
 					// This entity can be picked-up.
 					// TODO - identify exact radius and center.
 					var f32 c_pickup_distance= 48.0f;
-					var f32 square_distance= ( player_controller_.GetPos() - entity.position ).SquareLength();
+					var f32 square_distance= ( player_state_.position - entity.position ).SquareLength();
 					if( square_distance < c_pickup_distance * c_pickup_distance )
 					{
 						// Despawn this entity, since it was picked-up.
@@ -952,17 +978,72 @@ fn MoveEntity(
 	}
 }
 
+fn ApplyPlayerMovement(
+	f32 time_delta_s,
+	PlayerState &mut player_state,
+	f32 azimuth,
+	Vec3f& move_wish_direction )
+{
+	// TODO - tune max speed or even read it from entities description config.
+	var f32 max_horizontal_speed= 320.0f;
+	var f32 max_vertical_speed= 1024.0f;
+
+	var f32 time_to_max_speed_s= 0.3f;
+
+	// Acceleration is twice as big as deceleration, it's needed because deceleration is always applied.
+	var f32 horizontal_acceleration= max_horizontal_speed / time_to_max_speed_s * 2.0f;
+	var f32 horizontal_deceleation= max_horizontal_speed / time_to_max_speed_s;
+
+	var f32 vertical_deceleration= horizontal_deceleation;
+
+	var Vec3f forward_vector( -ust::sin(azimuth), ust::cos(azimuth), 0.0f );
+	var Vec3f right_vector( ust::cos(azimuth), ust::sin(azimuth), 0.0f );
+
+	player_state.velocity+=
+		( forward_vector * move_wish_direction.x + right_vector * move_wish_direction.y + Vec3f( 0.0f, 0.0f, move_wish_direction.z ) ) *
+		time_delta_s * horizontal_acceleration;
+
+	{
+		// Apply horizontal deceleration and limit horizontal speed if necessary.
+		// TODO - apply friction depending on current state (on ground/in air).
+		var Vec2f mut horizontal_velocity= player_state.velocity.xy();
+		var f32 speed= horizontal_velocity.Length();
+		if( speed > 0.0f )
+		{
+			var f32 new_speed= speed - horizontal_deceleation * time_delta_s;
+			var f32 new_speed_clamped= ust::max( 0.0f, ust::min( new_speed, max_horizontal_speed ) );
+			horizontal_velocity= horizontal_velocity * ( new_speed_clamped / speed );
+			player_state.velocity.x= horizontal_velocity.x;
+			player_state.velocity.y= horizontal_velocity.y;
+		}
+	}
+
+	{
+		// Apply vertical deceleration and limit vertical speed if necessary.
+		// TODO - use vertical deceleration only in noclip mode, in normal case use only gravity.
+		var f32 speed= ust::abs( player_state.velocity.z );
+		if( speed > 0.0f )
+		{
+			var f32 new_speed= speed - vertical_deceleration * time_delta_s;
+			var f32 new_speed_clamped= ust::max( 0.0f, ust::min( new_speed, max_vertical_speed ) );
+			player_state.velocity.z= player_state.velocity.z * (new_speed_clamped / speed);
+		}
+	}
+
+	player_state.position+= player_state.velocity * time_delta_s;
+}
+
 // The original game uses angles in range 0 to 1024 mapped to 0 to tau and with negative sign.
 fn Convert1024Angle( f32 a ) : f32
 {
 	return a * ( c_tau / -1024.0f );
 }
 
-fn GetCameraPositionForPlayer( PlayerController& p ) : Vec3f
+fn GetCameraPositionForPlayer( PlayerState& player_state ) : Vec3f
 {
 	// Offset camera slightly relative to the player's position.
 	// TODO - use also slight horisontal shift as the original game does.
-	return p.GetPos() + Vec3f( 0.0f, 0.0f, c_camera_z_offset );
+	return player_state.position + Vec3f( 0.0f, 0.0f, c_camera_z_offset );
 }
 
 fn GetPlayerColliderBBox() : BBox3f
