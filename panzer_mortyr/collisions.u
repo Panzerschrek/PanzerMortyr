@@ -1,0 +1,313 @@
+import "collisions.uh"
+import "geometry_utils.uh"
+
+namespace PM
+{
+
+fn RayTrace(
+	ZmapData& zmap_data,
+	ZvoxData& zvox_data,
+	Vec3f& ray_start,
+	Vec3f& direction_vector ) : ust::optional</RayTraceResult/>
+{
+	var f32 mut closest_distance= 1.0e38f;
+
+	var size_type mut hit_quad_index= ~0s, mut hit_quad_cluster_index= ~0s;
+
+	// Search for intersection with map geometry.
+
+	for( var size_type mut c= 0s; c < zvox_data.clusters.size(); ++c )
+	{
+		var ZvoxCluster& cluster= zvox_data.clusters[c];
+
+		if_var( intersection :
+			FindRayPolyhedronIntersection(
+				ray_start,
+				direction_vector,
+				CreateBBoxPlanes( GetSlightlyExtendedClusterBBox( cluster ) ) ) )
+		{
+			if( intersection.far_point_distance < 0.0f )
+			{
+				// This cluster is behind the back.
+
+				if( cluster.c.num_children_clusters > 0 )
+				{
+					// Jump over all children clusters - intersection with them isn't possible too.
+					c+= size_type( cluster.c.num_children_clusters );
+				}
+
+				continue;
+			}
+		}
+		else
+		{
+			// No intersection with this cluster at all - ignore it.
+
+			if( cluster.c.num_children_clusters > 0 )
+			{
+				// Jump over all children clusters - intersection with them isn't possible too.
+				c+= size_type( cluster.c.num_children_clusters );
+			}
+
+			continue;
+		}
+
+		for( var size_type mut q( cluster.c.first_quad_index ), q_end= size_type( cluster.c.first_quad_index ) + size_type( cluster.num_quads );
+			q < q_end;
+			++q )
+		{
+			var ZmapQuad& quad= zmap_data.quads[q];
+			// TODO - ignore quads with materials transparent for bullets (like water).
+
+			auto& center= cluster.c.center;
+			auto& in_vertices= quad.vertices;
+
+			var [ Vec3f, 4 ] vertices
+			[
+				Vec3f( f32( center[0] + i32( in_vertices[0][0] ) ), f32( center[1] + i32( in_vertices[0][1] ) ), f32( center[2] + i32( in_vertices[0][2] ) ) ),
+				Vec3f( f32( center[0] + i32( in_vertices[1][0] ) ), f32( center[1] + i32( in_vertices[1][1] ) ), f32( center[2] + i32( in_vertices[1][2] ) ) ),
+				Vec3f( f32( center[0] + i32( in_vertices[2][0] ) ), f32( center[1] + i32( in_vertices[2][1] ) ), f32( center[2] + i32( in_vertices[2][2] ) ) ),
+				Vec3f( f32( center[0] + i32( in_vertices[3][0] ) ), f32( center[1] + i32( in_vertices[3][1] ) ), f32( center[2] + i32( in_vertices[3][2] ) ) ),
+			];
+
+			// Process each triangle of a quad separately - in case if due to precision errors quads aren't planar.
+			// TODO - simplify this code for the majority of the cases with planar quads.
+
+			for( auto mut quad_triangle_index= 0s; quad_triangle_index < 2s; ++quad_triangle_index )
+			{
+				var Vec3f& v0= vertices[0];
+				var Vec3f& v1= vertices[quad_triangle_index + 1s];
+				var Vec3f& v2= vertices[quad_triangle_index + 2s];
+
+				// Don't process degenerate triangles, they are sometimes possible.
+				if( v0 == v1 || v0 == v2 || v1 == v2 )
+				{
+					continue;
+				}
+
+				var Planef plane= Planef::CreateFromNormalAndPoint( ( v1 - v0 ).Cross( v2 - v0 ), v0 );
+
+				var f32 direction_vector_plane_normal_dot= direction_vector.Dot( plane.normal );
+				if( direction_vector_plane_normal_dot != 0.0f )
+				{
+					var f32 ray_start_distance_to_plane= plane.GetDistanceForPoint( ray_start );
+
+					// This distance is negative for intersection points behind current ray.
+					var f32 signed_distance_to_intersection_point= -ray_start_distance_to_plane / direction_vector_plane_normal_dot;
+
+					if( signed_distance_to_intersection_point > 0.0f && // Process intersections only at the front of the ray.
+						signed_distance_to_intersection_point < closest_distance ) // Find the smallest positive distance.
+					{
+						var Vec3f intersection_point= ray_start + direction_vector * signed_distance_to_intersection_point;
+
+						// Check if ray-plane intersection lies within the triangle.
+						if( ( v1 - v0 ).Cross( intersection_point - v0 ).Dot( plane.normal ) >= 0.0f &&
+							( v2 - v1 ).Cross( intersection_point - v1 ).Dot( plane.normal ) >= 0.0f &&
+							( v0 - v2 ).Cross( intersection_point - v2 ).Dot( plane.normal ) >= 0.0f )
+						{
+							closest_distance= signed_distance_to_intersection_point;
+							hit_quad_index= q;
+							hit_quad_cluster_index= c;
+						}
+					}
+				}
+			}
+		}
+	}
+
+	if( hit_quad_index < zmap_data.quads.size() && hit_quad_cluster_index < zvox_data.clusters.size() )
+	{
+		return RayTraceResult
+		{
+			.quad_index( hit_quad_index ),
+			.cluster_index( hit_quad_cluster_index ),
+			.distance= closest_distance,
+		};
+	}
+
+	return ust::null_optional;
+}
+
+fn CollisionTrace(
+	ZmapData& zmap_data,
+	ZvoxData& zvox_data,
+	BBox3f& bbox,
+	Vec3f& start_position,
+	Vec3f& movement_vector ) : TraceCollisionResult
+{
+	var TraceCollisionResult mut trace_result
+	{
+		.clipped_move_distance= 1.0f,
+		.collision_point_normal( 0.0f, 0.0f, 0.0f ),
+	};
+
+	if( movement_vector.SquareLength() == 0.0f )
+	{
+		return trace_result;
+	}
+
+	var CompactPolyhedron mut collision_polyhedron
+	{
+		.num_planes= 0u,
+		.primary_planes_mask= 0u,
+		.planes
+		[
+			Planef{ .normal= Vec3f::MakeZero(), .distance= 0.0f },
+			Planef{ .normal= Vec3f::MakeZero(), .distance= 0.0f },
+			Planef{ .normal= Vec3f::MakeZero(), .distance= 0.0f },
+			Planef{ .normal= Vec3f::MakeZero(), .distance= 0.0f },
+			Planef{ .normal= Vec3f::MakeZero(), .distance= 0.0f },
+			Planef{ .normal= Vec3f::MakeZero(), .distance= 0.0f },
+			Planef{ .normal= Vec3f::MakeZero(), .distance= 0.0f },
+			Planef{ .normal= Vec3f::MakeZero(), .distance= 0.0f },
+			Planef{ .normal= Vec3f::MakeZero(), .distance= 0.0f },
+			Planef{ .normal= Vec3f::MakeZero(), .distance= 0.0f },
+			Planef{ .normal= Vec3f::MakeZero(), .distance= 0.0f },
+			Planef{ .normal= Vec3f::MakeZero(), .distance= 0.0f },
+			Planef{ .normal= Vec3f::MakeZero(), .distance= 0.0f },
+			Planef{ .normal= Vec3f::MakeZero(), .distance= 0.0f },
+			Planef{ .normal= Vec3f::MakeZero(), .distance= 0.0f },
+			Planef{ .normal= Vec3f::MakeZero(), .distance= 0.0f },
+			Planef{ .normal= Vec3f::MakeZero(), .distance= 0.0f },
+			Planef{ .normal= Vec3f::MakeZero(), .distance= 0.0f },
+			Planef{ .normal= Vec3f::MakeZero(), .distance= 0.0f },
+			Planef{ .normal= Vec3f::MakeZero(), .distance= 0.0f },
+		],
+	};
+
+	for( var size_type mut c= 0s; c < zvox_data.clusters.size(); ++c )
+	{
+		var ZvoxCluster& cluster= zvox_data.clusters[c];
+
+		var BBox3f mut cluster_bbox_extended= GetSlightlyExtendedClusterBBox( cluster );
+		cluster_bbox_extended.min+= bbox.min;
+		cluster_bbox_extended.max+= bbox.max;
+
+		if_var( intersection :
+			FindRayPolyhedronIntersection(
+				start_position,
+				movement_vector,
+				CreateBBoxPlanes( cluster_bbox_extended ) ) )
+		{
+			if( intersection.far_point_distance < 0.0f || intersection.near_point_distance > 1.0f )
+			{
+				// This cluster is behind the back or too far away.
+
+				if( cluster.c.num_children_clusters > 0 )
+				{
+					// Jump over all children clusters - intersection with them isn't possible too.
+					c+= size_type( cluster.c.num_children_clusters );
+				}
+
+				continue;
+			}
+		}
+		else
+		{
+			// No intersection with this cluster at all - ignore it.
+
+			if( cluster.c.num_children_clusters > 0 )
+			{
+				// Jump over all children clusters - intersection with them isn't possible too.
+				c+= size_type( cluster.c.num_children_clusters );
+			}
+
+			continue;
+		}
+
+		foreach( &quad : zmap_data.quads.range().subrange(
+			size_type( cluster.c.first_quad_index ),
+			size_type( cluster.c.first_quad_index ) + size_type( cluster.num_quads ) ) )
+		{
+			// TODO - ignore quads with materials passable by player (like water).
+
+			auto& center= cluster.c.center;
+			auto& in_vertices= quad.vertices;
+
+			var [ Vec3f, 4 ] vertices
+			[
+				Vec3f( f32( center[0] + i32( in_vertices[0][0] ) ), f32( center[1] + i32( in_vertices[0][1] ) ), f32( center[2] + i32( in_vertices[0][2] ) ) ),
+				Vec3f( f32( center[0] + i32( in_vertices[1][0] ) ), f32( center[1] + i32( in_vertices[1][1] ) ), f32( center[2] + i32( in_vertices[1][2] ) ) ),
+				Vec3f( f32( center[0] + i32( in_vertices[2][0] ) ), f32( center[1] + i32( in_vertices[2][1] ) ), f32( center[2] + i32( in_vertices[2][2] ) ) ),
+				Vec3f( f32( center[0] + i32( in_vertices[3][0] ) ), f32( center[1] + i32( in_vertices[3][1] ) ), f32( center[2] + i32( in_vertices[3][2] ) ) ),
+			];
+
+			CreateBBoxAndQuadMinkowskiSum( bbox, vertices, collision_polyhedron );
+
+			if( collision_polyhedron.num_planes >= 4u )
+			{
+				auto polyhedron_planes=
+					ust::array_view_imut</Planef/>( collision_polyhedron.planes ).subrange_end( size_type( collision_polyhedron.num_planes ) );
+
+				if_var( intersection : FindRayPolyhedronIntersection( start_position, movement_vector, polyhedron_planes ) )
+				{
+					if( intersection.near_point_distance >= 0.0f )
+					{
+						// Is outside and moving towards the quad volume.
+						// Clip movement by distance to the near intersection point.
+						if( intersection.near_point_distance < trace_result.clipped_move_distance )
+						{
+							trace_result.clipped_move_distance= intersection.near_point_distance;
+							trace_result.collision_point_normal= polyhedron_planes[ size_type( intersection.near_plane_index ) ].normal;
+						}
+					}
+					else if( intersection.far_point_distance <= 0.0f )
+					{
+						// Is outside and moving from the quad volume.
+						// Nothing to do here.
+					}
+					else
+					{
+						// Is inside.
+
+						// Apply extra push towards quad plane.
+						// This is necessary if due to numerical errors or some other reasons we still somehow get inside a collider.
+						for( auto mut plane_index= 0s; plane_index < polyhedron_planes.size(); ++plane_index )
+						{
+							if( ( collision_polyhedron.primary_planes_mask & ( 1u << plane_index ) ) != 0u )
+							{
+								var Planef& push_plane= polyhedron_planes[ plane_index ];
+
+								var f32 distance= push_plane.GetDistanceForPoint( start_position + movement_vector );
+								if( distance < 0.0f )
+								{
+									var Vec3f this_quad_push= push_plane.normal * ( -distance / push_plane.normal.SquareLength() );
+									if( trace_result.extra_push.empty() ||
+										// Select smallest push of such kind.
+										this_quad_push.SquareLength() < trace_result.extra_push.try_deref().SquareLength() )
+									{
+										trace_result.extra_push= this_quad_push;
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
+	return trace_result;
+}
+
+fn GetSlightlyExtendedClusterBBox( ZvoxCluster& cluster ) : BBox3f
+{
+	// Add a little bit size to fix numerical precision issues.
+
+	var f32 bbox_size_eps= 1.0f;
+
+	return
+		BBox3f
+		{
+			.min(
+				f32( cluster.c.center[0] - cluster.c.bounding_box_half_size[0] ) - bbox_size_eps,
+				f32( cluster.c.center[1] - cluster.c.bounding_box_half_size[1] ) - bbox_size_eps,
+				f32( cluster.c.center[2] - cluster.c.bounding_box_half_size[2] ) - bbox_size_eps ),
+			.max(
+				f32( cluster.c.center[0] + cluster.c.bounding_box_half_size[0] ) + bbox_size_eps,
+				f32( cluster.c.center[1] + cluster.c.bounding_box_half_size[1] ) + bbox_size_eps,
+				f32( cluster.c.center[2] + cluster.c.bounding_box_half_size[2] ) + bbox_size_eps ),
+		};
+}
+
+} // namespace PM

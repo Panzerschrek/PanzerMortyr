@@ -27,9 +27,45 @@ fn WorldDrawer::constructor(
 		model_shader_(
 			embed</char8/>( "shaders/model.vert.glsl" ),
 			embed</char8/>( "shaders/model.frag.glsl" ) ),
+		test_sprite_shader_(
+			embed</char8/>( "shaders/test_sprite.vert.glsl" ),
+			embed</char8/>( "shaders/test_sprite.frag.glsl" ) ),
+		test_triangle_shader_(
+			embed</char8/>( "shaders/test_triangle.vert.glsl" ),
+			embed</char8/>( "shaders/test_triangle.frag.glsl" ) ),
+		test_triangle_vertex_buffer_object_=
+			BufferObject::CreateUninitializedDynamicDrawBuffer(
+				GLenum( GL_ARRAY_BUFFER ),
+				c_max_test_triagle_vertices * typeinfo</TestTriangleVertex/>.size_of ),
 		map_index_= 0u,
 	)
 {
+	test_triangle_vertex_array_object_.Bind();
+	test_triangle_vertex_buffer_object_.Bind();
+
+	// These constants should match locations in the shader!
+	var u32 c_test_triangle_position_attrib= 0u;
+	var u32 c_test_triangle_color_attrib= 1u;
+
+	unsafe( glEnableVertexAttribArray( c_test_triangle_position_attrib ) );
+
+	unsafe( glVertexAttribPointer(
+		c_test_triangle_position_attrib,
+		3,
+		GLenum( GL_FLOAT ),
+		GLboolean(0),
+		GLsizei( typeinfo</TestTriangleVertex/>.size_of ),
+		ust::nullptr</byte8/>() + GetStructFieldOffset</ TestTriangleVertex, "position" />() ) );
+
+	unsafe( glEnableVertexAttribArray( c_test_triangle_color_attrib ) );
+
+	unsafe( glVertexAttribPointer(
+		c_test_triangle_color_attrib,
+		3,
+		GLenum( GL_UNSIGNED_BYTE ),
+		GLboolean(1),
+		GLsizei( typeinfo</TestTriangleVertex/>.size_of ),
+		ust::nullptr</byte8/>() + GetStructFieldOffset</ TestTriangleVertex, "color" />() ) );
 }
 
 fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingViewportInfo& viewport_info )
@@ -295,6 +331,59 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 			GLenum( GL_UNSIGNED_SHORT ),
 			ust::nullptr</byte8/>() ) );
 	}
+
+	// Draw test sprites.
+
+	if( !drawing_info.test_sprites.empty() )
+	{
+		test_sprite_shader_.Bind();
+
+		unsafe( glPointSize( 32.0f ) );
+
+		foreach( &v : drawing_info.test_sprites )
+		{
+			// Assuming we have only a handful of test sprites, just set transformation matrix for each of them individually.
+			// Do not bother filling a vertex buffer.
+			test_sprite_shader_.SetUniform( "vu_matrix", Mat4f::MakeTranslation( v ) * view_matrix );
+			unsafe( glDrawArrays( GLenum( GL_POINTS ), GLint(0), GLint(1) ) );
+		}
+
+		unsafe( glPointSize( 1.0f ) );
+	}
+
+	// Draw test triangles.
+	if( !drawing_info.test_triangles.empty() )
+	{
+		test_triangle_vertex_array_object_.Bind();
+		test_triangle_vertex_buffer_object_.Bind();
+
+		scoped_array TestTriangleVertex mut vertices[ drawing_info.test_triangles.size() * 3s ]( ust::make_zeroed</TestTriangleVertex/>() );
+
+		for( auto mut i= 0s; i < drawing_info.test_triangles.size(); ++i )
+		{
+			var WorldDrawingInfo::TestTriangle& triangle= drawing_info.test_triangles[i];
+
+			for( auto mut j= 0s; j < 3s; ++j )
+			{
+				var TestTriangleVertex &mut v= vertices[ i * 3s + j ];
+				var Vec3f& pos= triangle.vertices[j];
+				v.position[0]= pos.x;
+				v.position[1]= pos.y;
+				v.position[2]= pos.z;
+				v.color= triangle.color;
+			}
+		}
+
+		var ust::array_view_imut</TestTriangleVertex/> vertices_imut= vertices.subrange_end( c_max_test_triagle_vertices );
+
+		auto range= vertices_imut.to_byte8_range();
+		unsafe( glBufferSubData( GLenum( GL_ARRAY_BUFFER ), GLintptr(0), GLsizeiptr( range.size() ), range.data() ) );
+
+		test_triangle_shader_.Bind();
+		test_sprite_shader_.SetUniform( "vu_matrix", view_matrix );
+
+		unsafe( glDrawArrays( GLenum( GL_TRIANGLES ), GLint(0), GLint( vertices_imut.size() ) ) );
+	}
 }
 
 fn WorldDrawer::SetMap( mut this, u32 map_index )
@@ -385,36 +474,6 @@ fn WorldDrawer::SetMap( mut this, u32 map_index )
 
 			var size_type base_vertex_index= vertices.size() - cluser_first_vertex_index;
 
-			var [ [ i32, 3 ], 4 ] shifts
-			[
-				[ (quad.vertices[0][0]), (quad.vertices[0][1]), (quad.vertices[0][2]) ],
-				[ (quad.vertices[1][0]), (quad.vertices[1][1]), (quad.vertices[1][2]) ],
-				[ (quad.vertices[2][0]), (quad.vertices[2][1]), (quad.vertices[2][2]) ],
-				[ (quad.vertices[3][0]), (quad.vertices[3][1]), (quad.vertices[3][2]) ]
-			];
-
-			var [ i32, 3 ] shifts_min
-			[
-				ust::min( ust::min(shifts[0][0], shifts[1][0]), ust::min(shifts[2][0], shifts[3][0]) ),
-				ust::min( ust::min(shifts[0][1], shifts[1][1]), ust::min(shifts[2][1], shifts[3][1]) ),
-				ust::min( ust::min(shifts[0][2], shifts[1][2]), ust::min(shifts[2][2], shifts[3][2]) ),
-			];
-			var [ i32, 3 ] shifts_max
-			[
-				ust::max( ust::max(shifts[0][0], shifts[1][0]), ust::max(shifts[2][0], shifts[3][0]) ),
-				ust::max( ust::max(shifts[0][1], shifts[1][1]), ust::max(shifts[2][1], shifts[3][1]) ),
-				ust::max( ust::max(shifts[0][2], shifts[1][2]), ust::max(shifts[2][2], shifts[3][2]) ),
-			];
-
-			var [ i32, 3 ] center
-			[
-				// Using signed integer division by two is important here.
-				// Using fractional numbers or bit-shift isn't correct, because this leads to gaps in map geometry.
-				i32( quad.center[0] ) - ( shifts_min[0] + shifts_max[0] ) / 2,
-				i32( quad.center[1] ) - ( shifts_min[1] + shifts_max[1] ) / 2,
-				i32( quad.center[2] ) - ( shifts_min[2] + shifts_max[2] ) / 2,
-			];
-
 			var f32 mut texture_id( quad.texture_id );
 
 			// TODO - use speacial passes for special materials.
@@ -482,14 +541,14 @@ fn WorldDrawer::SetMap( mut this, u32 map_index )
 				// OpenGL uses normalized texture coordinates.
 				var f32 constexpr tc_scale= 1.0f / f32( MaterialsDescription::c_texture_size );
 
-				foreach( &vertex_shift : shifts )
+				foreach( &vertex_shift : quad.vertices )
 				{
 					// Texture coordinates are calculated relative to vertex #0.
 					var Vec3f vertex_relative_shift
 					(
-						f32( vertex_shift[0] - shifts[0][0] ),
-						f32( vertex_shift[1] - shifts[0][1] ),
-						f32( vertex_shift[2] - shifts[0][2] )
+						f32( i32( vertex_shift[0] ) - i32( quad.vertices[0][0] ) ),
+						f32( i32( vertex_shift[1] ) - i32( quad.vertices[0][1] ) ),
+						f32( i32( vertex_shift[2] ) - i32( quad.vertices[0][2] ) )
 					);
 
 					vertices.push_back(
@@ -497,9 +556,9 @@ fn WorldDrawer::SetMap( mut this, u32 map_index )
 						{
 							.position
 							[
-								f32( center[0] + vertex_shift[0] ),
-								f32( center[1] + vertex_shift[1] ),
-								f32( center[2] + vertex_shift[2] ),
+								f32( cluster.c.center[0] + i32( vertex_shift[0] ) ),
+								f32( cluster.c.center[1] + i32( vertex_shift[1] ) ),
+								f32( cluster.c.center[2] + i32( vertex_shift[2] ) ),
 							],
 							.padding12= zero_init,
 							.tex_coordinates
@@ -542,9 +601,9 @@ fn WorldDrawer::SetMap( mut this, u32 map_index )
 						{
 							.position
 							[
-								f32( center[0] ) + f32( vertex_data[ i + 0s ] ),
-								f32( center[1] ) + f32( vertex_data[ i + 1s ] ),
-								f32( center[2] ) + f32( vertex_data[ i + 2s ] ),
+								f32( cluster.c.center[0] ) + f32( vertex_data[ i + 0s ] ),
+								f32( cluster.c.center[1] ) + f32( vertex_data[ i + 1s ] ),
+								f32( cluster.c.center[2] ) + f32( vertex_data[ i + 2s ] ),
 							],
 							.padding12= zero_init,
 							.tex_coordinates
@@ -787,5 +846,7 @@ fn CalculateCameraMatrix( f32 aspect, Vec3f& camera_position, f32 camera_azimuth
 
 	return translate_matrix * rotation_matrix * perspective_matrix;
 }
+
+var size_type c_max_test_triagle_vertices= 1024s;
 
 } // namespace PM

@@ -1,5 +1,8 @@
 import "/string_conversions.u"
+import "collisions.uh"
+import "debug_visualization.uh"
 import "game.uh"
+import "geometry_utils.uh"
 import "math_constants.uh"
 
 namespace PM
@@ -12,7 +15,7 @@ fn Game::constructor(
 		caching_game_resources_loader_ptr_= move( caching_game_resources_loader_ptr ),
 		console_out_= move(console_out),
 		current_map_index_= 0u, // Set later.
-		camera_controller_( Vec3f( 0.0f, 0.0f, 0.0f ) ),
+		player_controller_( Vec3f( 0.0f, 0.0f, 0.0f ), 0.0f ),
 		prev_time_steps_= 0.0,
 	)
 {
@@ -72,6 +75,9 @@ fn Game::TeleportToMap( mut this, u32 map_index )
 
 	entities_description_= caching_game_resources_loader.LoadEntitiesDescription( entities_info_file );
 
+	zmap_data_= caching_game_resources_loader.LoadZmapFile( map_index );
+	zvox_data_= caching_game_resources_loader.LoadZvoxFile( map_index );
+
 	var GameResourceNullablePtr</ZpozData/> zpoz_data_nullable= caching_game_resources_loader.LoadZpozFile( map_index );
 
 	mapa_way_data_= caching_game_resources_loader.LoadMapaWayFile( map_index );
@@ -98,6 +104,12 @@ fn Game::TeleportToMap( mut this, u32 map_index )
 
 			if( in_entity.alive_flag == 0u16 )
 			{
+				continue;
+			}
+
+			if( u32( in_entity.kind ) == c_player_entity_index )
+			{
+				// Do not place player spawn entities.
 				continue;
 			}
 
@@ -132,6 +144,24 @@ fn Game::TeleportToMap( mut this, u32 map_index )
 					.animation_frames= zero_init, // Set exact frames later.
 				};
 		}
+
+		// Find player spawn.
+		foreach( &entity : zpoz_entities )
+		{
+			if( entity.alive_flag == 0u16 )
+			{
+				continue;
+			}
+
+			if( u32( entity.kind ) == c_player_entity_index )
+			{
+				player_controller_=
+					PlayerController(
+						Vec3f( f32( entity.position[0] ), f32( entity.position[1] ), f32( entity.position[2] ) ),
+						Convert1024Angle( f32( entity.data[4] ) ) );
+				break;
+			}
+		}
 	}
 
 	current_map_index_= map_index;
@@ -139,7 +169,8 @@ fn Game::TeleportToMap( mut this, u32 map_index )
 
 fn Game::Update( mut this, f32 time_delta_s, ust::array_view_imut</bool/> keyboard_state )
 {
-	camera_controller_.Update( time_delta_s, keyboard_state );
+	// TODO - process player movement (but not camera rotation) in fixed steps too!
+	MovePlayer( time_delta_s, keyboard_state );
 
 	// Process game logic in fixed time steps.
 
@@ -156,6 +187,86 @@ fn Game::Update( mut this, f32 time_delta_s, ust::array_view_imut</bool/> keyboa
 	}
 
 	prev_time_steps_= cur_time_steps;
+}
+
+fn Game::ProcessMouseButtonPress( mut this, u32 button_index )
+{
+	if( button_index == 1u )
+	{
+		var f32 azimuth= player_controller_.GetAzimuth();
+		var f32 elevation= player_controller_.GetElevation();
+
+		var f32 elevation_cos= ust::cos(elevation);
+		var f32 elevation_sin= ust::sin(elevation);
+
+		var Vec3f direction_vector( -ust::sin(azimuth) * elevation_cos, ust::cos(azimuth) * elevation_cos, elevation_sin );
+
+		var Vec3f ray_start= GetCameraPositionForPlayer( player_controller_ );
+
+		if( zmap_data_.empty() || zvox_data_.empty() )
+		{
+			return;
+		}
+
+		var ZmapData& zmap_data= zmap_data_.try_deref();
+		var ZvoxData& zvox_data= zvox_data_.try_deref();
+
+		test_bullet_holes_.clear();
+
+		if_var( ray_trace_result : RayTrace( zmap_data, zvox_data, ray_start, direction_vector ) )
+		{
+			var Vec3f closest_intersection_point= ray_start + direction_vector * ray_trace_result.distance;
+
+			test_bullet_holes_.push_back( closest_intersection_point );
+
+			auto& center= zvox_data.clusters[ size_type( ray_trace_result.cluster_index ) ].c.center;
+			auto& in_vertices= zmap_data.quads[ size_type( ray_trace_result.quad_index ) ].vertices;
+
+			var [ Vec3f, 4 ] vertices
+			[
+				Vec3f( f32( center[0] + i32( in_vertices[0][0] ) ), f32( center[1] + i32( in_vertices[0][1] ) ), f32( center[2] + i32( in_vertices[0][2] ) ) ),
+				Vec3f( f32( center[0] + i32( in_vertices[1][0] ) ), f32( center[1] + i32( in_vertices[1][1] ) ), f32( center[2] + i32( in_vertices[1][2] ) ) ),
+				Vec3f( f32( center[0] + i32( in_vertices[2][0] ) ), f32( center[1] + i32( in_vertices[2][1] ) ), f32( center[2] + i32( in_vertices[2][2] ) ) ),
+				Vec3f( f32( center[0] + i32( in_vertices[3][0] ) ), f32( center[1] + i32( in_vertices[3][1] ) ), f32( center[2] + i32( in_vertices[3][2] ) ) ),
+			];
+
+			var CompactPolyhedron mut polyhedron
+			{
+				.num_planes= 0u,
+				.primary_planes_mask= 0u,
+				.planes
+				[
+					Planef{ .normal= Vec3f::MakeZero(), .distance= 0.0f },
+					Planef{ .normal= Vec3f::MakeZero(), .distance= 0.0f },
+					Planef{ .normal= Vec3f::MakeZero(), .distance= 0.0f },
+					Planef{ .normal= Vec3f::MakeZero(), .distance= 0.0f },
+					Planef{ .normal= Vec3f::MakeZero(), .distance= 0.0f },
+					Planef{ .normal= Vec3f::MakeZero(), .distance= 0.0f },
+					Planef{ .normal= Vec3f::MakeZero(), .distance= 0.0f },
+					Planef{ .normal= Vec3f::MakeZero(), .distance= 0.0f },
+					Planef{ .normal= Vec3f::MakeZero(), .distance= 0.0f },
+					Planef{ .normal= Vec3f::MakeZero(), .distance= 0.0f },
+					Planef{ .normal= Vec3f::MakeZero(), .distance= 0.0f },
+					Planef{ .normal= Vec3f::MakeZero(), .distance= 0.0f },
+					Planef{ .normal= Vec3f::MakeZero(), .distance= 0.0f },
+					Planef{ .normal= Vec3f::MakeZero(), .distance= 0.0f },
+					Planef{ .normal= Vec3f::MakeZero(), .distance= 0.0f },
+					Planef{ .normal= Vec3f::MakeZero(), .distance= 0.0f },
+					Planef{ .normal= Vec3f::MakeZero(), .distance= 0.0f },
+					Planef{ .normal= Vec3f::MakeZero(), .distance= 0.0f },
+					Planef{ .normal= Vec3f::MakeZero(), .distance= 0.0f },
+					Planef{ .normal= Vec3f::MakeZero(), .distance= 0.0f },
+				],
+			};
+
+			CreateBBoxAndQuadMinkowskiSum( GetPlayerColliderBBox(), vertices, polyhedron );
+			if( polyhedron.num_planes >= 4u )
+			{
+				test_triangles_.clear();
+				PolygonizePolyhedron( ust::array_view_imut</Planef/>( polyhedron.planes ).subrange_end( size_type( polyhedron.num_planes ) ), test_triangles_ );
+			}
+		}
+	}
 }
 
 fn Game::GetWorldDrawingInfo( this ) : WorldDrawingInfo
@@ -218,21 +329,30 @@ fn Game::GetWorldDrawingInfo( this ) : WorldDrawingInfo
 	return WorldDrawingInfo
 	{
 		.map_index= current_map_index_,
-		.camera_position= camera_controller_.GetPos(),
-		.camera_azimuth= camera_controller_.GetAzimuth(),
-		.camera_elevation= camera_controller_.GetElevation(),
-		.model_objects= move(model_objects)
+		.camera_position= GetCameraPositionForPlayer( player_controller_ ),
+		.camera_azimuth= player_controller_.GetAzimuth(),
+		.camera_elevation= player_controller_.GetElevation(),
+		.model_objects= move(model_objects),
+		.test_sprites= test_bullet_holes_,
+		.test_triangles= test_triangles_,
 	};
+}
+
+fn Game::process_noclip( mut this )
+{
+	noclip_mode_active_ = !noclip_mode_active_;
+
+	ConsoleOutAddTextLine( console_out_, ( noclip_mode_active_ ? ust::string_view8( "noclip on" ) : ust::string_view8( "noclip off" ) ) );
 }
 
 fn Game::process_reset_position( mut this )
 {
-	camera_controller_= CameraController( Vec3f( 0.0f, 0.0f, 0.0f ) );
+	player_controller_= PlayerController( Vec3f( 0.0f, 0.0f, 0.0f ), 0.0f );
 }
 
 fn Game::process_trigger_player_see( mut this )
 {
-	var Vec3f pos= camera_controller_.GetPos();
+	var Vec3f pos= player_controller_.GetPos();
 	if_var( &mut entity : GetNearestEntity( pos ) )
 	{
 		entity.has_seen_player_in_current_operation= true;
@@ -241,7 +361,7 @@ fn Game::process_trigger_player_see( mut this )
 
 fn Game::process_trigger_player_in_shooting_zone( mut this )
 {
-	var Vec3f pos= camera_controller_.GetPos();
+	var Vec3f pos= player_controller_.GetPos();
 	if_var( &mut entity : GetNearestEntity( pos ) )
 	{
 		entity.player_is_inside_shooting_zone= true;
@@ -250,11 +370,122 @@ fn Game::process_trigger_player_in_shooting_zone( mut this )
 
 fn Game::process_trigger_energy_loss( mut this )
 {
-	var Vec3f pos= camera_controller_.GetPos();
+	var Vec3f pos= player_controller_.GetPos();
 	if_var( &mut entity : GetNearestEntity( pos ) )
 	{
 		entity.lost_energy_in_current_operation= true;
 	}
+}
+
+fn Game::MovePlayer( mut this, f32 time_delta_s, ust::array_view_imut</bool/> keyboard_state )
+{
+	var Vec3f old_position= player_controller_.GetPos();
+
+	player_controller_.Update( time_delta_s, keyboard_state );
+
+	if( noclip_mode_active_ )
+	{
+		return;
+	}
+
+	if( zmap_data_.empty() || zvox_data_.empty() )
+	{
+		return;
+	}
+
+	var ZmapData& zmap_data= zmap_data_.try_deref();
+	var ZvoxData& zvox_data= zvox_data_.try_deref();
+
+	// TODO - read these dimensions from the current entities description file.
+	var BBox3f player_bbox= GetPlayerColliderBBox();
+
+	var f32 c_push_eps= 1.0f / 32.0f;
+
+	var Vec3f new_position= player_controller_.GetPos();
+
+	var Vec3f mut position_clipped_to_movement= old_position;
+	var Vec3f mut position_clipped_to_movement_and_slided= old_position;
+
+	// Make first trace to clip movement to nearest collision point and slide sideways parallel to the collision plane (if necessary).
+
+	if( new_position != old_position )
+	{
+		var Vec3f movement_vector= new_position - old_position;
+		var TraceCollisionResult trace_result= CollisionTrace( zmap_data, zvox_data, player_bbox, old_position, movement_vector );
+
+		position_clipped_to_movement=
+			old_position +
+			movement_vector * ust::min( 1.0f, trace_result.clipped_move_distance );
+
+		// Apply extra push if has one and only if has no clip by some other plane.
+		if( !trace_result.extra_push.empty() && trace_result.clipped_move_distance >= 1.0f )
+		{
+			position_clipped_to_movement+= trace_result.extra_push.try_deref();
+		}
+
+		position_clipped_to_movement_and_slided= position_clipped_to_movement;
+
+		if( trace_result.clipped_move_distance < 1.0f )
+		{
+			// Slightly push out from the collision plane.
+			// This is necessary to avoid numerical inprecision and ensure we remain always outside colliders.
+			var f32 normal_square_length= trace_result.collision_point_normal.SquareLength();
+			if( normal_square_length > 0.0f )
+			{
+				var Vec3f push_vec= trace_result.collision_point_normal * ( c_push_eps / ust::sqrt( normal_square_length ) );
+				position_clipped_to_movement+= push_vec;
+				position_clipped_to_movement_and_slided+= push_vec;
+			}
+
+			if( normal_square_length > 0.0f )
+			{
+				var f32 remaining_movement_fration= 1.0f - trace_result.clipped_move_distance;
+				var Vec3f remaining_movement_vector= movement_vector * remaining_movement_fration;
+
+				position_clipped_to_movement_and_slided+=
+					remaining_movement_vector -
+					trace_result.collision_point_normal * ( remaining_movement_vector.Dot( trace_result.collision_point_normal ) / normal_square_length );
+			}
+			player_controller_.ClampVelocity( trace_result.collision_point_normal );
+		}
+	}
+
+	// Make second trace to clip sideways sliding.
+	// This is necessary to resolve collisions while moving towards a corner.
+
+	var Vec3f mut new_position_corrected= position_clipped_to_movement;
+
+	if( position_clipped_to_movement_and_slided != position_clipped_to_movement )
+	{
+		var Vec3f movement_vector= position_clipped_to_movement_and_slided - position_clipped_to_movement;
+		var TraceCollisionResult trace_result= CollisionTrace( zmap_data, zvox_data, player_bbox, position_clipped_to_movement, movement_vector );
+
+		new_position_corrected=
+			position_clipped_to_movement +
+			movement_vector * ust::min( 1.0f, trace_result.clipped_move_distance );
+
+		// Apply extra push if has one and only if has no clip by some other plane.
+		if( !trace_result.extra_push.empty() && trace_result.clipped_move_distance >= 1.0f )
+		{
+			new_position_corrected+= trace_result.extra_push.try_deref();
+		}
+
+		if( trace_result.clipped_move_distance < 1.0f )
+		{
+			// Slightly push out from the collision plane.
+			// This is necessary to avoid numerical inprecision and ensure we remain always outside colliders.
+			var f32 normal_square_length= trace_result.collision_point_normal.SquareLength();
+			if( normal_square_length > 0.0f )
+			{
+				new_position_corrected+=
+					trace_result.collision_point_normal * ( c_push_eps / ust::sqrt( normal_square_length ) );
+			}
+
+			player_controller_.ClampVelocity( trace_result.collision_point_normal );
+		}
+	}
+
+	player_controller_.SetPos( new_position_corrected );
 }
 
 fn Game::ProcessStep( mut this )
@@ -462,7 +693,7 @@ fn Game::ProcessStep( mut this )
 					// This entity can be picked-up.
 					// TODO - identify exact radius and center.
 					var f32 c_pickup_distance= 48.0f;
-					var f32 square_distance= ( camera_controller_.GetPos() - entity.position ).SquareLength();
+					var f32 square_distance= ( player_controller_.GetPos() - entity.position ).SquareLength();
 					if( square_distance < c_pickup_distance * c_pickup_distance )
 					{
 						// Despawn this entity, since it was picked-up.
@@ -723,11 +954,30 @@ fn Convert1024Angle( f32 a ) : f32
 	return a * ( c_tau / -1024.0f );
 }
 
+fn GetCameraPositionForPlayer( PlayerController& p ) : Vec3f
+{
+	// Offset camera slightly relative to the player's position.
+	// TODO - use also slight horisontal shift as the original game does.
+	return p.GetPos() + Vec3f( 0.0f, 0.0f, c_camera_z_offset );
+}
+
+fn GetPlayerColliderBBox() : BBox3f
+{
+	// TODO - read these dimensions from the current entities description file.
+	return BBox3f
+	{
+		.min( -14.0f, -14.0f,  0.0f ),
+		.max(  14.0f,  14.0f, 64.0f ),
+	};
+}
+
 // TODO - investigate exact step rate in the original game.
 var f32 c_steps_per_second= 30.0f;
 
 // Model animation frames are sparce - for each 2 logic steps there is only one frame.
 var u32 c_num_steps_per_animation_frame= 2u;
+
+var u32 c_player_entity_index= 0u;
 
 var u32 c_start_operation= 0u; // Start with operation 0.
 
@@ -739,5 +989,7 @@ var f32 c_entity_speed_scale= 1.0f / 4.0f;
 // Experimental value.
 // TODO - fiund how it's exactly specified. Maybe it depends on current speed?
 var f32 c_entity_turn_speed= c_tau / 30.0f;
+
+var f32 c_camera_z_offset= -48.0f;
 
 } // namespace PM

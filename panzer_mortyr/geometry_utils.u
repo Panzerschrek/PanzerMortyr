@@ -1,0 +1,301 @@
+import "geometry_utils.uh"
+
+namespace PM
+{
+
+fn FindRayPolyhedronIntersection(
+	Vec3f& ray_start,
+	Vec3f& ray_direction,
+	ust::array_view_imut</Planef/> polyhedron_planes ) : ust::optional</RayPolyhedronIntersectionResult/>
+{
+	// Use here ray-convex polyhedron intersection algorithm invented by Eric Haines.
+
+	var f32 mut near_distance= ust::minus_inf</f32/>(), mut far_distance= ust::plus_inf</f32/>();
+	var size_type mut near_index= ~0s, mut far_index= ~0s;
+
+	for( auto mut i= 0s; i < polyhedron_planes.size(); ++i )
+	{
+		var Planef& plane= polyhedron_planes[i];
+
+		var f32 direction_vector_plane_normal_dot= ray_direction.Dot( plane.normal );
+		var f32 ray_start_distance_to_plane= plane.GetDistanceForPoint( ray_start );
+
+		if( direction_vector_plane_normal_dot > 0.0f )
+		{
+			var f32 signed_distance_to_intersection_point= -ray_start_distance_to_plane / direction_vector_plane_normal_dot;
+			if( signed_distance_to_intersection_point < far_distance )
+			{
+				far_distance= signed_distance_to_intersection_point;
+				far_index= i;
+			}
+		}
+		else if( direction_vector_plane_normal_dot < 0.0f )
+		{
+			var f32 signed_distance_to_intersection_point= -ray_start_distance_to_plane / direction_vector_plane_normal_dot;
+			if( signed_distance_to_intersection_point > near_distance )
+			{
+				near_distance= signed_distance_to_intersection_point;
+				near_index= i;
+			}
+		}
+		else
+		{
+			// Ray parallel to the plane. Check if ray start is outside this plane and if so - return empty result since no intersection is possible.
+			if( ray_start_distance_to_plane >= 0.0f )
+			{
+				return ust::null_optional;
+			}
+		}
+	}
+
+	if( near_distance > far_distance )
+	{
+		// No intersection.
+		return ust::null_optional;
+	}
+	if( near_index >= polyhedron_planes.size() || far_index >= polyhedron_planes.size() )
+	{
+		// Something went wrong.
+		return ust::null_optional;
+	}
+
+	return RayPolyhedronIntersectionResult
+	{
+		.near_point_distance= near_distance,
+		.near_plane_index( near_index ),
+		.far_point_distance= far_distance,
+		.far_point_index( far_index ),
+	};
+}
+
+fn CreateBBoxPlanes( BBox3f& bbox ) : [ Planef, 6 ]
+{
+	var [ Planef, 6 ] planes
+	[
+		{ .normal( -1.0f,  0.0f,  0.0f ), .distance=  bbox.min.x },
+		{ .normal(  1.0f,  0.0f,  0.0f ), .distance= -bbox.max.x },
+		{ .normal(  0.0f, -1.0f,  0.0f ), .distance=  bbox.min.y },
+		{ .normal(  0.0f,  1.0f,  0.0f ), .distance= -bbox.max.y },
+		{ .normal(  0.0f,  0.0f, -1.0f ), .distance=  bbox.min.z },
+		{ .normal(  0.0f,  0.0f,  1.0f ), .distance= -bbox.max.z },
+	];
+
+	return planes;
+}
+
+fn CreateBBoxAndQuadMinkowskiSum( BBox3f& bbox, [ Vec3f, 4 ]& quad_vertices, CompactPolyhedron &mut result )
+{
+	static_assert( CompactPolyhedron::c_max_planes >= 8u ); // Should have at least enough planes for box sides and polygon front/back faces.
+
+	result.num_planes= 0u;
+	result.primary_planes_mask= 0u;
+
+	// Calculate quad normal. All these checks are necessary to skip degenerate triagles with zero-length normal.
+	var Vec3f mut quad_normal= Vec3f::MakeZero();
+	if( quad_vertices[1] != quad_vertices[2] && quad_vertices[2] != quad_vertices[3] )
+	{
+		quad_normal= ( quad_vertices[2] - quad_vertices[1] ).Cross( quad_vertices[3] - quad_vertices[2] );
+	}
+	else if( quad_vertices[0] != quad_vertices[2] && quad_vertices[2] != quad_vertices[3] )
+	{
+		quad_normal= ( quad_vertices[2] - quad_vertices[0] ).Cross( quad_vertices[3] - quad_vertices[2] );
+	}
+	else if( quad_vertices[0] != quad_vertices[1] && quad_vertices[1] != quad_vertices[3] )
+	{
+		quad_normal= ( quad_vertices[1] - quad_vertices[0] ).Cross( quad_vertices[3] - quad_vertices[1] );
+	}
+	else if( quad_vertices[0] != quad_vertices[1] && quad_vertices[1] != quad_vertices[2] )
+	{
+		quad_normal= ( quad_vertices[1] - quad_vertices[0] ).Cross( quad_vertices[2] - quad_vertices[1] );
+	}
+	else
+	{
+		return;
+	}
+
+	if( quad_normal.SquareLength() == 0.0f )
+	{
+		return;
+	}
+
+	var [ Vec3f, 8 ] bbox_vertices
+	[
+		( bbox.min.x, bbox.min.y, bbox.min.z ),
+		( bbox.max.x, bbox.min.y, bbox.min.z ),
+		( bbox.min.x, bbox.max.y, bbox.min.z ),
+		( bbox.max.x, bbox.max.y, bbox.min.z ),
+		( bbox.min.x, bbox.min.y, bbox.max.z ),
+		( bbox.max.x, bbox.min.y, bbox.max.z ),
+		( bbox.min.x, bbox.max.y, bbox.max.z ),
+		( bbox.max.x, bbox.max.y, bbox.max.z ),
+	];
+
+	{
+		var BBox3f quad_extended_bbox
+		{
+			.min= bbox.min +
+				Vec3f(
+					ust::min( ust::min( quad_vertices[0].x, quad_vertices[1].x ), ust::min( quad_vertices[2].x, quad_vertices[3].x ) ),
+					ust::min( ust::min( quad_vertices[0].y, quad_vertices[1].y ), ust::min( quad_vertices[2].y, quad_vertices[3].y ) ),
+					ust::min( ust::min( quad_vertices[0].z, quad_vertices[1].z ), ust::min( quad_vertices[2].z, quad_vertices[3].z ) ) ),
+			.max= bbox.max +
+				Vec3f(
+					ust::max( ust::max( quad_vertices[0].x, quad_vertices[1].x ), ust::max( quad_vertices[2].x, quad_vertices[3].x ) ),
+					ust::max( ust::max( quad_vertices[0].y, quad_vertices[1].y ), ust::max( quad_vertices[2].y, quad_vertices[3].y ) ),
+					ust::max( ust::max( quad_vertices[0].z, quad_vertices[1].z ), ust::max( quad_vertices[2].z, quad_vertices[3].z ) ) ),
+		};
+
+		// Add all bounding box planes to the volume.
+		var [ Planef, 6 ] bbox_planes= CreateBBoxPlanes( quad_extended_bbox );
+		for( auto mut i= 0s; i < 6s; ++i )
+		{
+			result.planes[i]= bbox_planes[i];
+		}
+		result.num_planes= 6u;
+	}
+
+
+	if( quad_normal.x == 0.0f && quad_normal.y == 0.0f )
+	{
+		result.primary_planes_mask |= 1u << ( quad_normal.z < 0.0f ? 4u : 5u );
+	}
+	else if( quad_normal.x == 0.0f && quad_normal.z == 0.0f )
+	{
+		result.primary_planes_mask |= 1u << ( quad_normal.y < 0.0f ? 2u : 3u );
+	}
+	else if( quad_normal.y == 0.0f && quad_normal.z == 0.0f )
+	{
+		result.primary_planes_mask |= 1u << ( quad_normal.x < 0.0f ? 0u : 1u );
+	}
+	else
+	{
+		// Add front and back planes of the quad, but only if a plane is't one of axis planes.
+		{
+			var f32 mut max_dist= ust::minus_inf</f32/>();
+			foreach( &v : bbox_vertices )
+			{
+				var f32 dist= quad_normal.Dot( v );
+				if( dist > max_dist )
+				{
+					max_dist= dist;
+				}
+			}
+
+			result.planes[ result.num_planes ]=
+				Planef
+				{
+					.normal= quad_normal,
+					.distance= -max_dist - quad_normal.Dot( quad_vertices[0] )
+				};
+			result.primary_planes_mask |= 1u << result.num_planes; // This is the primary plane.
+			++result.num_planes; // Up to 7 planes at this moment.
+		}
+		{
+			var Vec3f inverted_quad_normal= -quad_normal;
+
+			var f32 mut max_dist= ust::minus_inf</f32/>();
+			foreach( &v : bbox_vertices )
+			{
+				var f32 dist= inverted_quad_normal.Dot( v );
+				if( dist > max_dist )
+				{
+					max_dist= dist;
+				}
+			}
+
+			result.planes[ result.num_planes ]=
+				Planef
+				{
+					.normal= inverted_quad_normal,
+					.distance= -max_dist - inverted_quad_normal.Dot( quad_vertices[0] )
+				};
+			++result.num_planes; // Up to 9 planes at this moment.
+		}
+	}
+
+	var [ Planef, 6 ] bbox_planes= CreateBBoxPlanes( bbox );
+
+	// plane0 index, plane1 index, vertex index.
+	var [ [ u32, 3 ], 12 ] constexpr box_edges
+	[
+		// Edges parallel to X.
+		[ 4u, 2u, 0u ],
+		[ 4u, 3u, 2u ],
+		[ 5u, 2u, 4u ],
+		[ 5u, 3u, 6u ],
+		// Edges parallel to Y.
+		[ 0u, 4u, 0u ],
+		[ 1u, 4u, 1u ],
+		[ 0u, 5u, 4u ],
+		[ 1u, 5u, 5u ],
+		// Edges parallel to Z.
+		[ 0u, 2u, 0u ],
+		[ 0u, 3u, 2u ],
+		[ 1u, 2u, 1u ],
+		[ 1u, 3u, 3u ],
+	];
+
+	// Iterate over all box and quad edges and create product planes.
+	foreach( mut box_edge : ust::array_view_imut</ [ u32, 3 ] />( box_edges ) )
+	{
+		var Planef mut plane0= bbox_planes[ box_edge[0] ];
+		var Planef mut plane1= bbox_planes[ box_edge[1] ];
+		var Vec3f& box_edge_vertex= bbox_vertices[ box_edge[2] ];
+
+		var Vec3f mut box_edge_vec= plane0.normal.Cross( plane1.normal );
+
+		var f32 edge_quad_normal_dot= box_edge_vec.Dot( quad_normal );
+		if( edge_quad_normal_dot == 0.0f )
+		{
+			// This box edge is parallel to the quad's normal - no product is possible.
+			continue;
+		}
+
+		if( edge_quad_normal_dot > 0.0f )
+		{
+			// Invert edge if it's directed wrong way relative to the quad's plane.
+			box_edge_vec= -box_edge_vec;
+
+			var Planef tmp= plane0;
+			plane0= plane1;
+			plane1= tmp;
+		}
+
+		// Iterate over all quad edges.
+		var Vec3f mut prev_v= quad_vertices[3];
+		foreach( &v : quad_vertices )
+		{
+			var Vec3f quad_edge_v0= prev_v;
+			var Vec3f quad_edge_v1= v;
+			prev_v= v;
+
+			var Vec3f quad_edge_vec= quad_edge_v1 - quad_edge_v0;
+
+			var Vec3f product_plane_normal= box_edge_vec.Cross( quad_edge_vec );
+
+			if( product_plane_normal.SquareLength() == 0.0f )
+			{
+				// This quad edge is parallel to current box edge.
+				continue;
+			}
+
+			// Allow only product faces which normal lies between normals of faces forming current box edge.
+
+			var f32 plane0_product= product_plane_normal.Cross( plane0.normal ).Dot( box_edge_vec );
+			var f32 plane1_product= product_plane_normal.Cross( plane1.normal ).Dot( box_edge_vec );
+			if( plane0_product < 0.0f && plane1_product > 0.0f )
+			{
+				var Vec3f sample_point= quad_edge_v0 + box_edge_vertex;
+				result.planes[ result.num_planes]= Planef::CreateFromNormalAndPoint( product_plane_normal, sample_point );
+				++result.num_planes;
+
+				if( result.num_planes >= CompactPolyhedron::c_max_planes )
+				{
+					return;
+				}
+			}
+		}
+	}
+}
+
+} // namespace PM
