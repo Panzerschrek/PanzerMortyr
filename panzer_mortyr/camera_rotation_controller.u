@@ -1,3 +1,4 @@
+import "/math.u"
 import "/sdl/sdl_with_opengl.uh"
 import "camera_rotation_controller.uh"
 import "math_constants.uh"
@@ -6,7 +7,7 @@ namespace PM
 {
 
 fn CameraRotationController::constructor( f32 azimuth )
-	( azimuth_= azimuth, elevation_= 0.0f )
+	( azimuth_= azimuth, elevation_= 0.0f, azimuth_velocity_( 0.0f ), elevation_velocity_( 0.0f ) )
 {
 }
 
@@ -18,25 +19,52 @@ fn CameraRotationController::Update( mut this, f32 time_delta_s, ust::array_view
 		key_turn_up(SDL_SCANCODE_UP),
 		key_turn_down(SDL_SCANCODE_DOWN);
 
-	var f32 angle_speed= 2.0f;
-	var f32 max_elevation= c_tau / 4.0f;
+	// Perform angular movement via keyboard keys with acceleration. It looks a little bit better.
+
+	var f32 constexpr angle_acceleration= 30.0f;
+	var f32 constexpr angle_deceleration= 20.0f;
+
+	var f32 constexpr max_angle_speed= c_tau * 3.0f / 4.0f;
+	var f32 constexpr max_elevation= c_tau / 4.0f;
 
 	if( key_turn_left < keyboard_state.size() && keyboard_state[ key_turn_left ] )
 	{
-		azimuth_ += angle_speed * time_delta_s;
+		azimuth_velocity_ += angle_acceleration * time_delta_s;
 	}
 	if( key_turn_right < keyboard_state.size() && keyboard_state[ key_turn_right ] )
 	{
-		azimuth_ -= angle_speed * time_delta_s;
+		azimuth_velocity_ -= angle_acceleration * time_delta_s;
 	}
 	if( key_turn_up < keyboard_state.size() && keyboard_state[ key_turn_up ] )
 	{
-		elevation_ -= angle_speed * time_delta_s;
+		elevation_velocity_ -= angle_acceleration * time_delta_s;
 	}
 	if( key_turn_down < keyboard_state.size() && keyboard_state[ key_turn_down ] )
 	{
-		elevation_ += angle_speed * time_delta_s;
+		elevation_velocity_ += angle_acceleration * time_delta_s;
 	}
+
+	{
+		var f32 speed= ust::abs( azimuth_velocity_ );
+		if( speed > 0.0f )
+		{
+			var f32 speed_decelerated= speed - angle_deceleration * time_delta_s;
+			var f32 speed_decelerated_clamped= ust::max( 0.0f, ust::min( speed_decelerated, max_angle_speed ) );
+			azimuth_velocity_*= speed_decelerated_clamped / speed;
+		}
+	}
+	{
+		var f32 speed= ust::abs( elevation_velocity_ );
+		if( speed > 0.0f )
+		{
+			var f32 speed_decelerated= speed - angle_deceleration * time_delta_s;
+			var f32 speed_decelerated_clamped= ust::max( 0.0f, ust::min( speed_decelerated, max_angle_speed ) );
+			elevation_velocity_*= speed_decelerated_clamped / speed;
+		}
+	}
+
+	azimuth_+= azimuth_velocity_ * time_delta_s;
+	elevation_+= elevation_velocity_ * time_delta_s;
 
 	while(azimuth_ >  c_half_tau)
 	{
