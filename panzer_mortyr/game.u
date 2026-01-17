@@ -197,7 +197,6 @@ fn Game::Update( mut this, f32 time_delta_s, ust::array_view_imut</bool/> keyboa
 	{
 		for( auto mut i= 0u; i < num_steps_to_process; ++i )
 		{
-			MovePlayer( 1.0f / c_steps_per_second, keyboard_state );
 			ProcessStep();
 		}
 
@@ -398,12 +397,11 @@ fn Game::process_trigger_energy_loss( mut this )
 	}
 }
 
-fn Game::MovePlayer( mut this, f32 time_delta_s, ust::array_view_imut</bool/> keyboard_state )
+fn Game::PerformPlayerStepMovement( mut this )
 {
 	var Vec3f old_position= player_state_.position;
 
 	ApplyPlayerMovement(
-		time_delta_s,
 		player_state_,
 		camera_rotation_controller_.GetAzimuth(),
 		player_movement_controller_.GetAccumulatedMoveWishVector() );
@@ -515,6 +513,8 @@ fn Game::MovePlayer( mut this, f32 time_delta_s, ust::array_view_imut</bool/> ke
 
 fn Game::ProcessStep( mut this )
 {
+	PerformPlayerStepMovement();
+
 	if( entities_description_.empty() || mapa_way_data_.empty() )
 	{
 		return;
@@ -974,22 +974,21 @@ fn MoveEntity(
 }
 
 fn ApplyPlayerMovement(
-	f32 time_delta_s,
 	PlayerState &mut player_state,
 	f32 azimuth,
 	Vec3f& move_wish_direction )
 {
 	// TODO - tune max speed or even read it from entities description config.
-	var f32 max_horizontal_speed= 320.0f;
-	var f32 max_vertical_speed= 1024.0f;
+	var f32 constexpr max_horizontal_speed_per_step= 320.0f / c_steps_per_second;
+	var f32 constexpr max_vertical_speed_per_step= 1024.0f / c_steps_per_second;
 
-	var f32 time_to_max_speed_s= 0.3f;
+	var f32 constexpr num_steps_to_max_speed= 0.3f * c_steps_per_second;
 
 	// Acceleration is twice as big as deceleration, it's needed because deceleration is always applied.
-	var f32 horizontal_acceleration= max_horizontal_speed / time_to_max_speed_s * 2.0f;
-	var f32 horizontal_deceleation= max_horizontal_speed / time_to_max_speed_s;
+	var f32 constexpr horizontal_acceleration_per_step= max_horizontal_speed_per_step / num_steps_to_max_speed * 2.0f;
+	var f32 constexpr horizontal_deceleation_per_step= max_horizontal_speed_per_step / num_steps_to_max_speed;
 
-	var f32 vertical_deceleration= horizontal_deceleation;
+	var f32 constexpr vertical_deceleration_per_step= horizontal_deceleation_per_step;
 
 	var Vec3f forward_vector( -ust::sin(azimuth), ust::cos(azimuth), 0.0f );
 	var Vec3f right_vector( ust::cos(azimuth), ust::sin(azimuth), 0.0f );
@@ -1000,7 +999,7 @@ fn ApplyPlayerMovement(
 		move_wish_direction.y * right_vector +
 		move_wish_direction.z * down_vector;
 
-	player_state.velocity+= move_vector_transformed * ( time_delta_s * horizontal_acceleration );
+	player_state.velocity+= move_vector_transformed * horizontal_acceleration_per_step;
 
 	{
 		// Apply horizontal deceleration and limit horizontal speed if necessary.
@@ -1009,8 +1008,8 @@ fn ApplyPlayerMovement(
 		var f32 speed= horizontal_velocity.Length();
 		if( speed > 0.0f )
 		{
-			var f32 new_speed= speed - horizontal_deceleation * time_delta_s;
-			var f32 new_speed_clamped= ust::max( 0.0f, ust::min( new_speed, max_horizontal_speed ) );
+			var f32 new_speed= speed - horizontal_deceleation_per_step;
+			var f32 new_speed_clamped= ust::max( 0.0f, ust::min( new_speed, max_horizontal_speed_per_step ) );
 			horizontal_velocity= horizontal_velocity * ( new_speed_clamped / speed );
 			player_state.velocity.x= horizontal_velocity.x;
 			player_state.velocity.y= horizontal_velocity.y;
@@ -1023,13 +1022,13 @@ fn ApplyPlayerMovement(
 		var f32 speed= ust::abs( player_state.velocity.z );
 		if( speed > 0.0f )
 		{
-			var f32 new_speed= speed - vertical_deceleration * time_delta_s;
-			var f32 new_speed_clamped= ust::max( 0.0f, ust::min( new_speed, max_vertical_speed ) );
+			var f32 new_speed= speed - vertical_deceleration_per_step;
+			var f32 new_speed_clamped= ust::max( 0.0f, ust::min( new_speed, max_vertical_speed_per_step ) );
 			player_state.velocity.z= player_state.velocity.z * (new_speed_clamped / speed);
 		}
 	}
 
-	player_state.position+= player_state.velocity * time_delta_s;
+	player_state.position+= player_state.velocity;
 }
 
 fn ClampPlayerVelocity( PlayerState &mut player_state, Vec3f& prohibited_movement_direction )
