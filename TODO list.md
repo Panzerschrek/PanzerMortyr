@@ -128,6 +128,8 @@ PanzerMortyr game logic:
 * Implement rats.
 * Spawn enemies having trigger box only when player touches this box (usually behind his back).
 * Implement entity state transition caused by injury (but not killing).
+* Use material properties file contents for game physics (maximum speed, friction, etc.).
+* Read player's maximum speed from the game config.
 
 PanzerMortyr rendering:
 
