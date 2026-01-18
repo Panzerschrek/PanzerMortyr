@@ -463,16 +463,60 @@ fn Game::PerformPlayerStepMovement( mut this )
 	player_state_.position= collision_trace_clip_result.position_clipped;
 
 	var bool mut on_ground= false, mut collided_with_wall= false;
+	var f32 mut friction= 0.0f;
 
 	for( auto mut i= 0u; i < collision_trace_clip_result.num_collision_events; ++i )
 	{
-		var Vec3f& normal= collision_trace_clip_result.collision_events[i].plane_normal;
+		var CollisionTraceClipResult::CollisionEventParams& collision_event_params= collision_trace_clip_result.collision_events[i];
+
+		var Vec3f& normal= collision_event_params.plane_normal;
 		var f32 normal_length= normal.Length();
 		if( normal_length > 0.0f )
 		{
 			// Assume ground surfaces all surfaces with normal pointing mostly up.
 			// This value is tuned so that it's possible to jump on some steap ramps, where it's possible to jump in the original.
-			on_ground|= (-normal.z) / normal_length >= 0.67f;
+
+			if( (-normal.z) / normal_length >= 0.67f )
+			{
+				on_ground= true;
+
+				// Extract friction for current ground quad.
+				// TODO - handle more than one floor quad if necessary.
+				var size_type quad_index( collision_event_params.collision_quad_index );
+				if( quad_index < zmap_data.quads.size() )
+				{
+					var ZmapQuad& quad= zmap_data.quads[ quad_index ];
+					if_var( &map_description : maps_description_.deref().maps.find( current_map_index_ ) )
+					{
+						if_var( &materials_block : materials_description_.deref().blocks.find( map_description.materials_block ) )
+						{
+							// TODO - handle special materials.
+							var size_type material_index( quad.texture_id );
+							var size_type texture_index= material_index >> 2u;
+							if( texture_index < materials_block.textures.size() )
+							{
+								var MaterialsDescription::Texture& texture= materials_block.textures[ texture_index ];
+								var size_type tile_index= material_index & 3s;
+								var ust::string8& material_name= texture.materials[ tile_index ];
+
+								foreach( &material_properties : materials_properties_.deref() )
+								{
+									if( material_properties.name == material_name )
+									{
+										friction= f32( material_properties.player_step_friction );
+									}
+								}
+
+								if( friction == 0.0f && materials_properties_.deref().empty() )
+								{
+									friction= f32( materials_properties_.deref().front().player_step_friction );
+								}
+							}
+						}
+					}
+				}
+
+			}
 		}
 
 		// Assume only exactly vertical polygons to be walls.
