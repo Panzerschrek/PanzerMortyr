@@ -63,7 +63,6 @@ Gameplay investigation:
 * Investigate how different entity parameters affect their behavior.
 * Investigate details of buttons and doors functioning.
 * Investigate how player's bounding box is altered when crouching.
-* Investigate how stairs in the original game work, including max step height.
 
 MapViewer:
 
@@ -105,9 +104,10 @@ PanzerMortyr game logic:
 * Perform collisions between enemies and the world.
 * Perform collisions between enemies with each other and with player.
 * Implement collisions hack for the one-way passable wall on map 33.
-* Implement gravity affecting player, enemies and other entities.
-* Implement crouching.
-* Implement stairs climbing for player and enemies.
+* Tune gravity, friction and jumping speed, so that jump height is equal (or nearly-equal) to the original game and even sharp ramps are walkable.
+* Implement gravity affecting enemies and other entities.
+* Implement crouching for the player.
+* Implement stairs climbing for enemies.
 * Read player's physical parameters (collision bounding box, acceleration, etc.) from the entities config or investigate these parameters and hardcode them.
 * Apply additional friction for player if he is on ground.
 * Try using different ground/air acceleration/deceleration parameters.
@@ -129,7 +129,8 @@ PanzerMortyr game logic:
 * Spawn enemies having trigger box only when player touches this box (usually behind his back).
 * Implement entity state transition caused by injury (but not killing).
 * Use material properties file contents for game physics (maximum speed, friction, etc.).
-* Read player's maximum speed from the game config.
+* Read player's maximum speed from the game config and use it.
+* Fix collisions in some tricky cases, like collision in a sharp corner with 3 planes.
 
 PanzerMortyr rendering:
 
