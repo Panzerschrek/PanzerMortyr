@@ -47,7 +47,14 @@ fn Game::constructor(
 			} (),
 		caching_game_resources_loader_ptr_= move( caching_game_resources_loader_ptr ),
 		current_map_index_= 0u, // Set later.
-		player_state_{ .position( 0.0f, 0.0f, 0.0f ), .velocity( 0.0f, 0.0f, 0.0f ), .on_ground= false, .noclip= false },
+		player_state_
+		{
+			.position( 0.0f, 0.0f, 0.0f ),
+			.velocity( 0.0f, 0.0f, 0.0f ),
+			.on_ground= false,
+			.noclip= false,
+			.ground_friction= 0.0f,
+		},
 		camera_rotation_controller_( 0.0f ),
 		prev_time_steps_= 0.0,
 	)
@@ -187,6 +194,7 @@ fn Game::TeleportToMap( mut this, u32 map_index )
 						.velocity( 0.0f, 0.0f, 0.0f ),
 						.on_ground= false,
 						.noclip= false,
+						.ground_friction= 0.0f,
 					};
 
 				// Reset possible rotation and movement state.
@@ -463,7 +471,7 @@ fn Game::PerformPlayerStepMovement( mut this )
 	player_state_.position= collision_trace_clip_result.position_clipped;
 
 	var bool mut on_ground= false, mut collided_with_wall= false;
-	var f32 mut friction= 0.0f;
+	var f32 mut ground_friction= 0.0f;
 
 	for( auto mut i= 0u; i < collision_trace_clip_result.num_collision_events; ++i )
 	{
@@ -503,19 +511,19 @@ fn Game::PerformPlayerStepMovement( mut this )
 								{
 									if( material_properties.name == material_name )
 									{
-										friction= f32( material_properties.player_step_friction );
+										ground_friction= f32( material_properties.player_step_friction );
 									}
-								}
-
-								if( friction == 0.0f && materials_properties_.deref().empty() )
-								{
-									friction= f32( materials_properties_.deref().front().player_step_friction );
 								}
 							}
 						}
 					}
 				}
 
+				// Fallback for cases if no material kind is specified (or for some other reason).
+				if( ground_friction == 0.0f && !materials_properties_.deref().empty() )
+				{
+					ground_friction= f32( materials_properties_.deref().front().player_step_friction );
+				}
 			}
 		}
 
@@ -525,6 +533,7 @@ fn Game::PerformPlayerStepMovement( mut this )
 	}
 
 	player_state_.on_ground= on_ground;
+	player_state_.ground_friction= ground_friction;
 
 	if( on_ground && collided_with_wall )
 	{
@@ -1073,10 +1082,11 @@ fn ApplyPlayerMovement(
 	// TODO - tune max vertical speed.
 	var f32 max_vertical_speed_per_step= 1024.0f / c_steps_per_second;
 
+	// Acceleration depends on friction. Scale is for now just guessed.
 	// Acceleration is twice as big as deceleration, it's needed because deceleration is always applied.
-	// TODO - read it from materials property.
-	var f32 horizontal_acceleration_per_step= 0.5f * 3.0f * 2.0f;
-	var f32 horizontal_deceleation_per_step= 0.5f * 3.0f;
+	var f32 friction_acceleration_scale= 0.5f;
+	var f32 horizontal_deceleation_per_step= friction_acceleration_scale * ( player_state.on_ground ? player_state.ground_friction : 10.0f );
+	var f32 horizontal_acceleration_per_step= horizontal_deceleation_per_step * 2.0f;
 
 	// Experiments with the original game have shown that maximum jump height is 64 units.
 	// Jump speed and gravity are tuned so that it's barely possible to jump to this height (but not much higher).
