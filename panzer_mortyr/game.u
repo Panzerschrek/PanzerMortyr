@@ -436,7 +436,7 @@ fn Game::PerformPlayerStepMovement( mut this )
 
 	var Vec3f movement_end_position= player_state_.position;
 
-	var CollisionTraceClipResult collision_trace_clip_result=
+	var CollisionTraceClipResult mut collision_trace_clip_result=
 		CollisionTraceAndClip(
 			zmap_data,
 			zvox_data,
@@ -473,7 +473,7 @@ fn Game::PerformPlayerStepMovement( mut this )
 		var Vec3f up_movement_vector( 0.0f, 0.0f, -c_step_height );
 
 		var TraceCollisionResult up_trace_result=
-			CollisionTrace( zmap_data, zvox_data, player_bbox, player_state_.position, up_movement_vector );
+			CollisionTrace( zmap_data, zvox_data, player_bbox, position_with_step_movement, up_movement_vector );
 
 		if( up_trace_result.clipped_move_distance > 0.0f )
 		{
@@ -482,28 +482,42 @@ fn Game::PerformPlayerStepMovement( mut this )
 			var Vec3f mut side_movement_vector= movement_end_position - movement_start_position;
 			side_movement_vector.z= 0.0f;
 
-			var TraceCollisionResult
-				forward_trace_result=
-					CollisionTrace( zmap_data, zvox_data, player_bbox, position_with_step_movement, side_movement_vector );
+			var CollisionTraceClipResult tweaked_collision_trace_clip_result=
+				CollisionTraceAndClip(
+					zmap_data,
+					zvox_data,
+					player_bbox,
+					position_with_step_movement,
+					position_with_step_movement + side_movement_vector );
 
-			if( forward_trace_result.clipped_move_distance > 0.0f )
+			if( tweaked_collision_trace_clip_result.position_clipped != position_with_step_movement )
 			{
-				position_with_step_movement+= side_movement_vector * ust::min( forward_trace_result.clipped_move_distance, 1.0f );
+				// If we managed to move sideways from a lifted position update also clip planes.
+				collision_trace_clip_result= tweaked_collision_trace_clip_result;
 
-				player_state_.position= position_with_step_movement;
-
-				// TODO - clamp player velocity here?
-				return;
+				position_with_step_movement= collision_trace_clip_result.position_clipped;
 			}
 		}
+
+		// Move also down - in case if step is small or if we just hit a solid wall (not a step).
+
+		var Vec3f down_movement_vector( 0.0f, 0.0f, c_step_height );
+
+		var TraceCollisionResult down_trace_result=
+			CollisionTrace( zmap_data, zvox_data, player_bbox, position_with_step_movement, down_movement_vector );
+		if( down_trace_result.clipped_move_distance > 0.0f )
+		{
+			position_with_step_movement+= down_movement_vector * ust::min( down_trace_result.clipped_move_distance, 1.0f );
+		}
+
+		player_state_.position= position_with_step_movement;
 	}
 
-	// If didn't do a step, clamp velocity using original trace clip result.
+	// Clip player's velocity using clip planes of collision result.
 	for( auto mut i= 0u; i < collision_trace_clip_result.num_clip_planes; ++i )
 	{
 		ClampPlayerVelocity( player_state_, collision_trace_clip_result.clip_plane_normals[i] );
 	}
-
 }
 
 fn Game::ProcessStep( mut this )
