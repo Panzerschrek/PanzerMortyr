@@ -290,6 +290,90 @@ fn CollisionTrace(
 	return trace_result;
 }
 
+fn CollisionTraceAndClip(
+	ZmapData& zmap_data,
+	ZvoxData& zvox_data,
+	// Bounding box of the collider.
+	BBox3f& bbox,
+	// Where to start movement.
+	Vec3f mut movement_start_position,
+	// Where movement ends.
+	Vec3f mut movement_end_position ) : CollisionTraceClipResult
+{
+	var CollisionTraceClipResult mut result
+	{
+		.position_clipped= movement_start_position,
+		.num_clip_planes= 0u,
+		.clip_plane_normals
+		[
+			Vec3f( 0.0f, 0.0f, 0.0f ),
+			Vec3f( 0.0f, 0.0f, 0.0f ),
+			Vec3f( 0.0f, 0.0f, 0.0f ),
+			Vec3f( 0.0f, 0.0f, 0.0f )
+		]
+	};
+
+	var f32 c_push_eps= 1.0f / 32.0f;
+
+	// Perform several iterations to clip and slide against several planes.
+	// It's needed to resolve collisions in corners properly.
+	for( auto mut movement_iteration= 0s; movement_iteration < CollisionTraceClipResult::c_max_clip_planes; ++movement_iteration )
+	{
+		if( movement_start_position == movement_end_position )
+		{
+			break;
+		}
+
+		var Vec3f movement_vector= movement_end_position - movement_start_position;
+		var TraceCollisionResult trace_result= CollisionTrace( zmap_data, zvox_data, bbox, movement_start_position, movement_vector );
+
+		var Vec3f mut new_movement_start_position=
+			movement_start_position +
+			movement_vector * ust::min( 1.0f, trace_result.clipped_move_distance );
+
+		// Apply extra push if has one and only if has no clip by some other plane.
+		if( !trace_result.extra_push.empty() && trace_result.clipped_move_distance >= 1.0f )
+		{
+			new_movement_start_position+= trace_result.extra_push.try_deref();
+		}
+
+		var Vec3f mut new_movement_end_position= new_movement_start_position;
+
+		if( trace_result.clipped_move_distance < 1.0f )
+		{
+			// Slightly push out from the collision plane.
+			// This is necessary to avoid numerical inprecision and ensure we remain always outside colliders.
+			var f32 normal_square_length= trace_result.collision_point_normal.SquareLength();
+			if( normal_square_length > 0.0f )
+			{
+				var Vec3f push_vec= trace_result.collision_point_normal * ( c_push_eps / ust::sqrt( normal_square_length ) );
+				new_movement_start_position+= push_vec;
+				new_movement_end_position+= push_vec;
+			}
+
+			if( normal_square_length > 0.0f )
+			{
+				var f32 remaining_movement_fration= 1.0f - trace_result.clipped_move_distance;
+				var Vec3f remaining_movement_vector= movement_vector * remaining_movement_fration;
+
+				new_movement_end_position+=
+					remaining_movement_vector -
+					trace_result.collision_point_normal * ( remaining_movement_vector.Dot( trace_result.collision_point_normal ) / normal_square_length );
+			}
+
+			result.clip_plane_normals[ result.num_clip_planes ]= trace_result.collision_point_normal;
+			++result.num_clip_planes;
+		}
+
+		movement_start_position= new_movement_start_position;
+		movement_end_position= new_movement_end_position;
+	}
+
+	result.position_clipped= movement_start_position;
+
+	return result;
+}
+
 fn GetSlightlyExtendedClusterBBox( ZvoxCluster& cluster ) : BBox3f
 {
 	// Add a little bit size to fix numerical precision issues.
