@@ -31,7 +31,7 @@ fn Game::constructor(
 			} (),
 		caching_game_resources_loader_ptr_= move( caching_game_resources_loader_ptr ),
 		current_map_index_= 0u, // Set later.
-		player_state_{ .position( 0.0f, 0.0f, 0.0f ), .velocity( 0.0f, 0.0f, 0.0f ) },
+		player_state_{ .position( 0.0f, 0.0f, 0.0f ), .velocity( 0.0f, 0.0f, 0.0f ), .on_ground= false },
 		camera_rotation_controller_( 0.0f ),
 		prev_time_steps_= 0.0,
 	)
@@ -170,7 +170,8 @@ fn Game::TeleportToMap( mut this, u32 map_index )
 					PlayerState
 					{
 						.position( f32( entity.position[0] ), f32( entity.position[1] ), f32( entity.position[2] ) ),
-						.velocity( 0.0f, 0.0f, 0.0f )
+						.velocity( 0.0f, 0.0f, 0.0f ),
+						.on_ground= false,
 					};
 
 				// Reset possible rotation and movement state.
@@ -415,7 +416,8 @@ fn Game::PerformPlayerStepMovement( mut this )
 	ApplyPlayerMovement(
 		player_state_,
 		camera_rotation_controller_.GetAzimuth(),
-		player_movement_controller_.GetAccumulatedMoveWishVector() );
+		player_movement_controller_.GetAccumulatedMoveWishVector(),
+		player_movement_controller_.GetJumpRequested() );
 
 	if( noclip_mode_active_ )
 	{
@@ -449,7 +451,7 @@ fn Game::PerformPlayerStepMovement( mut this )
 
 	player_state_.position= collision_trace_clip_result.position_clipped;
 
-	var bool mut on_floor= false, mut collided_with_wall= false;
+	var bool mut on_ground= false, mut collided_with_wall= false;
 
 	for( auto mut i= 0u; i < collision_trace_clip_result.num_clip_planes; ++i )
 	{
@@ -457,13 +459,15 @@ fn Game::PerformPlayerStepMovement( mut this )
 		var f32 normal_length= normal.Length();
 		if( normal_length > 0.0f )
 		{
-			on_floor|= (-normal.z) / normal_length >= 0.7f;
+			on_ground|= (-normal.z) / normal_length >= 0.7f;
 		}
 
 		collided_with_wall|= normal.z == 0.0f;
 	}
 
-	if( on_floor && collided_with_wall )
+	player_state_.on_ground= on_ground;
+
+	if( on_ground && collided_with_wall )
 	{
 		var Vec3f mut position_with_step_movement= movement_start_position;
 
@@ -961,7 +965,8 @@ fn MoveEntity(
 fn ApplyPlayerMovement(
 	PlayerState &mut player_state,
 	f32 azimuth,
-	Vec3f& move_wish_direction )
+	Vec3f& move_wish_direction,
+	bool jump_requested )
 {
 	// TODO - tune max speed or even read it from entities description config.
 	var f32 constexpr max_horizontal_speed_per_step= 320.0f / c_steps_per_second;
@@ -973,16 +978,16 @@ fn ApplyPlayerMovement(
 	var f32 constexpr horizontal_acceleration_per_step= max_horizontal_speed_per_step / num_steps_to_max_speed * 2.0f;
 	var f32 constexpr horizontal_deceleation_per_step= max_horizontal_speed_per_step / num_steps_to_max_speed;
 
-	var f32 constexpr gravity_per_step= 3.0f;
+	// TODO - tune gravity and jump speed delta.
+	var f32 constexpr gravity_per_step= 2.0f;
+	var f32 constexpr jump_vertical_velocity_add= -15.0f;
 
 	var Vec3f forward_vector( -ust::sin(azimuth), ust::cos(azimuth), 0.0f );
 	var Vec3f right_vector( ust::cos(azimuth), ust::sin(azimuth), 0.0f );
-	var Vec3f down_vector( 0.0f, 0.0f, 1.0f );
 
 	var Vec3f move_vector_transformed=
 		move_wish_direction.x * forward_vector +
-		move_wish_direction.y * right_vector +
-		move_wish_direction.z * down_vector;
+		move_wish_direction.y * right_vector;
 
 	player_state.velocity+= move_vector_transformed * horizontal_acceleration_per_step;
 
@@ -1002,6 +1007,11 @@ fn ApplyPlayerMovement(
 	}
 
 	player_state.velocity.z+= gravity_per_step;
+
+	if( jump_requested && player_state.on_ground )
+	{
+		player_state.velocity.z+= jump_vertical_velocity_add;
+	}
 
 	{
 		// Limit vertical speed if necessary.
