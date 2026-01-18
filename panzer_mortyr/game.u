@@ -31,7 +31,7 @@ fn Game::constructor(
 			} (),
 		caching_game_resources_loader_ptr_= move( caching_game_resources_loader_ptr ),
 		current_map_index_= 0u, // Set later.
-		player_state_{ .position( 0.0f, 0.0f, 0.0f ), .velocity( 0.0f, 0.0f, 0.0f ), .on_ground= false },
+		player_state_{ .position( 0.0f, 0.0f, 0.0f ), .velocity( 0.0f, 0.0f, 0.0f ), .on_ground= false, .noclip= false },
 		camera_rotation_controller_( 0.0f ),
 		prev_time_steps_= 0.0,
 	)
@@ -172,6 +172,7 @@ fn Game::TeleportToMap( mut this, u32 map_index )
 						.position( f32( entity.position[0] ), f32( entity.position[1] ), f32( entity.position[2] ) ),
 						.velocity( 0.0f, 0.0f, 0.0f ),
 						.on_ground= false,
+						.noclip= false,
 					};
 
 				// Reset possible rotation and movement state.
@@ -369,9 +370,9 @@ fn Game::GetWorldDrawingInfo( this ) : WorldDrawingInfo
 
 fn Game::process_noclip( mut this )
 {
-	noclip_mode_active_ = !noclip_mode_active_;
+	player_state_.noclip = !player_state_.noclip;
 
-	ConsoleOutAddTextLine( console_out_, ( noclip_mode_active_ ? ust::string_view8( "noclip on" ) : ust::string_view8( "noclip off" ) ) );
+	ConsoleOutAddTextLine( console_out_, ( player_state_.noclip ? ust::string_view8( "noclip on" ) : ust::string_view8( "noclip off" ) ) );
 }
 
 fn Game::process_reset_position( mut this )
@@ -419,7 +420,7 @@ fn Game::PerformPlayerStepMovement( mut this )
 		player_movement_controller_.GetAccumulatedMoveWishVector(),
 		player_movement_controller_.GetJumpRequested() );
 
-	if( noclip_mode_active_ )
+	if( player_state_.noclip )
 	{
 		return;
 	}
@@ -1002,6 +1003,9 @@ fn ApplyPlayerMovement(
 	var f32 constexpr gravity_per_step= 2.0f;
 	var f32 constexpr jump_vertical_velocity_add= -15.0f;
 
+	var f32 constexpr vertical_fly_acceleration_per_step= horizontal_acceleration_per_step;
+	var f32 constexpr vertical_fly_deceleration_per_step= horizontal_deceleation_per_step;
+
 	var Vec3f forward_vector( -ust::sin(azimuth), ust::cos(azimuth), 0.0f );
 	var Vec3f right_vector( ust::cos(azimuth), ust::sin(azimuth), 0.0f );
 
@@ -1026,14 +1030,28 @@ fn ApplyPlayerMovement(
 		}
 	}
 
-	player_state.velocity.z+= gravity_per_step;
-
-	if( jump_requested && player_state.on_ground )
+	if( player_state.noclip )
 	{
-		player_state.velocity.z+= jump_vertical_velocity_add;
+		player_state.velocity.z+= move_wish_direction.z * vertical_fly_acceleration_per_step;
+
+		// Apply vertical deceleration and limit vertical speed if necessary.
+		var f32 speed= ust::abs( player_state.velocity.z );
+		if( speed > 0.0f )
+		{
+			var f32 new_speed= speed  - vertical_fly_deceleration_per_step;
+			var f32 new_speed_clamped= ust::max( 0.0f, ust::min( new_speed, max_vertical_speed_per_step ) );
+			player_state.velocity.z= player_state.velocity.z * (new_speed_clamped / speed);
+		}
 	}
-
+	else
 	{
+		player_state.velocity.z+= gravity_per_step;
+
+		if( jump_requested && player_state.on_ground )
+		{
+			player_state.velocity.z+= jump_vertical_velocity_add;
+		}
+
 		// Limit vertical speed if necessary.
 		var f32 speed= ust::abs( player_state.velocity.z );
 		if( speed > 0.0f )
