@@ -455,9 +455,12 @@ fn Game::PerformPlayerStepMovement( mut this )
 		var f32 normal_length= normal.Length();
 		if( normal_length > 0.0f )
 		{
+			// Assume ground surfaces all surfaces with normal pointing mostly up.
 			on_ground|= (-normal.z) / normal_length >= 0.7f;
 		}
 
+		// Assume only exactly vertical polygons to be walls.
+		// We can't assume even slightly-inclining polygons for performing step movement, since such movement doesn't look great.
 		collided_with_wall|= normal.z == 0.0f;
 	}
 
@@ -467,9 +470,10 @@ fn Game::PerformPlayerStepMovement( mut this )
 	{
 		var Vec3f mut position_with_step_movement= movement_start_position;
 
-		// Original game has steps with height 17.0f;
+		// Original game has steps with height 16. Add one extra unit to make sure we can climb all stairs.
 		var f32 constexpr c_step_height= 17.0f;
 
+		// Do not move up/down the whole distance to avoid landing exactly on edge of some collider.
 		var f32 c_push_eps= 1.0f / 32.0f;
 
 		// Try performing movement up.
@@ -480,8 +484,12 @@ fn Game::PerformPlayerStepMovement( mut this )
 
 		if( up_trace_result.clipped_move_distance > 0.0f && up_trace_result.extra_push.empty() )
 		{
+			// Movement up is possible - do it.
+
 			position_with_step_movement.z-=
 				ust::max( 0.0f, up_trace_result.clipped_move_distance * c_step_height - c_push_eps );
+
+			// Try performing sideways movement using XY components of the original movement vector but with start position moved up.
 
 			var Vec3f mut side_movement_vector= movement_end_position - movement_start_position;
 			side_movement_vector.z= 0.0f;
@@ -496,12 +504,14 @@ fn Game::PerformPlayerStepMovement( mut this )
 
 			if( tweaked_collision_trace_clip_result.position_clipped != position_with_step_movement )
 			{
-				// If we managed to move sideways from a lifted position update also clip planes.
+				// We managed to perform sideways move from a lifted position.
+
+				// Update clip planes.
 				collision_trace_clip_result= tweaked_collision_trace_clip_result;
 
-				position_with_step_movement= collision_trace_clip_result.position_clipped;
+				position_with_step_movement= tweaked_collision_trace_clip_result.position_clipped;
 
-				// Move also down - in case if step is small or if we just hit a solid wall (not a step).
+				// Move also down - in case if a step is small or if we just hit a solid wall (not a step).
 
 				var Vec3f down_movement_vector( 0.0f, 0.0f, c_step_height );
 
