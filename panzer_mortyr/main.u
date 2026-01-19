@@ -6,6 +6,7 @@ import "/stdout.u"
 import "console.uh"
 import "game.uh"
 import "opengl_window.uh"
+import "settings.uh"
 import "world_drawer.uh"
 
 pretty_main
@@ -20,11 +21,25 @@ namespace PM
 
 fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 {
+	var ust::filesystem_path_view mut settings_file_path= c_default_settings_file_name;
+
+	if( false ){ settings_file_path= args.front(); } // A hack for the "reference pollution for outer loop variable" error.
+
+	for( auto mut i= 1s; i + 1s < args.size(); ++i )
+	{
+		if( args[i] == "--config" )
+		{
+			settings_file_path= args[ i + 1s ];
+		}
+	}
+
 	// Create console out as first step - in order to have proper logging.
 
 	var ConsoleOutPtr console_out_ptr( ConsoleOut() );
 
 	ConsoleOutAddTextLine( console_out_ptr, "PanzerMortyr initializing..." );
+
+	var SettingsPtr settings_ptr= LoadSettings( settings_file_path, console_out_ptr );
 
 	var GameFilesystemNullablePtr game_filesystem_nullable_ptr= GameFilesystem::Create( console_out_ptr );
 	if( game_filesystem_nullable_ptr.empty() )
@@ -39,15 +54,16 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 
 	var Game mut game( caching_game_resources_loader_ptr, console_out_ptr );
 
-	var OpenGLWindow mut window( console_out_ptr );
+	var OpenGLWindow mut window( settings_ptr, console_out_ptr );
 
 	// Create classes requiring OpenGL context after OpenGL window creation.
 
-	var Console mut console( console_out_ptr, window.GetViewportSize() );
+	var Console mut console( settings_ptr, console_out_ptr, window.GetViewportSize() );
 
 	var TextDrawer mut text_drawer( window.GetViewportSize(), game_filesystem_ptr, console_out_ptr );
 
 	var WorldDrawer mut world_drawer(
+		settings_ptr,
 		game_filesystem_ptr,
 		caching_game_resources_loader_ptr,
 		console_out_ptr );
@@ -206,6 +222,8 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 
 		prev_frame_time_point= cur_frame_time_point;
 	}
+
+	SaveSettings( settings_ptr.lock_imut().deref(), settings_file_path, console_out_ptr );
 
 	// This should be called always.
 	unsafe( SDL_Quit() );

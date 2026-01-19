@@ -1,0 +1,109 @@
+import "/enum_string_conversions.u"
+import "/file_helpers.u"
+import "/integer_parsing.u"
+import "/string.u"
+import "/string_conversions.u"
+import "/common_lib/string_iterators.uh"
+import "settings.uh"
+
+namespace PM
+{
+
+fn LoadSettings( ust::filesystem_path_view file_path, ConsoleOutPtr& console_out ) : SettingsPtr
+{
+	ConsoleOutAddTextLine( console_out, ust::concat( "Loading settings from file \"", file_path, "\"" ) );
+
+	var Settings mut settings;
+
+	auto load_res= ust::read_file_to_string( file_path );
+	if_var( e : load_res.as_error_ref() )
+	{
+		ConsoleOutAddTextLine(
+			console_out,
+			ust::concat( "Failed to read settings file \"", file_path, "\"! Error: ", ust::enum_to_string( e ) ) );
+
+		return SettingsPtr( move( settings ) );
+	}
+
+	foreach( line : ust::wrap_raw_iterator( LinesRawIterator( load_res.try_deref() ) ) ) label lines_loop
+	{
+		auto mut words_it= ust::wrap_raw_iterator( WordsIterator( line ) );
+
+		auto first_word_opt= words_it.next();
+		auto second_word_opt= words_it.next();
+
+		if( first_word_opt.empty() || second_word_opt.empty() )
+		{
+			continue;
+		}
+
+		var ust::string_view8 first_word= first_word_opt.try_deref();
+		var ust::string_view8 second_word= second_word_opt.try_deref();
+
+		foreach( &field_description : typeinfo</Settings/>.fields_list )
+		{
+			if( first_word == field_description.name )
+			{
+				TryDeserializeValue( second_word, mixin( "settings." + field_description.name ) );
+				break;
+			}
+		}
+	}
+
+	return SettingsPtr( move( settings ) );
+}
+
+fn SaveSettings( Settings& settings,  ust::filesystem_path_view file_path, ConsoleOutPtr& console_out )
+{
+	var ust::string8 mut contents;
+
+	foreach( &field_description : typeinfo</Settings/>.fields_list )
+	{
+		contents+= field_description.name;
+
+		contents.push_back( ' ' );
+
+		SerializeValue( contents, mixin( "settings." + field_description.name ) );
+
+		contents.push_back( '\n' );
+	}
+
+	ConsoleOutAddTextLine( console_out, ust::concat( "Save settings into file \"", file_path, "\"" ) );
+
+	if_var( e : ust::write_string_view_to_file( file_path, contents ).as_error_ref() )
+	{
+		ConsoleOutAddTextLine(
+			console_out,
+			ust::concat( "Failed to write settings file \"",  file_path,  "\"! Error: ",  ust::enum_to_string( e ) ) );
+	}
+}
+
+fn TryDeserializeValue( ust::string_view8 s, bool &mut value )
+{
+	if_var( i : ust::parse_integer_exact</u32/>(s) )
+	{
+		value = i != 0u;
+	}
+}
+
+template</type T/>
+fn TryDeserializeValue( ust::string_view8 s, T &mut value )
+{
+	if_var( i : ust::parse_integer_exact</T/>(s) )
+	{
+		value= i;
+	}
+}
+
+fn SerializeValue( ust::string8 &mut s, bool& value )
+{
+	s.push_back( ( value ? '1' : '0' ) );
+}
+
+template</type T/>
+fn SerializeValue( ust::string8 &mut s, T& value )
+{
+	s+= ust::to_string8( value );
+}
+
+} // namespace PM
