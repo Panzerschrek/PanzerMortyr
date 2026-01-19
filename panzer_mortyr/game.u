@@ -488,49 +488,14 @@ fn Game::PerformPlayerStepMovement( mut this )
 			{
 				on_ground= true;
 
-				// Extract friction for current ground quad.
-
-				var size_type quad_index( collision_event_params.collision_quad_index );
-				if( quad_index < zmap_data.quads.size() )
-				{
-					var ZmapQuad& quad= zmap_data.quads[ quad_index ];
-					if_var( &map_description : maps_description_.deref().maps.find( current_map_index_ ) )
-					{
-						if_var( &materials_block : materials_description_.deref().blocks.find( map_description.materials_block ) )
-						{
-							// TODO - handle special materials.
-							var size_type material_index( quad.texture_id );
-							var size_type texture_index= material_index >> 2u;
-							if( texture_index < materials_block.textures.size() )
-							{
-								var MaterialsDescription::Texture& texture= materials_block.textures[ texture_index ];
-								var size_type tile_index= material_index & 3s;
-								var ust::string8& material_name= texture.materials[ tile_index ];
-
-								foreach( &material_properties : materials_properties_.deref() )
-								{
-									if( material_properties.name == material_name )
-									{
-										// Use maximum friction of all ground quads.
-										ust::max_assign( ground_friction, f32( material_properties.player_step_friction ) );
-									}
-								}
-							}
-						}
-					}
-				}
+				// Use maximum friction of all ground quads.
+				ust::max_assign( ground_friction, GetFrictionForMapQuad( collision_event_params.collision_quad_index ) );
 			}
 		}
 
 		// Assume only exactly vertical polygons to be walls.
 		// We can't assume even slightly-inclining polygons for performing step movement, since such movement doesn't look great.
 		collided_with_wall|= normal.z == 0.0f;
-	}
-
-	// Fallback for cases if no material kind is specified (or for some other reason).
-	if( on_ground && ground_friction == 0.0f && !materials_properties_.deref().empty() )
-	{
-		ground_friction= f32( materials_properties_.deref().front().player_step_friction );
 	}
 
 	player_state_.on_ground= on_ground;
@@ -908,6 +873,50 @@ fn Game::GetNearestEntity( mut this, Vec3f& pos ) : ust::optional_ref_mut</Entit
 	}
 
 	return entities_[ nearest_index ].as_ref();
+}
+
+fn Game::GetFrictionForMapQuad( this, u32 quad_index ) : f32
+{
+	var f32 default_friction( materials_properties_.deref().front().player_step_friction );
+
+	if( zmap_data_.empty() )
+	{
+		return default_friction;
+	}
+
+	var ZmapData& zmap_data= zmap_data_.try_deref();
+
+	if( size_type( quad_index ) >= zmap_data.quads.size() )
+	{
+		return default_friction;
+	}
+
+	var ZmapQuad& quad= zmap_data.quads[ size_type( quad_index ) ];
+	if_var( &map_description : maps_description_.deref().maps.find( current_map_index_ ) )
+	{
+		if_var( &materials_block : materials_description_.deref().blocks.find( map_description.materials_block ) )
+		{
+			// TODO - handle special materials.
+			var size_type material_index( quad.texture_id );
+			var size_type texture_index= material_index >> 2u;
+			if( texture_index < materials_block.textures.size() )
+			{
+				var MaterialsDescription::Texture& texture= materials_block.textures[ texture_index ];
+				var size_type tile_index= material_index & 3s;
+				var ust::string8& material_name= texture.materials[ tile_index ];
+
+				foreach( &material_properties : materials_properties_.deref() )
+				{
+					if( material_properties.name == material_name )
+					{
+						return f32( material_properties.player_step_friction );
+					}
+				}
+			}
+		}
+	}
+
+	return default_friction;
 }
 
 fn MoveEntity(
