@@ -1,6 +1,8 @@
 import "/file_helpers.u"
+import "/integer_parsing.u"
 import "/string.u"
 import "/string_conversions.u"
+import "/common_lib/string_iterators.uh"
 import "settings.uh"
 
 namespace PM
@@ -8,22 +10,54 @@ namespace PM
 
 fn LoadSettings() : SettingsPtr
 {
-	// TODO - do actual loading.
-	return SettingsPtr( Settings() );
+	var Settings mut settings;
+
+	auto load_res= ust::read_file_to_string( c_default_settings_file_name );
+	if( load_res.is_error() )
+	{
+		// TODO - log error.
+		return SettingsPtr( move( settings ) );
+	}
+
+	foreach( line : ust::wrap_raw_iterator( LinesRawIterator( load_res.try_deref() ) ) ) label lines_loop
+	{
+		auto mut words_it= ust::wrap_raw_iterator( WordsIterator( line ) );
+
+		auto first_word_opt= words_it.next();
+		auto second_word_opt= words_it.next();
+
+		if( first_word_opt.empty() || second_word_opt.empty() )
+		{
+			continue;
+		}
+
+		var ust::string_view8 first_word= first_word_opt.try_deref();
+		var ust::string_view8 second_word= second_word_opt.try_deref();
+
+		foreach( &field_description : typeinfo</Settings/>.fields_list )
+		{
+			if( first_word == field_description.name )
+			{
+				TryDeserializeValue( second_word, mixin( "settings." + field_description.name ) );
+				break;
+			}
+		}
+	}
+
+	return SettingsPtr( move( settings ) );
 }
 
 fn SaveSettings( Settings& settings )
 {
 	var ust::string8 mut contents;
 
-
-	foreach( &field : typeinfo</Settings/>.fields_list )
+	foreach( &field_description : typeinfo</Settings/>.fields_list )
 	{
-		contents+= field.name;
+		contents+= field_description.name;
 
 		contents.push_back( ' ' );
 
-		SerializeValue( contents, mixin( "settings." + field.name ) );
+		SerializeValue( contents, mixin( "settings." + field_description.name ) );
 
 		contents.push_back( '\n' );
 	}
@@ -32,6 +66,15 @@ fn SaveSettings( Settings& settings )
 	{
 		// TODO - write an error into the log.
 		ust::ignore_unused(e);
+	}
+}
+
+template</type T/>
+fn TryDeserializeValue( ust::string_view8 s, T &mut value )
+{
+	if_var( i : ust::parse_integer_exact</T/>(s) )
+	{
+		value= i;
 	}
 }
 
