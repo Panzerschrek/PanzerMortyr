@@ -72,19 +72,14 @@ PanzerMortyr general:
 
 * Support loading game data files directly (not only from the game archive). It seems that the original game can do this.
 * Perform more advanced search for the game installation directory by using current directory, current executable directory or even registry entries.
-* Implement console.
 * Implement menus.
-* Implement settings (via some config file saved on-disk).
 * Implement loading screen.
 * Extend existing setting menus/add new ones for extra options specific for PanzerMortyr.
 * Allow changing controls.
-* Allow changing window size.
-* Allow setting fullscreen mode (with possible resolution changing).
+* Allow setting fullscreen mode with possible resolution changing and/or in "desktop fullscreen" mode.
 * Play cinematics at start.
 * Cache or even preload weapon models to avoid reloading them after level transition.
 * Display console background image.
-* Allow changing settings from console (including auto-completion of setting keys).
-* Allow writing into console within command processing methods.
 
 PanzerMortyr game logic:
 
