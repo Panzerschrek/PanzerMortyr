@@ -139,6 +139,7 @@ fn CollisionTrace(
 	{
 		.clipped_move_distance= 1.0f,
 		.collision_point_normal( 0.0f, 0.0f, 0.0f ),
+		.collision_quad_index= ~0u
 	};
 
 	if( movement_vector.SquareLength() == 0.0f )
@@ -215,10 +216,11 @@ fn CollisionTrace(
 			continue;
 		}
 
-		foreach( &quad : zmap_data.quads.range().subrange(
-			size_type( cluster.c.first_quad_index ),
-			size_type( cluster.c.first_quad_index ) + size_type( cluster.num_quads ) ) )
+		for( var size_type mut q( cluster.c.first_quad_index ), q_end= size_type( cluster.c.first_quad_index ) + size_type( cluster.num_quads );
+			q < q_end;
+			++q )
 		{
+			var ZmapQuad& quad= zmap_data.quads[q];
 			// TODO - ignore quads with materials passable by player (like water).
 
 			auto& center= cluster.c.center;
@@ -249,6 +251,7 @@ fn CollisionTrace(
 						{
 							trace_result.clipped_move_distance= intersection.near_point_distance;
 							trace_result.collision_point_normal= polyhedron_planes[ size_type( intersection.near_plane_index ) ].normal;
+							trace_result.collision_quad_index= u32(q);
 						}
 					}
 					else if( intersection.far_point_distance <= 0.0f )
@@ -300,13 +303,13 @@ fn CollisionTraceAndClip(
 	var CollisionTraceClipResult mut result
 	{
 		.position_clipped= movement_start_position,
-		.num_clip_planes= 0u,
-		.clip_plane_normals
+		.num_collision_events= 0u,
+		.collision_events
 		[
-			Vec3f( 0.0f, 0.0f, 0.0f ),
-			Vec3f( 0.0f, 0.0f, 0.0f ),
-			Vec3f( 0.0f, 0.0f, 0.0f ),
-			Vec3f( 0.0f, 0.0f, 0.0f )
+			{ .plane_normal( 0.0f, 0.0f, 0.0f ), .collision_quad_index= ~0u },
+			{ .plane_normal( 0.0f, 0.0f, 0.0f ), .collision_quad_index= ~0u },
+			{ .plane_normal( 0.0f, 0.0f, 0.0f ), .collision_quad_index= ~0u },
+			{ .plane_normal( 0.0f, 0.0f, 0.0f ), .collision_quad_index= ~0u },
 		]
 	};
 
@@ -314,7 +317,7 @@ fn CollisionTraceAndClip(
 
 	// Perform several iterations to clip and slide against several planes.
 	// It's needed to resolve collisions in corners properly.
-	for( auto mut movement_iteration= 0s; movement_iteration < CollisionTraceClipResult::c_max_clip_planes; ++movement_iteration )
+	for( auto mut movement_iteration= 0s; movement_iteration < CollisionTraceClipResult::c_max_collision_events; ++movement_iteration )
 	{
 		if( movement_start_position == movement_end_position )
 		{
@@ -358,8 +361,14 @@ fn CollisionTraceAndClip(
 					trace_result.collision_point_normal * ( remaining_movement_vector.Dot( trace_result.collision_point_normal ) / normal_square_length );
 			}
 
-			result.clip_plane_normals[ result.num_clip_planes ]= trace_result.collision_point_normal;
-			++result.num_clip_planes;
+			result.collision_events[ result.num_collision_events ]=
+				CollisionTraceClipResult::CollisionEvent
+				{
+					.plane_normal= trace_result.collision_point_normal,
+					.collision_quad_index= trace_result.collision_quad_index,
+				};
+
+			++result.num_collision_events;
 		}
 
 		movement_start_position= new_movement_start_position;

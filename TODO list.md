@@ -104,14 +104,10 @@ PanzerMortyr game logic:
 * Perform collisions between enemies and the world.
 * Perform collisions between enemies with each other and with player.
 * Implement collisions hack for the one-way passable wall on map 33.
-* Tune gravity, friction and jumping speed, so that jump height is equal (or nearly-equal) to the original game and even sharp ramps are walkable.
 * Implement gravity affecting enemies and other entities.
 * Implement crouching for the player.
 * Implement stairs climbing for enemies.
-* Read player's physical parameters (collision bounding box, acceleration, etc.) from the entities config or investigate these parameters and hardcode them.
-* Apply additional friction for player if he is on ground.
-* Try using different ground/air acceleration/deceleration parameters.
-* Perform actual player movement only at tick points, in frames where no ticks are processed just accumulate player's input.
+* Read player's physical parameters (collision bounding box) from the entities config or investigate these parameters and hardcode them.
 * Implement fall damage for player and for entities.
 * Implement shooting logic - with shots colliding with walls and damaging enemies and the player.
 * Implement shooting by enemies.
@@ -128,8 +124,6 @@ PanzerMortyr game logic:
 * Implement rats.
 * Spawn enemies having trigger box only when player touches this box (usually behind his back).
 * Implement entity state transition caused by injury (but not killing).
-* Use material properties file contents for game physics (maximum speed, friction, etc.).
-* Read player's maximum speed from the game config and use it.
 * Fix collisions in some tricky cases, like collision in a sharp corner with 3 planes.
 
 PanzerMortyr rendering:
