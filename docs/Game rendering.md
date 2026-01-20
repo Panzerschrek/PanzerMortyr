@@ -8,6 +8,7 @@ No blending or other tricks are necessary.
 
 Map geometry should be generally clipped - by using frustum culling and clusters visibility information.
 
+
 ### Map polygons with animation
 
 There are a couple of special materials enabling frame-based texture animation.
@@ -37,7 +38,7 @@ And they aren't affected by dynamic lights (like flashlight).
 
 ### Breakable world polygons
 
-Map polygons which can be broken (like glass or windows) should be not displayed if they are broken.
+Map polygons which can be broken (like glass or windows) should not be displayed if they are broken.
 This may require creating a separate per-cluster index buffer for such polygons and modifying this buffer on each draw - in order to exclude drawing broken polygons.
 
 Such polygons can be also semitransparent, which makes things even more complex.
@@ -72,7 +73,7 @@ It may draw sky only where sky polygons are placed, or maybe sky is draw in the 
 
 ### Triangular models
 
-Triangular models are used for the most of game object.
+Triangular models are used for the most of game objects.
 They use single unique texture (with size varying from model to model).
 They also use per-vertex animation.
 Models require special shader doing per-vertex animation (with two frames blending).
@@ -105,6 +106,19 @@ Dynamic flame and smoke billboards require blending and thus ordering.
 Smoke billboards require lighting, but it can be calculated per-billboard basis on CPU.
 
 
+### Bubbles
+
+Bubbles are drawn underwater while shooting and (maybe moving).
+They are just billboards.
+
+
+### Broken glass fragments
+
+Breakable glass polygons produce glass fragments.
+They are drawn with the original texture and in case of semetransparent glass are semitransparent.
+Thus they require ordering before drawing.
+
+
 ### Decals on map geometry
 
 Decals are used for bullet holes, footsteps, blood.
@@ -124,9 +138,10 @@ This can be done by creating a separate shader for models using blood layer or b
 
 ### Bullets
 
-The original game shows bullets as linear fast traveling objects.
+The original game shows bullets as linear fast travelling objects.
 They should be drawn somehow, presumably as quads elongated along travel direction.
-They seems to require to lighting (they are always fullbright).
+They seems to require no lighting (they are always fullbright).
+But they may require blending (furher investigation is necessary).
 
 
 ### Dynamic lights
