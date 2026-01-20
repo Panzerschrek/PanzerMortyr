@@ -177,6 +177,7 @@ fn Game::TeleportToMap( mut this, u32 map_index )
 					.player_is_inside_shooting_zone= false,
 					.lost_energy_in_current_operation= false,
 					.animation_frames= zero_init, // Set exact frames later.
+					.velocity_z= 0.0f,
 				};
 		}
 
@@ -502,13 +503,15 @@ fn Game::ProcessStep( mut this )
 {
 	PerformPlayerStepMovement();
 
-	if( entities_description_.empty() || mapa_way_data_.empty() )
+	if( entities_description_.empty() || zmap_data_.empty() || zvox_data_.empty() || mapa_way_data_.empty()  )
 	{
 		return;
 	}
 
 	var EntitiesDescription& entities_description= entities_description_.try_deref();
 
+	var ZmapData& zmap_data= zmap_data_.try_deref();
+	var ZvoxData& zvox_data= zvox_data_.try_deref();
 	var MapaWayData& mapa_way_data= mapa_way_data_.try_deref();
 
 	// Use index-based loop to be able to insert entities.
@@ -536,7 +539,7 @@ fn Game::ProcessStep( mut this )
 
 				if_var( &operation_control : operation.operation_control )
 				{
-					MoveEntity( entity, operation_control, mapa_way_data );
+					MoveEntity( zmap_data, zvox_data, mapa_way_data, entity, operation_control );
 
 					// Always check if killed.
 					if_var( &energy_loss : operation_control.energy_loss )
@@ -694,6 +697,7 @@ fn Game::ProcessStep( mut this )
 										.player_is_inside_shooting_zone= false,
 										.lost_energy_in_current_operation= false,
 										.animation_frames= zero_init, // Set exact frames later.
+										.velocity_z= 0.0f,
 									} );
 							}
 						}
@@ -962,9 +966,11 @@ fn Game::DebugShowEntityBoundingBoxes( mut this )
 }
 
 fn MoveEntity(
+	ZmapData& zmap_data,
+	ZvoxData& zvox_data,
+	MapaWayData& mapa_way_data,
 	EntityState &mut entity,
-	EntitiesDescription::OperationControl& operation_control,
-	MapaWayData& mapa_way_data )
+	EntitiesDescription::OperationControl& operation_control )
 {
 	if( operation_control.speed == 0u )
 	{
@@ -1074,9 +1080,26 @@ fn MoveEntity(
 	// We should move only directly towards the target, otherwise we can encount various problems with target reaching.
 	var f32 move_distance= base_move_distance * move_fraction;
 
+	var Vec3f old_position= entity.position;
+
+	entity.velocity_z+= c_gravity_per_step;
+
 	// Perform movement towards current direction.
 	var Vec3f direction_vector( -ust::sin(entity.azimuth), ust::cos(entity.azimuth), 0.0f );
-	entity.position+= direction_vector * move_distance;
+	var Vec3f new_position= entity.position + direction_vector * move_distance + Vec3f( 0.0f, 0.0f, entity.velocity_z );
+
+	var CollisionStepMoveResult move_result=
+		CollisionStepMove(
+			zmap_data,
+			zvox_data,
+			ust::array_view_imut</BBox3f/>(),
+			GetPlayerColliderBBox(), // TODO - use proper collider.
+			old_position,
+			new_position );
+
+	// TODO - reset vertical speed.
+
+	entity.position= move_result.trace_clip_result.position_clipped;
 
 	if( square_distance_to_waypoint <= base_move_distance * base_move_distance )
 	{
