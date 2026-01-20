@@ -449,6 +449,8 @@ fn Game::PerformPlayerStepMovement( mut this )
 		return;
 	}
 
+	BuildEntityColliders();
+
 	if( zmap_data_.empty() || zvox_data_.empty() )
 	{
 		return;
@@ -994,6 +996,83 @@ fn Game::GetFrictionForMapQuad( this, u32 quad_index ) : f32
 	}
 
 	return default_friction;
+}
+
+fn Game::BuildEntityColliders( mut this )
+{
+	entity_colliders_.clear();
+
+	if( entities_description_.empty() )
+	{
+		return;
+	}
+
+	var EntitiesDescription& entities_description= entities_description_.try_deref();
+
+	foreach( &entity_opt : entities_ )
+	{
+		if( entity_opt.empty() )
+		{
+			continue;
+		}
+
+		var EntityState& entity= entity_opt.try_deref();
+
+		var EntitiesDescription::EntityDescription& entity_description= entities_description.entities[ entity.kind ];
+
+		if( entity_description.mode == 4u )
+		{
+			// Pick-ups don't collide with other entities.
+			continue;
+		}
+
+		var EntitiesDescription::Operation& operation= entity_description.operations[ entity.current_operation ];
+
+		foreach( &anim : operation.animations )
+		{
+			if( anim.num_steps == 0u )
+			{
+				continue;
+			}
+
+			if( anim.bounding_box_half_size_x == 0 ||
+				anim.bounding_box_half_size_y == 0 ||
+				anim.bounding_box_half_size_z == 0 )
+			{
+				// Entities with at least one zero collider dimentsion don't collide with each other.
+				continue;
+			}
+
+			var Vec3f mut bbox_half_size(
+				f32( anim.bounding_box_half_size_x ),
+				f32( anim.bounding_box_half_size_y ),
+				f32( anim.bounding_box_half_size_z ) );
+
+			if( bbox_half_size.x != bbox_half_size.y && ust::abs( ust::sin( entity.azimuth ) ) >= c_half_sqrt_2 )
+			{
+				// Rotate initial bounding box by 90 degrees.
+				// This is necessary for decorations with unsymmetrical bounds.
+				var f32 tmp= bbox_half_size.x;
+				bbox_half_size.x= bbox_half_size.y;
+				bbox_half_size.y= tmp;
+			}
+
+			var Vec3f bbox_center=
+				entity.position +
+				Vec3f(
+					f32( anim.bounding_box_center_x ),
+					f32( anim.bounding_box_center_y ),
+					f32( anim.bounding_box_center_z ) );
+
+			var BBox3f bbox
+			{
+				.min= bbox_center - bbox_half_size,
+				.max= bbox_center + bbox_half_size,
+			};
+
+			entity_colliders_.push_back( bbox );
+		}
+	}
 }
 
 fn MoveEntity(
