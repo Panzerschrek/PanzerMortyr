@@ -131,6 +131,7 @@ fn RayTrace(
 fn CollisionTrace(
 	ZmapData& zmap_data,
 	ZvoxData& zvox_data,
+	ust::array_view_imut</BBox3f/> extra_colliders,
 	BBox3f& bbox,
 	Vec3f& start_position,
 	Vec3f& movement_vector ) : TraceCollisionResult
@@ -290,12 +291,67 @@ fn CollisionTrace(
 		}
 	}
 
+	foreach( &extra_collider : extra_colliders )
+	{
+		var BBox3f minkowski_sum_bbox
+		{
+			.min= extra_collider.min + bbox.min,
+			.max= extra_collider.max + bbox.max,
+		};
+
+		var [ Planef, 6 ] collider_planes= CreateBBoxPlanes( minkowski_sum_bbox );
+
+		// TODO - maybe use an optimized version of ray holyhedron intersection for boxes?
+
+		if_var( intersection : FindRayPolyhedronIntersection( start_position, movement_vector, collider_planes ) )
+		{
+			if( intersection.near_point_distance >= 0.0f )
+			{
+				// Is outside and moving towards the collider volume.
+				// Clip movement by distance to the near intersection point.
+				if( intersection.near_point_distance < trace_result.clipped_move_distance )
+				{
+					trace_result.clipped_move_distance= intersection.near_point_distance;
+					trace_result.collision_point_normal= collider_planes[ size_type( intersection.near_plane_index ) ].normal;
+					trace_result.collision_quad_index= ~0u;
+				}
+			}
+			else if( intersection.far_point_distance <= 0.0f )
+			{
+				// Is outside and moving from the collider volume.
+				// Nothing to do here.
+			}
+			else
+			{
+				// Is inside.
+
+				// Apply extra push towards nearest collider plane.
+				// This is necessary if due to numerical errors or some other reasons we still somehow get inside a collider.
+				foreach( &push_plane : collider_planes )
+				{
+					var f32 distance= push_plane.GetDistanceForPoint( start_position + movement_vector );
+					if( distance < 0.0f )
+					{
+						var Vec3f this_quad_push= push_plane.normal * ( -distance / push_plane.normal.SquareLength() );
+						if( trace_result.extra_push.empty() ||
+							// Select smallest push of such kind.
+							this_quad_push.SquareLength() < trace_result.extra_push.try_deref().SquareLength() )
+						{
+							trace_result.extra_push= this_quad_push;
+						}
+					}
+				}
+			}
+		}
+	}
+
 	return trace_result;
 }
 
 fn CollisionTraceAndClip(
 	ZmapData& zmap_data,
 	ZvoxData& zvox_data,
+	ust::array_view_imut</BBox3f/> extra_colliders,
 	BBox3f& bbox,
 	Vec3f mut movement_start_position,
 	Vec3f mut movement_end_position ) : CollisionTraceClipResult
@@ -325,7 +381,8 @@ fn CollisionTraceAndClip(
 		}
 
 		var Vec3f movement_vector= movement_end_position - movement_start_position;
-		var TraceCollisionResult trace_result= CollisionTrace( zmap_data, zvox_data, bbox, movement_start_position, movement_vector );
+		var TraceCollisionResult trace_result=
+			CollisionTrace( zmap_data, zvox_data, extra_colliders, bbox, movement_start_position, movement_vector );
 
 		var Vec3f mut new_movement_start_position=
 			movement_start_position +
