@@ -11,11 +11,14 @@ This documents describes various interesting facts about the original game.
 * Enemies have limited ammo, like panzerfaust guy having only single shot, but some enemies have really a lot of ammo (like machinegunners with 900 bullets).
 * Enemies can search for health kits and armor, but this behavior is rare due to low chance of search behavior specified in the entities config.
 * Enemies can search for ammo boxes if they run out of ammo, but this behavior is rarely observed or isn't observed at all.
+* At least some enemies rotate towards the player while playing death animaton.
 * Rudy-102 can be destroyed, but it has a lot of health - 4500 units.
 * There is a single dog enemy on some of future maps with unique dead animation - flying flies around the corpse.
 * The original game has secret areas with a message "you have found a secret place" showed upon entering, but there are only a couple of such places.
 * The officer enemy drops the false documents item only if killed in some states, in other states he drops a pistol.
 * The player shots slightly right from the crosshair. There is an alternative behavior activated wia a console command "aim on" - which moves crosshair if necessary.
+* Some decorations can be pushed (bottles, crates), but it's buggy if more than one decoration is pushed in the same time - it's possible to push a decoration into a wall.
+* Сabinet decorations have incorrect collider box - it's too low and wide.
 
 ### Technical aspects
 
@@ -26,12 +29,15 @@ This documents describes various interesting facts about the original game.
 * Enemies can't travel far from their start positions, since they use individual navigation graphs and each graph has very limited number of points.
 * In some rare places it's possible to see some map parts through a broken window - where normally only sky should be shown.
 * The game maps contain a lot of out-of-the-bounds entities, which are disabled. They look like leftovers from other maps.
+* Enemies use collision bounding boxes for bullet hits, so that it's not necessary to hit the model itself to deal damage.
+* Sky is a little bit strange - clouds texture is projected on sky polygons, but scale isn't tweaked. This projection is also broken on vertical sky polygons.
 
-### Cut content
+### Cut or unused content
 
 * MG-42 nest isn't used in the game, but it's listed in the manual.
 * Gestapo officer isn't used in the game, but he is listed in the manual.
 * Nurse isn't used in the game, but she is listed in the manual.
 * Adolf Hitler isn't listed in the manual, he is missing in many versions of the game except one or two regional editions. But he is still present in game resources.
-* Automatic gun turret seems to be unused, but it's listed in the manual.
 * Game files contain unfinished maps with indices 0, 22, 8000.
+* Map 0 is a raw version of maps 10 and 33 combined.
+* Map 22 contains elements of maps 1 and 11.
