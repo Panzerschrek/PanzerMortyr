@@ -10,9 +10,11 @@ namespace PM
 {
 
 fn Game::constructor(
+	SettingsPtr mut settings,
 	CachingGameResourcesLoaderPtr mut caching_game_resources_loader_ptr,
 	ConsoleOutPtr mut console_out )
 	(
+		settings_= move(settings),
 		console_out_= move(console_out),
 		game_params_=
 			lambda[&caching_game_resources_loader_ptr]() : GameResourcePtr</GameParams/>
@@ -264,13 +266,13 @@ fn Game::ProcessMouseButtonPress( mut this, u32 button_index )
 		var ZmapData& zmap_data= zmap_data_.try_deref();
 		var ZvoxData& zvox_data= zvox_data_.try_deref();
 
-		test_bullet_holes_.clear();
+		test_sprites_.clear();
 
 		if_var( ray_trace_result : RayTrace( zmap_data, zvox_data, ray_start, direction_vector ) )
 		{
 			var Vec3f closest_intersection_point= ray_start + direction_vector * ray_trace_result.distance;
 
-			test_bullet_holes_.push_back( closest_intersection_point );
+			test_sprites_.push_back( closest_intersection_point );
 
 			auto& center= zvox_data.clusters[ size_type( ray_trace_result.cluster_index ) ].c.center;
 			auto& in_vertices= zmap_data.quads[ size_type( ray_trace_result.quad_index ) ].vertices;
@@ -386,7 +388,7 @@ fn Game::GetWorldDrawingInfo( this ) : WorldDrawingInfo
 		.camera_azimuth= camera_rotation_controller_.GetAzimuth(),
 		.camera_elevation= camera_rotation_controller_.GetElevation(),
 		.model_objects= move(model_objects),
-		.test_sprites= test_bullet_holes_,
+		.test_sprites= test_sprites_,
 		.test_triangles= test_triangles_,
 	};
 }
@@ -855,61 +857,72 @@ fn Game::ProcessStep( mut this )
 		}
 	}
 
-	test_triangles_.clear();
-	foreach( &entity_opt : entities_ )
+	if( settings_.lock_imut().deref().g_debug_show_entity_bounding_boxes )
 	{
-		if( entity_opt.empty() )
+		test_sprites_.clear();
+
+		foreach( &entity_opt : entities_ )
 		{
-			continue;
-		}
-
-		var EntityState& entity= entity_opt.try_deref();
-
-		var EntitiesDescription::EntityDescription& entity_description= entities_description.entities[ entity.kind ];
-
-		if( entity_description.mode == 4u )
-		{
-			// Pick-ups don't collide with other entities.
-			continue;
-		}
-
-		var EntitiesDescription::Operation& operation= entity_description.operations[ entity.current_operation ];
-
-		foreach( &anim : operation.animations )
-		{
-			if( anim.num_steps == 0u )
+			if( entity_opt.empty() )
 			{
 				continue;
 			}
 
-			var Vec3f mut bbox_half_size(
-				f32( anim.bounding_box_half_size_x ),
-				f32( anim.bounding_box_half_size_y ),
-				f32( anim.bounding_box_half_size_z ) );
+			var EntityState& entity= entity_opt.try_deref();
 
-			if( bbox_half_size.x != bbox_half_size.y && ust::abs( ust::sin( entity.azimuth ) ) >= c_half_sqrt_2 )
+			var EntitiesDescription::EntityDescription& entity_description= entities_description.entities[ entity.kind ];
+
+			if( entity_description.mode == 4u )
 			{
-				// Rotate initial bounding box by 90 degrees.
-				// This is necessary for decorations with unsymmetrical bounds.
-				var f32 tmp= bbox_half_size.x;
-				bbox_half_size.x= bbox_half_size.y;
-				bbox_half_size.y= tmp;
+				// Pick-ups don't collide with other entities.
+				continue;
 			}
 
-			var Vec3f bbox_center=
-				entity.position +
-				Vec3f(
-					f32( anim.bounding_box_center_x ),
-					f32( anim.bounding_box_center_y ),
-					f32( anim.bounding_box_center_z ) );
+			var EntitiesDescription::Operation& operation= entity_description.operations[ entity.current_operation ];
 
-			var BBox3f bbox
+			foreach( &anim : operation.animations )
 			{
-				.min= bbox_center - bbox_half_size,
-				.max= bbox_center + bbox_half_size,
-			};
+				if( anim.num_steps == 0u )
+				{
+					continue;
+				}
 
-			PolygonizePolyhedron( CreateBBoxPlanes( bbox ), test_triangles_ );
+				var Vec3f mut bbox_half_size(
+					f32( anim.bounding_box_half_size_x ),
+					f32( anim.bounding_box_half_size_y ),
+					f32( anim.bounding_box_half_size_z ) );
+
+				if( bbox_half_size.x != bbox_half_size.y && ust::abs( ust::sin( entity.azimuth ) ) >= c_half_sqrt_2 )
+				{
+					// Rotate initial bounding box by 90 degrees.
+					// This is necessary for decorations with unsymmetrical bounds.
+					var f32 tmp= bbox_half_size.x;
+					bbox_half_size.x= bbox_half_size.y;
+					bbox_half_size.y= tmp;
+				}
+
+				var Vec3f bbox_center=
+					entity.position +
+					Vec3f(
+						f32( anim.bounding_box_center_x ),
+						f32( anim.bounding_box_center_y ),
+						f32( anim.bounding_box_center_z ) );
+
+				var BBox3f bbox
+				{
+					.min= bbox_center - bbox_half_size,
+					.max= bbox_center + bbox_half_size,
+				};
+
+				test_sprites_.push_back( Vec3f( bbox.min.x, bbox.min.y, bbox.min.z ) );
+				test_sprites_.push_back( Vec3f( bbox.max.x, bbox.min.y, bbox.min.z ) );
+				test_sprites_.push_back( Vec3f( bbox.min.x, bbox.max.y, bbox.min.z ) );
+				test_sprites_.push_back( Vec3f( bbox.max.x, bbox.max.y, bbox.min.z ) );
+				test_sprites_.push_back( Vec3f( bbox.min.x, bbox.min.y, bbox.max.z ) );
+				test_sprites_.push_back( Vec3f( bbox.max.x, bbox.min.y, bbox.max.z ) );
+				test_sprites_.push_back( Vec3f( bbox.min.x, bbox.max.y, bbox.max.z ) );
+				test_sprites_.push_back( Vec3f( bbox.max.x, bbox.max.y, bbox.max.z ) );
+			}
 		}
 	}
 }
