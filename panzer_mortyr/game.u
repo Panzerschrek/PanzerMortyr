@@ -4,7 +4,6 @@ import "debug_visualization.uh"
 import "game.uh"
 import "game_constants.uh"
 import "geometry_utils.uh"
-import "mat.uh"
 import "math_constants.uh"
 
 namespace PM
@@ -870,65 +869,34 @@ fn Game::ProcessStep( mut this )
 				continue;
 			}
 
-			// Rotate initial bounding box.
-			// TODO - simplify this. Perform rotation only in 90 degree increments and avoid doing this for symmetrical cases.
+			var Vec3f mut bbox_half_size(
+				f32( anim.bounding_box_half_size_x ),
+				f32( anim.bounding_box_half_size_y ),
+				f32( anim.bounding_box_half_size_z ) );
 
-			var BBox3f bbox_initial
+			if( bbox_half_size.x != bbox_half_size.y && ust::abs( ust::sin( entity.azimuth ) ) >= c_half_sqrt_2 )
 			{
-				.min=
-					Vec3f(
-						f32( anim.bounding_box_center_x - anim.bounding_box_half_size_x ),
-						f32( anim.bounding_box_center_y - anim.bounding_box_half_size_y ),
-						f32( anim.bounding_box_center_z - anim.bounding_box_half_size_z ) ),
-				.max=
-					Vec3f(
-						f32( anim.bounding_box_center_x + anim.bounding_box_half_size_x ),
-						f32( anim.bounding_box_center_y + anim.bounding_box_half_size_y ),
-						f32( anim.bounding_box_center_z + anim.bounding_box_half_size_z ) )
-			};
-
-			var [ Vec3f, 8 ] bbox_vertices
-			[
-				( bbox_initial.min.x, bbox_initial.min.y, bbox_initial.min.z ),
-				( bbox_initial.max.x, bbox_initial.min.y, bbox_initial.min.z ),
-				( bbox_initial.min.x, bbox_initial.max.y, bbox_initial.min.z ),
-				( bbox_initial.max.x, bbox_initial.max.y, bbox_initial.min.z ),
-				( bbox_initial.min.x, bbox_initial.min.y, bbox_initial.max.z ),
-				( bbox_initial.max.x, bbox_initial.min.y, bbox_initial.max.z ),
-				( bbox_initial.min.x, bbox_initial.max.y, bbox_initial.max.z ),
-				( bbox_initial.max.x, bbox_initial.max.y, bbox_initial.max.z ),
-			];
-
-			var Mat4f matrix= Mat4f::MakeRotationZ( entity.azimuth );
-
-			var BBox3f mut bbox_rotated
-			{
-				.min( ust::plus_inf</f32/>(), ust::plus_inf</f32/>(), ust::plus_inf</f32/>() ),
-				.max( ust::minus_inf</f32/>(), ust::minus_inf</f32/>(), ust::minus_inf</f32/>() ),
-			};
-
-			foreach( &v : bbox_vertices )
-			{
-				var Vec3f v_transformed(
-					v.x * matrix.values[0][0] + v.y * matrix.values[1][0] + v.z * matrix.values[2][0] + matrix.values[3][0],
-					v.x * matrix.values[0][1] + v.y * matrix.values[1][1] + v.z * matrix.values[2][1] + matrix.values[3][1],
-					v.x * matrix.values[0][2] + v.y * matrix.values[1][2] + v.z * matrix.values[2][2] + matrix.values[3][2] );
-
-				ust::min_assign( bbox_rotated.min.x, v_transformed.x );
-				ust::min_assign( bbox_rotated.min.y, v_transformed.y );
-				ust::min_assign( bbox_rotated.min.z, v_transformed.z );
-				ust::max_assign( bbox_rotated.max.x, v_transformed.x );
-				ust::max_assign( bbox_rotated.max.y, v_transformed.y );
-				ust::max_assign( bbox_rotated.max.z, v_transformed.z );
+				// Rotate initial bounding box by 90 degrees.
+				// This is necessary for decorations with unsymmetrical bounds.
+				var f32 tmp= bbox_half_size.x;
+				bbox_half_size.x= bbox_half_size.y;
+				bbox_half_size.y= tmp;
 			}
 
-			var BBox3f result_bbox
+			var Vec3f bbox_center=
+				entity.position +
+				Vec3f(
+					f32( anim.bounding_box_center_x ),
+					f32( anim.bounding_box_center_y ),
+					f32( anim.bounding_box_center_z ) );
+
+			var BBox3f bbox
 			{
-				.min= entity.position + bbox_rotated.min,
-				.max= entity.position + bbox_rotated.max,
+				.min= bbox_center - bbox_half_size,
+				.max= bbox_center + bbox_half_size,
 			};
 
-			PolygonizePolyhedron( CreateBBoxPlanes( result_bbox ), test_triangles_ );
+			PolygonizePolyhedron( CreateBBoxPlanes( bbox ), test_triangles_ );
 		}
 	}
 }
