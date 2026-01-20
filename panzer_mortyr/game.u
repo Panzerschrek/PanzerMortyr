@@ -742,7 +742,7 @@ fn Game::ProcessStep( mut this )
 			var EntitiesDescription::Operation& operation= entity_description.operations[ entity.current_operation ];
 
 			// Perform entity movement.
-			MoveEntity( zmap_data, zvox_data, mapa_way_data, entity, operation );
+			MoveEntity( zmap_data, zvox_data, mapa_way_data, entity, entity_description, operation );
 
 			// Calculate current frame based on animation params.
 			// TODO - perform different animation logic for different animation kinds.
@@ -971,6 +971,7 @@ fn MoveEntity(
 	ZvoxData& zvox_data,
 	MapaWayData& mapa_way_data,
 	EntityState &mut entity,
+	EntitiesDescription::EntityDescription& entity_description,
 	EntitiesDescription::Operation& current_operation )
 {
 	var Vec3f old_position= entity.position;
@@ -979,8 +980,35 @@ fn MoveEntity(
 
 	var Vec3f mut new_position= entity.position;
 
-	entity.velocity_z+= c_gravity_per_step;
-	new_position.z+= entity.velocity_z;
+	var bool mut affected_by_gravity= false;
+
+	// Players are affected by gravity.
+	affected_by_gravity|= entity_description.mode == EntitiesDescription::EntityDescription::c_mode_player;
+
+	// Enemies are affected by gravity.
+	affected_by_gravity|= entity_description.mode == EntitiesDescription::EntityDescription::c_mode_enemy;
+
+	// Pick-ups are affected by gravity.
+	affected_by_gravity|= entity_description.mode == EntitiesDescription::EntityDescription::c_mode_pickup;
+
+	// TODO - process here also projectiles.
+
+	// Decorations are affected by gravity, but only if they are pushable.
+	affected_by_gravity|=
+		entity_description.mode == EntitiesDescription::EntityDescription::c_mode_decoration &&
+		!entity_description.param_akt.empty() && entity_description.param_akt.try_deref()[3] != 0u;
+
+	if( current_operation.animations[ size_type( EntitiesDescription::Operation::AnimationKind::Landscape ) ].num_steps != 0u )
+	{
+		// Decorations like planes and airships shouldn't be affected by gravity.
+		affected_by_gravity= false;
+	}
+
+	if( affected_by_gravity )
+	{
+		entity.velocity_z+= c_gravity_per_step;
+		new_position.z+= entity.velocity_z;
+	}
 
 	var CollisionStepMoveResult move_result=
 		CollisionStepMove(
