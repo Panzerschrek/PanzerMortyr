@@ -453,6 +453,8 @@ fn Game::PerformPlayerStepMovement( mut this )
 		player_movement_controller_.GetAccumulatedMoveWishVector(),
 		player_movement_controller_.GetJumpRequested() );
 
+	var Vec3f movement_end_position= player_state_.position;
+
 	if( player_state_.noclip )
 	{
 		return;
@@ -465,123 +467,35 @@ fn Game::PerformPlayerStepMovement( mut this )
 		return;
 	}
 
-	var ZmapData& zmap_data= zmap_data_.try_deref();
-	var ZvoxData& zvox_data= zvox_data_.try_deref();
-
-	var ust::array_view_imut</BBox3f/> extra_colliders= entity_colliders_;
-
-	var BBox3f player_bbox= GetPlayerColliderBBox();
-
-	var Vec3f movement_end_position= player_state_.position;
-
-	var CollisionTraceClipResult mut collision_trace_clip_result=
-		CollisionTraceAndClip(
-			zmap_data,
-			zvox_data,
-			extra_colliders,
-			player_bbox,
+	var CollisionStepMoveResult move_result=
+		CollisionStepMove(
+			zmap_data_.try_deref(),
+			zvox_data_.try_deref(),
+			entity_colliders_,
+			GetPlayerColliderBBox(),
 			movement_start_position,
 			movement_end_position );
 
-	player_state_.position= collision_trace_clip_result.position_clipped;
+	player_state_.position= move_result.trace_clip_result.position_clipped;
+	player_state_.on_ground= move_result.ground_planes_mask != 0u;
 
-	var bool mut on_ground= false, mut collided_with_wall= false;
 	var f32 mut ground_friction= 0.0f;
 
-	for( auto mut i= 0u; i < collision_trace_clip_result.num_collision_events; ++i )
+	for( auto mut i= 0u; i < move_result.trace_clip_result.num_collision_events; ++i )
 	{
-		var CollisionTraceClipResult::CollisionEvent& collision_event= collision_trace_clip_result.collision_events[i];
+		var CollisionTraceClipResult::CollisionEvent& collision_event= move_result.trace_clip_result.collision_events[i];
 
-		var Vec3f& normal= collision_event.plane_normal;
-		var f32 normal_length= normal.Length();
-		if( normal_length > 0.0f )
+		// Clip player's velocity using clip planes of collision result.
+		ClampPlayerVelocity( player_state_, collision_event.plane_normal );
+
+		if( ( move_result.ground_planes_mask & ( 1u << i ) ) != 0u )
 		{
-			// Assume ground surfaces all surfaces with normal pointing mostly up.
-			// This value is tuned so that it's possible to jump on some steap ramps, where it's possible to jump in the original.
-
-			if( (-normal.z) / normal_length >= 0.67f )
-			{
-				on_ground= true;
-
-				// Use maximum friction of all ground quads.
-				ust::max_assign( ground_friction, GetFrictionForMapQuad( collision_event.collision_quad_index ) );
-			}
+			// Use maximum friction of all ground quads.
+			ust::max_assign( ground_friction, GetFrictionForMapQuad( collision_event.collision_quad_index ) );
 		}
-
-		// Assume only exactly vertical polygons to be walls.
-		// We can't assume even slightly-inclining polygons for performing step movement, since such movement doesn't look great.
-		collided_with_wall|= normal.z == 0.0f;
 	}
 
-	player_state_.on_ground= on_ground;
 	player_state_.ground_friction= ground_friction;
-
-	if( on_ground && collided_with_wall )
-	{
-		var Vec3f mut position_with_step_movement= movement_start_position;
-
-		// Original game has steps with height 16. Add one extra unit to make sure we can climb all stairs.
-		var f32 constexpr c_step_height= 17.0f;
-
-		// Do not move up/down the whole distance to avoid landing exactly on edge of some collider.
-		var f32 c_push_eps= 1.0f / 32.0f;
-
-		// Try performing movement up.
-		var Vec3f up_movement_vector( 0.0f, 0.0f, -c_step_height );
-
-		var TraceCollisionResult up_trace_result=
-			CollisionTrace( zmap_data, zvox_data, extra_colliders, player_bbox, position_with_step_movement, up_movement_vector );
-
-		if( up_trace_result.clipped_move_distance > 0.0f && up_trace_result.extra_push.empty() )
-		{
-			// Movement up is possible - do it.
-
-			position_with_step_movement.z-=
-				ust::max( 0.0f, up_trace_result.clipped_move_distance * c_step_height - c_push_eps );
-
-			// Try performing sideways movement using the original movement vector but with start position moved up.
-			var Vec3f side_movement_vector= movement_end_position - movement_start_position;
-
-			var CollisionTraceClipResult tweaked_collision_trace_clip_result=
-				CollisionTraceAndClip(
-					zmap_data,
-					zvox_data,
-					extra_colliders,
-					player_bbox,
-					position_with_step_movement,
-					position_with_step_movement + side_movement_vector );
-
-			if( tweaked_collision_trace_clip_result.position_clipped != position_with_step_movement )
-			{
-				// We managed to perform sideways move from a lifted position.
-
-				// Update clip planes.
-				collision_trace_clip_result= tweaked_collision_trace_clip_result;
-
-				position_with_step_movement= tweaked_collision_trace_clip_result.position_clipped;
-
-				// Move also down - in case if a step is small or if we just hit a solid wall (not a step).
-
-				var Vec3f down_movement_vector( 0.0f, 0.0f, c_step_height );
-
-				var TraceCollisionResult down_trace_result=
-					CollisionTrace( zmap_data, zvox_data, extra_colliders, player_bbox, position_with_step_movement, down_movement_vector );
-				if( down_trace_result.clipped_move_distance > 0.0f && down_trace_result.extra_push.empty() )
-				{
-					position_with_step_movement.z+=
-						ust::max( 0.0f, down_trace_result.clipped_move_distance * c_step_height - c_push_eps );
-				}
-
-				player_state_.position= position_with_step_movement;
-			}
-		}
-	}
-
-	// Clip player's velocity using clip planes of collision result.
-	for( auto mut i= 0u; i < collision_trace_clip_result.num_collision_events; ++i )
-	{
-		ClampPlayerVelocity( player_state_, collision_trace_clip_result.collision_events[i].plane_normal );
-	}
 }
 
 fn Game::ProcessStep( mut this )
