@@ -464,12 +464,14 @@ fn Game::PerformPlayerStepMovement( mut this )
 		return;
 	}
 
-	BuildEntityColliders();
-
-	if( zmap_data_.empty() || zvox_data_.empty() )
+	if( entities_description_.empty() || zmap_data_.empty() || zvox_data_.empty() )
 	{
 		return;
 	}
+
+	// Build colliders for all entities and without player collider (to avoid self-collision).
+	BuildEntityColliders(
+		entities_description_.try_deref(), entities_, ~0s, ust::null_optional_ref, entity_colliders_ );
 
 	var CollisionStepMoveResult move_result=
 		CollisionStepMove(
@@ -524,6 +526,10 @@ fn Game::ProcessStep( mut this )
 		{
 			continue;
 		}
+
+		// Build colliders excluding this entity and including the player.
+		// TODO - avoid doing this for each entity.
+		BuildEntityColliders( entities_description_.try_deref(), entities_, entity_index, player_state_, entity_colliders_ );
 
 		var bool mut need_to_remove_entity= false;
 		var ust::optional</EntityState/> mut new_spawned_entity;
@@ -745,7 +751,7 @@ fn Game::ProcessStep( mut this )
 			var EntitiesDescription::Operation& operation= entity_description.operations[ entity.current_operation ];
 
 			// Perform entity movement.
-			MoveEntity( zmap_data, zvox_data, mapa_way_data, entity, entity_description, operation );
+			MoveEntity( zmap_data, zvox_data, mapa_way_data, entity_colliders_, entity, entity_description, operation );
 
 			// Calculate current frame based on animation params.
 			// TODO - perform different animation logic for different animation kinds.
@@ -875,86 +881,15 @@ fn Game::GetFrictionForMapQuad( this, u32 quad_index ) : f32
 	return default_friction;
 }
 
-fn Game::BuildEntityColliders( mut this )
-{
-	entity_colliders_.clear();
 
+fn Game::DebugShowEntityBoundingBoxes( mut this )
+{
 	if( entities_description_.empty() )
 	{
 		return;
 	}
 
-	var EntitiesDescription& entities_description= entities_description_.try_deref();
-
-	foreach( &entity_opt : entities_ )
-	{
-		if( entity_opt.empty() )
-		{
-			continue;
-		}
-
-		var EntityState& entity= entity_opt.try_deref();
-
-		var EntitiesDescription::EntityDescription& entity_description= entities_description.entities[ entity.kind ];
-
-		if( entity_description.mode == 4u )
-		{
-			// Pick-ups don't collide with other entities.
-			continue;
-		}
-
-		var EntitiesDescription::Operation& operation= entity_description.operations[ entity.current_operation ];
-
-		foreach( &anim : operation.animations )
-		{
-			if( anim.num_steps == 0u )
-			{
-				continue;
-			}
-
-			if( anim.bounding_box_half_size_x == 0 ||
-				anim.bounding_box_half_size_y == 0 ||
-				anim.bounding_box_half_size_z == 0 )
-			{
-				// Entities with at least one zero collider dimentsion don't collide with each other.
-				continue;
-			}
-
-			var Vec3f mut bbox_half_size(
-				f32( anim.bounding_box_half_size_x ),
-				f32( anim.bounding_box_half_size_y ),
-				f32( anim.bounding_box_half_size_z ) );
-
-			if( bbox_half_size.x != bbox_half_size.y && ust::abs( ust::sin( entity.azimuth ) ) >= c_half_sqrt_2 )
-			{
-				// Rotate initial bounding box by 90 degrees.
-				// This is necessary for decorations with unsymmetrical bounds.
-				var f32 tmp= bbox_half_size.x;
-				bbox_half_size.x= bbox_half_size.y;
-				bbox_half_size.y= tmp;
-			}
-
-			var Vec3f bbox_center=
-				entity.position +
-				Vec3f(
-					f32( anim.bounding_box_center_x ),
-					f32( anim.bounding_box_center_y ),
-					f32( anim.bounding_box_center_z ) );
-
-			var BBox3f bbox
-			{
-				.min= bbox_center - bbox_half_size,
-				.max= bbox_center + bbox_half_size,
-			};
-
-			entity_colliders_.push_back( bbox );
-		}
-	}
-}
-
-fn Game::DebugShowEntityBoundingBoxes( mut this )
-{
-	BuildEntityColliders();
+	BuildEntityColliders( entities_description_.try_deref(), entities_, ~0s, player_state_, entity_colliders_ );
 
 	var [ u8, 3 ] color[ (255), (0), (255) ];
 
@@ -968,6 +903,7 @@ fn MoveEntity(
 	ZmapData& zmap_data,
 	ZvoxData& zvox_data,
 	MapaWayData& mapa_way_data,
+	ust::array_view_imut</BBox3f/> extra_colliders,
 	EntityState &mut entity,
 	EntitiesDescription::EntityDescription& entity_description,
 	EntitiesDescription::Operation& current_operation )
@@ -1066,7 +1002,7 @@ fn MoveEntity(
 		CollisionStepMove(
 			zmap_data,
 			zvox_data,
-			ust::array_view_imut</BBox3f/>(),
+			extra_colliders,
 			collider_bbox.try_deref(),
 			old_position,
 			new_position );
@@ -1334,6 +1270,100 @@ fn ApplyPlayerMovement(
 	}
 
 	player_state.position+= player_state.velocity;
+}
+
+fn BuildEntityColliders(
+	EntitiesDescription& entities_description,
+	ust::array_view_imut</ ust::optional</EntityState /> /> entities,
+	size_type entity_index_to_ignore,
+	ust::optional_ref_imut</PlayerState/> player_state_opt,
+	ust::vector</BBox3f/> &mut out_colliders )
+{
+	out_colliders.clear();
+
+	for( auto mut i= 0s; i < entities.size(); ++i )
+	{
+		if( i == entity_index_to_ignore )
+		{
+			continue;
+		}
+
+		auto& entity_opt= entities[i];
+		if( entity_opt.empty() )
+		{
+			continue;
+		}
+
+		var EntityState& entity= entity_opt.try_deref();
+
+		var EntitiesDescription::EntityDescription& entity_description= entities_description.entities[ entity.kind ];
+
+		if( entity_description.mode == 4u )
+		{
+			// Pick-ups don't collide with other entities.
+			continue;
+		}
+
+		var EntitiesDescription::Operation& operation= entity_description.operations[ entity.current_operation ];
+
+		foreach( &anim : operation.animations )
+		{
+			if( anim.num_steps == 0u )
+			{
+				continue;
+			}
+
+			if( anim.bounding_box_half_size_x == 0 ||
+				anim.bounding_box_half_size_y == 0 ||
+				anim.bounding_box_half_size_z == 0 )
+			{
+				// Entities with at least one zero collider dimentsion don't collide with each other.
+				continue;
+			}
+
+			var Vec3f mut bbox_half_size(
+				f32( anim.bounding_box_half_size_x ),
+				f32( anim.bounding_box_half_size_y ),
+				f32( anim.bounding_box_half_size_z ) );
+
+			if( bbox_half_size.x != bbox_half_size.y && ust::abs( ust::sin( entity.azimuth ) ) >= c_half_sqrt_2 )
+			{
+				// Rotate initial bounding box by 90 degrees.
+				// This is necessary for decorations with unsymmetrical bounds.
+				var f32 tmp= bbox_half_size.x;
+				bbox_half_size.x= bbox_half_size.y;
+				bbox_half_size.y= tmp;
+			}
+
+			var Vec3f bbox_center=
+				entity.position +
+				Vec3f(
+					f32( anim.bounding_box_center_x ),
+					f32( anim.bounding_box_center_y ),
+					f32( anim.bounding_box_center_z ) );
+
+			var BBox3f bbox
+			{
+				.min= bbox_center - bbox_half_size,
+				.max= bbox_center + bbox_half_size,
+			};
+
+			out_colliders.push_back( bbox );
+		}
+	}
+
+	if_var( &player_state : player_state_opt )
+	{
+		var BBox3f bbox= GetPlayerColliderBBox();
+
+		var BBox3f bbox_translated
+		{
+			.min= bbox.min + player_state.position,
+			.max= bbox.max + player_state.position,
+		};
+
+		out_colliders.push_back( bbox_translated );
+	}
 }
 
 fn ClampPlayerVelocity( PlayerState &mut player_state, Vec3f& prohibited_movement_direction )
