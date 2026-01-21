@@ -178,6 +178,8 @@ Maybe in such cases fog should be applied only to opaque geometry and for semitr
 ### Planar reflections
 
 The original game have several places with floors having planar reflections (blended with floor texture).
+Mirrors are present on maps 1, 10, 15, 22 (unused), 23.
+Only floor polygons are mirrors and all mirror polygons are coplanar.
 
 Drawing reflections requires drawing the whole scene one more time, but with some tweaks.
 This includes altered (reflected) view matrix, using stencil buffer and depth buffer clears (if necessary), changing triangle clipping rules (reject front instead of back triangles).
