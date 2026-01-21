@@ -268,11 +268,12 @@ fn Game::ProcessMouseButtonPress( mut this, u32 button_index )
 
 		var Vec3f ray_start= GetCameraPositionForPlayer( player_state_ );
 
-		if( zmap_data_.empty() || zvox_data_.empty() )
+		if( entities_description_.empty() || zmap_data_.empty() || zvox_data_.empty() )
 		{
 			return;
 		}
 
+		var EntitiesDescription& entities_description= entities_description_.try_deref();
 		var ZmapData& zmap_data= zmap_data_.try_deref();
 		var ZvoxData& zvox_data= zvox_data_.try_deref();
 
@@ -324,7 +325,7 @@ fn Game::ProcessMouseButtonPress( mut this, u32 button_index )
 				],
 			};
 
-			CreateBBoxAndQuadMinkowskiSum( GetPlayerColliderBBox(), vertices, polyhedron );
+			CreateBBoxAndQuadMinkowskiSum( GetPlayerColliderBBox( entities_description ), vertices, polyhedron );
 			if( polyhedron.num_planes >= 4u )
 			{
 				test_triangles_.clear();
@@ -469,16 +470,17 @@ fn Game::PerformPlayerStepMovement( mut this )
 		return;
 	}
 
+	var EntitiesDescription& entities_description= entities_description_.try_deref();
+
 	// Build colliders for all entities and without player collider (to avoid self-collision).
-	BuildEntityColliders(
-		entities_description_.try_deref(), entities_, ~0s, ust::null_optional_ref, entity_colliders_ );
+	BuildEntityColliders( entities_description, entities_, ~0s, ust::null_optional_ref, entity_colliders_ );
 
 	var CollisionStepMoveResult move_result=
 		CollisionStepMove(
 			zmap_data_.try_deref(),
 			zvox_data_.try_deref(),
 			entity_colliders_,
-			GetPlayerColliderBBox(),
+			GetPlayerColliderBBox( entities_description ),
 			movement_start_position,
 			movement_end_position );
 
@@ -1354,7 +1356,7 @@ fn BuildEntityColliders(
 
 	if_var( &player_state : player_state_opt )
 	{
-		var BBox3f bbox= GetPlayerColliderBBox();
+		var BBox3f bbox= GetPlayerColliderBBox( entities_description );
 
 		var BBox3f bbox_translated
 		{
@@ -1388,14 +1390,39 @@ fn GetCameraPositionForPlayer( PlayerState& player_state ) : Vec3f
 	return player_state.position + Vec3f( 0.0f, 0.0f, c_camera_z_offset );
 }
 
-fn GetPlayerColliderBBox() : BBox3f
+fn GetPlayerColliderBBox( EntitiesDescription& entities_description ) : BBox3f
 {
-	// TODO - read these dimensions from the current entities description file.
-	return BBox3f
+	// Some reasonable default.
+	var BBox3f mut bbox
 	{
 		.min( -14.0f, -14.0f, -64.0f ),
 		.max(  14.0f,  14.0f, 0.0f ),
 	};
+
+	if_var( &entity_description : entities_description.entities.find( 0u ) )
+	{
+		foreach( &op_pair : entity_description.operations )
+		{
+			foreach( &animation : op_pair.value().animations )
+			{
+				if( animation.num_steps != 0u &&
+					animation.bounding_box_half_size_x != 0 &&
+					animation.bounding_box_half_size_y != 0 )
+				{
+					bbox.min.x= f32( animation.bounding_box_center_x - animation.bounding_box_half_size_x );
+					bbox.max.x= f32( animation.bounding_box_center_x + animation.bounding_box_half_size_x );
+					bbox.min.y= f32( animation.bounding_box_center_y - animation.bounding_box_half_size_y );
+					bbox.max.y= f32( animation.bounding_box_center_y + animation.bounding_box_half_size_y );
+
+					// The original game seems to use a hard-coded Z dimensions, so, ignore Z dimensions from the config.
+
+					return bbox;
+				}
+			}
+		}
+	}
+
+	return bbox;
 }
 
 } // namespace PM
