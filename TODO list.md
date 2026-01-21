@@ -96,13 +96,8 @@ PanzerMortyr game logic:
 * Avoid picking-up an item if player has maximum amount of it.
 * Implement enemy movement towards the player.
 * Implement decorations movement logic (with mode=11).
-* Perform collisions between enemies and the world.
-* Perform collisions between enemies with each other and with player.
 * Implement collisions hack for the one-way passable wall on map 33.
-* Implement gravity affecting enemies and other entities.
 * Implement crouching for the player.
-* Implement stairs climbing for enemies.
-* Read player's physical parameters (collision bounding box) from the entities config or investigate these parameters and hardcode them.
 * Implement fall damage for player and for entities.
 * Implement shooting logic - with shots colliding with walls and damaging enemies and the player.
 * Implement shooting by enemies.
@@ -119,6 +114,9 @@ PanzerMortyr game logic:
 * Implement rats.
 * Spawn enemies having trigger box only when player touches this box (usually behind his back).
 * Implement entity state transition caused by injury (but not killing).
+* Speed-up collisions calculation by building some sort of hierarchical structure for map root clusters (like bounding box hierarchy).
+* Speed-up collisions calculation between entities by building some hierarchical structure. Reuse one for clusters? Use quadtree?
+* Implement pushing pushable entities.
 * Fix collisions in some tricky cases, like collision in a sharp corner with 3 planes.
 
 PanzerMortyr rendering:
