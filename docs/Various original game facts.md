@@ -34,10 +34,10 @@ This documents describes various interesting facts about the original game.
 
 ### Cut or unused content
 
-* MG-42 nest isn't used in the game, but it's listed in the manual.
-* Gestapo officer isn't used in the game, but he is listed in the manual.
-* Nurse isn't used in the game, but she is listed in the manual.
-* Adolf Hitler isn't listed in the manual, he is missing in many versions of the game except one or two regional editions. But he is still present in game resources.
+* MG-42 nest isn't used in the game, but it's listed in the manual. These enemies are placed on maps 8 and 24, but are disabled.
+* Gestapo officer is listed in the manual, but he isn't used in the singlplayer game. He is present on cooperative map 36.
+* Nurse is listed in the manual, but she isn't used in the singlplayer game. Nurses are placed on maps 19, 24, 30, 37, but are disabled. Only on cooperative map 36 there are a couple of them.
+* Adolf Hitler isn't listed in the manual, he is missing in many versions of the game except one or two regional editions. But he is still present in game resources. On map 13 he is placed, but disabled.
 * Game files contain unfinished maps with indices 0, 22, 8000.
 * Map 0 is a raw version of maps 10 and 33 combined.
 * Map 22 contains elements of maps 1 and 11.
