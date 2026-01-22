@@ -49,13 +49,16 @@ fn Game::constructor(
 				}
 			} (),
 		caching_game_resources_loader_ptr_= move( caching_game_resources_loader_ptr ),
-		player_state_
+		game_state_
 		{
-			.position( 0.0f, 0.0f, 0.0f ),
-			.velocity( 0.0f, 0.0f, 0.0f ),
-			.on_ground= false,
-			.noclip= false,
-			.ground_friction= 0.0f,
+			.player
+			{
+				.position( 0.0f, 0.0f, 0.0f ),
+				.velocity( 0.0f, 0.0f, 0.0f ),
+				.on_ground= false,
+				.noclip= false,
+				.ground_friction= 0.0f,
+			},
 		},
 		camera_rotation_controller_( 0.0f ),
 		prev_time_steps_= 0.0,
@@ -130,18 +133,18 @@ fn Game::TeleportToMap( mut this, u32 map_index )
 
 	prev_time_steps_= 0.0;
 
-	random_= PseudoRandomGenerator( 0u ); // TODO - tweak seed?
+	game_state_.random= PseudoRandomGenerator( 0u ); // TODO - tweak seed?
 
-	entities_.clear();
 
 	var EntitiesDescription& entities_description= entities_description_ptr.deref();
 	auto& zpoz_entities= zpoz_data_nullable.try_deref().entities;
 
+	game_state_.entities.clear();
+
 	// Map source entities 1 to 1 to runtime entities. It's needed for index stability.
+	game_state_.entities.resize( zpoz_entities.size() );
 
-	entities_.resize( zpoz_entities.size() );
-
-	foreach( pair : zpoz_entities.iter().zip( entities_.iter() ) )
+	foreach( pair : zpoz_entities.iter().zip( game_state_.entities.iter() ) )
 	{
 		var ZpozEntity& in_entity= pair.first;
 
@@ -199,7 +202,7 @@ fn Game::TeleportToMap( mut this, u32 map_index )
 
 		if( u32( entity.kind ) == c_player_entity_index )
 		{
-			player_state_=
+			game_state_.player=
 				PlayerState
 				{
 					.position( f32( entity.position[0] ), f32( entity.position[1] ), f32( entity.position[2] ) ),
@@ -271,7 +274,7 @@ fn Game::ProcessMouseButtonPress( mut this, u32 button_index )
 
 		var Vec3f direction_vector( -ust::sin(azimuth) * elevation_cos, ust::cos(azimuth) * elevation_cos, elevation_sin );
 
-		var Vec3f ray_start= GetCameraPositionForPlayer( player_state_ );
+		var Vec3f ray_start= GetCameraPositionForPlayer( game_state_.player );
 
 		if( map_data_.empty() )
 		{
@@ -348,7 +351,7 @@ fn Game::GetWorldDrawingInfo( this ) : WorldDrawingInfo
 	{
 		var EntitiesDescription& entities_description= map_data_.try_deref().entities_description.deref();
 
-		foreach( &entity_opt : entities_ )
+		foreach( &entity_opt : game_state_.entities )
 		{
 			if( entity_opt.empty() )
 			{
@@ -400,7 +403,7 @@ fn Game::GetWorldDrawingInfo( this ) : WorldDrawingInfo
 	return WorldDrawingInfo
 	{
 		.map_index= ( map_data_.empty() ? 0u : map_data_.try_deref().map_index ),
-		.camera_position= GetCameraPositionForPlayer( player_state_ ),
+		.camera_position= GetCameraPositionForPlayer( game_state_.player ),
 		.camera_azimuth= camera_rotation_controller_.GetAzimuth(),
 		.camera_elevation= camera_rotation_controller_.GetElevation(),
 		.model_objects= move(model_objects),
@@ -412,22 +415,22 @@ fn Game::GetWorldDrawingInfo( this ) : WorldDrawingInfo
 
 fn Game::process_noclip( mut this )
 {
-	player_state_.noclip = !player_state_.noclip;
+	game_state_.player.noclip = !game_state_.player.noclip;
 
-	ConsoleOutAddTextLine( console_out_, ( player_state_.noclip ? ust::string_view8( "noclip on" ) : ust::string_view8( "noclip off" ) ) );
+	ConsoleOutAddTextLine( console_out_, ( game_state_.player.noclip ? ust::string_view8( "noclip on" ) : ust::string_view8( "noclip off" ) ) );
 }
 
 fn Game::process_reset_position( mut this )
 {
-	player_state_.position= Vec3f( 0.0f, 0.0f, 0.0f );
-	player_state_.velocity= Vec3f( 0.0f, 0.0f, 0.0f );
+	game_state_.player.position= Vec3f( 0.0f, 0.0f, 0.0f );
+	game_state_.player.velocity= Vec3f( 0.0f, 0.0f, 0.0f );
 	camera_rotation_controller_= CameraRotationController( 0.0f );
 	player_movement_controller_.Reset();
 }
 
 fn Game::process_trigger_player_see( mut this )
 {
-	var Vec3f pos= player_state_.position;
+	var Vec3f pos= game_state_.player.position;
 	if_var( &mut entity : GetNearestEntity( pos ) )
 	{
 		entity.has_seen_player_in_current_operation= true;
@@ -436,7 +439,7 @@ fn Game::process_trigger_player_see( mut this )
 
 fn Game::process_trigger_player_in_shooting_zone( mut this )
 {
-	var Vec3f pos= player_state_.position;
+	var Vec3f pos= game_state_.player.position;
 	if_var( &mut entity : GetNearestEntity( pos ) )
 	{
 		entity.player_is_inside_shooting_zone= true;
@@ -445,7 +448,7 @@ fn Game::process_trigger_player_in_shooting_zone( mut this )
 
 fn Game::process_trigger_energy_loss( mut this )
 {
-	var Vec3f pos= player_state_.position;
+	var Vec3f pos= game_state_.player.position;
 	if_var( &mut entity : GetNearestEntity( pos ) )
 	{
 		entity.lost_energy_in_current_operation= true;
@@ -454,18 +457,18 @@ fn Game::process_trigger_energy_loss( mut this )
 
 fn Game::PerformPlayerStepMovement( mut this )
 {
-	var Vec3f movement_start_position= player_state_.position;
+	var Vec3f movement_start_position= game_state_.player.position;
 
 	ApplyPlayerMovement(
 		game_params_.deref(),
-		player_state_,
+		game_state_.player,
 		camera_rotation_controller_.GetAzimuth(),
 		player_movement_controller_.GetAccumulatedMoveWishVector(),
 		player_movement_controller_.GetJumpRequested() );
 
-	var Vec3f movement_end_position= player_state_.position;
+	var Vec3f movement_end_position= game_state_.player.position;
 
-	if( player_state_.noclip )
+	if( game_state_.player.noclip )
 	{
 		return;
 	}
@@ -479,7 +482,7 @@ fn Game::PerformPlayerStepMovement( mut this )
 	var EntitiesDescription& entities_description= map_data.entities_description.deref();
 
 	// Build colliders for all entities and without player collider (to avoid self-collision).
-	BuildEntityColliders( entities_description, entities_, ~0s, ust::null_optional_ref, entity_colliders_ );
+	BuildEntityColliders( entities_description, game_state_.entities, ~0s, ust::null_optional_ref, entity_colliders_ );
 
 	var CollisionStepMoveResult move_result=
 		CollisionStepMove(
@@ -490,8 +493,8 @@ fn Game::PerformPlayerStepMovement( mut this )
 			movement_start_position,
 			movement_end_position );
 
-	player_state_.position= move_result.trace_clip_result.position_clipped;
-	player_state_.on_ground= move_result.ground_planes_mask != 0u;
+	game_state_.player.position= move_result.trace_clip_result.position_clipped;
+	game_state_.player.on_ground= move_result.ground_planes_mask != 0u;
 
 	var f32 mut ground_friction= 0.0f;
 
@@ -500,7 +503,7 @@ fn Game::PerformPlayerStepMovement( mut this )
 		var CollisionTraceClipResult::CollisionEvent& collision_event= move_result.trace_clip_result.collision_events[i];
 
 		// Clip player's velocity using clip planes of collision result.
-		ClampPlayerVelocity( player_state_, collision_event.plane_normal );
+		ClampPlayerVelocity( game_state_.player, collision_event.plane_normal );
 
 		if( ( move_result.ground_planes_mask & ( 1u << i ) ) != 0u )
 		{
@@ -509,7 +512,7 @@ fn Game::PerformPlayerStepMovement( mut this )
 		}
 	}
 
-	player_state_.ground_friction= ground_friction;
+	game_state_.player.ground_friction= ground_friction;
 }
 
 fn Game::ProcessStep( mut this )
@@ -525,22 +528,23 @@ fn Game::ProcessStep( mut this )
 	var EntitiesDescription& entities_description= map_data.entities_description.deref();
 
 	// Use index-based loop to be able to insert entities.
-	for( auto mut entity_index= 0s; entity_index < entities_.size(); ++entity_index )
+	for( auto mut entity_index= 0s; entity_index < game_state_.entities.size(); ++entity_index )
 	{
-		if( entities_[entity_index].empty() )
+		if( game_state_.entities[entity_index].empty() )
 		{
 			continue;
 		}
 
 		// Build colliders excluding this entity and including the player.
 		// TODO - avoid doing this for each entity.
-		BuildEntityColliders( entities_description, entities_, entity_index, player_state_, entity_colliders_ );
+		BuildEntityColliders(
+			entities_description, game_state_.entities, entity_index, game_state_.player, entity_colliders_ );
 
 		var bool mut need_to_remove_entity= false;
 		var ust::optional</EntityState/> mut new_spawned_entity;
 
 		{
-			var EntityState &mut entity= entities_[entity_index].try_deref();
+			var EntityState &mut entity= game_state_.entities[entity_index].try_deref();
 
 			var EntitiesDescription::EntityDescription& entity_description= entities_description.entities[ entity.kind ];
 
@@ -617,12 +621,12 @@ fn Game::ProcessStep( mut this )
 							var u32 period( randomness[0] );
 							if( entity.num_steps_since_operation_start == period )
 							{
-								if( randomness[2] >= 0 && random_.Next() % 100u <= u32(randomness[1]) )
+								if( randomness[2] >= 0 && game_state_.random.Next() % 100u <= u32(randomness[1]) )
 								{
 									entity.next_operation= u32( randomness[2] );
 									entity.num_steps_left_to_next_operation= 0u;
 								}
-								else if( randomness[4] >= 0 && random_.Next() % 100u <= u32(randomness[3]) )
+								else if( randomness[4] >= 0 && game_state_.random.Next() % 100u <= u32(randomness[3]) )
 								{
 									entity.next_operation= u32( randomness[4] );
 									entity.num_steps_left_to_next_operation= 0u;
@@ -721,7 +725,7 @@ fn Game::ProcessStep( mut this )
 					// This entity can be picked-up.
 					// TODO - identify exact radius and center.
 					var f32 c_pickup_distance= 48.0f;
-					var f32 square_distance= ( player_state_.position - entity.position ).SquareLength();
+					var f32 square_distance= ( game_state_.player.position - entity.position ).SquareLength();
 					if( square_distance < c_pickup_distance * c_pickup_distance )
 					{
 						// Despawn this entity, since it was picked-up.
@@ -786,26 +790,26 @@ fn Game::ProcessStep( mut this )
 
 		if( need_to_remove_entity )
 		{
-			entities_[ entity_index ].reset();
+			game_state_.entities[ entity_index ].reset();
 		}
 
 		// Push new entity into the container.
 		// It's necessary to process it later (within current update step).
 		if( !new_spawned_entity.empty() )
 		{
-			entities_.push_back( new_spawned_entity.try_take() );
+			game_state_.entities.push_back( new_spawned_entity.try_take() );
 		}
 	}
 }
 
 fn Game::GetNearestEntity( mut this, Vec3f& pos ) : ust::optional_ref_mut</EntityState/> @( ust::reference_notation::return_inner_references::param0 )
 {
-	var size_type mut nearest_index= entities_.size();
+	var size_type mut nearest_index= game_state_.entities.size();
 	var f32 mut min_square_distance= 1.0e64f;
 
-	for( auto mut i= 0s; i < entities_.size(); ++i )
+	for( auto mut i= 0s; i < game_state_.entities.size(); ++i )
 	{
-		if_var( &entity : entities_[i] )
+		if_var( &entity : game_state_.entities[i] )
 		{
 			var f32 square_distace= ( pos - entity.position ).SquareLength();
 			if( square_distace < min_square_distance )
@@ -816,12 +820,12 @@ fn Game::GetNearestEntity( mut this, Vec3f& pos ) : ust::optional_ref_mut</Entit
 		}
 	}
 
-	if( nearest_index >= entities_.size() )
+	if( nearest_index >= game_state_.entities.size() )
 	{
 		return ust::null_optional_ref;
 	}
 
-	return entities_[ nearest_index ].as_ref();
+	return game_state_.entities[ nearest_index ].as_ref();
 }
 
 fn Game::GetFrictionForMapQuad( this, u32 quad_index ) : f32
@@ -894,7 +898,12 @@ fn Game::DebugShowEntityBoundingBoxes( mut this )
 		return;
 	}
 
-	BuildEntityColliders( map_data_.try_deref().entities_description.deref(), entities_, ~0s, player_state_, entity_colliders_ );
+	BuildEntityColliders(
+		map_data_.try_deref().entities_description.deref(),
+		game_state_.entities,
+		~0s,
+		game_state_.player,
+		entity_colliders_ );
 
 	var [ u8, 3 ] color[ (255), (0), (255) ];
 
