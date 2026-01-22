@@ -369,8 +369,6 @@ fn CollisionTraceAndClip(
 		]
 	};
 
-	var f32 c_push_eps= 1.0f / 32.0f;
-
 	// Perform several iterations to clip and slide against several planes.
 	// It's needed to resolve collisions in corners properly.
 	for( auto mut movement_iteration= 0s; movement_iteration < CollisionTraceClipResult::c_max_collision_events; ++movement_iteration )
@@ -403,7 +401,7 @@ fn CollisionTraceAndClip(
 			var f32 normal_square_length= trace_result.collision_point_normal.SquareLength();
 			if( normal_square_length > 0.0f )
 			{
-				var Vec3f push_vec= trace_result.collision_point_normal * ( c_push_eps / ust::sqrt( normal_square_length ) );
+				var Vec3f push_vec= trace_result.collision_point_normal * ( c_collider_plane_push_eps / ust::sqrt( normal_square_length ) );
 				new_movement_start_position+= push_vec;
 				new_movement_end_position+= push_vec;
 			}
@@ -486,9 +484,6 @@ fn CollisionStepMove(
 		// Original game has steps with height 16. Add one extra unit to make sure we can climb all stairs.
 		var f32 constexpr c_step_height= 17.0f;
 
-		// Do not move up/down the whole distance to avoid landing exactly on edge of some collider.
-		var f32 c_push_eps= 1.0f / 32.0f;
-
 		// Try performing movement up.
 		var Vec3f up_movement_vector( 0.0f, 0.0f, -c_step_height );
 
@@ -499,8 +494,9 @@ fn CollisionStepMove(
 		{
 			// Movement up is possible - do it.
 
+			// Do not move up the whole distance to avoid landing exactly on edge of some collider.
 			position_with_step_movement.z-=
-				ust::max( 0.0f, ust::min( 1.0f, up_trace_result.clipped_move_distance ) * c_step_height - c_push_eps );
+				ust::max( 0.0f, ust::min( 1.0f, up_trace_result.clipped_move_distance ) * c_step_height - c_collider_plane_push_eps );
 
 			// Try performing sideways movement using the original movement vector but with start position moved up.
 			var Vec3f side_movement_vector= movement_end_position - movement_start_position;
@@ -528,8 +524,9 @@ fn CollisionStepMove(
 					CollisionTrace( zmap_data, zvox_data, extra_colliders, bbox, position_with_step_movement, down_movement_vector );
 				if( down_trace_result.clipped_move_distance > 0.0f && down_trace_result.extra_push.empty() )
 				{
+					// Do not move down the whole distance to avoid landing exactly on edge of some collider.
 					position_with_step_movement.z+=
-						ust::max( 0.0f, ust::min( 1.0f, down_trace_result.clipped_move_distance ) * c_step_height - c_push_eps );
+						ust::max( 0.0f, ust::min( 1.0f, down_trace_result.clipped_move_distance ) * c_step_height - c_collider_plane_push_eps );
 				}
 
 				// Update clip planes and result position.
@@ -545,6 +542,10 @@ fn CollisionStepMove(
 		.ground_planes_mask= ground_planes_mask,
 	};
 }
+
+// Push collision result slightly from collider planes using this amout.
+// It's necessary to avoid numerical precision issues when even a clopped collision leads to result position inside a collider.
+var f32 c_collider_plane_push_eps= 1.0f / 32.0f;
 
 fn GetSlightlyExtendedClusterBBox( ZvoxCluster& cluster ) : BBox3f
 {
