@@ -76,68 +76,72 @@ fn Game::TeleportToMap( mut this, u32 map_index )
 		return;
 	}
 
-	if( !map_data_.empty() &&  map_index == map_data_.try_deref().map_index )
+	if( map_data_.empty() || map_index != map_data_.try_deref().map_index )
 	{
-		return;
-	}
+		// Load map data if teleporting to a map different from current one.
 
-	map_data_.reset();
+		map_data_.reset();
 
-	var ust::optional_ref_imut</MapsDescription::MapDescription/> map_description_opt=
-		maps_description_.deref().maps.find( map_index );
+		var ust::optional_ref_imut</MapsDescription::MapDescription/> map_description_opt=
+			maps_description_.deref().maps.find( map_index );
 
-	if( map_description_opt.empty() )
-	{
-		ConsoleOutAddTextLine( console_out_, ust::concat( "Map with index ", ust::to_string8( map_index ), " not found!" ) );
-		return;
-	}
-
-	var MapsDescription::MapDescription& map_description= map_description_opt.try_deref();
-
-	auto mut lock= caching_game_resources_loader_ptr_.lock_mut();
-	var CachingGameResourcesLoader &mut caching_game_resources_loader= lock.deref();
-
-	// Some maps don't specify entities description file name.
-	// In such case use some default value.
-	// TODO - check if it's correct to use this name.
-	var ResourceString& entities_info_file=
-		( map_description.entities_info_file[0] == '\0'
-			? "ZINF.STD\0\0\0\0\0\0\0\0"
-			: map_description.entities_info_file );
-
-	var GameResourcePtr</EntitiesDescription/> entities_description_ptr=
-		caching_game_resources_loader.LoadEntitiesDescription( entities_info_file );
-
-	var GameResourceNullablePtr</ZmapData/> zmap_data_nullable= caching_game_resources_loader.LoadZmapFile( map_index );
-	var GameResourceNullablePtr</ZvoxData/> zvox_data_nullable= caching_game_resources_loader.LoadZvoxFile( map_index );
-	var GameResourceNullablePtr</ZpozData/> zpoz_data_nullable= caching_game_resources_loader.LoadZpozFile( map_index );
-	var GameResourceNullablePtr</MapaWayData/> mapa_way_data_nullable= caching_game_resources_loader.LoadMapaWayFile( map_index );
-
-	if( zmap_data_nullable.empty() ||
-		zvox_data_nullable.empty() ||
-		zpoz_data_nullable.empty() ||
-		mapa_way_data_nullable.empty() )
-	{
-		return;
-	}
-
-	map_data_=
-		GameMapData
+		if( map_description_opt.empty() )
 		{
-			.map_index= map_index,
-			.entities_description= entities_description_ptr,
-			.zmap_data= zmap_data_nullable.try_to_non_nullable(),
-			.zvox_data= zvox_data_nullable.try_to_non_nullable(),
-			.mapa_way_data= mapa_way_data_nullable.try_to_non_nullable(),
-		};
+			ConsoleOutAddTextLine( console_out_, ust::concat( "Map with index ", ust::to_string8( map_index ), " not found!" ) );
+			return;
+		}
+
+		var MapsDescription::MapDescription& map_description= map_description_opt.try_deref();
+
+		auto mut lock= caching_game_resources_loader_ptr_.lock_mut();
+		var CachingGameResourcesLoader &mut caching_game_resources_loader= lock.deref();
+
+		// Some maps don't specify entities description file name.
+		// In such case use some default value.
+		// TODO - check if it's correct to use this name.
+		var ResourceString& entities_info_file=
+			( map_description.entities_info_file[0] == '\0'
+				? "ZINF.STD\0\0\0\0\0\0\0\0"
+				: map_description.entities_info_file );
+
+		var GameResourcePtr</EntitiesDescription/> entities_description_ptr=
+			caching_game_resources_loader.LoadEntitiesDescription( entities_info_file );
+
+		var GameResourceNullablePtr</ZmapData/> zmap_data_nullable= caching_game_resources_loader.LoadZmapFile( map_index );
+		var GameResourceNullablePtr</ZvoxData/> zvox_data_nullable= caching_game_resources_loader.LoadZvoxFile( map_index );
+		var GameResourceNullablePtr</ZpozData/> zpoz_data_nullable= caching_game_resources_loader.LoadZpozFile( map_index );
+		var GameResourceNullablePtr</MapaWayData/> mapa_way_data_nullable= caching_game_resources_loader.LoadMapaWayFile( map_index );
+
+		if( zmap_data_nullable.empty() ||
+			zvox_data_nullable.empty() ||
+			zpoz_data_nullable.empty() ||
+			mapa_way_data_nullable.empty() )
+		{
+			return;
+		}
+
+		map_data_=
+			GameMapData
+			{
+				.map_index= map_index,
+				.entities_description= entities_description_ptr,
+				.zmap_data= zmap_data_nullable.try_to_non_nullable(),
+				.zvox_data= zvox_data_nullable.try_to_non_nullable(),
+				.zpoz_data= zpoz_data_nullable.try_to_non_nullable(),
+				.mapa_way_data= mapa_way_data_nullable.try_to_non_nullable(),
+			};
+	}
+
+	// Reset game state.
+
+	var GameMapData& map_data= map_data_.try_deref();
 
 	prev_time_steps_= 0.0;
 
 	game_state_.random= PseudoRandomGenerator( 0u ); // TODO - tweak seed?
 
-
-	var EntitiesDescription& entities_description= entities_description_ptr.deref();
-	auto& zpoz_entities= zpoz_data_nullable.try_deref().entities;
+	var EntitiesDescription& entities_description= map_data.entities_description.deref();
+	auto& zpoz_entities= map_data.zpoz_data.deref().entities;
 
 	game_state_.entities.clear();
 
