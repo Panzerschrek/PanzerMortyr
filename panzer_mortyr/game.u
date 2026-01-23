@@ -119,13 +119,17 @@ fn Game::TeleportToMap( mut this, u32 map_index )
 			return;
 		}
 
+		var GameResourcePtr</ZvoxData/> mut zvox_data= zvox_data_nullable.try_to_non_nullable();
+		var GameResourcePtr</ZmapData/> mut zmap_data= zmap_data_nullable.try_to_non_nullable();
+
 		map_data_=
 			GameMapData
 			{
 				.map_index= map_index,
 				.entities_description= entities_description_ptr,
-				.zmap_data= zmap_data_nullable.try_to_non_nullable(),
-				.zvox_data= zvox_data_nullable.try_to_non_nullable(),
+				.quads_hierarchy= BuildQuadsHierarchy( zvox_data.deref().clusters, zmap_data.deref().quads ),
+				.zmap_data= move(zmap_data),
+				.zvox_data= move(zvox_data),
 				.zpoz_data= zpoz_data_nullable.try_to_non_nullable(),
 				.mapa_way_data= mapa_way_data_nullable.try_to_non_nullable(),
 			};
@@ -240,8 +244,12 @@ fn Game::Update( mut this, f32 time_delta_s, ust::array_view_imut</bool/> keyboa
 
 	var u32 prev_step= u32( prev_time_steps_ );
 	var u32 cur_step= u32( cur_time_steps );
-	// Avoid processing too much steps at once (in case of process topeed via debugger).
-	var u32 num_steps_to_process= ust::min( 5u, cur_step - prev_step );
+
+	var u32 num_steps_to_process=
+		( settings_.lock_imut().deref().g_debug_sync_game_logic_steps
+			? 1u
+			// Avoid processing too much steps at once (in case of process topeed via debugger).
+			: ust::min( 5u, cur_step - prev_step ) );
 
 	if( num_steps_to_process > 0u )
 	{
@@ -262,6 +270,28 @@ fn Game::Update( mut this, f32 time_delta_s, ust::array_view_imut</bool/> keyboa
 	if( settings_.lock_imut().deref().g_debug_show_entity_bounding_boxes )
 	{
 		DebugShowEntityBoundingBoxes();
+	}
+
+	if( settings_.lock_imut().deref().g_debug_show_quads_hierarchy )
+	{
+		if( !map_data_.empty() )
+		{
+			CreateQuadsHierarchyLines(
+				map_data_.try_deref().quads_hierarchy,
+				settings_.lock_imut().deref().g_debug_quads_hierarchy_level_to_show,
+				test_lines_ );
+		}
+	}
+
+	if( settings_.lock_imut().deref().g_debug_show_player_position_in_quads_hierarchy )
+	{
+		if( !map_data_.empty() )
+		{
+			CreateLinesForPositionInQuadsHierarchy(
+				map_data_.try_deref().quads_hierarchy,
+				game_state_.player.position,
+				test_lines_ );
+		}
 	}
 }
 
@@ -489,8 +519,7 @@ fn Game::PerformPlayerStepMovement( mut this )
 
 	var CollisionStepMoveResult move_result=
 		CollisionStepMove(
-			map_data.zmap_data.deref(),
-			map_data.zvox_data.deref(),
+			map_data,
 			entity_colliders_,
 			GetPlayerColliderBBox( entities_description ),
 			movement_start_position,
@@ -1021,13 +1050,7 @@ fn MoveEntity(
 	}
 
 	var CollisionStepMoveResult move_result=
-		CollisionStepMove(
-			map_data.zmap_data.deref(),
-			map_data.zvox_data.deref(),
-			extra_colliders,
-			collider_bbox.try_deref(),
-			old_position,
-			new_position );
+		CollisionStepMove( map_data, extra_colliders, collider_bbox.try_deref(), old_position, new_position );
 
 	// Clamp vertical velocity if necessary.
 	for( auto mut i= 0u; i < move_result.trace_clip_result.num_collision_events; ++i )

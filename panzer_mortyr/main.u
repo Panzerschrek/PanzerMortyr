@@ -6,6 +6,7 @@ import "/stdout.u"
 import "console.uh"
 import "game.uh"
 import "opengl_window.uh"
+import "performance_counter.uh"
 import "world_drawer.uh"
 
 pretty_main
@@ -69,9 +70,8 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 
 	var ust::vector</bool/> mut keyboard_state;
 
-	var u64 system_performace_counter_frequency= ( unsafe( SDL_GetPerformanceFrequency() ) );
-
-	var u64 mut prev_frame_time_point= unsafe( SDL_GetPerformanceCounter() );
+	var PerformanceCounter mut performance_counter;
+	var PerformanceCounter::TimePoint mut prev_frame_time_point= performance_counter.GetCurrentTime();
 
 	ConsoleOutAddTextLine( console_out_ptr, "PanzerMortyr initialized!" );
 
@@ -161,10 +161,14 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 			}
 		}
 
-		var u64 cur_frame_time_point=  unsafe( SDL_GetPerformanceCounter() );
+		var PerformanceCounter::TimePoint cur_frame_time_point= performance_counter.GetCurrentTime();
 
-		var f32 time_delta_s= ( f32( cur_frame_time_point ) - f32( prev_frame_time_point ) ) / f32( system_performace_counter_frequency );
+		var f32 time_delta_s= performance_counter.CalculateDurationS( prev_frame_time_point, cur_frame_time_point );
 		var f32 time_delta_s_limited= ust::min( ust::max( 0.0001f, time_delta_s ), 0.1f );
+
+		performance_counter.AddMeasurement( prev_frame_time_point, cur_frame_time_point );
+
+		prev_frame_time_point= cur_frame_time_point;
 
 		game.Update( time_delta_s_limited, keyboard_state );
 		console.Update( time_delta_s );
@@ -178,24 +182,36 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 		console.Draw( text_drawer );
 
 		{
-			var u32 mcs( time_delta_s * 1000000.0f );
-			var [ char8, 9 ] text
+			var f32 average_frame_duration_s= performance_counter.GetAverageDurationS();
+			var f32 fps= 1.0f / average_frame_duration_s;
+
+			var u32 duration_mcs( ust::round( average_frame_duration_s * 1000000.0f ) );
+			var u32 fps100( ust::round( fps * 100.0f ) );
+
+			var [ char8, 19 ] text
 			[
-				( u32('0') + u32( mcs / 1000000u  % 10u ) ),
-				( u32('0') + u32( mcs /  100000u  % 10u ) ),
-				( u32('0') + u32( mcs /   10000u  % 10u ) ),
-				( u32('0') + u32( mcs /    1000u  % 10u ) ),
+				( u32('0') + u32( duration_mcs / 1000000u % 10u ) ),
+				( u32('0') + u32( duration_mcs /  100000u % 10u ) ),
+				( u32('0') + u32( duration_mcs /   10000u % 10u ) ),
+				( u32('0') + u32( duration_mcs /    1000u % 10u ) ),
 				'.',
-				( u32('0') + u32( mcs /     100u  % 10u ) ),
-				( u32('0') + u32( mcs /      10u  % 10u ) ),
-				'm',
-				's',
+				( u32('0') + u32( duration_mcs /     100u % 10u ) ),
+				( u32('0') + u32( duration_mcs /      10u % 10u ) ),
+				'm', 's',
+				'\n',
+				( u32('0') + u32( fps100 /  10000u % 10u ) ),
+				( u32('0') + u32( fps100 /   1000u % 10u ) ),
+				( u32('0') + u32( fps100 /    100u % 10u ) ),
+				'.',
+				( u32('0') + u32( fps100 /     10u % 10u ) ),
+				( u32('0') + u32( fps100 /      1u % 10u ) ),
+				'f', 'p', 's'
 			];
 
 			var [ u32, 2 ] viewport_size= window.GetViewportSize();
 
 			text_drawer.AddText(
-				f32( viewport_size[0] - TextDrawer::c_max_glyph_width * u32( typeinfo</ typeof(text) />.element_count ) ),
+				f32( viewport_size[0] - TextDrawer::c_max_glyph_width * 9u ),
 				f32( viewport_size[1] - TextDrawer::c_glyph_height ),
 				text,
 				TextDrawer::Settings
@@ -211,15 +227,13 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 
 		// If vsync is off it may happen that we are too fast.
 		// In such case wait a little bit.
-		var f32 c_min_frame_delta_s= 4.0f / 1000.0f; // 4ms frame time means 250fps.
-		if( time_delta_s < c_min_frame_delta_s )
+		var f32 min_frame_delta_s= 1.0f / f32( GetMaxFPS( settings_ptr ) );
+		if( time_delta_s < min_frame_delta_s )
 		{
-			var f32 time_to_sleep_s= c_min_frame_delta_s - time_delta_s;
+			var f32 time_to_sleep_s= min_frame_delta_s - time_delta_s;
 			var u32 time_to_sleep_ms( ust::ceil( time_to_sleep_s * 1000.0f ) );
 			unsafe( SDL_Delay( time_to_sleep_ms ) );
 		}
-
-		prev_frame_time_point= cur_frame_time_point;
 	}
 
 	SaveSettings( settings_ptr.lock_imut().deref(), settings_file_path, console_out_ptr );
@@ -291,6 +305,17 @@ struct HostCommandProcessor
 	bool quit_requested= false;
 	Game &mut @('a') game;
 	ConsoleOutPtr& @('b') console_out_ptr;
+}
+
+fn GetMaxFPS( SettingsPtr& settings_ptr ) : u32
+{
+	auto mut lock= settings_ptr.lock_mut();
+	var Settings &mut settings= lock.deref();
+
+	var u32 max_fps= ust::max( 10u, ust::min( settings.r_max_fps, 500u ) );
+	settings.r_max_fps= max_fps;
+
+	return max_fps;
 }
 
 } // namespace PM
