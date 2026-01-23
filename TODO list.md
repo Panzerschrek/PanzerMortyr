@@ -116,8 +116,7 @@ PanzerMortyr game logic:
 * Implement rats.
 * Spawn enemies having trigger box only when player touches this box (usually behind his back).
 * Implement entity state transition caused by injury (but not killing).
-* Speed-up collisions calculation by building some sort of hierarchical structure for map root clusters (like bounding box hierarchy).
-* Speed-up collisions calculation between entities by building some hierarchical structure. Reuse one for clusters? Use quadtree?
+* Speed-up collisions calculation between entities by building some hierarchical structure. Use quadtree or something similar?
 * Implement pushing pushable entities.
 * Perform camera Z coordinate smoothing while climbing steps, so that camera movement doesn't look jaggy.
 
