@@ -131,6 +131,7 @@ fn RayTrace(
 fn CollisionTrace(
 	ZmapData& zmap_data,
 	ZvoxData& zvox_data,
+	QuadsHierarchy& quads_hierarchy,
 	ust::array_view_imut</BBox3f/> extra_colliders,
 	BBox3f& bbox,
 	Vec3f& start_position,
@@ -196,26 +197,14 @@ fn CollisionTrace(
 				ust::max( start_position.z, end_position.z ) ),
 	};
 
-	for( var size_type mut c= 0s; c < zvox_data.clusters.size(); ++c )
-	{
-		var ZvoxCluster& cluster= zvox_data.clusters[c];
-
-		if( !movement_bbox.InstersectsOrTouches( GetSlightlyExtendedClusterBBox( cluster ) ) )
+	VisitQuadsHierarchy(
+		quads_hierarchy,
+		movement_bbox,
+		lambda[&]( size_type c, size_type q )
 		{
-			if( cluster.c.num_children_clusters > 0 )
-			{
-				// Jump over all children clusters - intersection with them isn't possible too.
-				c+= size_type( cluster.c.num_children_clusters );
-			}
-
-			continue;
-		}
-
-		for( var size_type mut q( cluster.c.first_quad_index ), q_end= size_type( cluster.c.first_quad_index ) + size_type( cluster.num_quads );
-			q < q_end;
-			++q )
-		{
+			var ZvoxCluster& cluster= zvox_data.clusters[c];
 			var ZmapQuad& quad= zmap_data.quads[q];
+
 			// TODO - ignore quads with materials passable by player (like water).
 
 			auto& center= cluster.c.center;
@@ -282,8 +271,7 @@ fn CollisionTrace(
 					}
 				}
 			}
-		}
-	}
+		} );
 
 	foreach( &extra_collider : extra_colliders )
 	{
@@ -345,6 +333,7 @@ fn CollisionTrace(
 fn CollisionTraceAndClip(
 	ZmapData& zmap_data,
 	ZvoxData& zvox_data,
+	QuadsHierarchy& quads_hierarchy,
 	ust::array_view_imut</BBox3f/> extra_colliders,
 	BBox3f& bbox,
 	Vec3f mut movement_start_position,
@@ -373,8 +362,16 @@ fn CollisionTraceAndClip(
 		}
 
 		var Vec3f movement_vector= movement_end_position - movement_start_position;
+
 		var TraceCollisionResult trace_result=
-			CollisionTrace( zmap_data, zvox_data, extra_colliders, bbox, movement_start_position, movement_vector );
+			CollisionTrace(
+				zmap_data,
+				zvox_data,
+				quads_hierarchy,
+				extra_colliders,
+				bbox,
+				movement_start_position,
+				movement_vector );
 
 		var Vec3f mut new_movement_start_position=
 			movement_start_position +
@@ -439,6 +436,7 @@ fn CollisionTraceAndClip(
 fn CollisionStepMove(
 	ZmapData& zmap_data,
 	ZvoxData& zvox_data,
+	QuadsHierarchy& quads_hierarchy,
 	ust::array_view_imut</BBox3f/> extra_colliders,
 	BBox3f& bbox,
 	Vec3f movement_start_position,
@@ -448,6 +446,7 @@ fn CollisionStepMove(
 		CollisionTraceAndClip(
 			zmap_data,
 			zvox_data,
+			quads_hierarchy,
 			extra_colliders,
 			bbox,
 			movement_start_position,
@@ -489,7 +488,14 @@ fn CollisionStepMove(
 		var Vec3f up_movement_vector( 0.0f, 0.0f, -c_step_height );
 
 		var TraceCollisionResult up_trace_result=
-			CollisionTrace( zmap_data, zvox_data, extra_colliders, bbox, position_with_step_movement, up_movement_vector );
+			CollisionTrace(
+				zmap_data,
+				zvox_data,
+				quads_hierarchy,
+				extra_colliders,
+				bbox,
+				position_with_step_movement,
+				up_movement_vector );
 
 		if( up_trace_result.clipped_move_distance > 0.0f && up_trace_result.extra_push.empty() )
 		{
@@ -508,6 +514,7 @@ fn CollisionStepMove(
 				CollisionTraceAndClip(
 					zmap_data,
 					zvox_data,
+					quads_hierarchy,
 					extra_colliders,
 					bbox,
 					position_with_step_movement,
@@ -524,7 +531,15 @@ fn CollisionStepMove(
 				var Vec3f down_movement_vector( 0.0f, 0.0f, ust::max( 0.0f, c_step_height + extra_z_movement ) );
 
 				var TraceCollisionResult down_trace_result=
-					CollisionTrace( zmap_data, zvox_data, extra_colliders, bbox, position_with_step_movement, down_movement_vector );
+					CollisionTrace(
+						zmap_data,
+						zvox_data,
+						quads_hierarchy,
+						extra_colliders,
+						bbox,
+						position_with_step_movement,
+						down_movement_vector );
+
 				if( down_trace_result.clipped_move_distance > 0.0f && down_trace_result.extra_push.empty() )
 				{
 					// Do not move down the whole distance to avoid landing exactly on edge of some collider.
