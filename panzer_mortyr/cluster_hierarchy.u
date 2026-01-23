@@ -1,0 +1,150 @@
+import "/sort.u"
+import "cluster_hierarchy.uh"
+
+namespace PM
+{
+
+fn BuildClusterHierarchy( ust::array_view_imut</ZvoxCluster/> clusters ) : ClusterHierarchy
+{
+	var ust::vector</u32/> mut cluster_indices;
+
+	for( auto mut i= 0s; i < clusters.size(); ++i )
+	{
+		if( clusters[i].c.num_children_clusters >= 0 )
+		{
+			cluster_indices.push_back( u32(i) );
+		}
+	}
+
+	var ClusterHierarchy mut hierarchy;
+
+	Build_r( hierarchy, clusters, cluster_indices );
+
+	return hierarchy;
+}
+
+fn Build_r(
+	ClusterHierarchy &mut hierarchy,
+	ust::array_view_imut</ZvoxCluster/> clusters,
+	ust::array_view_mut</u32/> cluster_indices ) : u32
+{
+	var u32 node_index( hierarchy.nodes.size() );
+
+	if( cluster_indices.size() <= 5s )
+	{
+		var ClusterHierarchy::LeafNode mut leaf_node
+		{
+			.first_cluster_index( hierarchy.cluster_indices.size() ),
+			.num_cluster_indices( cluster_indices.size() ),
+		};
+
+		hierarchy.nodes.push_back( move(leaf_node) );
+
+		foreach( cluster_index : cluster_indices )
+		{
+			hierarchy.cluster_indices.push_back( cluster_index );
+		}
+	}
+	else
+	{
+		var BBox3f mut bbox
+		{
+			.min( ust::plus_inf </f32/>(), ust::plus_inf </f32/>(), ust::plus_inf </f32/>() ),
+			.max( ust::minus_inf</f32/>(), ust::minus_inf</f32/>(), ust::minus_inf</f32/>() ),
+		};
+
+		foreach( cluster_index : cluster_indices )
+		{
+			var ZvoxCluster& cluster= clusters[ size_type( cluster_index ) ];
+			ust::min_assign( bbox.min.x, f32( cluster.c.center[0] - cluster.c.bounding_box_half_size[0] ) );
+			ust::min_assign( bbox.min.y, f32( cluster.c.center[1] - cluster.c.bounding_box_half_size[1] ) );
+			ust::min_assign( bbox.min.z, f32( cluster.c.center[2] - cluster.c.bounding_box_half_size[2] ) );
+			ust::max_assign( bbox.max.x, f32( cluster.c.center[0] + cluster.c.bounding_box_half_size[0] ) );
+			ust::max_assign( bbox.max.y, f32( cluster.c.center[1] + cluster.c.bounding_box_half_size[1] ) );
+			ust::max_assign( bbox.max.z, f32( cluster.c.center[2] + cluster.c.bounding_box_half_size[2] ) );
+		}
+
+		hierarchy.nodes.push_back( ClusterHierarchy::BranchNode{ .bbox= bbox, .children_nodes[ 0u, 0u ] } );
+
+		auto compare_center_x= lambda[clusters]( u32 index ) : i32 { return clusters[ size_type(index) ].c.center[0]; };
+		auto compare_center_y= lambda[clusters]( u32 index ) : i32 { return clusters[ size_type(index) ].c.center[1]; };
+		auto compare_center_z= lambda[clusters]( u32 index ) : i32 { return clusters[ size_type(index) ].c.center[2]; };
+
+		var size_type half_clusters= cluster_indices.size() >> 1s;
+
+		var size_type mut smallest_volume_dimension= 0s;
+		var f32 mut smallest_volume= ust::plus_inf</f32/>();
+
+		{
+			ust::sort_by_key( cluster_indices, compare_center_x );
+			var f32 volume=
+				GetClustersVolume( clusters, cluster_indices.subrange_end  ( half_clusters ) ) +
+				GetClustersVolume( clusters, cluster_indices.subrange_start( half_clusters ) );
+			if( volume < smallest_volume )
+			{
+				smallest_volume= volume;
+				smallest_volume_dimension= 0s;
+			}
+		}
+		{
+			ust::sort_by_key( cluster_indices, compare_center_y );
+			var f32 volume=
+				GetClustersVolume( clusters, cluster_indices.subrange_end  ( half_clusters ) ) +
+				GetClustersVolume( clusters, cluster_indices.subrange_start( half_clusters ) );
+			if( volume < smallest_volume )
+			{
+				smallest_volume= volume;
+				smallest_volume_dimension= 1s;
+			}
+		}
+		{
+			ust::sort_by_key( cluster_indices, compare_center_z );
+			var f32 volume=
+				GetClustersVolume( clusters, cluster_indices.subrange_end  ( half_clusters ) ) +
+				GetClustersVolume( clusters, cluster_indices.subrange_start( half_clusters ) );
+			if( volume < smallest_volume )
+			{
+				smallest_volume= volume;
+				smallest_volume_dimension= 2s;
+			}
+		}
+
+		switch( smallest_volume_dimension )
+		{
+			0s-> { ust::sort_by_key( cluster_indices, compare_center_x ); },
+			1s-> { ust::sort_by_key( cluster_indices, compare_center_y ); },
+			2s-> { ust::sort_by_key( cluster_indices, compare_center_z ); },
+			default -> { halt; }
+		}
+
+		var u32 child0= Build_r( hierarchy, clusters, cluster_indices.subrange_end  ( half_clusters ) );
+		var u32 child1= Build_r( hierarchy, clusters, cluster_indices.subrange_start( half_clusters ) );
+
+		hierarchy.nodes[ size_type( node_index ) ].try_get</ClusterHierarchy::BranchNode/>().children_nodes= ust::make_array( child0, child1 );
+	}
+
+	return node_index;
+}
+
+fn GetClustersVolume(
+	ust::array_view_imut</ZvoxCluster/> clusters,
+	ust::array_view_imut</u32/> cluster_indices ) : f32
+{
+	var [ i32, 3 ] mut mins[ 0x7FFFFFFF, 0x7FFFFFFF, 0x7FFFFFFF ], mut maxs[ -0x7FFFFFFF, -0x7FFFFFFF, -0x7FFFFFFF ];
+
+	foreach( cluster_index : cluster_indices )
+	{
+		var ZvoxCluster& cluster= clusters[ size_type( cluster_index ) ];
+
+		for( auto mut i= 0s; i < 3s; ++i )
+		{
+			ust::min_assign( mins[i], cluster.c.center[i] - cluster.c.bounding_box_half_size[i] );
+			ust::max_assign( maxs[i], cluster.c.center[i] + cluster.c.bounding_box_half_size[i] );
+		}
+	}
+
+	return f32( maxs[0] - mins[0] ) * f32( maxs[1] - mins[1] ) * f32( maxs[2] - mins[2] );
+}
+
+} // namespace PM
+
