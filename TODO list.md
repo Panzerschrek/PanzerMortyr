@@ -97,6 +97,7 @@ PanzerMortyr game logic:
 * Implement enemy movement towards the player.
 * Implement decorations movement logic (with mode=11).
 * Implement collisions hack for the one-way passable wall on map 33.
+* Perform some collision hacks to avoid stucking between rails on map 6.
 * Implement crouching for the player.
 * Implement fall damage for player and for entities.
 * Implement shooting logic - with shots colliding with walls and damaging enemies and the player.
@@ -106,6 +107,7 @@ PanzerMortyr game logic:
 * Implement tank-related logic elements.
 * Implement logic elements specific for dog enemies.
 * Implement logic elements specific for gestapo enemies.
+* Implement logic elements specific for nurses.
 * Implement logic specific for multiplayer entities.
 * Consider storing entities rotation using quaternions.
 * Consider extrapolating game logic one or two steps further, using extrapolated data to make movements and animations smooth (mix position, angle, animation) and correcting possible extrapolation errors.
@@ -117,7 +119,7 @@ PanzerMortyr game logic:
 * Speed-up collisions calculation by building some sort of hierarchical structure for map root clusters (like bounding box hierarchy).
 * Speed-up collisions calculation between entities by building some hierarchical structure. Reuse one for clusters? Use quadtree?
 * Implement pushing pushable entities.
-* Fix collisions in some tricky cases, like collision in a sharp corner with 3 planes.
+* Perform camera Z coordinate smoothing while climbing steps, so that camera movement doesn't look jaggy.
 
 PanzerMortyr rendering:
 
