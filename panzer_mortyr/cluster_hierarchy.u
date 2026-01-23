@@ -28,17 +28,34 @@ fn Build_r(
 	ust::array_view_imut</ZvoxCluster/> clusters,
 	ust::array_view_mut</u32/> cluster_indices ) : u32
 {
+	var BBox3f mut bbox
+	{
+		.min( ust::plus_inf </f32/>(), ust::plus_inf </f32/>(), ust::plus_inf </f32/>() ),
+		.max( ust::minus_inf</f32/>(), ust::minus_inf</f32/>(), ust::minus_inf</f32/>() ),
+	};
+
+	foreach( cluster_index : cluster_indices )
+	{
+		var ZvoxCluster& cluster= clusters[ size_type( cluster_index ) ];
+		ust::min_assign( bbox.min.x, f32( cluster.c.center[0] - cluster.c.bounding_box_half_size[0] ) );
+		ust::min_assign( bbox.min.y, f32( cluster.c.center[1] - cluster.c.bounding_box_half_size[1] ) );
+		ust::min_assign( bbox.min.z, f32( cluster.c.center[2] - cluster.c.bounding_box_half_size[2] ) );
+		ust::max_assign( bbox.max.x, f32( cluster.c.center[0] + cluster.c.bounding_box_half_size[0] ) );
+		ust::max_assign( bbox.max.y, f32( cluster.c.center[1] + cluster.c.bounding_box_half_size[1] ) );
+		ust::max_assign( bbox.max.z, f32( cluster.c.center[2] + cluster.c.bounding_box_half_size[2] ) );
+	}
+
 	var u32 node_index( hierarchy.nodes.size() );
 
 	if( cluster_indices.size() <= 5s )
 	{
-		var ClusterHierarchy::LeafNode mut leaf_node
+		var ClusterHierarchy::LeafNodeContents mut leaf_node_contents
 		{
 			.first_cluster_index( hierarchy.cluster_indices.size() ),
 			.num_cluster_indices( cluster_indices.size() ),
 		};
 
-		hierarchy.nodes.push_back( move(leaf_node) );
+		hierarchy.nodes.push_back( ClusterHierarchy::Node{ .bbox= bbox, .contents= move(leaf_node_contents) } );
 
 		foreach( cluster_index : cluster_indices )
 		{
@@ -47,24 +64,9 @@ fn Build_r(
 	}
 	else
 	{
-		var BBox3f mut bbox
-		{
-			.min( ust::plus_inf </f32/>(), ust::plus_inf </f32/>(), ust::plus_inf </f32/>() ),
-			.max( ust::minus_inf</f32/>(), ust::minus_inf</f32/>(), ust::minus_inf</f32/>() ),
-		};
+		var ClusterHierarchy::BranchNodeContents mut branch_node_contents= zero_init; // Set later.
 
-		foreach( cluster_index : cluster_indices )
-		{
-			var ZvoxCluster& cluster= clusters[ size_type( cluster_index ) ];
-			ust::min_assign( bbox.min.x, f32( cluster.c.center[0] - cluster.c.bounding_box_half_size[0] ) );
-			ust::min_assign( bbox.min.y, f32( cluster.c.center[1] - cluster.c.bounding_box_half_size[1] ) );
-			ust::min_assign( bbox.min.z, f32( cluster.c.center[2] - cluster.c.bounding_box_half_size[2] ) );
-			ust::max_assign( bbox.max.x, f32( cluster.c.center[0] + cluster.c.bounding_box_half_size[0] ) );
-			ust::max_assign( bbox.max.y, f32( cluster.c.center[1] + cluster.c.bounding_box_half_size[1] ) );
-			ust::max_assign( bbox.max.z, f32( cluster.c.center[2] + cluster.c.bounding_box_half_size[2] ) );
-		}
-
-		hierarchy.nodes.push_back( ClusterHierarchy::BranchNode{ .bbox= bbox, .children_nodes[ 0u, 0u ] } );
+		hierarchy.nodes.push_back( ClusterHierarchy::Node{ .bbox= bbox, .contents= move(branch_node_contents) } );
 
 		auto compare_center_x= lambda[clusters]( u32 index ) : i32 { return clusters[ size_type(index) ].c.center[0]; };
 		auto compare_center_y= lambda[clusters]( u32 index ) : i32 { return clusters[ size_type(index) ].c.center[1]; };
@@ -120,7 +122,7 @@ fn Build_r(
 		var u32 child0= Build_r( hierarchy, clusters, cluster_indices.subrange_end  ( half_clusters ) );
 		var u32 child1= Build_r( hierarchy, clusters, cluster_indices.subrange_start( half_clusters ) );
 
-		hierarchy.nodes[ size_type( node_index ) ].try_get</ClusterHierarchy::BranchNode/>().children_nodes= ust::make_array( child0, child1 );
+		hierarchy.nodes[ size_type( node_index ) ].contents.try_get</ClusterHierarchy::BranchNodeContents/>().children_nodes= ust::make_array( child0, child1 );
 	}
 
 	return node_index;
