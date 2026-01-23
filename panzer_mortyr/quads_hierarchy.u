@@ -14,7 +14,9 @@ fn BuildQuadsHierarchy(
 	{
 		var ZvoxCluster& cluster= clusters[c];
 
-		for( auto mut q= size_type( cluster.c.first_quad_index ); q < size_type( cluster.c.first_quad_index ) + size_type( cluster.num_quads ); ++q )
+		for( var size_type mut q( cluster.c.first_quad_index ), q_end= size_type( cluster.c.first_quad_index ) + size_type( cluster.num_quads );
+			q < q_end;
+			++q )
 		{
 			quad_indices.push_back( QuadsHierarchy::PackedQuadIndex( c, q ) );
 		}
@@ -42,21 +44,30 @@ fn BuildQuadsHierarchy_r(
 
 	if( quad_indices.size() <= c_max_quads_in_node )
 	{
+		// Have only a few quads left - create leaf node.
+
 		var QuadsHierarchy::LeafNodeContents mut leaf_node_contents
 		{
-			.first_cluster_index( hierarchy.cluster_indices.size() ),
-			.num_cluster_indices( quad_indices.size() ),
+			.first_quad_index( hierarchy.quad_indices.size() ),
+			.num_quad_indices( quad_indices.size() ),
 		};
 
 		hierarchy.nodes.push_back( QuadsHierarchy::Node{ .bbox= bbox, .contents= move(leaf_node_contents) } );
 
 		foreach( &quad_index : quad_indices )
 		{
-			hierarchy.cluster_indices.push_back( quad_index );
+			hierarchy.quad_indices.push_back( quad_index );
 		}
 	}
 	else
 	{
+		// Create two children nodes.
+		// Always split input quads list into two halves with equal (or almost equal) size in order to build balanced tree.
+		//
+		// We can perform 3 ways of splitting using 3 axis (X, Y, Z).
+		// Sort quads by each axis (using center coordinate).
+		// Select the splitting giving the smallest volume of intersection between two children of this node.
+
 		var QuadsHierarchy::BranchNodeContents mut branch_node_contents= zero_init; // Set later.
 
 		hierarchy.nodes.push_back( QuadsHierarchy::Node{ .bbox= bbox, .contents= move(branch_node_contents) } );
@@ -118,7 +129,8 @@ fn BuildQuadsHierarchy_r(
 		var u32 child0= BuildQuadsHierarchy_r( hierarchy, clusters, quads, quad_indices.subrange_end  ( half_clusters ) );
 		var u32 child1= BuildQuadsHierarchy_r( hierarchy, clusters, quads, quad_indices.subrange_start( half_clusters ) );
 
-		hierarchy.nodes[ size_type( node_index ) ].contents.try_get</QuadsHierarchy::BranchNodeContents/>().children_nodes= ust::make_array( child0, child1 );
+		var QuadsHierarchy::Node &mut node= hierarchy.nodes[ size_type( node_index ) ];
+		node.contents.try_get</QuadsHierarchy::BranchNodeContents/>().children_nodes= ust::make_array( child0, child1 );
 	}
 
 	return node_index;
