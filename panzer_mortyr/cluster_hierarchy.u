@@ -4,21 +4,25 @@ import "cluster_hierarchy.uh"
 namespace PM
 {
 
-fn BuildClusterHierarchy( ust::array_view_imut</ZvoxCluster/> clusters ) : ClusterHierarchy
+fn BuildClusterHierarchy(
+	ust::array_view_imut</ZvoxCluster/> clusters,
+	ust::array_view_imut</ZmapQuad/> quads ) : ClusterHierarchy
 {
-	var ust::vector</u16/> mut cluster_indices;
+	var ust::vector</ClusterHierarchy::QuadIndex/> mut quad_indices;
 
-	for( auto mut i= 0s; i < clusters.size(); ++i )
+	for( auto mut c= 0s; c < clusters.size(); ++c )
 	{
-		if( clusters[i].c.num_children_clusters >= 0 )
+		var ZvoxCluster& cluster= clusters[c];
+
+		for( auto mut q= size_type( cluster.c.first_quad_index ); q < size_type( cluster.c.first_quad_index ) + size_type( cluster.num_quads ); ++q )
 		{
-			cluster_indices.push_back( u16(i) );
+			quad_indices.push_back( ClusterHierarchy::QuadIndex{ .cluster_index(c), .quad_index(q) } );
 		}
 	}
 
 	var ClusterHierarchy mut hierarchy;
 
-	Build_r( hierarchy, clusters, cluster_indices );
+	Build_r( hierarchy, clusters, quads, quad_indices );
 
 	return hierarchy;
 }
@@ -26,23 +30,24 @@ fn BuildClusterHierarchy( ust::array_view_imut</ZvoxCluster/> clusters ) : Clust
 fn Build_r(
 	ClusterHierarchy &mut hierarchy,
 	ust::array_view_imut</ZvoxCluster/> clusters,
-	ust::array_view_mut</u16/> cluster_indices ) : u16
+	ust::array_view_imut</ZmapQuad/> quads,
+	ust::array_view_mut</ClusterHierarchy::QuadIndex/> quad_indices ) : u32
 {
-	var BBox3f bbox= GetBBoxForClustersList( clusters, cluster_indices );
+	var BBox3f bbox= GetBBoxForQuadsList( quads, quad_indices );
 
-	var u16 node_index( hierarchy.nodes.size() );
+	var u32 node_index( hierarchy.nodes.size() );
 
-	if( cluster_indices.size() <= 5s )
+	if( quad_indices.size() <= 12s )
 	{
 		var ClusterHierarchy::LeafNodeContents mut leaf_node_contents
 		{
 			.first_cluster_index( hierarchy.cluster_indices.size() ),
-			.num_cluster_indices( cluster_indices.size() ),
+			.num_cluster_indices( quad_indices.size() ),
 		};
 
 		hierarchy.nodes.push_back( ClusterHierarchy::Node{ .bbox= bbox, .contents= move(leaf_node_contents) } );
 
-		foreach( cluster_index : cluster_indices )
+		foreach( cluster_index : quad_indices )
 		{
 			hierarchy.cluster_indices.push_back( cluster_index );
 		}
@@ -53,21 +58,21 @@ fn Build_r(
 
 		hierarchy.nodes.push_back( ClusterHierarchy::Node{ .bbox= bbox, .contents= move(branch_node_contents) } );
 
-		auto compare_center_x= lambda[clusters]( u16 index ) : i32 { return clusters[ size_type(index) ].c.center[0]; };
-		auto compare_center_y= lambda[clusters]( u16 index ) : i32 { return clusters[ size_type(index) ].c.center[1]; };
-		auto compare_center_z= lambda[clusters]( u16 index ) : i32 { return clusters[ size_type(index) ].c.center[2]; };
+		auto compare_center_x= lambda[quads]( ClusterHierarchy::QuadIndex& index ) : i16 { return quads[ size_type(index.quad_index) ].center[0]; };
+		auto compare_center_y= lambda[quads]( ClusterHierarchy::QuadIndex& index ) : i16 { return quads[ size_type(index.quad_index) ].center[1]; };
+		auto compare_center_z= lambda[quads]( ClusterHierarchy::QuadIndex& index ) : i16 { return quads[ size_type(index.quad_index) ].center[2]; };
 
-		var size_type half_clusters= cluster_indices.size() >> 1s;
+		var size_type half_clusters= quad_indices.size() >> 1s;
 
 		var size_type mut smallest_volume_dimension= 0s;
 		var f32 mut smallest_volume= ust::plus_inf</f32/>();
 
 		{
-			ust::sort_by_key( cluster_indices, compare_center_x );
+			ust::sort_by_key( quad_indices, compare_center_x );
 			var f32 volume=
 				CalculateBBoxIntersectionVolume(
-					GetBBoxForClustersList( clusters, cluster_indices.subrange_end  ( half_clusters ) ),
-					GetBBoxForClustersList( clusters, cluster_indices.subrange_start( half_clusters ) ) );
+					GetBBoxForQuadsList( quads, quad_indices.subrange_end  ( half_clusters ) ),
+					GetBBoxForQuadsList( quads, quad_indices.subrange_start( half_clusters ) ) );
 			if( volume < smallest_volume )
 			{
 				smallest_volume= volume;
@@ -75,11 +80,11 @@ fn Build_r(
 			}
 		}
 		{
-			ust::sort_by_key( cluster_indices, compare_center_y );
+			ust::sort_by_key( quad_indices, compare_center_y );
 			var f32 volume=
 				CalculateBBoxIntersectionVolume(
-					GetBBoxForClustersList( clusters, cluster_indices.subrange_end  ( half_clusters ) ),
-					GetBBoxForClustersList( clusters, cluster_indices.subrange_start( half_clusters ) ) );
+					GetBBoxForQuadsList( quads, quad_indices.subrange_end  ( half_clusters ) ),
+					GetBBoxForQuadsList( quads, quad_indices.subrange_start( half_clusters ) ) );
 			if( volume < smallest_volume )
 			{
 				smallest_volume= volume;
@@ -87,11 +92,11 @@ fn Build_r(
 			}
 		}
 		{
-			ust::sort_by_key( cluster_indices, compare_center_z );
+			ust::sort_by_key( quad_indices, compare_center_z );
 			var f32 volume=
 				CalculateBBoxIntersectionVolume(
-					GetBBoxForClustersList( clusters, cluster_indices.subrange_end  ( half_clusters ) ),
-					GetBBoxForClustersList( clusters, cluster_indices.subrange_start( half_clusters ) ) );
+					GetBBoxForQuadsList( quads, quad_indices.subrange_end  ( half_clusters ) ),
+					GetBBoxForQuadsList( quads, quad_indices.subrange_start( half_clusters ) ) );
 			if( volume < smallest_volume )
 			{
 				smallest_volume= volume;
@@ -101,14 +106,14 @@ fn Build_r(
 
 		switch( smallest_volume_dimension )
 		{
-			0s-> { ust::sort_by_key( cluster_indices, compare_center_x ); },
-			1s-> { ust::sort_by_key( cluster_indices, compare_center_y ); },
-			2s-> { ust::sort_by_key( cluster_indices, compare_center_z ); },
+			0s-> { ust::sort_by_key( quad_indices, compare_center_x ); },
+			1s-> { ust::sort_by_key( quad_indices, compare_center_y ); },
+			2s-> { ust::sort_by_key( quad_indices, compare_center_z ); },
 			default -> { halt; }
 		}
 
-		var u16 child0= Build_r( hierarchy, clusters, cluster_indices.subrange_end  ( half_clusters ) );
-		var u16 child1= Build_r( hierarchy, clusters, cluster_indices.subrange_start( half_clusters ) );
+		var u32 child0= Build_r( hierarchy, clusters, quads, quad_indices.subrange_end  ( half_clusters ) );
+		var u32 child1= Build_r( hierarchy, clusters, quads, quad_indices.subrange_start( half_clusters ) );
 
 		hierarchy.nodes[ size_type( node_index ) ].contents.try_get</ClusterHierarchy::BranchNodeContents/>().children_nodes= ust::make_array( child0, child1 );
 	}
@@ -116,9 +121,9 @@ fn Build_r(
 	return node_index;
 }
 
-fn GetBBoxForClustersList(
-	ust::array_view_imut</ZvoxCluster/> clusters,
-	ust::array_view_imut</u16/> cluster_indices ) : BBox3f
+fn GetBBoxForQuadsList(
+	ust::array_view_imut</ZmapQuad/> quads,
+	ust::array_view_imut</ClusterHierarchy::QuadIndex/> quad_indices ) : BBox3f
 {
 	var BBox3f mut bbox
 	{
@@ -126,15 +131,15 @@ fn GetBBoxForClustersList(
 		.max( ust::minus_inf</f32/>(), ust::minus_inf</f32/>(), ust::minus_inf</f32/>() ),
 	};
 
-	foreach( cluster_index : cluster_indices )
+	foreach( quad_index : quad_indices )
 	{
-		var ZvoxCluster& cluster= clusters[ size_type( cluster_index ) ];
-		ust::min_assign( bbox.min.x, f32( cluster.c.center[0] - cluster.c.bounding_box_half_size[0] ) );
-		ust::min_assign( bbox.min.y, f32( cluster.c.center[1] - cluster.c.bounding_box_half_size[1] ) );
-		ust::min_assign( bbox.min.z, f32( cluster.c.center[2] - cluster.c.bounding_box_half_size[2] ) );
-		ust::max_assign( bbox.max.x, f32( cluster.c.center[0] + cluster.c.bounding_box_half_size[0] ) );
-		ust::max_assign( bbox.max.y, f32( cluster.c.center[1] + cluster.c.bounding_box_half_size[1] ) );
-		ust::max_assign( bbox.max.z, f32( cluster.c.center[2] + cluster.c.bounding_box_half_size[2] ) );
+		var ZmapQuad& quad= quads[ size_type( quad_index.quad_index ) ];
+		ust::min_assign( bbox.min.x, f32( i32( quad.center[0] ) - i32( quad.bounding_box_half_size[0] ) ) );
+		ust::min_assign( bbox.min.y, f32( i32( quad.center[1] ) - i32( quad.bounding_box_half_size[1] ) ) );
+		ust::min_assign( bbox.min.z, f32( i32( quad.center[2] ) - i32( quad.bounding_box_half_size[2] ) ) );
+		ust::max_assign( bbox.max.x, f32( i32( quad.center[0] ) + i32( quad.bounding_box_half_size[0] ) ) );
+		ust::max_assign( bbox.max.y, f32( i32( quad.center[1] ) + i32( quad.bounding_box_half_size[1] ) ) );
+		ust::max_assign( bbox.max.z, f32( i32( quad.center[2] ) + i32( quad.bounding_box_half_size[2] ) ) );
 	}
 
 	return bbox;
