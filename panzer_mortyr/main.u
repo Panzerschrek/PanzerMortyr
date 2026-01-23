@@ -6,6 +6,7 @@ import "/stdout.u"
 import "console.uh"
 import "game.uh"
 import "opengl_window.uh"
+import "performance_counter.uh"
 import "world_drawer.uh"
 
 pretty_main
@@ -69,9 +70,8 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 
 	var ust::vector</bool/> mut keyboard_state;
 
-	var u64 system_performace_counter_frequency= ( unsafe( SDL_GetPerformanceFrequency() ) );
-
-	var u64 mut prev_frame_time_point= unsafe( SDL_GetPerformanceCounter() );
+	var PerformanceCounter mut performance_counter;
+	var PerformanceCounter::TimePoint mut prev_frame_time_point= performance_counter.GetCurrentTime();
 
 	ConsoleOutAddTextLine( console_out_ptr, "PanzerMortyr initialized!" );
 
@@ -161,10 +161,14 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 			}
 		}
 
-		var u64 cur_frame_time_point=  unsafe( SDL_GetPerformanceCounter() );
+		var PerformanceCounter::TimePoint cur_frame_time_point= performance_counter.GetCurrentTime();
 
-		var f32 time_delta_s= ( f32( cur_frame_time_point ) - f32( prev_frame_time_point ) ) / f32( system_performace_counter_frequency );
+		var f32 time_delta_s= performance_counter.CalculateDurationS( prev_frame_time_point, cur_frame_time_point );
 		var f32 time_delta_s_limited= ust::min( ust::max( 0.0001f, time_delta_s ), 0.1f );
+
+		performance_counter.AddMeasurement( prev_frame_time_point, cur_frame_time_point );
+
+		prev_frame_time_point= cur_frame_time_point;
 
 		game.Update( time_delta_s_limited, keyboard_state );
 		console.Update( time_delta_s );
@@ -178,7 +182,7 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 		console.Draw( text_drawer );
 
 		{
-			var u32 mcs( time_delta_s * 1000000.0f );
+			var u32 mcs( performance_counter.GetAverageDurationS() * 1000000.0f );
 			var [ char8, 9 ] text
 			[
 				( u32('0') + u32( mcs / 1000000u  % 10u ) ),
@@ -218,8 +222,6 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 			var u32 time_to_sleep_ms( ust::ceil( time_to_sleep_s * 1000.0f ) );
 			unsafe( SDL_Delay( time_to_sleep_ms ) );
 		}
-
-		prev_frame_time_point= cur_frame_time_point;
 	}
 
 	SaveSettings( settings_ptr.lock_imut().deref(), settings_file_path, console_out_ptr );
