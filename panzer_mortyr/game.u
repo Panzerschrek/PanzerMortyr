@@ -1,3 +1,4 @@
+import "/assert.u"
 import "/string_conversions.u"
 import "collisions.uh"
 import "debug_visualization.uh"
@@ -204,6 +205,8 @@ fn Game::TeleportToMap( mut this, u32 map_index )
 	game_state_.colliders.clear();
 	for( auto mut i= 0s; i < game_state_.entities.size(); ++i )
 	{
+		var ust::optional</BBox3f/> mut collider_bbox;
+
 		if_var( &mut entity : game_state_.entities[i] )
 		{
 			var EntitiesDescription::EntityDescription& entity_description=
@@ -212,15 +215,13 @@ fn Game::TeleportToMap( mut this, u32 map_index )
 			if( entity_description.mode == EntitiesDescription::EntityDescription::c_mode_pickup )
 			{
 				// Pick-ups don't collide with other entities.
-				continue;
+				collider_bbox= CreateEntityColliderBBox( entity_description, entity );
 			}
+		}
 
-			auto mut collider= CreateEntityCollider( entity_description, u32(i), entity );
-			if( !collider.empty() )
-			{
-				entity.collider_index= u32( game_state_.colliders.size() );
-				game_state_.colliders.push_back( collider.try_take() );
-			}
+		if( !collider_bbox.empty() )
+		{
+			AddEntityCollider( i, collider_bbox.try_take(), game_state_.entities, game_state_.colliders );
 		}
 	}
 
@@ -588,6 +589,9 @@ fn Game::ProcessStep( mut this )
 			continue;
 		}
 
+		// Remove entity from colliders list before processing collisions - to avoid colliding with itself.
+		RemoveEntityCollider( entity_index, game_state_.entities, game_state_.colliders );
+
 		var bool mut need_to_remove_entity= false;
 		var ust::optional</EntityState/> mut new_spawned_entity;
 
@@ -845,7 +849,30 @@ fn Game::ProcessStep( mut this )
 
 		if( need_to_remove_entity )
 		{
+			RemoveEntityCollider( entity_index, game_state_.entities, game_state_.colliders );
 			game_state_.entities[ entity_index ].reset();
+		}
+
+		// Add entity back to the colliders list (if necessary).
+		{
+			var ust::optional</BBox3f/> mut collider_bbox;
+
+			if_var( &mut entity : game_state_.entities[ entity_index ] )
+			{
+				var EntitiesDescription::EntityDescription& entity_description=
+					entities_description.entities[ size_type( entity.kind ) ];
+
+				// Pick-ups don't collide with other entities.
+				if( entity_description.mode != EntitiesDescription::EntityDescription::c_mode_pickup )
+				{
+					collider_bbox= CreateEntityColliderBBox( entity_description, entity );
+				}
+			}
+
+			if( !collider_bbox.empty() )
+			{
+				AddEntityCollider( entity_index, collider_bbox.try_take(), game_state_.entities, game_state_.colliders );
+			}
 		}
 
 		// Push new entity into the container.
@@ -964,6 +991,58 @@ fn Game::DebugShowEntityBoundingBoxes( mut this )
 	{
 		CreateBBoxLines( collider.bbox, color, test_lines_ );
 	}
+}
+
+fn RemoveEntityCollider(
+	size_type entity_index,
+	ust::array_view_mut</ ust::optional</EntityState/> /> entities,
+	ust::vector</ Collider /> &mut colliders )
+{
+	if( entities[ entity_index ].empty() )
+	{
+		return;
+	}
+
+	var u32 collider_index= entities[ size_type( entity_index ) ].try_deref().collider_index;
+	entities[ size_type( entity_index ) ].try_deref().collider_index= ~0u;
+
+	debug_assert( collider_index == ~0u || size_type( collider_index ) < colliders.size() );
+
+	if( size_type( collider_index ) >= colliders.size() )
+	{
+		return;
+	}
+
+	if( size_type( collider_index ) + 1s == colliders.size() )
+	{
+		colliders.drop_back();
+	}
+	else
+	{
+		var Collider mut last_collider= colliders.pop_back();
+
+		if_var( &mut last_collider_entity : entities[ size_type( last_collider.entity_index ) ] )
+		{
+			last_collider_entity.collider_index= collider_index;
+		}
+
+		colliders[ size_type( collider_index ) ]= move( last_collider );
+	}
+}
+
+fn AddEntityCollider(
+	size_type entity_index,
+	BBox3f mut bbox,
+	ust::array_view_mut</ ust::optional</EntityState/> /> entities,
+	ust::vector</ Collider /> &mut colliders )
+{
+	if_var( &mut entity : entities[ entity_index ] )
+	{
+		debug_assert( entity.collider_index == ~0u );
+		entity.collider_index= u32( colliders.size() );
+		colliders.push_back( Collider{ .bbox= move(bbox), .entity_index( entity_index ) } );
+	}
+	else{ halt; }
 }
 
 fn MoveEntity(
@@ -1323,10 +1402,9 @@ fn ApplyPlayerMovement(
 	player_state.position+= player_state.velocity;
 }
 
-fn CreateEntityCollider(
+fn CreateEntityColliderBBox(
 	EntitiesDescription::EntityDescription& entity_description,
-	u32 entity_index,
-	EntityState& entity ) : ust::optional</Collider/>
+	EntityState& entity ) : ust::optional</BBox3f/>
 {
 	var EntitiesDescription::Operation& operation=
 		entity_description.operations[ size_type( entity.current_operation ) ];
@@ -1367,12 +1445,7 @@ fn CreateEntityCollider(
 		collider_bbox= BBox3f{ .min= bbox_center - bbox_half_size, .max= bbox_center + bbox_half_size };
 	}
 
-	if( !collider_bbox.empty() )
-	{
-		return Collider{ .bbox= collider_bbox.try_take(), .entity_index= entity_index };
-	}
-
-	return ust::null_optional;
+	return collider_bbox;
 }
 
 fn RotateEntityBBox( Vec3f &mut bbox_half_size, f32 azimuth )
