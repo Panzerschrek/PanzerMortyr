@@ -205,24 +205,7 @@ fn Game::TeleportToMap( mut this, u32 map_index )
 	game_state_.colliders.clear();
 	for( auto mut i= 0s; i < game_state_.entities.size(); ++i )
 	{
-		var ust::optional</BBox3f/> mut collider_bbox;
-
-		if_var( &mut entity : game_state_.entities[i] )
-		{
-			var EntitiesDescription::EntityDescription& entity_description=
-				entities_description.entities[ size_type( entity.kind ) ];
-
-			if( entity_description.mode == EntitiesDescription::EntityDescription::c_mode_pickup )
-			{
-				// Pick-ups don't collide with other entities.
-				collider_bbox= CreateEntityColliderBBox( entity_description, entity );
-			}
-		}
-
-		if( !collider_bbox.empty() )
-		{
-			AddEntityCollider( i, collider_bbox.try_take(), game_state_.entities, game_state_.colliders );
-		}
+		AddEntityCollider( entities_description, i, game_state_.entities, game_state_.colliders );
 	}
 
 	// Find player spawn.
@@ -854,26 +837,7 @@ fn Game::ProcessStep( mut this )
 		}
 
 		// Add entity back to the colliders list (if necessary).
-		{
-			var ust::optional</BBox3f/> mut collider_bbox;
-
-			if_var( &mut entity : game_state_.entities[ entity_index ] )
-			{
-				var EntitiesDescription::EntityDescription& entity_description=
-					entities_description.entities[ size_type( entity.kind ) ];
-
-				// Pick-ups don't collide with other entities.
-				if( entity_description.mode != EntitiesDescription::EntityDescription::c_mode_pickup )
-				{
-					collider_bbox= CreateEntityColliderBBox( entity_description, entity );
-				}
-			}
-
-			if( !collider_bbox.empty() )
-			{
-				AddEntityCollider( entity_index, collider_bbox.try_take(), game_state_.entities, game_state_.colliders );
-			}
-		}
+		AddEntityCollider( entities_description, entity_index, game_state_.entities, game_state_.colliders );
 
 		// Push new entity into the container.
 		// It's necessary to process it later (within current update step).
@@ -993,6 +957,72 @@ fn Game::DebugShowEntityBoundingBoxes( mut this )
 	}
 }
 
+fn AddEntityCollider(
+	EntitiesDescription& entities_description,
+	size_type entity_index,
+	ust::array_view_mut</ ust::optional</EntityState/> /> entities,
+	ust::vector</ Collider /> &mut colliders )
+{
+	if_var( &mut entity : entities[ entity_index ] )
+	{
+		debug_assert( entity.collider_index == ~0u, "Should not add entity collider if already has one!" );
+
+		var EntitiesDescription::EntityDescription& entity_description=
+			entities_description.entities[ size_type( entity.kind ) ];
+
+		if( entity_description.mode == EntitiesDescription::EntityDescription::c_mode_pickup )
+		{
+			// Pick-ups don't collide with other entities.
+			return;
+		}
+
+		var EntitiesDescription::Operation& operation=
+			entity_description.operations[ size_type( entity.current_operation ) ];
+
+		var ust::optional</BBox3f/> mut collider_bbox;
+
+		foreach( &anim : operation.animations )
+		{
+			if( anim.num_steps == 0u )
+			{
+				continue;
+			}
+
+			if( anim.bounding_box_half_size_x == 0 ||
+				anim.bounding_box_half_size_y == 0 ||
+				anim.bounding_box_half_size_z == 0 )
+			{
+				// Entities with at least one zero collider dimentsion don't collide with each other.
+				continue;
+			}
+
+			var Vec3f mut bbox_half_size(
+				f32( anim.bounding_box_half_size_x ),
+				f32( anim.bounding_box_half_size_y ),
+				f32( anim.bounding_box_half_size_z ) );
+
+			RotateEntityBBox( bbox_half_size, entity.azimuth );
+
+			var Vec3f bbox_center=
+				entity.position +
+				Vec3f(
+					f32( anim.bounding_box_center_x ),
+					f32( anim.bounding_box_center_y ),
+					f32( anim.bounding_box_center_z ) );
+
+			// Usually we have only one collision box.
+			// The only exception is the tank enemy on map 24. In this case use the last one collider - it's good enough.
+			collider_bbox= BBox3f{ .min= bbox_center - bbox_half_size, .max= bbox_center + bbox_half_size };
+		}
+
+		if( !collider_bbox.empty() )
+		{
+			entity.collider_index= u32( colliders.size() );
+			colliders.push_back( Collider{ .bbox= collider_bbox.try_take(), .entity_index( entity_index ) } );
+		}
+	}
+}
+
 fn RemoveEntityCollider(
 	size_type entity_index,
 	ust::array_view_mut</ ust::optional</EntityState/> /> entities,
@@ -1006,7 +1036,7 @@ fn RemoveEntityCollider(
 	var u32 collider_index= entities[ size_type( entity_index ) ].try_deref().collider_index;
 	entities[ size_type( entity_index ) ].try_deref().collider_index= ~0u;
 
-	debug_assert( collider_index == ~0u || size_type( collider_index ) < colliders.size() );
+	debug_assert( collider_index == ~0u || size_type( collider_index ) < colliders.size(), "Invalid collider index!" );
 
 	if( size_type( collider_index ) >= colliders.size() )
 	{
@@ -1028,21 +1058,6 @@ fn RemoveEntityCollider(
 
 		colliders[ size_type( collider_index ) ]= move( last_collider );
 	}
-}
-
-fn AddEntityCollider(
-	size_type entity_index,
-	BBox3f mut bbox,
-	ust::array_view_mut</ ust::optional</EntityState/> /> entities,
-	ust::vector</ Collider /> &mut colliders )
-{
-	if_var( &mut entity : entities[ entity_index ] )
-	{
-		debug_assert( entity.collider_index == ~0u );
-		entity.collider_index= u32( colliders.size() );
-		colliders.push_back( Collider{ .bbox= move(bbox), .entity_index( entity_index ) } );
-	}
-	else{ halt; }
 }
 
 fn MoveEntity(
@@ -1400,52 +1415,6 @@ fn ApplyPlayerMovement(
 	}
 
 	player_state.position+= player_state.velocity;
-}
-
-fn CreateEntityColliderBBox(
-	EntitiesDescription::EntityDescription& entity_description,
-	EntityState& entity ) : ust::optional</BBox3f/>
-{
-	var EntitiesDescription::Operation& operation=
-		entity_description.operations[ size_type( entity.current_operation ) ];
-
-	var ust::optional</BBox3f/> mut collider_bbox;
-
-	foreach( &anim : operation.animations )
-	{
-		if( anim.num_steps == 0u )
-		{
-			continue;
-		}
-
-		if( anim.bounding_box_half_size_x == 0 ||
-			anim.bounding_box_half_size_y == 0 ||
-			anim.bounding_box_half_size_z == 0 )
-		{
-			// Entities with at least one zero collider dimentsion don't collide with each other.
-			continue;
-		}
-
-		var Vec3f mut bbox_half_size(
-			f32( anim.bounding_box_half_size_x ),
-			f32( anim.bounding_box_half_size_y ),
-			f32( anim.bounding_box_half_size_z ) );
-
-		RotateEntityBBox( bbox_half_size, entity.azimuth );
-
-		var Vec3f bbox_center=
-			entity.position +
-			Vec3f(
-				f32( anim.bounding_box_center_x ),
-				f32( anim.bounding_box_center_y ),
-				f32( anim.bounding_box_center_z ) );
-
-		// Usually we have only one collision box.
-		// The only exception is the tank enemy on map 24. In this case use the last one collider - it's good enough.
-		collider_bbox= BBox3f{ .min= bbox_center - bbox_half_size, .max= bbox_center + bbox_half_size };
-	}
-
-	return collider_bbox;
 }
 
 fn RotateEntityBBox( Vec3f &mut bbox_half_size, f32 azimuth )
