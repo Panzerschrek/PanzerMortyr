@@ -83,7 +83,10 @@ PanzerMortyr general:
 
 PanzerMortyr game logic:
 
-* Implement interactions with buttons, doors, elevators.
+* Implement proper collisions (for the player and entities) with quads of dynamic clusters like buttons, doors, elevators.
+	This should include pushing of entities (if it's possible).
+* Implement doors and elevators triggered by touching.
+* Implement doors and elevators triggered by a button push, including buttons requiring a key.
 * Implement player's weapons logic (shooting, ammo management).
 * Implement player's death.
 * Implement transition to next level.
@@ -116,9 +119,10 @@ PanzerMortyr game logic:
 * Implement rats.
 * Spawn enemies having trigger box only when player touches this box (usually behind his back).
 * Implement entity state transition caused by injury (but not killing).
-* Speed-up collisions calculation between entities by building some hierarchical structure. Use quadtree or something similar?
 * Implement pushing pushable entities.
 * Perform camera Z coordinate smoothing while climbing steps, so that camera movement doesn't look jaggy.
+* Don't perform collisions with map quads with collisions disabled via materials property (like water and maybe sky).
+* Turn-off collisions with map quads which were broken (like glass).
 
 PanzerMortyr rendering:
 
