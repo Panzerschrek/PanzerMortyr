@@ -30,9 +30,6 @@ fn WorldDrawer::constructor(
 		model_shader_(
 			embed</char8/>( "shaders/model.vert.glsl" ),
 			embed</char8/>( "shaders/model.frag.glsl" ) ),
-		test_sprite_shader_(
-			embed</char8/>( "shaders/test_sprite.vert.glsl" ),
-			embed</char8/>( "shaders/test_sprite.frag.glsl" ) ),
 		test_primitive_shader_(
 			embed</char8/>( "shaders/test_primitive.vert.glsl" ),
 			embed</char8/>( "shaders/test_primitive.frag.glsl" ) ),
@@ -332,17 +329,31 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 
 	if( !drawing_info.test_sprites.empty() )
 	{
-		test_sprite_shader_.Bind();
-
 		unsafe( glPointSize( 8.0f ) );
 
-		foreach( &v : drawing_info.test_sprites )
-		{
-			// Assuming we have only a handful of test sprites, just set transformation matrix for each of them individually.
-			// Do not bother filling a vertex buffer.
-			test_sprite_shader_.SetUniform( "vu_matrix", Mat4f::MakeTranslation( v ) * view_matrix );
-			unsafe( glDrawArrays( GLenum( GL_POINTS ), GLint(0), GLint(1) ) );
-		}
+		test_primitive_vertex_array_object_.Bind();
+		test_primitive_vertex_buffer_object_.Bind();
+
+		scoped_array TestPrimitiveVertex vertices[ drawing_info.test_sprites.size() ](
+			drawing_info.test_sprites.iter().map(
+				lambda( Vec3f& p ) : TestPrimitiveVertex
+				{
+					return TestPrimitiveVertex
+					{
+						.position[ p.x, p.y, p.z ],
+						.color[ 0u8, 255u8, 0u8 ],
+						.padding15= zero_init,
+					};
+				} ) );
+
+		auto range= vertices.to_byte8_range();
+
+		unsafe( glBufferSubData( GLenum( GL_ARRAY_BUFFER ), GLintptr(0), GLsizeiptr( range.size() ), range.data() ) );
+
+		test_primitive_shader_.Bind();
+		test_primitive_shader_.SetUniform( "vu_matrix", view_matrix );
+
+		unsafe( glDrawArrays( GLenum( GL_POINTS ), GLint(0), GLint( vertices.size() ) ) );
 
 		unsafe( glPointSize( 1.0f ) );
 	}
@@ -376,7 +387,7 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 		unsafe( glBufferSubData( GLenum( GL_ARRAY_BUFFER ), GLintptr(0), GLsizeiptr( range.size() ), range.data() ) );
 
 		test_primitive_shader_.Bind();
-		test_sprite_shader_.SetUniform( "vu_matrix", view_matrix );
+		test_primitive_shader_.SetUniform( "vu_matrix", view_matrix );
 
 		unsafe( glDrawArrays( GLenum( GL_TRIANGLES ), GLint(0), GLint( vertices_imut.size() ) ) );
 	}
@@ -410,7 +421,7 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 		unsafe( glBufferSubData( GLenum( GL_ARRAY_BUFFER ), GLintptr(0), GLsizeiptr( range.size() ), range.data() ) );
 
 		test_primitive_shader_.Bind();
-		test_sprite_shader_.SetUniform( "vu_matrix", view_matrix );
+		test_primitive_shader_.SetUniform( "vu_matrix", view_matrix );
 
 		unsafe( glDrawArrays( GLenum( GL_LINES ), GLint(0), GLint( vertices_imut.size() ) ) );
 	}
