@@ -82,16 +82,15 @@ fn Game::TeleportToMap( mut this, u32 map_index )
 
 		map_data_.reset();
 
-		var ust::optional_ref_imut</MapsDescription::MapDescription/> map_description_opt=
-			maps_description_.deref().maps.find( map_index );
+		var MapsDescription& maps_description= maps_description_.deref();
 
-		if( map_description_opt.empty() )
+		if( size_type(map_index) >= maps_description.maps.size() )
 		{
 			ConsoleOutAddTextLine( console_out_, ust::concat( "Map with index ", ust::to_string8( map_index ), " not found!" ) );
 			return;
 		}
 
-		var MapsDescription::MapDescription& map_description= map_description_opt.try_deref();
+		var MapsDescription::MapDescription& map_description= maps_description.maps[ size_type( map_index ) ];
 
 		auto mut lock= caching_game_resources_loader_ptr_.lock_mut();
 		var CachingGameResourcesLoader &mut caching_game_resources_loader= lock.deref();
@@ -166,14 +165,15 @@ fn Game::TeleportToMap( mut this, u32 map_index )
 			continue;
 		}
 
-		if_var( &entity_description : entities_description.entities.find( u32( in_entity.kind ) ) )
+		if( size_type( in_entity.kind ) >= entities_description.entities.size() )
 		{
-			if( !entity_description.operations.exists( c_start_operation ) )
-			{
-				continue;
-			}
+			continue;
 		}
-		else
+
+		var EntitiesDescription::EntityDescription& entity_description=
+			entities_description.entities[ size_type( in_entity.kind ) ];
+
+		if( size_type( c_start_operation ) >= entity_description.operations.size() )
 		{
 			continue;
 		}
@@ -393,15 +393,14 @@ fn Game::GetWorldDrawingInfo( this ) : WorldDrawingInfo
 
 			var EntityState& entity= entity_opt.try_deref();
 
-			var EntitiesDescription::EntityDescription& entity_description= entities_description.entities[ entity.kind ];
+			var EntitiesDescription::EntityDescription& entity_description= entities_description.entities[ size_type( entity.kind ) ];
 
-			auto operation_opt= entity_description.operations.find( entity.current_operation );
-			if( operation_opt.empty() )
+			if( size_type( entity.current_operation ) >= entity_description.operations.size() )
 			{
 				continue;
 			}
 
-			var EntitiesDescription::Operation& operation= entity_description.operations[ entity.current_operation ];
+			var EntitiesDescription::Operation& operation= entity_description.operations[ size_type( entity.current_operation ) ];
 
 			foreach( pair :
 				ust::array_view_imut</EntitiesDescription::OperationAnimationDescription/>( operation.animations ).iter().zip(
@@ -414,12 +413,12 @@ fn Game::GetWorldDrawingInfo( this ) : WorldDrawingInfo
 					continue;
 				}
 
-				auto animation_opt= entities_description.animations.find( operation_animation_description.animation_number );
-				if( animation_opt.empty() )
+				var size_type a( operation_animation_description.animation_number );
+				if( a >= entities_description.animations.size() )
 				{
 					continue;
 				}
-				var EntitiesDescription::AnimationDescription& animation= animation_opt.try_deref();
+				var EntitiesDescription::AnimationDescription& animation= entities_description.animations[a];
 
 				model_objects.push_back(
 					WorldDrawingInfo::ModelObject
@@ -578,12 +577,14 @@ fn Game::ProcessStep( mut this )
 		{
 			var EntityState &mut entity= game_state_.entities[entity_index].try_deref();
 
-			var EntitiesDescription::EntityDescription& entity_description= entities_description.entities[ entity.kind ];
+			var EntitiesDescription::EntityDescription& entity_description=
+				entities_description.entities[ size_type( entity.kind ) ];
 
 			// Perform operation transition (if necessary).
 
 			{
-				var EntitiesDescription::Operation& operation= entity_description.operations[ entity.current_operation ];
+				var EntitiesDescription::Operation& operation=
+					entity_description.operations[ size_type( entity.current_operation ) ];
 
 				// TODO - determine exact priorities of different operation transition conditions.
 
@@ -724,9 +725,12 @@ fn Game::ProcessStep( mut this )
 
 					if( entity.num_steps_since_operation_start == supply_drop.time )
 					{
-						if_var( &new_entity_description : entities_description.entities.find( supply_drop.special_object ) )
+						if( size_type( supply_drop.special_object ) < entities_description.entities.size() )
 						{
-							if( new_entity_description.operations.exists( c_start_operation ) )
+							var EntitiesDescription::EntityDescription& new_entity_description=
+								entities_description.entities[ size_type( supply_drop.special_object ) ];
+
+							if( size_type( c_start_operation ) < new_entity_description.operations.size() )
 							{
 								new_spawned_entity.reset(
 									EntityState
@@ -770,7 +774,7 @@ fn Game::ProcessStep( mut this )
 
 				if( entity.next_operation != ~0u && entity.num_steps_left_to_next_operation == 0u )
 				{
-					if( entity_description.operations.exists( entity.next_operation ) )
+					if( size_type( entity.next_operation ) < entity_description.operations.size() )
 					{
 						entity.current_operation= entity.next_operation;
 						entity.next_operation= ~0u;
@@ -789,7 +793,8 @@ fn Game::ProcessStep( mut this )
 				}
 			}
 
-			var EntitiesDescription::Operation& operation= entity_description.operations[ entity.current_operation ];
+			var EntitiesDescription::Operation& operation=
+				entity_description.operations[ size_type( entity.current_operation ) ];
 
 			// Perform entity movement.
 			MoveEntity( map_data, entity_colliders_, entity, entity_description, operation );
@@ -880,8 +885,12 @@ fn Game::GetFrictionForMapQuad( this, u32 quad_index ) : f32
 
 	var ZmapQuad& quad= zmap_data.quads[ size_type( quad_index ) ];
 
-	if_var( &map_description : maps_description_.deref().maps.find( map_data.map_index ) )
+	var MapsDescription& maps_description= maps_description_.deref();
+
+	if( size_type( map_data.map_index ) < maps_description.maps.size() )
 	{
+		var MapsDescription::MapDescription& map_description= maps_description.maps[ size_type( map_data.map_index ) ];
+
 		if_var( &materials_block : materials_description_.deref().blocks.find( map_description.materials_block ) )
 		{
 			var size_type constexpr num_materials_in_texture=
@@ -1341,7 +1350,8 @@ fn BuildEntityColliders(
 
 		var EntityState& entity= entity_opt.try_deref();
 
-		var EntitiesDescription::EntityDescription& entity_description= entities_description.entities[ entity.kind ];
+		var EntitiesDescription::EntityDescription& entity_description=
+			entities_description.entities[ size_type( entity.kind ) ];
 
 		if( entity_description.mode == EntitiesDescription::EntityDescription::c_mode_pickup )
 		{
@@ -1349,7 +1359,8 @@ fn BuildEntityColliders(
 			continue;
 		}
 
-		var EntitiesDescription::Operation& operation= entity_description.operations[ entity.current_operation ];
+		var EntitiesDescription::Operation& operation=
+			entity_description.operations[ size_type( entity.current_operation ) ];
 
 		foreach( &anim : operation.animations )
 		{
@@ -1444,11 +1455,16 @@ fn GetPlayerColliderBBox( EntitiesDescription& entities_description ) : BBox3f
 		.max(  14.0f,  14.0f, 0.0f ),
 	};
 
-	if_var( &entity_description : entities_description.entities.find( 0u ) )
+	var size_type player_entity_kind= 0s;
+
+	if( player_entity_kind < entities_description.entities.size() )
 	{
-		foreach( &op_pair : entity_description.operations )
+		var EntitiesDescription::EntityDescription& entity_description=
+			entities_description.entities[ player_entity_kind ];
+
+		foreach( &operation : entity_description.operations )
 		{
-			foreach( &animation : op_pair.value().animations )
+			foreach( &animation : operation.animations )
 			{
 				if( animation.num_steps != 0u &&
 					animation.bounding_box_half_size_x != 0 &&
