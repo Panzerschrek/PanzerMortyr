@@ -109,105 +109,13 @@ fn Game::TeleportToMap( mut this, u32 map_index )
 
 	var GameMapData& map_data= map_data_.try_deref();
 
+	game_state_= CreateNewMapGameState( map_data );
+
 	prev_time_steps_= 0.0;
 
-	game_state_.random= PseudoRandomGenerator( 0u ); // TODO - tweak seed?
-
-	var EntitiesDescription& entities_description= map_data.entities_description.deref();
-	auto& zpoz_entities= map_data.zpoz_data.deref().entities;
-
-	game_state_.entities.clear();
-
-	// Map source entities 1 to 1 to runtime entities. It's needed for index stability.
-	game_state_.entities.resize( zpoz_entities.size() );
-
-	foreach( pair : zpoz_entities.iter().zip( game_state_.entities.iter() ) )
-	{
-		var ZpozEntity& in_entity= pair.first;
-
-		if( in_entity.alive_flag == 0u16 )
-		{
-			continue;
-		}
-
-		if( u32( in_entity.kind ) == c_player_entity_index )
-		{
-			// Do not place player spawn entities.
-			continue;
-		}
-
-		if( size_type( in_entity.kind ) >= entities_description.entities.size() )
-		{
-			continue;
-		}
-
-		var EntitiesDescription::EntityDescription& entity_description=
-			entities_description.entities[ size_type( in_entity.kind ) ];
-
-		if( size_type( c_start_operation ) >= entity_description.operations.size() )
-		{
-			continue;
-		}
-
-		pair.second=
-			EntityState
-			{
-				.kind( in_entity.kind ),
-				.position( f32( in_entity.position[0] ), f32( in_entity.position[1] ), f32( in_entity.position[2] ) ),
-				.azimuth( Convert1024Angle( f32( in_entity.data[4] ) ) ),
-				.current_operation= c_start_operation,
-				.next_operation= ~0u,
-				.num_steps_since_operation_start= 0u,
-				.num_steps_left_to_next_operation= ~0u,
-				.navigation_info_index( in_entity.data[16] ),
-				.target_navigation_graph_node= ~0u,
-				.current_navigation_graph_node= ~0u,
-				.has_seen_player_in_current_operation= false,
-				.player_is_inside_shooting_zone= false,
-				.lost_energy_in_current_operation= false,
-				.animation_frames= zero_init, // Set exact frames later.
-				.velocity_z= 0.0f,
-				.collider_index= ~0u,
-			};
-	}
-
-	// Build colliders for entities.
-	game_state_.colliders.clear();
-	for( auto mut i= 0s; i < game_state_.entities.size(); ++i )
-	{
-		AddEntityCollider( entities_description, i, game_state_ );
-	}
-
-	// Find player spawn.
-	foreach( &entity : zpoz_entities )
-	{
-		if( entity.alive_flag == 0u16 )
-		{
-			continue;
-		}
-
-		if( u32( entity.kind ) == c_player_entity_index )
-		{
-			game_state_.player=
-				PlayerState
-				{
-					.position( f32( entity.position[0] ), f32( entity.position[1] ), f32( entity.position[2] ) ),
-					.velocity( 0.0f, 0.0f, 0.0f ),
-					.on_ground= false,
-					.noclip= false,
-					.ground_friction= 0.0f,
-					.collider_index= ~0u,
-				};
-
-			AddPlayerCollider( entities_description, game_state_ );
-
-			// Reset possible rotation and movement state.
-			camera_rotation_controller_= CameraRotationController( Convert1024Angle( f32( entity.data[4] ) ) );
-			player_movement_controller_.Reset();
-
-			break;
-		}
-	}
+	// Reset possible rotation and movement state.
+	camera_rotation_controller_= CameraRotationController( 0.0f /* TODO - set proper angle */ );
+	player_movement_controller_.Reset();
 }
 
 fn Game::Update( mut this, f32 time_delta_s, ust::array_view_imut</bool/> keyboard_state )
@@ -490,6 +398,114 @@ fn Game::process_trigger_energy_loss( mut this )
 	{
 		entity.lost_energy_in_current_operation= true;
 	}
+}
+
+fn CreateNewMapGameState( GameMapData& map_data ) : GameState
+{
+	var GameState mut game_state
+	{
+		.player
+		{
+			.position( 0.0f, 0.0f, 0.0f ),
+			.velocity( 0.0f, 0.0f, 0.0f ),
+			.on_ground= false,
+			.noclip= false,
+			.ground_friction= 0.0f,
+			.collider_index= ~0u,
+		},
+	};
+
+	var EntitiesDescription& entities_description= map_data.entities_description.deref();
+	auto& zpoz_entities= map_data.zpoz_data.deref().entities;
+
+	// Map source entities 1 to 1 to runtime entities. It's needed for index stability.
+	game_state.entities.resize( zpoz_entities.size() );
+
+	foreach( pair : zpoz_entities.iter().zip( game_state.entities.iter() ) )
+	{
+		var ZpozEntity& in_entity= pair.first;
+
+		if( in_entity.alive_flag == 0u16 )
+		{
+			continue;
+		}
+
+		if( u32( in_entity.kind ) == c_player_entity_index )
+		{
+			// Do not place player spawn entities.
+			continue;
+		}
+
+		if( size_type( in_entity.kind ) >= entities_description.entities.size() )
+		{
+			continue;
+		}
+
+		var EntitiesDescription::EntityDescription& entity_description=
+			entities_description.entities[ size_type( in_entity.kind ) ];
+
+		if( size_type( c_start_operation ) >= entity_description.operations.size() )
+		{
+			continue;
+		}
+
+		pair.second=
+			EntityState
+			{
+				.kind( in_entity.kind ),
+				.position( f32( in_entity.position[0] ), f32( in_entity.position[1] ), f32( in_entity.position[2] ) ),
+				.azimuth( Convert1024Angle( f32( in_entity.data[4] ) ) ),
+				.current_operation= c_start_operation,
+				.next_operation= ~0u,
+				.num_steps_since_operation_start= 0u,
+				.num_steps_left_to_next_operation= ~0u,
+				.navigation_info_index( in_entity.data[16] ),
+				.target_navigation_graph_node= ~0u,
+				.current_navigation_graph_node= ~0u,
+				.has_seen_player_in_current_operation= false,
+				.player_is_inside_shooting_zone= false,
+				.lost_energy_in_current_operation= false,
+				.animation_frames= zero_init, // Set exact frames later.
+				.velocity_z= 0.0f,
+				.collider_index= ~0u,
+			};
+	}
+
+	// Build colliders for entities.
+	game_state.colliders.clear();
+	for( auto mut i= 0s; i < game_state.entities.size(); ++i )
+	{
+		AddEntityCollider( entities_description, i, game_state );
+	}
+
+	// Find player spawn.
+	foreach( &entity : zpoz_entities )
+	{
+		if( entity.alive_flag == 0u16 )
+		{
+			continue;
+		}
+
+		if( u32( entity.kind ) == c_player_entity_index )
+		{
+			game_state.player=
+				PlayerState
+				{
+					.position( f32( entity.position[0] ), f32( entity.position[1] ), f32( entity.position[2] ) ),
+					.velocity( 0.0f, 0.0f, 0.0f ),
+					.on_ground= false,
+					.noclip= false,
+					.ground_friction= 0.0f,
+					.collider_index= ~0u,
+				};
+
+			AddPlayerCollider( entities_description, game_state );
+
+			break;
+		}
+	}
+
+	return game_state;
 }
 
 fn Game::PerformPlayerStepMovement(
