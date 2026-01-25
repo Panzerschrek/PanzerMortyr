@@ -76,6 +76,7 @@ PanzerMortyr general:
 * Implement loading screen.
 * Extend existing setting menus/add new ones for extra options specific for PanzerMortyr.
 * Allow changing controls.
+* Allow setting mouse sensitivity.
 * Allow setting fullscreen mode with possible resolution changing and/or in "desktop fullscreen" mode.
 * Play cinematics at start.
 * Cache or even preload weapon models to avoid reloading them after level transition.
