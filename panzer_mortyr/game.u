@@ -235,9 +235,17 @@ fn Game::Update( mut this, f32 time_delta_s, ust::array_view_imut</bool/> keyboa
 
 	if( num_steps_to_process > 0u )
 	{
-		for( auto mut i= 0u; i < num_steps_to_process; ++i )
+		if_var( &map_data : map_data_ )
 		{
-			ProcessStep();
+			for( auto mut i= 0u; i < num_steps_to_process; ++i )
+			{
+				ProcessStep(
+					global_data_,
+					map_data,
+					camera_rotation_controller_,
+					player_movement_controller_,
+					game_state_ );
+			}
 		}
 
 		player_movement_controller_.Reset();
@@ -547,40 +555,39 @@ fn Game::PerformPlayerStepMovement(
 	AddPlayerCollider( map_data.entities_description.deref(), game_state );
 }
 
-fn Game::ProcessStep( mut this )
+fn Game::ProcessStep(
+	GameGlobalData& global_data,
+	GameMapData& map_data,
+	CameraRotationController& camera_rotation_controller,
+	PlayerMovementController& player_movement_controller,
+	GameState &mut game_state )
 {
 
-	if( map_data_.empty() )
-	{
-		return;
-	}
-
-	var GameMapData& map_data= map_data_.try_deref();
 	var EntitiesDescription& entities_description= map_data.entities_description.deref();
 
 	PerformPlayerStepMovement(
-		global_data_,
+		global_data,
 		map_data,
-		camera_rotation_controller_,
-		player_movement_controller_,
-		game_state_ );
+		camera_rotation_controller,
+		player_movement_controller,
+		game_state );
 
 	// Use index-based loop to be able to insert entities.
-	for( auto mut entity_index= 0s; entity_index < game_state_.entities.size(); ++entity_index )
+	for( auto mut entity_index= 0s; entity_index < game_state.entities.size(); ++entity_index )
 	{
-		if( game_state_.entities[entity_index].empty() )
+		if( game_state.entities[entity_index].empty() )
 		{
 			continue;
 		}
 
 		// Remove entity from colliders list before processing collisions - to avoid colliding with itself.
-		RemoveEntityCollider( entity_index, game_state_ );
+		RemoveEntityCollider( entity_index, game_state );
 
 		var bool mut need_to_remove_entity= false;
 		var ust::optional</EntityState/> mut new_spawned_entity;
 
 		{
-			var EntityState &mut entity= game_state_.entities[entity_index].try_deref();
+			var EntityState &mut entity= game_state.entities[entity_index].try_deref();
 
 			var EntitiesDescription::EntityDescription& entity_description=
 				entities_description.entities[ size_type( entity.kind ) ];
@@ -659,12 +666,12 @@ fn Game::ProcessStep( mut this )
 							var u32 period( randomness[0] );
 							if( entity.num_steps_since_operation_start == period )
 							{
-								if( randomness[2] >= 0 && game_state_.random.Next() % 100u <= u32(randomness[1]) )
+								if( randomness[2] >= 0 && game_state.random.Next() % 100u <= u32(randomness[1]) )
 								{
 									entity.next_operation= u32( randomness[2] );
 									entity.num_steps_left_to_next_operation= 0u;
 								}
-								else if( randomness[4] >= 0 && game_state_.random.Next() % 100u <= u32(randomness[3]) )
+								else if( randomness[4] >= 0 && game_state.random.Next() % 100u <= u32(randomness[3]) )
 								{
 									entity.next_operation= u32( randomness[4] );
 									entity.num_steps_left_to_next_operation= 0u;
@@ -767,7 +774,7 @@ fn Game::ProcessStep( mut this )
 					// This entity can be picked-up.
 					// TODO - identify exact radius and center.
 					var f32 c_pickup_distance= 48.0f;
-					var f32 square_distance= ( game_state_.player.position - entity.position ).SquareLength();
+					var f32 square_distance= ( game_state.player.position - entity.position ).SquareLength();
 					if( square_distance < c_pickup_distance * c_pickup_distance )
 					{
 						// Despawn this entity, since it was picked-up.
@@ -803,7 +810,7 @@ fn Game::ProcessStep( mut this )
 				entity_description.operations[ size_type( entity.current_operation ) ];
 
 			// Perform entity movement.
-			MoveEntity( map_data, game_state_.colliders, entity, entity_description, operation );
+			MoveEntity( map_data, game_state.colliders, entity, entity_description, operation );
 
 			// Calculate current frame based on animation params.
 			// TODO - perform different animation logic for different animation kinds.
@@ -833,22 +840,22 @@ fn Game::ProcessStep( mut this )
 
 		if( need_to_remove_entity )
 		{
-			RemoveEntityCollider( entity_index, game_state_ );
-			game_state_.entities[ entity_index ].reset();
+			RemoveEntityCollider( entity_index, game_state );
+			game_state.entities[ entity_index ].reset();
 		}
 		else
 		{
 			// Add entity back to the colliders list (if necessary).
-			AddEntityCollider( entities_description, entity_index, game_state_ );
+			AddEntityCollider( entities_description, entity_index, game_state );
 		}
 
 		// Push new entity into the container.
 		// It's necessary to process it later (within current update step).
 		if( !new_spawned_entity.empty() )
 		{
-			var size_type new_entity_index= game_state_.entities.size();
-			game_state_.entities.push_back( new_spawned_entity.try_take() );
-			AddEntityCollider( entities_description, new_entity_index, game_state_ );
+			var size_type new_entity_index= game_state.entities.size();
+			game_state.entities.push_back( new_spawned_entity.try_take() );
+			AddEntityCollider( entities_description, new_entity_index, game_state );
 		}
 	}
 }
