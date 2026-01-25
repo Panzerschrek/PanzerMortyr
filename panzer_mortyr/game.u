@@ -484,45 +484,44 @@ fn Game::process_trigger_energy_loss( mut this )
 	}
 }
 
-fn Game::PerformPlayerStepMovement( mut this )
+fn Game::PerformPlayerStepMovement(
+	GameGlobalData& global_data,
+	GameMapData& map_data,
+	CameraRotationController& camera_rotation_controller,
+	PlayerMovementController& player_movement_controller,
+	GameState &mut game_state )
 {
 	// Remove player collider before moving the player - to avoid self-collisions.
-	RemovePlayerCollider( game_state_ );
+	RemovePlayerCollider( game_state );
 
-	var Vec3f movement_start_position= game_state_.player.position;
+	var Vec3f movement_start_position= game_state.player.position;
 
 	ApplyPlayerMovement(
-		global_data_.game_params.deref(),
-		game_state_.player,
-		camera_rotation_controller_.GetAzimuth(),
-		player_movement_controller_.GetAccumulatedMoveWishVector(),
-		player_movement_controller_.GetJumpRequested() );
+		global_data.game_params.deref(),
+		game_state.player,
+		camera_rotation_controller.GetAzimuth(),
+		player_movement_controller.GetAccumulatedMoveWishVector(),
+		player_movement_controller.GetJumpRequested() );
 
-	var Vec3f movement_end_position= game_state_.player.position;
+	var Vec3f movement_end_position= game_state.player.position;
 
-	if( game_state_.player.noclip )
+	if( game_state.player.noclip )
 	{
 		return;
 	}
 
-	if( map_data_.empty() )
-	{
-		return;
-	}
-
-	var GameMapData& map_data= map_data_.try_deref();
 	var EntitiesDescription& entities_description= map_data.entities_description.deref();
 
 	var CollisionStepMoveResult move_result=
 		CollisionStepMove(
 			map_data,
-			game_state_.colliders,
+			game_state.colliders,
 			GetPlayerColliderBBox( entities_description ),
 			movement_start_position,
 			movement_end_position );
 
-	game_state_.player.position= move_result.trace_clip_result.position_clipped;
-	game_state_.player.on_ground= move_result.ground_planes_mask != 0u;
+	game_state.player.position= move_result.trace_clip_result.position_clipped;
+	game_state.player.on_ground= move_result.ground_planes_mask != 0u;
 
 	var f32 mut ground_friction= 0.0f;
 
@@ -531,24 +530,25 @@ fn Game::PerformPlayerStepMovement( mut this )
 		var CollisionTraceClipResult::CollisionEvent& collision_event= move_result.trace_clip_result.collision_events[i];
 
 		// Clip player's velocity using clip planes of collision result.
-		ClampPlayerVelocity( game_state_.player, collision_event.plane_normal );
+		ClampPlayerVelocity( game_state.player, collision_event.plane_normal );
 
 		if( ( move_result.ground_planes_mask & ( 1u << i ) ) != 0u )
 		{
 			// Use maximum friction of all ground quads.
-			ust::max_assign( ground_friction, GetFrictionForMapQuad( collision_event.collision_quad_index ) );
+			ust::max_assign(
+				ground_friction,
+				GetFrictionForMapQuad( global_data, map_data, collision_event.collision_quad_index ) );
 		}
 	}
 
-	game_state_.player.ground_friction= ground_friction;
+	game_state.player.ground_friction= ground_friction;
 
 	// After the player was moved, add his collider back.
-	AddPlayerCollider( map_data.entities_description.deref(), game_state_ );
+	AddPlayerCollider( map_data.entities_description.deref(), game_state );
 }
 
 fn Game::ProcessStep( mut this )
 {
-	PerformPlayerStepMovement();
 
 	if( map_data_.empty() )
 	{
@@ -557,6 +557,13 @@ fn Game::ProcessStep( mut this )
 
 	var GameMapData& map_data= map_data_.try_deref();
 	var EntitiesDescription& entities_description= map_data.entities_description.deref();
+
+	PerformPlayerStepMovement(
+		global_data_,
+		map_data,
+		camera_rotation_controller_,
+		player_movement_controller_,
+		game_state_ );
 
 	// Use index-based loop to be able to insert entities.
 	for( auto mut entity_index= 0s; entity_index < game_state_.entities.size(); ++entity_index )
@@ -872,19 +879,14 @@ fn Game::GetNearestEntity( mut this, Vec3f& pos ) : ust::optional_ref_mut</Entit
 	return game_state_.entities[ nearest_index ].as_ref();
 }
 
-fn Game::GetFrictionForMapQuad( this, u32 quad_index ) : f32
+fn Game::GetFrictionForMapQuad( GameGlobalData& global_data, GameMapData& map_data, u32 quad_index ) : f32
 {
-	var MaterialsProperties& materials_properties= global_data_.materials_properties.deref();
+	var MaterialsProperties& materials_properties= global_data.materials_properties.deref();
 
 	var f32 default_friction(
 		( materials_properties.empty() ? 1u : materials_properties.front().player_step_friction ) );
 
-	if( map_data_.empty() )
-	{
-		return default_friction;
-	}
 
-	var GameMapData& map_data= map_data_.try_deref();
 	var ZmapData& zmap_data= map_data.zmap_data.deref();
 
 	if( size_type( quad_index ) >= zmap_data.quads.size() )
@@ -894,13 +896,13 @@ fn Game::GetFrictionForMapQuad( this, u32 quad_index ) : f32
 
 	var ZmapQuad& quad= zmap_data.quads[ size_type( quad_index ) ];
 
-	var MapsDescription& maps_description= global_data_.maps_description.deref();
+	var MapsDescription& maps_description= global_data.maps_description.deref();
 
 	if( size_type( map_data.map_index ) < maps_description.maps.size() )
 	{
 		var MapsDescription::MapDescription& map_description= maps_description.maps[ size_type( map_data.map_index ) ];
 
-		if_var( &materials_block : global_data_.materials_description.deref().blocks.find( map_description.materials_block ) )
+		if_var( &materials_block : global_data.materials_description.deref().blocks.find( map_description.materials_block ) )
 		{
 			var size_type constexpr num_materials_in_texture=
 				size_type( MaterialsDescription::c_texture_file_num_tiles_x * MaterialsDescription::c_texture_file_num_tiles_y );
