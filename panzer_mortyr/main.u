@@ -75,12 +75,14 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 	var ust::vector</bool/> mut keyboard_state;
 
 	var PerformanceCounter mut performance_counter;
-	var PerformanceCounter::TimePoint mut prev_frame_time_point= performance_counter.GetCurrentTime();
+	var PerformanceCounter::TimePoint mut prev_frame_start_time_point= performance_counter.GetCurrentTime();
 
 	ConsoleOutAddTextLine( console_out_ptr, "PanzerMortyr initialized!" );
 
 	loop label main_loop
 	{
+		var PerformanceCounter::TimePoint cur_frame_start_time_point= performance_counter.GetCurrentTime();
+
 		var bool mut had_console_toggle_event= false;
 
 		var [ i32, 2 ] mut mouse_motion[ 0, 0 ];
@@ -186,14 +188,12 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 			}
 		}
 
-		var PerformanceCounter::TimePoint cur_frame_time_point= performance_counter.GetCurrentTime();
-
-		var f32 time_delta_s= performance_counter.CalculateDurationS( prev_frame_time_point, cur_frame_time_point );
+		var f32 time_delta_s= performance_counter.CalculateDurationS( prev_frame_start_time_point, cur_frame_start_time_point );
 		var f32 time_delta_s_limited= ust::min( ust::max( 0.0001f, time_delta_s ), 0.1f );
 
-		performance_counter.AddMeasurement( prev_frame_time_point, cur_frame_time_point );
+		performance_counter.AddMeasurement( prev_frame_start_time_point, cur_frame_start_time_point );
 
-		prev_frame_time_point= cur_frame_time_point;
+		prev_frame_start_time_point= cur_frame_start_time_point;
 
 		game.Update( time_delta_s_limited, keyboard_state, mouse_motion );
 		console.Update( time_delta_s );
@@ -251,14 +251,20 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 
 		window.SwapWindow();
 
-		// If vsync is off it may happen that we are too fast.
-		// In such case wait a little bit.
-		var f32 min_frame_delta_s= 1.0f / f32( GetMaxFPS( settings_ptr ) );
-		if( time_delta_s < min_frame_delta_s )
 		{
-			var f32 time_to_sleep_s= min_frame_delta_s - time_delta_s;
-			var u32 time_to_sleep_ms( ust::ceil( time_to_sleep_s * 1000.0f ) );
-			unsafe( SDL_Delay( time_to_sleep_ms ) );
+			var PerformanceCounter::TimePoint cur_frame_end_time_point= performance_counter.GetCurrentTime();
+			var f32 frame_duration_excluding_waiting_s=
+				performance_counter.CalculateDurationS( cur_frame_start_time_point, cur_frame_end_time_point );
+
+			// If vsync is off, it may happen, that we are too fast.
+			// In such case wait a little bit.
+			var f32 min_frame_delta_s= 1.0f / f32( GetMaxFPS( settings_ptr ) );
+			if( frame_duration_excluding_waiting_s < min_frame_delta_s )
+			{
+				var f32 time_to_sleep_s= min_frame_delta_s - frame_duration_excluding_waiting_s;
+				var u32 time_to_sleep_ms( ust::floor( time_to_sleep_s * 1000.0f ) );
+				unsafe( SDL_Delay( time_to_sleep_ms ) );
+			}
 		}
 	}
 
