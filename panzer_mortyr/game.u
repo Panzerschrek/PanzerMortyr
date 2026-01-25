@@ -19,19 +19,6 @@ fn Game::constructor(
 		console_out_= move(console_out),
 		global_data_= LoadGlobalData( caching_game_resources_loader_ptr ),
 		caching_game_resources_loader_ptr_= move( caching_game_resources_loader_ptr ),
-		game_state_
-		{
-			.player
-			{
-				.position( 0.0f, 0.0f, 0.0f ),
-				.azimuth= 0.0f,
-				.velocity( 0.0f, 0.0f, 0.0f ),
-				.on_ground= false,
-				.noclip= false,
-				.ground_friction= 0.0f,
-				.collider_index= ~0u,
-			},
-		},
 		camera_rotation_controller_( 0.0f ),
 		prev_time_steps_= 0.0,
 	)
@@ -108,14 +95,12 @@ fn Game::TeleportToMap( mut this, u32 map_index )
 
 	// Reset game state.
 
-	var GameMapData& map_data= map_data_.try_deref();
-
-	game_state_= CreateNewMapGameState( map_data );
-
 	prev_time_steps_= 0.0;
 
+	game_state_= CreateNewMapGameState( map_data_.try_deref() );
+
 	// Reset possible rotation and movement state.
-	camera_rotation_controller_= CameraRotationController( game_state_.player.azimuth );
+	camera_rotation_controller_= CameraRotationController( game_state_.try_deref().player.azimuth );
 	player_movement_controller_.Reset();
 }
 
@@ -144,8 +129,11 @@ fn Game::Update( mut this, f32 time_delta_s, ust::array_view_imut</bool/> keyboa
 
 	if( num_steps_to_process > 0u )
 	{
-		if_var( &map_data : map_data_ )
+		if( !map_data_.empty() && !game_state_.empty() )
 		{
+			var GameMapData& map_data= map_data_.try_deref();
+			var GameState &mut game_state= game_state_.try_deref();
+
 			for( auto mut i= 0u; i < num_steps_to_process; ++i )
 			{
 				ProcessStep(
@@ -153,7 +141,7 @@ fn Game::Update( mut this, f32 time_delta_s, ust::array_view_imut</bool/> keyboa
 					map_data,
 					camera_rotation_controller_,
 					player_movement_controller_,
-					game_state_ );
+					game_state );
 			}
 		}
 
@@ -167,6 +155,14 @@ fn Game::ProcessMouseButtonPress( mut this, u32 button_index )
 {
 	if( button_index == 1u )
 	{
+		if( map_data_.empty() || game_state_.empty() )
+		{
+			return;
+		}
+
+		var GameMapData& map_data= map_data_.try_deref();
+		var GameState& game_state= game_state_.try_deref();
+
 		var f32 azimuth= camera_rotation_controller_.GetAzimuth();
 		var f32 elevation= camera_rotation_controller_.GetElevation();
 
@@ -175,14 +171,8 @@ fn Game::ProcessMouseButtonPress( mut this, u32 button_index )
 
 		var Vec3f direction_vector( -ust::sin(azimuth) * elevation_cos, ust::cos(azimuth) * elevation_cos, elevation_sin );
 
-		var Vec3f ray_start= GetCameraPositionForPlayer( game_state_.player );
+		var Vec3f ray_start= GetCameraPositionForPlayer( game_state.player );
 
-		if( map_data_.empty() )
-		{
-			return;
-		}
-
-		var GameMapData& map_data= map_data_.try_deref();
 		var ZmapData& zmap_data= map_data.zmap_data.deref();
 		var ZvoxData& zvox_data= map_data.zvox_data.deref();
 
@@ -246,13 +236,23 @@ fn Game::ProcessMouseButtonPress( mut this, u32 button_index )
 
 fn Game::GetWorldDrawingInfo( this ) : WorldDrawingInfo
 {
+	var u32 mut map_index= 0u;
+	var Vec3f mut camera_position( 0.0f, 0.0f, 0.0f );
+
 	var ust::vector</WorldDrawingInfo::ModelObject/> mut model_objects;
+	var ust::vector</WorldDrawingInfo::TestLine/> mut test_lines;
 
-	if( !map_data_.empty() )
+	if( !map_data_.empty() && !game_state_.empty() )
 	{
-		var EntitiesDescription& entities_description= map_data_.try_deref().entities_description.deref();
+		var GameMapData& map_data= map_data_.try_deref();
+		var GameState& game_state= game_state_.try_deref();
 
-		foreach( &entity_opt : game_state_.entities )
+		map_index= map_data.map_index;
+		camera_position= GetCameraPositionForPlayer( game_state.player );
+
+		var EntitiesDescription& entities_description= map_data.entities_description.deref();
+
+		foreach( &entity_opt : game_state.entities )
 		{
 			if( entity_opt.empty() )
 			{
@@ -298,46 +298,44 @@ fn Game::GetWorldDrawingInfo( this ) : WorldDrawingInfo
 					} );
 				}
 		}
-	}
 
-	var ust::vector</WorldDrawingInfo::TestLine/> mut test_lines;
-
-	if( settings_.lock_imut().deref().g_debug_show_entity_bounding_boxes )
-	{
-		var [ u8, 3 ] color[ (255), (0), (255) ];
-
-		foreach( &collider : game_state_.colliders )
+		if( settings_.lock_imut().deref().g_debug_show_entity_bounding_boxes )
 		{
-			CreateBBoxLines( collider.bbox, color, test_lines );
+			var [ u8, 3 ] color[ (255), (0), (255) ];
+
+			foreach( &collider : game_state.colliders )
+			{
+				CreateBBoxLines( collider.bbox, color, test_lines );
+			}
 		}
-	}
 
-	if( settings_.lock_imut().deref().g_debug_show_quads_hierarchy )
-	{
-		if( !map_data_.empty() )
+		if( settings_.lock_imut().deref().g_debug_show_quads_hierarchy )
 		{
-			CreateQuadsHierarchyLines(
-				map_data_.try_deref().quads_hierarchy,
-				settings_.lock_imut().deref().g_debug_quads_hierarchy_level_to_show,
-				test_lines );
+			if( !map_data_.empty() )
+			{
+				CreateQuadsHierarchyLines(
+					map_data_.try_deref().quads_hierarchy,
+					settings_.lock_imut().deref().g_debug_quads_hierarchy_level_to_show,
+					test_lines );
+			}
 		}
-	}
 
-	if( settings_.lock_imut().deref().g_debug_show_player_position_in_quads_hierarchy )
-	{
-		if( !map_data_.empty() )
+		if( settings_.lock_imut().deref().g_debug_show_player_position_in_quads_hierarchy )
 		{
-			CreateLinesForPositionInQuadsHierarchy(
-				map_data_.try_deref().quads_hierarchy,
-				game_state_.player.position,
-				test_lines );
+			if( !map_data_.empty() )
+			{
+				CreateLinesForPositionInQuadsHierarchy(
+					map_data_.try_deref().quads_hierarchy,
+					game_state.player.position,
+					test_lines );
+			}
 		}
 	}
 
 	return WorldDrawingInfo
 	{
-		.map_index= ( map_data_.empty() ? 0u : map_data_.try_deref().map_index ),
-		.camera_position= GetCameraPositionForPlayer( game_state_.player ),
+		.map_index= map_index,
+		.camera_position= camera_position,
 		.camera_azimuth= camera_rotation_controller_.GetAzimuth(),
 		.camera_elevation= camera_rotation_controller_.GetElevation(),
 		.model_objects= move(model_objects),
@@ -349,55 +347,67 @@ fn Game::GetWorldDrawingInfo( this ) : WorldDrawingInfo
 
 fn Game::process_noclip( mut this )
 {
-	game_state_.player.noclip = !game_state_.player.noclip;
-
-	ConsoleOutAddTextLine( console_out_, ( game_state_.player.noclip ? ust::string_view8( "noclip on" ) : ust::string_view8( "noclip off" ) ) );
-
-	if( game_state_.player.noclip )
+	if_var( &mut game_state : game_state_ )
 	{
-		RemovePlayerCollider( game_state_ );
-	}
-	else
-	{
-		if( !map_data_.empty() )
+		game_state.player.noclip = !game_state.player.noclip;
+
+		ConsoleOutAddTextLine( console_out_, ( game_state.player.noclip ? ust::string_view8( "noclip on" ) : ust::string_view8( "noclip off" ) ) );
+
+		if( game_state.player.noclip )
 		{
-			AddPlayerCollider( map_data_.try_deref().entities_description.deref(), game_state_ );
+			RemovePlayerCollider( game_state );
+		}
+		else
+		{
+			if( !map_data_.empty() )
+			{
+				AddPlayerCollider( map_data_.try_deref().entities_description.deref(), game_state );
+			}
 		}
 	}
 }
 
 fn Game::process_reset_position( mut this )
 {
-	game_state_.player.position= Vec3f( 0.0f, 0.0f, 0.0f );
-	game_state_.player.velocity= Vec3f( 0.0f, 0.0f, 0.0f );
+	if_var( &mut game_state : game_state_ )
+	{
+		game_state.player.position= Vec3f( 0.0f, 0.0f, 0.0f );
+		game_state.player.velocity= Vec3f( 0.0f, 0.0f, 0.0f );
+	}
 	camera_rotation_controller_= CameraRotationController( 0.0f );
 	player_movement_controller_.Reset();
 }
 
 fn Game::process_trigger_player_see( mut this )
 {
-	var Vec3f pos= game_state_.player.position;
-	if_var( &mut entity : GetNearestEntity( pos ) )
+	if_var( &mut game_state : game_state_ )
 	{
-		entity.has_seen_player_in_current_operation= true;
+		if_var( &mut entity : GetNearestEntity( game_state.entities, game_state.player.position ) )
+		{
+			entity.has_seen_player_in_current_operation= true;
+		}
 	}
 }
 
 fn Game::process_trigger_player_in_shooting_zone( mut this )
 {
-	var Vec3f pos= game_state_.player.position;
-	if_var( &mut entity : GetNearestEntity( pos ) )
+	if_var( &mut game_state : game_state_ )
 	{
-		entity.player_is_inside_shooting_zone= true;
+		if_var( &mut entity : GetNearestEntity( game_state.entities, game_state.player.position ) )
+		{
+			entity.player_is_inside_shooting_zone= true;
+		}
 	}
 }
 
 fn Game::process_trigger_energy_loss( mut this )
 {
-	var Vec3f pos= game_state_.player.position;
-	if_var( &mut entity : GetNearestEntity( pos ) )
+	if_var( &mut game_state : game_state_ )
 	{
-		entity.lost_energy_in_current_operation= true;
+		if_var( &mut entity : GetNearestEntity( game_state.entities, game_state.player.position ) )
+		{
+			entity.lost_energy_in_current_operation= true;
+		}
 	}
 }
 
@@ -880,14 +890,15 @@ fn Game::ProcessStep(
 	}
 }
 
-fn Game::GetNearestEntity( mut this, Vec3f& pos ) : ust::optional_ref_mut</EntityState/> @( ust::reference_notation::return_inner_references::param0 )
+fn Game::GetNearestEntity( ust::array_view_mut</ ust::optional</EntityState/> /> entities, Vec3f& pos )
+	: ust::optional_ref_mut</EntityState/> @( ust::reference_notation::return_inner_references::param0_inner_reference0 )
 {
-	var size_type mut nearest_index= game_state_.entities.size();
+	var size_type mut nearest_index= entities.size();
 	var f32 mut min_square_distance= 1.0e64f;
 
-	for( auto mut i= 0s; i < game_state_.entities.size(); ++i )
+	for( auto mut i= 0s; i < entities.size(); ++i )
 	{
-		if_var( &entity : game_state_.entities[i] )
+		if_var( &entity : entities[i] )
 		{
 			var f32 square_distace= ( pos - entity.position ).SquareLength();
 			if( square_distace < min_square_distance )
@@ -898,12 +909,12 @@ fn Game::GetNearestEntity( mut this, Vec3f& pos ) : ust::optional_ref_mut</Entit
 		}
 	}
 
-	if( nearest_index >= game_state_.entities.size() )
+	if( nearest_index >= entities.size() )
 	{
 		return ust::null_optional_ref;
 	}
 
-	return game_state_.entities[ nearest_index ].as_ref();
+	return entities[ nearest_index ].as_ref();
 }
 
 fn Game::GetFrictionForMapQuad( GameGlobalData& global_data, GameMapData& map_data, u32 quad_index ) : f32
