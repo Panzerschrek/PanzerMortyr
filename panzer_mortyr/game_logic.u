@@ -118,6 +118,23 @@ fn CreateNewMapGameState( GameMapData& map_data ) : GameState
 	return game_state;
 }
 
+fn ProcessGameLogicStep(
+	GameGlobalData& global_data,
+	GameMapData& map_data,
+	CameraRotationController& camera_rotation_controller,
+	PlayerMovementController& player_movement_controller,
+	GameState &mut game_state )
+{
+	PerformPlayerStepMovement(
+		global_data,
+		map_data,
+		camera_rotation_controller,
+		player_movement_controller,
+		game_state );
+
+	ProcessEntitiesLogicStep( map_data, game_state );
+}
+
 fn PerformPlayerStepMovement(
 	GameGlobalData& global_data,
 	GameMapData& map_data,
@@ -182,22 +199,163 @@ fn PerformPlayerStepMovement(
 	AddPlayerCollider( map_data.entities_description.deref(), game_state );
 }
 
-fn ProcessStep(
-	GameGlobalData& global_data,
-	GameMapData& map_data,
-	CameraRotationController& camera_rotation_controller,
-	PlayerMovementController& player_movement_controller,
-	GameState &mut game_state )
+fn ApplyPlayerMovement(
+	GameParams& game_params,
+	PlayerState &mut player_state,
+	Vec3f& move_wish_direction,
+	bool jump_requested )
 {
+	// Max player speed is defined via the game config.
+	var f32 max_horizontal_speed_per_step( game_params.max_player_speed );
 
+	var f32 azimuth_cos= ust::cos( player_state.azimuth );
+	var f32 azimuth_sin= ust::sin( player_state.azimuth );
+
+	var Vec3f forward_vector( -azimuth_sin, azimuth_cos, 0.0f );
+	var Vec3f right_vector( azimuth_cos, azimuth_sin, 0.0f );
+	var Vec3f down_vector( 0.0f, 0.0f, 1.0f );
+
+	if( player_state.noclip )
+	{
+		// Some arbitrary scaler for nice fast noclip flight.
+		var f32 max_noclip_horizontal_speed_per_step= max_horizontal_speed_per_step * 3.0f;
+
+		var f32 noclip_acceleration_per_step= 2.0f;
+		var f32 noclip_deceleration_per_step= 1.0f;
+
+		var Vec3f move_vector_transformed=
+			move_wish_direction.x * forward_vector +
+			move_wish_direction.y * right_vector +
+			move_wish_direction.z * down_vector;
+
+		player_state.velocity+= move_vector_transformed * noclip_acceleration_per_step;
+
+		var f32 speed= player_state.velocity.Length();
+		if( speed > 0.0f )
+		{
+			var f32 new_speed= speed - noclip_deceleration_per_step;
+			var f32 new_speed_clamped= ust::max( 0.0f, ust::min( new_speed, max_noclip_horizontal_speed_per_step ) );
+			player_state.velocity*= new_speed_clamped / speed;
+		}
+	}
+	else
+	{
+		// Acceleration depends on friction. Scale is for now just guessed.
+		// Acceleration is twice as big as deceleration, it's needed because deceleration is always applied.
+		var f32 friction_acceleration_scale= 0.5f;
+		var f32 horizontal_deceleation_per_step= friction_acceleration_scale * player_state.ground_friction;
+		var f32 horizontal_acceleration_per_step= horizontal_deceleation_per_step * 2.0f;
+
+		// Allow only a little bit acceleration while in air.
+		var f32 constexpr horizontal_air_acceleration_per_step= 0.2f;
+		// Apply fast no deceleration while in air.
+		var f32 constexpr horizontal_air_deceleation_per_step= 0.05f;
+
+		var Vec3f move_vector_transformed=
+			move_wish_direction.x * forward_vector +
+			move_wish_direction.y * right_vector;
+
+		player_state.velocity+=
+			move_vector_transformed *
+			( player_state.on_ground ? horizontal_acceleration_per_step : horizontal_air_acceleration_per_step );
+
+		player_state.velocity.z+= c_gravity_per_step;
+
+		if( jump_requested && player_state.on_ground )
+		{
+			player_state.velocity.z+= c_jump_vertical_velocity_add;
+		}
+
+		{
+			// Apply horizontal deceleration and limit horizontal speed if necessary.
+			var Vec2f mut horizontal_velocity= player_state.velocity.xy();
+			var f32 speed= horizontal_velocity.Length();
+			if( speed > 0.0f )
+			{
+				var f32 deceleration= ( player_state.on_ground ? horizontal_deceleation_per_step : horizontal_air_deceleation_per_step );
+				var f32 new_speed= speed - deceleration;
+				var f32 new_speed_clamped= ust::max( 0.0f, ust::min( new_speed, max_horizontal_speed_per_step ) );
+				horizontal_velocity*= new_speed_clamped / speed;
+				player_state.velocity.x= horizontal_velocity.x;
+				player_state.velocity.y= horizontal_velocity.y;
+			}
+		}
+
+		// Limit vertical speed if necessary.
+		ust::min_assign( player_state.velocity.z,  c_max_vertical_speed );
+		ust::max_assign( player_state.velocity.z, -c_max_vertical_speed );
+	}
+
+	player_state.position+= player_state.velocity;
+}
+
+fn GetFrictionForMapQuad( GameGlobalData& global_data, GameMapData& map_data, u32 quad_index ) : f32
+{
+	var MaterialsProperties& materials_properties= global_data.materials_properties.deref();
+
+	var f32 default_friction(
+		( materials_properties.empty() ? 1u : materials_properties.front().player_step_friction ) );
+
+
+	var ZmapData& zmap_data= map_data.zmap_data.deref();
+
+	if( size_type( quad_index ) >= zmap_data.quads.size() )
+	{
+		return default_friction;
+	}
+
+	var ZmapQuad& quad= zmap_data.quads[ size_type( quad_index ) ];
+
+	var MapsDescription& maps_description= global_data.maps_description.deref();
+
+	if( size_type( map_data.map_index ) < maps_description.maps.size() )
+	{
+		var MapsDescription::MapDescription& map_description= maps_description.maps[ size_type( map_data.map_index ) ];
+
+		if_var( &materials_block : global_data.materials_description.deref().blocks.find( map_description.materials_block ) )
+		{
+			var size_type constexpr num_materials_in_texture=
+				size_type( MaterialsDescription::c_texture_file_num_tiles_x * MaterialsDescription::c_texture_file_num_tiles_y );
+
+			var size_type mut material_index( quad.texture_id );
+
+			if( material_index >= materials_block.textures.size() * num_materials_in_texture )
+			{
+				// Find actual material index for a special material.
+				for( auto mut j= 0s; j < typeinfo</MaterialsDescription::SpecialMaterial/>.element_count; ++j )
+				{
+					if( u32( quad.texture_id ) == MaterialsDescription::c_special_material_texture_indices[j] )
+					{
+						material_index= size_type( materials_block.special_material_indices[j] );
+						break;
+					}
+				}
+			}
+
+			var size_type texture_index= material_index / num_materials_in_texture;
+			if( texture_index < materials_block.textures.size() )
+			{
+				var MaterialsDescription::Texture& texture= materials_block.textures[ texture_index ];
+				var size_type tile_index= material_index % num_materials_in_texture;
+				var ust::string8& material_name= texture.materials[ tile_index ];
+
+				foreach( &material_properties : materials_properties )
+				{
+					if( material_properties.name == material_name )
+					{
+						return f32( material_properties.player_step_friction );
+					}
+				}
+			}
+		}
+	}
+
+	return default_friction;
+}
+
+fn ProcessEntitiesLogicStep( GameMapData& map_data, GameState &mut game_state )
+{
 	var EntitiesDescription& entities_description= map_data.entities_description.deref();
-
-	PerformPlayerStepMovement(
-		global_data,
-		map_data,
-		camera_rotation_controller,
-		player_movement_controller,
-		game_state );
 
 	// Use index-based loop to be able to insert entities.
 	for( auto mut entity_index= 0s; entity_index < game_state.entities.size(); ++entity_index )
@@ -485,70 +643,6 @@ fn ProcessStep(
 			AddEntityCollider( entities_description, new_entity_index, game_state );
 		}
 	}
-}
-
-fn GetFrictionForMapQuad( GameGlobalData& global_data, GameMapData& map_data, u32 quad_index ) : f32
-{
-	var MaterialsProperties& materials_properties= global_data.materials_properties.deref();
-
-	var f32 default_friction(
-		( materials_properties.empty() ? 1u : materials_properties.front().player_step_friction ) );
-
-
-	var ZmapData& zmap_data= map_data.zmap_data.deref();
-
-	if( size_type( quad_index ) >= zmap_data.quads.size() )
-	{
-		return default_friction;
-	}
-
-	var ZmapQuad& quad= zmap_data.quads[ size_type( quad_index ) ];
-
-	var MapsDescription& maps_description= global_data.maps_description.deref();
-
-	if( size_type( map_data.map_index ) < maps_description.maps.size() )
-	{
-		var MapsDescription::MapDescription& map_description= maps_description.maps[ size_type( map_data.map_index ) ];
-
-		if_var( &materials_block : global_data.materials_description.deref().blocks.find( map_description.materials_block ) )
-		{
-			var size_type constexpr num_materials_in_texture=
-				size_type( MaterialsDescription::c_texture_file_num_tiles_x * MaterialsDescription::c_texture_file_num_tiles_y );
-
-			var size_type mut material_index( quad.texture_id );
-
-			if( material_index >= materials_block.textures.size() * num_materials_in_texture )
-			{
-				// Find actual material index for a special material.
-				for( auto mut j= 0s; j < typeinfo</MaterialsDescription::SpecialMaterial/>.element_count; ++j )
-				{
-					if( u32( quad.texture_id ) == MaterialsDescription::c_special_material_texture_indices[j] )
-					{
-						material_index= size_type( materials_block.special_material_indices[j] );
-						break;
-					}
-				}
-			}
-
-			var size_type texture_index= material_index / num_materials_in_texture;
-			if( texture_index < materials_block.textures.size() )
-			{
-				var MaterialsDescription::Texture& texture= materials_block.textures[ texture_index ];
-				var size_type tile_index= material_index % num_materials_in_texture;
-				var ust::string8& material_name= texture.materials[ tile_index ];
-
-				foreach( &material_properties : materials_properties )
-				{
-					if( material_properties.name == material_name )
-					{
-						return f32( material_properties.player_step_friction );
-					}
-				}
-			}
-		}
-	}
-
-	return default_friction;
 }
 
 fn AddPlayerCollider( EntitiesDescription& entities_description, GameState &mut game_state )
@@ -990,96 +1084,6 @@ fn PerformEntityOwnMovement(
 			entity.target_navigation_graph_node= next_node_index;
 		}
 	}
-}
-
-fn ApplyPlayerMovement(
-	GameParams& game_params,
-	PlayerState &mut player_state,
-	Vec3f& move_wish_direction,
-	bool jump_requested )
-{
-	// Max player speed is defined via the game config.
-	var f32 max_horizontal_speed_per_step( game_params.max_player_speed );
-
-	var f32 azimuth_cos= ust::cos( player_state.azimuth );
-	var f32 azimuth_sin= ust::sin( player_state.azimuth );
-
-	var Vec3f forward_vector( -azimuth_sin, azimuth_cos, 0.0f );
-	var Vec3f right_vector( azimuth_cos, azimuth_sin, 0.0f );
-	var Vec3f down_vector( 0.0f, 0.0f, 1.0f );
-
-	if( player_state.noclip )
-	{
-		// Some arbitrary scaler for nice fast noclip flight.
-		var f32 max_noclip_horizontal_speed_per_step= max_horizontal_speed_per_step * 3.0f;
-
-		var f32 noclip_acceleration_per_step= 2.0f;
-		var f32 noclip_deceleration_per_step= 1.0f;
-
-		var Vec3f move_vector_transformed=
-			move_wish_direction.x * forward_vector +
-			move_wish_direction.y * right_vector +
-			move_wish_direction.z * down_vector;
-
-		player_state.velocity+= move_vector_transformed * noclip_acceleration_per_step;
-
-		var f32 speed= player_state.velocity.Length();
-		if( speed > 0.0f )
-		{
-			var f32 new_speed= speed - noclip_deceleration_per_step;
-			var f32 new_speed_clamped= ust::max( 0.0f, ust::min( new_speed, max_noclip_horizontal_speed_per_step ) );
-			player_state.velocity*= new_speed_clamped / speed;
-		}
-	}
-	else
-	{
-		// Acceleration depends on friction. Scale is for now just guessed.
-		// Acceleration is twice as big as deceleration, it's needed because deceleration is always applied.
-		var f32 friction_acceleration_scale= 0.5f;
-		var f32 horizontal_deceleation_per_step= friction_acceleration_scale * player_state.ground_friction;
-		var f32 horizontal_acceleration_per_step= horizontal_deceleation_per_step * 2.0f;
-
-		// Allow only a little bit acceleration while in air.
-		var f32 constexpr horizontal_air_acceleration_per_step= 0.2f;
-		// Apply fast no deceleration while in air.
-		var f32 constexpr horizontal_air_deceleation_per_step= 0.05f;
-
-		var Vec3f move_vector_transformed=
-			move_wish_direction.x * forward_vector +
-			move_wish_direction.y * right_vector;
-
-		player_state.velocity+=
-			move_vector_transformed *
-			( player_state.on_ground ? horizontal_acceleration_per_step : horizontal_air_acceleration_per_step );
-
-		player_state.velocity.z+= c_gravity_per_step;
-
-		if( jump_requested && player_state.on_ground )
-		{
-			player_state.velocity.z+= c_jump_vertical_velocity_add;
-		}
-
-		{
-			// Apply horizontal deceleration and limit horizontal speed if necessary.
-			var Vec2f mut horizontal_velocity= player_state.velocity.xy();
-			var f32 speed= horizontal_velocity.Length();
-			if( speed > 0.0f )
-			{
-				var f32 deceleration= ( player_state.on_ground ? horizontal_deceleation_per_step : horizontal_air_deceleation_per_step );
-				var f32 new_speed= speed - deceleration;
-				var f32 new_speed_clamped= ust::max( 0.0f, ust::min( new_speed, max_horizontal_speed_per_step ) );
-				horizontal_velocity*= new_speed_clamped / speed;
-				player_state.velocity.x= horizontal_velocity.x;
-				player_state.velocity.y= horizontal_velocity.y;
-			}
-		}
-
-		// Limit vertical speed if necessary.
-		ust::min_assign( player_state.velocity.z,  c_max_vertical_speed );
-		ust::max_assign( player_state.velocity.z, -c_max_vertical_speed );
-	}
-
-	player_state.position+= player_state.velocity;
 }
 
 fn RotateEntityBBox( Vec3f &mut bbox_half_size, f32 azimuth )
