@@ -17,38 +17,7 @@ fn Game::constructor(
 	(
 		settings_= move(settings),
 		console_out_= move(console_out),
-		game_params_=
-			lambda[&caching_game_resources_loader_ptr]() : GameResourcePtr</GameParams/>
-			{
-				with( mut lock : caching_game_resources_loader_ptr.lock_mut() )
-				{
-					return lock.deref().LoadGameParams();
-				}
-			} (),
-		maps_description_=
-			lambda[&caching_game_resources_loader_ptr]() : GameResourcePtr</MapsDescription/>
-			{
-				with( mut lock : caching_game_resources_loader_ptr.lock_mut() )
-				{
-					return lock.deref().LoadMapsDescription();
-				}
-			} (),
-		materials_description_=
-			lambda[&caching_game_resources_loader_ptr]() : GameResourcePtr</MaterialsDescription/>
-			{
-				with( mut lock : caching_game_resources_loader_ptr.lock_mut() )
-				{
-					return lock.deref().LoadMaterialsDescription();
-				}
-			} (),
-		materials_properties_=
-			lambda[&caching_game_resources_loader_ptr]() : GameResourcePtr</MaterialsProperties/>
-			{
-				with( mut lock : caching_game_resources_loader_ptr.lock_mut() )
-				{
-					return lock.deref().LoadMaterialsProperties();
-				}
-			} (),
+		global_data_= LoadGlobalData( caching_game_resources_loader_ptr ),
 		caching_game_resources_loader_ptr_= move( caching_game_resources_loader_ptr ),
 		game_state_
 		{
@@ -66,7 +35,7 @@ fn Game::constructor(
 		prev_time_steps_= 0.0,
 	)
 {
-	var u32 start_map= game_params_.deref().start_map;
+	var u32 start_map= global_data_.game_params.deref().start_map;
 	TeleportToMap( start_map );
 }
 
@@ -84,7 +53,7 @@ fn Game::TeleportToMap( mut this, u32 map_index )
 
 		map_data_.reset();
 
-		var MapsDescription& maps_description= maps_description_.deref();
+		var MapsDescription& maps_description= global_data_.maps_description.deref();
 
 		if( size_type(map_index) >= maps_description.maps.size() )
 		{
@@ -523,7 +492,7 @@ fn Game::PerformPlayerStepMovement( mut this )
 	var Vec3f movement_start_position= game_state_.player.position;
 
 	ApplyPlayerMovement(
-		game_params_.deref(),
+		global_data_.game_params.deref(),
 		game_state_.player,
 		camera_rotation_controller_.GetAzimuth(),
 		player_movement_controller_.GetAccumulatedMoveWishVector(),
@@ -905,8 +874,10 @@ fn Game::GetNearestEntity( mut this, Vec3f& pos ) : ust::optional_ref_mut</Entit
 
 fn Game::GetFrictionForMapQuad( this, u32 quad_index ) : f32
 {
+	var MaterialsProperties& materials_properties= global_data_.materials_properties.deref();
+
 	var f32 default_friction(
-		( materials_properties_.deref().empty() ? 1u : materials_properties_.deref().front().player_step_friction ) );
+		( materials_properties.empty() ? 1u : materials_properties.front().player_step_friction ) );
 
 	if( map_data_.empty() )
 	{
@@ -923,13 +894,13 @@ fn Game::GetFrictionForMapQuad( this, u32 quad_index ) : f32
 
 	var ZmapQuad& quad= zmap_data.quads[ size_type( quad_index ) ];
 
-	var MapsDescription& maps_description= maps_description_.deref();
+	var MapsDescription& maps_description= global_data_.maps_description.deref();
 
 	if( size_type( map_data.map_index ) < maps_description.maps.size() )
 	{
 		var MapsDescription::MapDescription& map_description= maps_description.maps[ size_type( map_data.map_index ) ];
 
-		if_var( &materials_block : materials_description_.deref().blocks.find( map_description.materials_block ) )
+		if_var( &materials_block : global_data_.materials_description.deref().blocks.find( map_description.materials_block ) )
 		{
 			var size_type constexpr num_materials_in_texture=
 				size_type( MaterialsDescription::c_texture_file_num_tiles_x * MaterialsDescription::c_texture_file_num_tiles_y );
@@ -956,7 +927,7 @@ fn Game::GetFrictionForMapQuad( this, u32 quad_index ) : f32
 				var size_type tile_index= material_index % num_materials_in_texture;
 				var ust::string8& material_name= texture.materials[ tile_index ];
 
-				foreach( &material_properties : materials_properties_.deref() )
+				foreach( &material_properties : materials_properties )
 				{
 					if( material_properties.name == material_name )
 					{
@@ -1569,6 +1540,20 @@ fn GetPlayerColliderBBox( EntitiesDescription& entities_description ) : BBox3f
 	}
 
 	return bbox;
+}
+
+fn LoadGlobalData( CachingGameResourcesLoaderPtr& caching_game_resources_loader_ptr ) : GameGlobalData
+{
+	auto mut lock= caching_game_resources_loader_ptr.lock_mut();
+	var CachingGameResourcesLoader &mut caching_game_resources_loader= lock.deref();
+
+	return GameGlobalData
+	{
+		.game_params= caching_game_resources_loader.LoadGameParams(),
+		.maps_description= caching_game_resources_loader.LoadMapsDescription(),
+		.materials_description= caching_game_resources_loader.LoadMaterialsDescription(),
+		.materials_properties= caching_game_resources_loader.LoadMaterialsProperties(),
+	};
 }
 
 } // namespace PM
