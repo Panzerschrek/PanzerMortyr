@@ -768,7 +768,7 @@ fn PickUpItems( GameMapData& map_data, GameState &mut game_state )
 			var EntitiesDescription::Operation& operation=
 				entity_description.operations[ size_type( entity.current_operation ) ];
 
-			if( !operation.box_contents.empty() )
+			if_var( &box_contents : operation.box_contents )
 			{
 				// This entity can be picked-up.
 				// TODO - identify exact radius and center.
@@ -776,11 +776,40 @@ fn PickUpItems( GameMapData& map_data, GameState &mut game_state )
 				var f32 square_distance= ( game_state.player.position - entity.position ).SquareLength();
 				if( square_distance < c_pickup_distance * c_pickup_distance )
 				{
-					// Despawn this entity, since it was picked-up.
-					// TODO - give the picked-up item to the player.
-					// TODO - avoid picking-up if player has maximum number of items provided by this entity.
-					// TODO - handle regenerating entities in multiplayer.
-					need_to_remove_entity= true;
+					var size_type tool_index( entities_description.tool_type_to_index_map[ size_type( box_contents.tool_type ) ] );
+					if( tool_index < entities_description.tools.size() )
+					{
+						var EntitiesDescription::Tool& tool= entities_description.tools[ tool_index ];
+
+						{
+							var u32 &mut current_count= game_state.player.inventory[ size_type( box_contents.tool_type ) ];
+							if( current_count < tool.player_max_count )
+							{
+								current_count+= box_contents.amount;
+								ust::min_assign( current_count, tool.player_max_count );
+
+								need_to_remove_entity= true;
+							}
+						}
+
+						if( box_contents.ammo > 0u &&
+							tool.ammo_item >= 0 &&
+							size_type( tool.ammo_item ) < entities_description.tools.size() )
+						{
+							var EntitiesDescription::Tool& ammo_tool= entities_description.tools[ size_type( tool.ammo_item ) ];
+
+							var u32 &mut current_count= game_state.player.inventory[ size_type( ammo_tool.tool_type ) ];
+							if( current_count < ammo_tool.player_max_count )
+							{
+								current_count+= box_contents.ammo;
+								ust::min_assign( current_count, ammo_tool.player_max_count );
+
+								need_to_remove_entity= true;
+							}
+						}
+
+						// TODO - handle regenerating entities in multiplayer.
+					}
 				}
 			}
 		}
