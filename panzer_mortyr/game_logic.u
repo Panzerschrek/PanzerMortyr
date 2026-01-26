@@ -252,6 +252,8 @@ fn ProcessGameLogicStep(
 	PerformPlayerStepMovement( global_data, map_data, player_input, game_state );
 
 	ProcessEntitiesLogicStep( map_data, game_state );
+
+	PickUpItems( map_data, game_state );
 }
 
 fn PerformPlayerStepMovement(
@@ -669,22 +671,6 @@ fn ProcessEntitiesLogicStep( GameMapData& map_data, GameState &mut game_state )
 					}
 				}
 
-				if( !operation.box_contents.empty() )
-				{
-					// This entity can be picked-up.
-					// TODO - identify exact radius and center.
-					var f32 c_pickup_distance= 48.0f;
-					var f32 square_distance= ( game_state.player.position - entity.position ).SquareLength();
-					if( square_distance < c_pickup_distance * c_pickup_distance )
-					{
-						// Despawn this entity, since it was picked-up.
-						// TODO - give the picked-up item to the player.
-						// TODO - avoid picking-up if player has maximum number of items provided by this entity.
-						// TODO - handle regenerating entities in multiplayer.
-						need_to_remove_entity= true;
-					}
-				}
-
 				if( entity.next_operation != ~0u && entity.num_steps_left_to_next_operation == 0u )
 				{
 					if( size_type( entity.next_operation ) < entity_description.operations.size() )
@@ -756,6 +742,53 @@ fn ProcessEntitiesLogicStep( GameMapData& map_data, GameState &mut game_state )
 			var size_type new_entity_index= game_state.entities.size();
 			game_state.entities.push_back( new_spawned_entity.try_take() );
 			AddEntityCollider( entities_description, new_entity_index, game_state );
+		}
+	}
+}
+
+fn PickUpItems( GameMapData& map_data, GameState &mut game_state )
+{
+	var EntitiesDescription& entities_description= map_data.entities_description.deref();
+
+	for( auto mut entity_index= 0s; entity_index < game_state.entities.size(); ++entity_index )
+	{
+		if( game_state.entities[entity_index].empty() )
+		{
+			continue;
+		}
+
+		var bool mut need_to_remove_entity= false;
+
+		{
+			var EntityState &mut entity= game_state.entities[entity_index].try_deref();
+
+			var EntitiesDescription::EntityDescription& entity_description=
+				entities_description.entities[ size_type( entity.kind ) ];
+
+			var EntitiesDescription::Operation& operation=
+				entity_description.operations[ size_type( entity.current_operation ) ];
+
+			if( !operation.box_contents.empty() )
+			{
+				// This entity can be picked-up.
+				// TODO - identify exact radius and center.
+				var f32 c_pickup_distance= 48.0f;
+				var f32 square_distance= ( game_state.player.position - entity.position ).SquareLength();
+				if( square_distance < c_pickup_distance * c_pickup_distance )
+				{
+					// Despawn this entity, since it was picked-up.
+					// TODO - give the picked-up item to the player.
+					// TODO - avoid picking-up if player has maximum number of items provided by this entity.
+					// TODO - handle regenerating entities in multiplayer.
+					need_to_remove_entity= true;
+				}
+			}
+		}
+
+		if( need_to_remove_entity )
+		{
+			RemoveEntityCollider( entity_index, game_state );
+			game_state.entities[ entity_index ].reset();
 		}
 	}
 }
