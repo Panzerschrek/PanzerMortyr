@@ -101,13 +101,21 @@ fn Game::TeleportToMap( mut this, u32 map_index )
 	player_movement_controller_.Reset();
 }
 
-fn Game::Update( mut this, f32 time_delta_s, ust::array_view_imut</bool/> keyboard_state, [ i32, 2 ] mouse_motion )
+fn Game::Update(
+	mut this,
+	f32 time_delta_s,
+	ust::array_view_imut</bool/> keyboard_state,
+	u32 mouse_state,
+	[ i32, 2 ] mouse_motion )
 {
 	// Rotate camera each frame.
-	camera_rotation_controller_.Update( time_delta_s, keyboard_state, mouse_motion );
+	camera_rotation_controller_.Update( time_delta_s, keyboard_state, mouse_state, mouse_motion );
 
 	// Accumulate movement input each frame.
 	player_movement_controller_.Update(  time_delta_s, keyboard_state );
+
+	// Process tool requests each frame.
+	player_tool_controller_.Update( keyboard_state );
 
 	// TODO - accumulate shot commands each frame in order to shoot exactly in the direction where camera sees.
 
@@ -136,9 +144,13 @@ fn Game::Update( mut this, f32 time_delta_s, ust::array_view_imut</bool/> keyboa
 				.azimuth= camera_rotation_controller_.GetAzimuth(),
 				.move_wish_vector= player_movement_controller_.GetAccumulatedMoveWishVector(),
 				.jump_requested= player_movement_controller_.GetJumpRequested(),
+				.requested_weapon= player_tool_controller_.GetRequestedWeapon(),
+				.shot_request= camera_rotation_controller_.GetShotRequest(),
 			};
 
+			camera_rotation_controller_.Reset();
 			player_movement_controller_.Reset();
+			player_tool_controller_.Reset();
 
 			for( auto mut i= 0u; i < num_steps_to_process; ++i )
 			{
@@ -152,8 +164,10 @@ fn Game::Update( mut this, f32 time_delta_s, ust::array_view_imut</bool/> keyboa
 
 fn Game::ProcessMouseButtonPress( mut this, u32 button_index )
 {
-	if( button_index == 1u )
+	if( button_index == 2u )
 	{
+		// Debug ray intersection code.
+		// TODO - move it somewhere else.
 		if( map_data_.empty() || game_state_.empty() )
 		{
 			return;
@@ -297,9 +311,40 @@ fn Game::GetWorldDrawingInfo( this ) : WorldDrawingInfo
 						.model_file_name= animation.model_file_name,
 						.position= entity.position,
 						.azimuth= entity.azimuth,
+						.elevation= 0.0f,
 						.frame= pair.second,
 					} );
 				}
+		}
+
+		{
+			var size_type weapon_tool_index(
+				entities_description.tool_type_to_index_map[ size_type( game_state.player.weapon_state.current_weapon ) ] );
+			if( weapon_tool_index < entities_description.tools.size() )
+			{
+				var EntitiesDescription::Tool& tool= entities_description.tools[ weapon_tool_index ];
+				if( size_type( tool.animation ) < entities_description.animations.size() )
+				{
+					var EntitiesDescription::AnimationDescription& animation=
+						entities_description.animations[ size_type( tool.animation ) ];
+
+					// Lower the weapon model if performing weapon switching.
+					// TODO - tune this angle.
+					var f32 elevation_add=
+						c_tau / 6.0f *
+						( 1.0f - f32( game_state.player.weapon_state.switching_fraction ) / f32( c_weapon_switching_half_time_steps ) );
+
+					drawing_info.model_objects.push_back(
+						WorldDrawingInfo::ModelObject
+						{
+							.model_file_name= animation.model_file_name,
+							.position= drawing_info.camera_position,
+							.azimuth= camera_rotation_controller_.GetAzimuth(),
+							.elevation= camera_rotation_controller_.GetElevation() + elevation_add,
+							.frame= game_state.player.weapon_state.current_animation_step / c_num_steps_per_animation_frame,
+						} );
+				}
+			}
 		}
 
 		if( settings_.lock_imut().deref().g_debug_show_entity_bounding_boxes )
@@ -383,6 +428,26 @@ fn Game::process_trigger_energy_loss( mut this )
 		{
 			entity.lost_energy_in_current_operation= true;
 		}
+	}
+}
+
+fn Game::process_give_all( mut this )
+{
+	if( !game_state_.empty() && !map_data_.empty() )
+	{
+		var GameState &mut game_state= game_state_.try_deref();
+		var EntitiesDescription& entities_description= map_data_.try_deref().entities_description.deref();
+
+		for( auto mut t= 0s; t < typeinfo</ EntitiesDescription::ToolType />.element_count; ++t )
+		{
+			var size_type tool_index( entities_description.tool_type_to_index_map[t] );
+			if( tool_index < entities_description.tools.size() )
+			{
+				game_state.player.inventory[t]= entities_description.tools[ tool_index ].player_max_count;
+			}
+		}
+
+		ConsoleOutAddTextLine( console_out_, "Giving maximum amount of all items" );
 	}
 }
 
