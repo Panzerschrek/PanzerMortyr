@@ -185,9 +185,29 @@ fn ProcessGameLogicStep(
 
 fn PerformPlayerWeaponLogic( GameMapData& map_data, PlayerInput& player_input, GameState &mut game_state )
 {
-	if( !player_input.shot_request.empty() )
+	var EntitiesDescription& entities_description= map_data.entities_description.deref();
+
+	if_var( &shot_request : player_input.shot_request )
 	{
-		ust::ignore_unused( player_input.shot_request );
+		if( game_state.player.weapon_state.num_active_shooting_steps.empty() )
+		{
+			// Initiate shooting.
+			game_state.player.weapon_state.num_active_shooting_steps= 0u;
+			game_state.player.weapon_state.current_animation= PlayerWeaponState::WeaponAnimation::Shooting;
+
+			var size_type weapon_tool_index(
+				entities_description.tool_type_to_index_map[ size_type( game_state.player.weapon_state.current_weapon ) ] );
+
+			if( weapon_tool_index < entities_description.tools.size() )
+			{
+				var EntitiesDescription::Tool& tool= entities_description.tools[ weapon_tool_index ];
+
+				game_state.player.weapon_state.current_animation_step= u32( tool.weapon_data[6] );
+			}
+
+			// TODO - perform actual shooting.
+			ust::ignore_unused( shot_request );
+		}
 	}
 
 	if( player_input.requested_weapon != EntitiesDescription::ToolType::None )
@@ -195,9 +215,30 @@ fn PerformPlayerWeaponLogic( GameMapData& map_data, PlayerInput& player_input, G
 		game_state.player.weapon_state.requested_weapon= player_input.requested_weapon;
 	}
 
-	if( game_state.player.weapon_state.requested_weapon != game_state.player.weapon_state.current_weapon )
+	if( !game_state.player.weapon_state.num_active_shooting_steps.empty() )
 	{
-		// Perform weapon switching logic.
+		// Process shooting logic.
+		++game_state.player.weapon_state.num_active_shooting_steps.try_deref();
+
+		var size_type weapon_tool_index(
+			entities_description.tool_type_to_index_map[ size_type( game_state.player.weapon_state.current_weapon ) ] );
+
+		if( weapon_tool_index < entities_description.tools.size() )
+		{
+			var EntitiesDescription::Tool& tool= entities_description.tools[ weapon_tool_index ];
+
+			if( game_state.player.weapon_state.num_active_shooting_steps.try_deref() >= tool.shooting )
+			{
+				// Finish shooting.
+				game_state.player.weapon_state.num_active_shooting_steps.reset();
+				game_state.player.weapon_state.current_animation= PlayerWeaponState::WeaponAnimation::None;
+				game_state.player.weapon_state.current_animation_step= 0u;
+			}
+		}
+	}
+	else if( game_state.player.weapon_state.requested_weapon != game_state.player.weapon_state.current_weapon )
+	{
+		// Perform weapon switching logic (if not shooting right now).
 
 		// Check first if we have requiresed weapon.
 		// It may be necessary if (somehow) the player loses his weapons during transition.
@@ -228,8 +269,6 @@ fn PerformPlayerWeaponLogic( GameMapData& map_data, PlayerInput& player_input, G
 	}
 
 	{
-		var EntitiesDescription& entities_description= map_data.entities_description.deref();
-
 		var size_type weapon_tool_index(
 				entities_description.tool_type_to_index_map[ size_type( game_state.player.weapon_state.current_weapon ) ] );
 
@@ -310,7 +349,6 @@ fn PerformPlayerWeaponLogic( GameMapData& map_data, PlayerInput& player_input, G
 				PlayerWeaponState::WeaponAnimation::Shooting ->
 				{
 					++game_state.player.weapon_state.current_animation_step;
-					// TODO - transition to none after shot was done.
 				},
 			}
 		}
