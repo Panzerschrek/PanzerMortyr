@@ -63,10 +63,7 @@ Gameplay investigation:
 * Investigate how different entity parameters affect their behavior.
 * Investigate details of buttons and doors functioning.
 * Investigate how player's bounding box is altered when crouching.
-
-MapViewer:
-
-* Read entities config and display bounding boxes for entities which are read from this config.
+* Investigate what "BUTLA_TLENU" is.
 
 PanzerMortyr general:
 
@@ -88,7 +85,7 @@ PanzerMortyr game logic:
 	This should include pushing of entities (if it's possible).
 * Implement doors and elevators triggered by touching.
 * Implement doors and elevators triggered by a button push, including buttons requiring a key.
-* Implement player's weapons logic (shooting, ammo management).
+* Implement player's shooting (projectiles spawning, enemies damaging).
 * Implement player's death.
 * Implement transition to next level.
 * Implement game state save/loading.
@@ -96,8 +93,6 @@ PanzerMortyr game logic:
 * Implement multiplayer-specific game modes.
 * Make singleplayer mode tweaks for cooperative mode support.
 * Implement note items logic - show note text (it's actually an image) and pause the game while it's shown.
-* Give picked-up items to player.
-* Avoid picking-up an item if player has maximum amount of it.
 * Implement enemy movement towards the player.
 * Implement decorations movement logic (with mode=11).
 * Implement collisions hack for the one-way passable wall on map 33.
@@ -106,7 +101,6 @@ PanzerMortyr game logic:
 * Implement fall damage for player and for entities.
 * Implement shooting logic - with shots colliding with walls and damaging enemies and the player.
 * Implement shooting by enemies.
-* Implement non-bullet shots - projectiles, grenades.
 * Implement rare animation types - used for some entities.
 * Implement tank-related logic elements.
 * Implement logic elements specific for dog enemies.
@@ -124,6 +118,36 @@ PanzerMortyr game logic:
 * Perform camera Z coordinate smoothing while climbing steps, so that camera movement doesn't look jaggy.
 * Don't perform collisions with map quads with collisions disabled via materials property (like water and maybe sky).
 * Turn-off collisions with map quads which were broken (like glass).
+* Implement bullet projectiles (flying directly).
+* Implement grenade projectiles (affected by gravity and slightly bouncing).
+* Implement panzerfaust projectiles (slightly affected by gravity).
+* Implement ricocheting projectiles.
+* Implement melee attacks (kick, knife).
+* Implement player's helath management.
+* Implement player's armor management.
+* Implement inventory navigation and weapon/tool selection.
+* Implement jetpack tool.
+* Implement night vision tool.
+* Implement infrared vision tool.
+* Implement flashlight tool.
+* Implement oxygen ballon tool.
+* Implement acid protection suit tool.
+* Implement weapon amplifier tool.
+* Implement silencer tool.
+* Implement invisibility tool.
+* Leave shot marks on walls.
+* Leave blood makrs on walls.
+* Leave footsteps where they should be.
+* Implement bullet hit effects (smoke, sparkles).
+* Spawn smoke trail sprites.
+* Spawn Muzzle flash and napalm sprites.
+* Implement flamethrower flames sticking to map geometry and entities and damaging them.
+* Implement shot recoil (where it should be).
+* Implement weapon lowering on reloading for weapons where it's necessary (grenades).
+* Implement splash damage for projectiles.
+* Spawn light flashes while shooting.
+* Attach dynamic light sources to projectiles (where they should be).
+
 
 PanzerMortyr rendering:
 
@@ -138,7 +162,7 @@ PanzerMortyr rendering:
 * Draw map polygons and other objects (models, sprites) requiring blending in back to front order.
 * Draw reflections in reflective surfaces (usually floors).
 * Draw polygons with animated textures (frame-based animation) properly.
-* Draw first-person weapon.
+* Draw first-person weapon with some sort of depth hack and depth-based effects (like fog) working properly.
 * Use smooth animation for animated models (with two or more frames interpolation).
 * Apply lighting for models.
 * Apply lighting for dynamic map polygons (doors, elevators, buttons).
@@ -163,10 +187,10 @@ PanzerMortyr rendering:
 
 PanzerMortyr sound:
 
-* Play event sounds - shots, footsteps, enemy sounds.
+* Play event sounds - shots, footsteps, enemy sounds, item pick-up sounds.
 * Play main character speech (he says something at some specific map places).
 * Play ambient sounds.
 * Play CD music and/or music files ripped from the original CD.
 * Implement 3D sounds - with distance-based attenuation and separate volume for left and right channel depending on head orientation.
-* Perform smooth volume transition (smaple-by-sample) for sound sources which can change their volume (positional ones, for example).
+* Perform smooth volume transition (sample-by-sample) for sound sources which can change their volume (positional ones, for example).
 * Cache or preload sound files to avoid starting playing a sound which isn't loaded yet.
