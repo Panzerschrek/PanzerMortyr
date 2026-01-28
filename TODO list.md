@@ -114,8 +114,7 @@ PanzerMortyr game logic:
 * Implement entity state transition caused by injury (but not killing).
 * Implement pushing pushable entities.
 * Perform camera Z coordinate smoothing while climbing steps, so that camera movement doesn't look jaggy.
-* Don't perform collisions with map quads with collisions disabled via materials property (like water and maybe sky).
-* Turn-off collisions with map quads which were broken (like glass). Maybe perform collsions with the separately?
+* Perform separate collisions calculation with glass quads - to skip broken glass quads.
 * Implement bullet projectiles (flying directly).
 * Implement grenade projectiles (affected by gravity and slightly bouncing).
 * Implement panzerfaust projectiles (slightly affected by gravity).
