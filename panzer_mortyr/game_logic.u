@@ -479,6 +479,17 @@ fn ApplyPlayerUnclippedMovement(
 	// Max player speed is defined via the game config.
 	var f32 max_horizontal_speed_per_step( game_params.max_player_speed );
 
+	// Acceleration depends on friction. Scale is for now just guessed.
+	// Acceleration is twice as big as deceleration, it's needed because deceleration is always applied.
+	var f32 friction_acceleration_scale= 0.5f;
+	var f32 horizontal_deceleation_per_step= friction_acceleration_scale * player_state.ground_friction;
+	var f32 horizontal_acceleration_per_step= horizontal_deceleation_per_step * 2.0f;
+
+	// Allow only a little bit acceleration while in air.
+	var f32 constexpr horizontal_air_acceleration_per_step= 0.2f;
+	// Apply fast no deceleration while in air.
+	var f32 constexpr horizontal_air_deceleation_per_step= 0.05f;
+
 	var f32 azimuth_cos= ust::cos( player_state.azimuth );
 	var f32 azimuth_sin= ust::sin( player_state.azimuth );
 
@@ -517,6 +528,7 @@ fn ApplyPlayerUnclippedMovement(
 		var f32 liquid_decelration_per_step_speed_factor= 15.0f / 16.0f;
 		var f32 liquid_gravity_scale= 1.0f / 16.0f;
 
+		// Perform swimming-based acceleration.
 		var Vec3f move_vector_transformed=
 			move_wish_direction.x * forward_vector +
 			move_wish_direction.y * right_vector +
@@ -527,33 +539,48 @@ fn ApplyPlayerUnclippedMovement(
 		// Apply less gravity acceleration in liquid compared to air (because of buoyancy counter-force).
 		player_state.velocity.z+= c_gravity_per_step * liquid_gravity_scale;
 
-		// Allow jumping while standing on bottom.
-		if( jump_requested && player_state.on_ground )
+		if( player_state.on_ground )
 		{
-			player_state.velocity.z+= c_jump_vertical_velocity_add;
+			// If staying on ground, perform additional walking-based acceleration.
+			var Vec3f move_vector_transformed=
+				move_wish_direction.x * forward_vector +
+				move_wish_direction.y * right_vector;
+
+			player_state.velocity+= move_vector_transformed * ( horizontal_acceleration_per_step * liquid_gravity_scale );
+
+			// Allow jumping while standing on bottom.
+			if( jump_requested )
+			{
+				player_state.velocity.z+= c_jump_vertical_velocity_add;
+			}
+
+			// Apply ground deceleration.
+			var Vec2f mut horizontal_velocity= player_state.velocity.xy();
+			var f32 speed= horizontal_velocity.Length();
+			if( speed > 0.0f )
+			{
+				var f32 deceleration= horizontal_deceleation_per_step * liquid_gravity_scale;
+				var f32 new_speed= speed - deceleration;
+				var f32 new_speed_clamped= ust::max( 0.0f, ust::min( new_speed, max_horizontal_speed_per_step ) );
+				horizontal_velocity*= new_speed_clamped / speed;
+				player_state.velocity.x= horizontal_velocity.x;
+				player_state.velocity.y= horizontal_velocity.y;
+			}
 		}
 
-		var f32 speed= player_state.velocity.Length();
-		if( speed > 0.0f )
+		// Apply liquid deceleration.
 		{
-			var f32 new_speed= speed * liquid_decelration_per_step_speed_factor;
-			var f32 new_speed_clamped= ust::max( 0.0f, ust::min( new_speed, max_horizontal_speed_per_step ) );
-			player_state.velocity*= new_speed_clamped / speed;
+			var f32 speed= player_state.velocity.Length();
+			if( speed > 0.0f )
+			{
+				var f32 new_speed= speed * liquid_decelration_per_step_speed_factor;
+				var f32 new_speed_clamped= ust::max( 0.0f, ust::min( new_speed, max_horizontal_speed_per_step ) );
+				player_state.velocity*= new_speed_clamped / speed;
+			}
 		}
 	}
 	else
 	{
-		// Acceleration depends on friction. Scale is for now just guessed.
-		// Acceleration is twice as big as deceleration, it's needed because deceleration is always applied.
-		var f32 friction_acceleration_scale= 0.5f;
-		var f32 horizontal_deceleation_per_step= friction_acceleration_scale * player_state.ground_friction;
-		var f32 horizontal_acceleration_per_step= horizontal_deceleation_per_step * 2.0f;
-
-		// Allow only a little bit acceleration while in air.
-		var f32 constexpr horizontal_air_acceleration_per_step= 0.2f;
-		// Apply fast no deceleration while in air.
-		var f32 constexpr horizontal_air_deceleation_per_step= 0.05f;
-
 		var Vec3f move_vector_transformed=
 			move_wish_direction.x * forward_vector +
 			move_wish_direction.y * right_vector;
