@@ -1,0 +1,319 @@
+import "/enum_string_conversions.u"
+import "/scoped_array.u"
+import "buffer_utils.uh"
+import "gl_functions.uh"
+import "gl_state.uh"
+import "hud_drawer.uh"
+import "image_loading.uh"
+
+namespace PM
+{
+
+fn HudDrawer::constructor(
+	[ u32, 2 ] viewport_size,
+	GameFilesystemPtr& game_filesystem_ptr,
+	ConsoleOutPtr& console_out )
+	(
+		viewport_size_= viewport_size,
+		// Scale propertional to screen width.
+		// Scale 2 starts with screen width 1280.
+		scale_( ust::max( 1u, viewport_size[0] / 640u ) ),
+		shader_( embed</char8/>( "shaders/hud.vert.glsl" ), embed</char8/>( "shaders/hud.frag.glsl" ) ),
+		vertex_buffer_= CreateHudVertexBuffer( c_max_buffer_size_quads ),
+		index_buffer_= CreateQuadsU16IndexBuffer( c_max_buffer_size_quads ),
+		hud_texture_atlas_= LoadHudTextureAtlas( game_filesystem_ptr, console_out ),
+		buffered_quads_= zero_init,
+		num_buffered_quads_= 0s,
+	)
+{
+	vertex_array_object_.Bind();
+
+	vertex_buffer_.Bind();
+
+	var u32 c_position_attrib= 0u;
+	var u32 c_tex_coord_attrib= 1u;
+
+	unsafe( glEnableVertexAttribArray( c_position_attrib ) );
+	unsafe( glVertexAttribPointer(
+		c_position_attrib,
+		2,
+		GLenum( GL_FLOAT ),
+		GLboolean(0),
+		GLsizei( typeinfo</ HudVertex />.size_of ),
+		ust::nullptr</byte8/>() + GetStructFieldOffset</ HudVertex, "position" />() ) );
+
+	unsafe( glEnableVertexAttribArray( c_tex_coord_attrib ) );
+	unsafe( glVertexAttribPointer(
+		c_tex_coord_attrib,
+		2,
+		GLenum( GL_FLOAT ),
+		GLboolean(0),
+		GLsizei( typeinfo</ HudVertex />.size_of ),
+		ust::nullptr</byte8/>() + GetStructFieldOffset</ HudVertex, "tex_coordinates" />() ) );
+}
+
+fn HudDrawer::Draw( mut this, HudDrawingInfo& drawing_info )
+{
+	var f32 padding_bottom= 4.0f * scale_;
+	var f32 incon_number_half_padding= 1.0f * scale_;
+
+	// Health and armor icons are located in 1 / 4 width from screen edges and 1 / 4 width from weapon icon.
+	var f32 symmetric_icons_offset_x( viewport_size_[0] / 4u );
+
+	{
+		var f32 offset_x= symmetric_icons_offset_x;
+
+		AddTileQuad( offset_x + incon_number_half_padding, padding_bottom, c_health_icon_index );
+
+		AddDecimalNumber( offset_x - incon_number_half_padding, padding_bottom, drawing_info.health );
+	}
+	{
+		var f32 offset_x( viewport_size_[0] / 2u );
+
+		AddTileQuad( offset_x + incon_number_half_padding, padding_bottom, drawing_info.weapon_icon_index );
+
+		if( drawing_info.ammo >= 0 )
+		{
+			AddDecimalNumber( offset_x - incon_number_half_padding, padding_bottom, u32( drawing_info.ammo ) );
+		}
+	}
+	{
+		var f32 offset_x= f32( viewport_size_[0] ) - symmetric_icons_offset_x;
+
+		AddTileQuad( offset_x + incon_number_half_padding, padding_bottom, c_armor_icon_index );
+
+		AddDecimalNumber( offset_x - incon_number_half_padding, padding_bottom, drawing_info.armor );
+	}
+	{
+		// This scaling constant was experimentally-found by measuring offsets on original game screenshots with different resolution.
+		var f32 offset_x= f32( viewport_size_[0] ) * 0.85f;
+
+		AddTileQuad( offset_x, padding_bottom, drawing_info.selected_tool_icon_index );
+
+		if( drawing_info.active_tool_amount > 0u )
+		{
+			var f32 offset_y= scale_ * c_tile_height;
+
+			AddTileQuad( offset_x + incon_number_half_padding, offset_y + padding_bottom, drawing_info.active_tool_icon_index );
+
+			AddDecimalNumber( offset_x - incon_number_half_padding, offset_y + padding_bottom, drawing_info.active_tool_amount );
+		}
+	}
+
+	FlushDrawQuads();
+}
+
+fn HudDrawer::AddTileQuad( mut this, f32 x, f32 y, u32 tile_index )
+{
+	if( num_buffered_quads_ >= c_max_buffer_size_quads )
+	{
+		return;
+	}
+
+	var [ HudVertex, 4 ] &mut dst_quad= buffered_quads_[ num_buffered_quads_ ];
+	++num_buffered_quads_;
+
+	var u32 tile_x= tile_index % c_num_tiles_x;
+	var u32 tile_y= tile_index / c_num_tiles_y;
+
+	var f32 normalized_tile_width = scale_ * ( c_tile_width  * 2.0f ) / f32( viewport_size_[0] );
+	var f32 normalized_tile_height= scale_ * ( c_tile_height * 2.0f ) / f32( viewport_size_[1] );
+
+	var f32 normalized_x= x / f32( viewport_size_[0] ) * 2.0f - 1.0f;
+	var f32 normalized_y= y / f32( viewport_size_[1] ) * 2.0f - 1.0f;
+
+	var f32 tc_x= f32( tile_x ) / f32( c_num_tiles_x );
+	var f32 tc_y= f32( c_num_tiles_y - 1u - tile_y ) / f32( c_num_tiles_y );
+
+	dst_quad[0]=
+		HudVertex
+		{
+			.position[ normalized_x, normalized_y ],
+			.tex_coordinates[ tc_x, tc_y ],
+		};
+
+	dst_quad[1]=
+		HudVertex
+		{
+			.position[ normalized_x + normalized_tile_width, normalized_y ],
+			.tex_coordinates[ tc_x + c_tile_tc_width, tc_y ],
+		};
+
+	dst_quad[2]=
+		HudVertex
+		{
+			.position[ normalized_x + normalized_tile_width, normalized_y + normalized_tile_height ],
+			.tex_coordinates[ tc_x + c_tile_tc_width, tc_y + c_tile_tc_height ],
+		};
+
+	dst_quad[3]=
+		HudVertex
+		{
+			.position[ normalized_x, normalized_y + normalized_tile_height ],
+			.tex_coordinates[ tc_x, tc_y + c_tile_tc_height ],
+		};
+}
+
+fn HudDrawer::AddDigitQuad( mut this, f32 x, f32 y, u32 digit_index )
+{
+	if( num_buffered_quads_ >= c_max_buffer_size_quads )
+	{
+		return;
+	}
+
+	var [ HudVertex, 4 ] &mut dst_quad= buffered_quads_[ num_buffered_quads_ ];
+	++num_buffered_quads_;
+
+	var f32 normalized_digit_width = scale_ * ( c_digit_width  * 2.0f ) / f32( viewport_size_[0] );
+	var f32 normalized_digit_height= scale_ * ( c_digit_height * 2.0f ) / f32( viewport_size_[1] );
+
+	var f32 normalized_x= x / f32( viewport_size_[0] ) * 2.0f - 1.0f;
+	var f32 normalized_y= y / f32( viewport_size_[1] ) * 2.0f - 1.0f;
+
+	var f32 tc_x= f32( digit_index ) / f32( c_num_digits_x );
+	var f32 tc_y= f32( c_num_digits_y - 1u ) / f32( c_num_digits_y );
+
+	dst_quad[0]=
+		HudVertex
+		{
+			.position[ normalized_x, normalized_y ],
+			.tex_coordinates[ tc_x, tc_y ],
+		};
+
+	dst_quad[1]=
+		HudVertex
+		{
+			.position[ normalized_x + normalized_digit_width, normalized_y ],
+			.tex_coordinates[ tc_x + c_digit_tc_width, tc_y ],
+		};
+
+	dst_quad[2]=
+		HudVertex
+		{
+			.position[ normalized_x + normalized_digit_width, normalized_y + normalized_digit_height ],
+			.tex_coordinates[ tc_x + c_digit_tc_width, tc_y + c_digit_tc_height ],
+		};
+
+	dst_quad[3]=
+		HudVertex
+		{
+			.position[ normalized_x, normalized_y + normalized_digit_height ],
+			.tex_coordinates[ tc_x, tc_y + c_digit_tc_height ],
+		};
+}
+
+fn HudDrawer::AddDecimalNumber( mut this, f32 mut right_x, f32 y, u32 mut num )
+{
+	loop
+	{
+		var u32 digit= num % 10u;
+		num/= 10u;
+		right_x-= scale_ * c_digit_width;
+		AddDigitQuad( right_x, y, digit );
+
+		if( num == 0u )
+		{
+			break;
+		}
+	}
+}
+
+fn HudDrawer::FlushDrawQuads( mut this )
+{
+	var size_type num_quads_to_draw= num_buffered_quads_;
+
+	{
+		vertex_buffer_.Bind();
+		auto range= ust::array_view_imut</ [ HudVertex, 4 ] />( buffered_quads_ ).subrange_end( num_buffered_quads_ ).to_byte8_range();
+		unsafe( glBufferSubData( GLenum( GL_ARRAY_BUFFER ), GLintptr(0), GLsizeiptr( range.size() ), range.data() ) );
+		num_buffered_quads_= 0s;
+	}
+
+	SetGLState( g_hud_drawing_gl_state );
+
+	var u32 texture_slot= 0u;
+
+	unsafe( glActiveTexture( GLenum( GL_TEXTURE0 ) + GLenum(texture_slot) ) );
+	hud_texture_atlas_.Bind();
+
+	shader_.Bind();
+	shader_.SetUniform( "fu_texture", texture_slot );
+
+	vertex_array_object_.Bind();
+	index_buffer_.Bind();
+
+	unsafe( glDrawElements(
+		GLenum( GL_TRIANGLES ),
+		GLsizei( num_quads_to_draw * 6s ),
+		GLenum( GL_UNSIGNED_SHORT ),
+		ust::nullptr</byte8/>() ) );
+}
+
+fn CreateHudVertexBuffer( size_type num_quads ) : BufferObject
+{
+	return
+		BufferObject::CreateUninitializedDynamicDrawBuffer(
+			GLenum( GL_ARRAY_BUFFER ),
+			num_quads * 4s * typeinfo</HudVertex/>.size_of );
+}
+
+fn LoadHudTextureAtlas( GameFilesystemPtr& game_filesystem_ptr, ConsoleOutPtr& console_out ) : Texture
+{
+	var Texture texture= Texture::Create( GLenum( GL_TEXTURE_2D ) );
+	texture.Bind();
+
+	auto mut lock= game_filesystem_ptr.lock_mut();
+	var GameFilesystem &mut game_filesystem= lock.deref();
+
+	result_match( game_filesystem.LoadFile( "PANEL.BMP\0\0\0\0\0\0\0", LoadImageBMP ) )
+	{
+		Ok( image_data ) ->
+		{
+			unsafe( glTexImage2D(
+				GLenum( GL_TEXTURE_2D ),
+				0,
+				GLint( GL_RGBA8 ),
+				GLsizei( image_data.size[0] ),
+				GLsizei( image_data.size[1] ),
+				0,
+				GLenum( GL_RGBA ),
+				GLenum( GL_UNSIGNED_BYTE ),
+				ust::ptr_cast_to_byte8( image_data.pixels.range().data() ) ) );
+		},
+		Err(e) ->
+		{
+			ConsoleOutAddTextLine( console_out, ust::concat( "Failed to read image file! Error: ", ust::enum_to_string(e), "!" ) );
+		}
+	}
+
+	// Use linear filtration.
+	unsafe( glTexParameteri( GLenum( GL_TEXTURE_2D ), GLenum( GL_TEXTURE_MIN_FILTER ), GLint( GL_LINEAR ) ) );
+	unsafe( glTexParameteri( GLenum( GL_TEXTURE_2D ), GLenum( GL_TEXTURE_MAG_FILTER ), GLint( GL_LINEAR ) ) );
+
+	return texture;
+}
+
+var u32 constexpr c_num_tiles_x= 8u, constexpr c_num_tiles_y= 8u;
+var f32 constexpr c_tile_width= 32.0f, constexpr c_tile_height= 32.0f;
+var f32 constexpr c_tile_tc_width= 1.0f / f32( c_num_tiles_x ), constexpr c_tile_tc_height= 1.0f / f32( c_num_tiles_y );
+
+var u32 constexpr c_num_digits_x= 16u, c_num_digits_y= 8u;
+var f32 constexpr c_digit_width= 16.0f, constexpr c_digit_height= 32.0f;
+var f32 constexpr c_digit_tc_width= 1.0f / f32( c_num_digits_x ), constexpr c_digit_tc_height= 1.0f / f32( c_num_digits_y );
+
+var u32 constexpr c_health_icon_index= 8u, constexpr c_armor_icon_index= 9u;
+
+var GLState g_hud_drawing_gl_state
+{
+	.depth_test_enabled= false,
+	.depth_test_func( GL_INVALID_ENUM ),
+	.depth_write_enabled= false,
+	.cull_face_enabled= false,
+	.cull_face( GL_INVALID_ENUM ),
+	.blending_enabled= true,
+	// Use additive blending. It seems that the original uses it.
+	.blend_source_factor( GL_ONE ),
+	.blend_destination_factor( GL_ONE ),
+};
+
+} // namespace PM
