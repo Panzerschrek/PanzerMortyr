@@ -69,15 +69,12 @@ PanzerMortyr general:
 
 * Support loading game data files directly (not only from the game archive). It seems that the original game can do this.
 * Perform more advanced search for the game installation directory by using current directory, current executable directory or even registry entries.
-* Implement menus.
-* Implement loading screen.
-* Extend existing setting menus/add new ones for extra options specific for PanzerMortyr.
 * Allow changing controls.
 * Allow setting mouse sensitivity.
 * Allow setting fullscreen mode with possible resolution changing and/or in "desktop fullscreen" mode.
 * Play cinematics at start.
 * Cache or even preload weapon models to avoid reloading them after level transition.
-* Display console background image.
+* Implement multiple skill levels.
 
 PanzerMortyr game logic:
 
@@ -98,6 +95,7 @@ PanzerMortyr game logic:
 * Implement collisions hack for the one-way passable wall on map 33.
 * Perform some collision hacks to avoid stucking between rails on map 6.
 * Implement crouching for the player.
+* Implement swimming for the player.
 * Implement fall damage for player and for entities.
 * Implement shooting logic - with shots colliding with walls and damaging enemies and the player.
 * Implement shooting by enemies.
@@ -117,7 +115,7 @@ PanzerMortyr game logic:
 * Implement pushing pushable entities.
 * Perform camera Z coordinate smoothing while climbing steps, so that camera movement doesn't look jaggy.
 * Don't perform collisions with map quads with collisions disabled via materials property (like water and maybe sky).
-* Turn-off collisions with map quads which were broken (like glass).
+* Turn-off collisions with map quads which were broken (like glass). Maybe perform collsions with the separately?
 * Implement bullet projectiles (flying directly).
 * Implement grenade projectiles (affected by gravity and slightly bouncing).
 * Implement panzerfaust projectiles (slightly affected by gravity).
@@ -183,7 +181,17 @@ PanzerMortyr rendering:
 * Implement all smoke effects.
 * Implement all flame effects.
 * Draw light shafts - with colored gradient, some underlying texture and additive blending.
-* Draw game HUD - health, ammo, current weapon, current item, active items, etc.
+
+PanzerMortyr menus and HUD:
+
+* Implement loading screen.
+* Display console background image.
+* Extend existing setting menus/add new ones for extra options specific for PanzerMortyr.
+* Implement menus.
+* Show low health and armor numbers in HUD using red color.
+* Display more than one active tool in HUD.
+* Display crosshair.
+* Display short game-related mesages (as the original does).
 
 PanzerMortyr sound:
 
