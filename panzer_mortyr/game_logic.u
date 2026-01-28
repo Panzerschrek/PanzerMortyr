@@ -18,6 +18,7 @@ fn CreateNewMapGameState( GameMapData& map_data ) : GameState
 			.azimuth= 0.0f,
 			.velocity( 0.0f, 0.0f, 0.0f ),
 			.on_ground= false,
+			.in_liquid= false,
 			.noclip= false,
 			.ground_friction= 0.0f,
 			.collider_index= ~0u,
@@ -113,6 +114,7 @@ fn CreateNewMapGameState( GameMapData& map_data ) : GameState
 					.azimuth= Convert1024Angle( f32( entity.data[4] ) ),
 					.velocity( 0.0f, 0.0f, 0.0f ),
 					.on_ground= false,
+					.in_liquid= false,
 					.noclip= false,
 					.ground_friction= 0.0f,
 					.collider_index= ~0u,
@@ -402,11 +404,13 @@ fn PerformPlayerMovement(
 
 	var EntitiesDescription& entities_description= map_data.entities_description.deref();
 
+	var BBox3f player_bbox= GetPlayerColliderBBox( entities_description );
+
 	var CollisionStepMoveResult move_result=
 		CollisionStepMove(
 			map_data,
 			game_state.colliders,
-			GetPlayerColliderBBox( entities_description ),
+			player_bbox,
 			movement_start_position,
 			movement_end_position );
 
@@ -435,6 +439,35 @@ fn PerformPlayerMovement(
 
 	// After the player was moved, add his collider back.
 	AddPlayerCollider( map_data.entities_description.deref(), game_state );
+
+	// Check if in liquid.
+	{
+		var Vec3f player_center_position= game_state.player.position + ( player_bbox.min + player_bbox.max ) * 0.5f;
+
+		game_state.player.in_liquid= false;
+
+		foreach( &cluster : map_data.zvox_data.deref().clusters )
+		{
+			if( cluster.contents == 1 | cluster.contents == 2 )
+			{
+				var BBox3f cluster_bbox
+				{
+					.min(
+						f32( cluster.c.center[0] - cluster.c.bounding_box_half_size[0] ),
+						f32( cluster.c.center[1] - cluster.c.bounding_box_half_size[1] ),
+						f32( cluster.c.center[2] - cluster.c.bounding_box_half_size[2] ) ),
+					.max(
+						f32( cluster.c.center[0] + cluster.c.bounding_box_half_size[0] ),
+						f32( cluster.c.center[1] + cluster.c.bounding_box_half_size[1] ),
+						f32( cluster.c.center[2] + cluster.c.bounding_box_half_size[2] ) ),
+				};
+				if( cluster_bbox.PointIsInside( player_center_position ) )
+				{
+					game_state.player.in_liquid= true;
+				}
+			}
+		}
+	}
 }
 
 fn ApplyPlayerUnclippedMovement(
