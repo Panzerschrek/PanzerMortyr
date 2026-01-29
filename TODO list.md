@@ -95,7 +95,6 @@ PanzerMortyr game logic:
 * Implement collisions hack for the one-way passable wall on map 33.
 * Perform some collision hacks to avoid stucking between rails on map 6.
 * Implement crouching for the player.
-* Implement swimming for the player.
 * Implement fall damage for player and for entities.
 * Implement shooting logic - with shots colliding with walls and damaging enemies and the player.
 * Implement shooting by enemies.
@@ -144,6 +143,8 @@ PanzerMortyr game logic:
 * Implement splash damage for projectiles.
 * Spawn light flashes while shooting.
 * Attach dynamic light sources to projectiles (where they should be).
+* Spawn bubble sprites while swimming in water.
+* Spawn bubble sprites for projectiles moving in water.
 
 
 PanzerMortyr rendering:
@@ -180,6 +181,7 @@ PanzerMortyr rendering:
 * Implement all smoke effects.
 * Implement all flame effects.
 * Draw light shafts - with colored gradient, some underlying texture and additive blending.
+* Somehow distort/colorize the whole image while swimming in water.
 
 PanzerMortyr menus and HUD:
 

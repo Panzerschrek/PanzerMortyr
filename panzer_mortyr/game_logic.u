@@ -18,6 +18,7 @@ fn CreateNewMapGameState( GameMapData& map_data ) : GameState
 			.azimuth= 0.0f,
 			.velocity( 0.0f, 0.0f, 0.0f ),
 			.on_ground= false,
+			.in_liquid= false,
 			.noclip= false,
 			.ground_friction= 0.0f,
 			.collider_index= ~0u,
@@ -113,6 +114,7 @@ fn CreateNewMapGameState( GameMapData& map_data ) : GameState
 					.azimuth= Convert1024Angle( f32( entity.data[4] ) ),
 					.velocity( 0.0f, 0.0f, 0.0f ),
 					.on_ground= false,
+					.in_liquid= false,
 					.noclip= false,
 					.ground_friction= 0.0f,
 					.collider_index= ~0u,
@@ -176,7 +178,7 @@ fn ProcessGameLogicStep(
 {
 	PerformPlayerWeaponLogic( map_data, player_input, game_state );
 
-	PerformPlayerStepMovement( global_data, map_data, player_input, game_state );
+	PerformPlayerMovement( global_data, map_data, player_input, game_state );
 
 	ProcessEntitiesLogicStep( map_data, game_state );
 
@@ -377,7 +379,7 @@ fn PerformPlayerWeaponLogic( GameMapData& map_data, PlayerInput& player_input, G
 	}
 }
 
-fn PerformPlayerStepMovement(
+fn PerformPlayerMovement(
 	GameGlobalData& global_data, GameMapData& map_data, PlayerInput& player_input, GameState &mut game_state )
 {
 	game_state.player.azimuth= player_input.azimuth;
@@ -387,7 +389,7 @@ fn PerformPlayerStepMovement(
 
 	var Vec3f movement_start_position= game_state.player.position;
 
-	ApplyPlayerMovement(
+	ApplyPlayerUnclippedMovement(
 		global_data.game_params.deref(),
 		game_state.player,
 		player_input.move_wish_vector,
@@ -402,11 +404,13 @@ fn PerformPlayerStepMovement(
 
 	var EntitiesDescription& entities_description= map_data.entities_description.deref();
 
+	var BBox3f player_bbox= GetPlayerColliderBBox( entities_description );
+
 	var CollisionStepMoveResult move_result=
 		CollisionStepMove(
 			map_data,
 			game_state.colliders,
-			GetPlayerColliderBBox( entities_description ),
+			player_bbox,
 			movement_start_position,
 			movement_end_position );
 
@@ -435,9 +439,38 @@ fn PerformPlayerStepMovement(
 
 	// After the player was moved, add his collider back.
 	AddPlayerCollider( map_data.entities_description.deref(), game_state );
+
+	// Check if in liquid.
+	var Vec3f player_center_position= game_state.player.position + ( player_bbox.min + player_bbox.max ) * 0.5f;
+
+	game_state.player.in_liquid= IsPointInLiquid( map_data, player_center_position );
+
+	// Water leaving logic.
+	// If the player is in water (but not staying on bottom), slightly above has air,
+	// wishes to move upowards and has a collision with a wall -
+	// set vertical velocity to some large value, enough to perform jumping out of the water volume.
+	if( game_state.player.in_liquid &&
+		!game_state.player.on_ground &&
+		player_input.move_wish_vector.z < 0.0f )
+	{
+		var bool mut has_wall_collision= false;
+		for( auto mut i= 0u; i < move_result.trace_clip_result.num_collision_events; ++i )
+		{
+			// TODO - maybe check for slightly non-vertical walls?
+			has_wall_collision|= move_result.trace_clip_result.collision_events[i].plane_normal.z == 0.0f;
+		}
+
+		if( has_wall_collision &&
+			!IsPointInLiquid( map_data, player_center_position + Vec3f( 0.0f, 0.0f, -4.0f ) ) )
+		{
+			// Set vertical velocity, not add it.
+			// Do this to ensure that the jump height is not too small and too heigh.
+			game_state.player.velocity.z= c_water_jump_vertical_velocity;
+		}
+	}
 }
 
-fn ApplyPlayerMovement(
+fn ApplyPlayerUnclippedMovement(
 	GameParams& game_params,
 	PlayerState &mut player_state,
 	Vec3f& move_wish_direction,
@@ -445,6 +478,12 @@ fn ApplyPlayerMovement(
 {
 	// Max player speed is defined via the game config.
 	var f32 max_horizontal_speed_per_step( game_params.max_player_speed );
+
+	// Acceleration depends on friction. Scale is for now just guessed.
+	// Acceleration is twice as big as deceleration, it's needed because deceleration is always applied.
+	var f32 friction_acceleration_scale= 0.5f;
+	var f32 horizontal_deceleation_per_step= friction_acceleration_scale * player_state.ground_friction;
+	var f32 horizontal_acceleration_per_step= horizontal_deceleation_per_step * 2.0f;
 
 	var f32 azimuth_cos= ust::cos( player_state.azimuth );
 	var f32 azimuth_sin= ust::sin( player_state.azimuth );
@@ -476,14 +515,64 @@ fn ApplyPlayerMovement(
 			player_state.velocity*= new_speed_clamped / speed;
 		}
 	}
+	else if( player_state.in_liquid )
+	{
+		// Deceleration in liquid is propertional to current speed.
+		var f32 liquid_decelration_per_step_speed_factor= 15.0f / 16.0f;
+
+		// Acceleration should be derived from deceleration and max speed.
+		var f32 liquid_acceleration_per_step=
+			max_horizontal_speed_per_step *
+			( 1.0f - liquid_decelration_per_step_speed_factor );
+
+		var f32 liquid_gravity_scale= 1.0f / 16.0f;
+		var f32 liquid_jump_velocity_scale= 0.5f;
+
+		// Perform swimming-based acceleration.
+		var Vec3f move_vector_transformed=
+			move_wish_direction.x * forward_vector +
+			move_wish_direction.y * right_vector +
+			move_wish_direction.z * down_vector;
+
+		player_state.velocity+= move_vector_transformed * liquid_acceleration_per_step;
+
+		// Apply less gravity acceleration in liquid compared to air (because of buoyancy counter-force).
+		player_state.velocity.z+= c_gravity_per_step * liquid_gravity_scale;
+
+		if( player_state.on_ground )
+		{
+			// If staying on ground, perform additional walking-based acceleration.
+			var Vec3f move_vector_transformed=
+				move_wish_direction.x * forward_vector +
+				move_wish_direction.y * right_vector;
+
+			player_state.velocity+= move_vector_transformed * ( horizontal_acceleration_per_step * liquid_gravity_scale );
+
+			// Allow jumping while standing on bottom, but with less power.
+			if( jump_requested )
+			{
+				player_state.velocity.z+= c_jump_vertical_velocity_add * liquid_jump_velocity_scale;
+			}
+
+			// Apply ground deceleration.
+			var Vec2f mut horizontal_velocity= player_state.velocity.xy();
+			var f32 speed= horizontal_velocity.Length();
+			if( speed > 0.0f )
+			{
+				var f32 deceleration= horizontal_deceleation_per_step * liquid_gravity_scale;
+				var f32 new_speed= speed - deceleration;
+				var f32 new_speed_clamped= ust::max( 0.0f, ust::min( new_speed, max_horizontal_speed_per_step ) );
+				horizontal_velocity*= new_speed_clamped / speed;
+				player_state.velocity.x= horizontal_velocity.x;
+				player_state.velocity.y= horizontal_velocity.y;
+			}
+		}
+
+		// Apply liquid deceleration.
+		player_state.velocity*= liquid_decelration_per_step_speed_factor;
+	}
 	else
 	{
-		// Acceleration depends on friction. Scale is for now just guessed.
-		// Acceleration is twice as big as deceleration, it's needed because deceleration is always applied.
-		var f32 friction_acceleration_scale= 0.5f;
-		var f32 horizontal_deceleation_per_step= friction_acceleration_scale * player_state.ground_friction;
-		var f32 horizontal_acceleration_per_step= horizontal_deceleation_per_step * 2.0f;
-
 		// Allow only a little bit acceleration while in air.
 		var f32 constexpr horizontal_air_acceleration_per_step= 0.2f;
 		// Apply fast no deceleration while in air.
@@ -1382,6 +1471,34 @@ fn PerformEntityOwnMovement(
 			entity.target_navigation_graph_node= next_node_index;
 		}
 	}
+}
+
+fn IsPointInLiquid( GameMapData& map_data, Vec3f& point ) : bool
+{
+	auto& clusters= map_data.zvox_data.deref().clusters;
+
+	foreach( cluster_index : map_data.liquid_cluster_indices )
+	{
+		var ZvoxCluster& cluster= clusters[ size_type( cluster_index ) ];
+
+		var BBox3f cluster_bbox
+		{
+			.min(
+				f32( cluster.c.center[0] - cluster.c.bounding_box_half_size[0] ),
+				f32( cluster.c.center[1] - cluster.c.bounding_box_half_size[1] ),
+				f32( cluster.c.center[2] - cluster.c.bounding_box_half_size[2] ) ),
+			.max(
+				f32( cluster.c.center[0] + cluster.c.bounding_box_half_size[0] ),
+				f32( cluster.c.center[1] + cluster.c.bounding_box_half_size[1] ),
+				f32( cluster.c.center[2] + cluster.c.bounding_box_half_size[2] ) ),
+		};
+		if( cluster_bbox.PointIsInsideOrOnFace( point ) )
+		{
+			return true;
+		}
+	}
+
+	return false;
 }
 
 fn RotateEntityBBox( Vec3f &mut bbox_half_size, f32 azimuth )
