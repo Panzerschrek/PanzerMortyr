@@ -13,15 +13,15 @@ fn CreateSkyBackgroundBuffer( [ u8, 3 ]& color0, [ u8, 3 ]& color1 ) : SkyBackgr
 	var ust::vector</SkyBackgroundVertex/> mut vertices;
 	var ust::vector</u16/> mut indices;
 
-	var size_type c_num_rings= 22s, c_num_directions= 32s;
+	var size_type constexpr c_num_rings= 22s, constexpr c_num_stripes= 32s;
 
 	for( auto mut r= 1s; r < c_num_rings; ++r )
 	{
-		var f32 elevation_angle= ( f32(r) / f32( c_num_rings ) * 2.0f - 1.0f ) * ( c_tau * 0.25f );
+		var f32 elevation_angle= ( f32(r) *( 2.0f / f32( c_num_rings ) ) - 1.0f ) * ( c_tau * 0.25f );
 		var f32 elevation_angle_cos= ust::cos( elevation_angle );
 		var f32 elevation_angle_sin= ust::sin( elevation_angle );
 
-		var f32 azimuth_offset= f32( r & 1s ) * ( c_half_tau / f32(c_num_directions) );
+		var f32 azimuth_offset= f32( r & 1s ) * ( c_half_tau / f32(c_num_stripes) );
 
 		var [ u8, 3 ] mut ring_color= zero_init;
 		for( auto mut i= 0s; i < 3s; ++i )
@@ -29,16 +29,19 @@ fn CreateSkyBackgroundBuffer( [ u8, 3 ]& color0, [ u8, 3 ]& color1 ) : SkyBackgr
 			ring_color[ 2s - i ]= u8( ( size_type( color0[i] ) * r + size_type( color1[i] ) * ( c_num_rings - r ) ) / c_num_rings );
 		}
 
-		for( auto mut d= 0s; d < c_num_directions; ++d )
+		for( auto mut d= 0s; d < c_num_stripes; ++d )
 		{
-			var f32 azimuth= f32(d) * ( c_tau / f32(c_num_directions) ) + azimuth_offset;
-			var f32 azimuth_cos= ust::cos( azimuth );
-			var f32 azimuth_sin= ust::sin( azimuth );
+			var f32 azimuth= f32(d) * ( c_tau / f32(c_num_stripes) ) + azimuth_offset;
 
 			vertices.push_back(
 				SkyBackgroundVertex
 				{
-					.position[ elevation_angle_cos * azimuth_cos, elevation_angle_cos * azimuth_sin, elevation_angle_sin ],
+					.position
+					[
+						elevation_angle_cos * ust::cos( azimuth ),
+						elevation_angle_cos * ust::sin( azimuth ),
+						elevation_angle_sin
+					],
 					.color= ring_color,
 					.padding15= zero_init,
 				} );
@@ -47,12 +50,12 @@ fn CreateSkyBackgroundBuffer( [ u8, 3 ]& color0, [ u8, 3 ]& color1 ) : SkyBackgr
 
 	for( auto mut r= 0s; r < c_num_rings - 2s; ++r )
 	{
-		var size_type offset0= c_num_directions * r;
-		var size_type offset1= c_num_directions * ( r + 1s );
+		var size_type offset0= c_num_stripes * r;
+		var size_type offset1= c_num_stripes * ( r + 1s );
 
-		for( auto mut d= 0s; d < c_num_directions; ++d )
+		for( auto mut d= 0s; d < c_num_stripes; ++d )
 		{
-			var size_type next_d= ( d + 1s ) % c_num_directions;
+			var size_type next_d= ( d + 1s ) % c_num_stripes;
 			var [ u16, 4 ] quad_indices
 			[
 				( offset0 + d ),
@@ -60,24 +63,22 @@ fn CreateSkyBackgroundBuffer( [ u8, 3 ]& color0, [ u8, 3 ]& color1 ) : SkyBackgr
 				( offset1 + d ),
 				( offset1 + next_d ),
 			];
+
+			indices.push_back( quad_indices[0] );
+			indices.push_back( quad_indices[1] );
 			if( ( r & 1s ) == 0s )
 			{
-				indices.push_back( quad_indices[0] );
-				indices.push_back( quad_indices[1] );
+
 				indices.push_back( quad_indices[3] );
 				indices.push_back( quad_indices[0] );
-				indices.push_back( quad_indices[2] );
-				indices.push_back( quad_indices[3] );
 			}
 			else
 			{
-				indices.push_back( quad_indices[0] );
-				indices.push_back( quad_indices[1] );
 				indices.push_back( quad_indices[2] );
 				indices.push_back( quad_indices[1] );
-				indices.push_back( quad_indices[2] );
-				indices.push_back( quad_indices[3] );
 			}
+			indices.push_back( quad_indices[2] );
+			indices.push_back( quad_indices[3] );
 		}
 	}
 
@@ -91,11 +92,11 @@ fn CreateSkyBackgroundBuffer( [ u8, 3 ]& color0, [ u8, 3 ]& color1 ) : SkyBackgr
 				.padding15= zero_init,
 			} );
 
-		for( auto mut d= 0s; d < c_num_directions; ++d )
+		for( auto mut d= 0s; d < c_num_stripes; ++d )
 		{
 			indices.push_back( u16( pole_vertex_index ) );
 			indices.push_back( u16( d ) );
-			indices.push_back( u16( ( d + 1s ) % c_num_directions ) );
+			indices.push_back( u16( ( d + 1s ) % c_num_stripes ) );
 		}
 	}
 	{
@@ -108,13 +109,13 @@ fn CreateSkyBackgroundBuffer( [ u8, 3 ]& color0, [ u8, 3 ]& color1 ) : SkyBackgr
 				.padding15= zero_init,
 			} );
 
-		var size_type base_index= ( c_num_rings - 2s ) * c_num_directions;
+		var size_type base_index= ( c_num_rings - 2s ) * c_num_stripes;
 
-		for( auto mut d= 0s; d < c_num_directions; ++d )
+		for( auto mut d= 0s; d < c_num_stripes; ++d )
 		{
 			indices.push_back( u16( pole_vertex_index ) );
 			indices.push_back( u16( base_index + d ) );
-			indices.push_back( u16( base_index + ( d + 1s ) % c_num_directions ) );
+			indices.push_back( u16( base_index + ( d + 1s ) % c_num_stripes ) );
 		}
 	}
 
