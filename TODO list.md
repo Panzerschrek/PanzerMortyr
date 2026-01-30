@@ -50,6 +50,7 @@ Other investigation:
 * Investigate how many menu pages the original game has and what state pieces are preserved in transition between menu pages.
 * Investigate how original game console works (supported commands, history).
 * Invisitage command-line options of the original game.
+* Investigate contents of the BLIKI.STD file.
 
 Gameplay investigation:
 
@@ -93,7 +94,6 @@ PanzerMortyr game logic:
 * Implement enemy movement towards the player.
 * Implement decorations movement logic (with mode=11).
 * Implement collisions hack for the one-way passable wall on map 33.
-* Perform some collision hacks to avoid stucking between rails on map 6.
 * Implement crouching for the player.
 * Implement fall damage for player and for entities.
 * Implement shooting logic - with shots colliding with walls and damaging enemies and the player.
