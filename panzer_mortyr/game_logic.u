@@ -435,6 +435,49 @@ fn PerformPlayerMovement(
 		}
 	}
 
+	if( move_result.ground_planes_mask == 0u )
+	{
+		// A hack for cases if the player is stuck between two almost vertical planes.
+		// If we detect such case, assume that the player is still on ground and thus can jump and move with ground acceleration.
+		// Assume that it's technically possible to jump from such tight corner.
+		// It's especially needed for map 6, where it's possible to stuch between rails.
+		//
+		for( auto mut i= 0u; i < move_result.trace_clip_result.num_collision_events; ++i )
+		{
+			for( auto mut j= 1u; j < move_result.trace_clip_result.num_collision_events; ++j )
+			{
+				var CollisionTraceClipResult::CollisionEvent& collision_event_i=
+					move_result.trace_clip_result.collision_events[i];
+				var CollisionTraceClipResult::CollisionEvent& collision_event_j=
+					move_result.trace_clip_result.collision_events[j];
+
+				var Vec3f& normal_i= collision_event_i.plane_normal;
+				var Vec3f& normal_j= collision_event_j.plane_normal;
+
+				if( ( normal_i.z < 0.0f && normal_j.z <= 0.0f ) || ( normal_i.z <= 0.0f && normal_j.z < 0.0f ) )
+				{
+					var Vec2f normal_i_xy= normal_i.xy();
+					var Vec2f normal_j_xy= normal_j.xy();
+					var f32 lengths_square_product= normal_i_xy.SquareLength() * normal_j_xy.SquareLength();
+					if( lengths_square_product > 0.0f )
+					{
+						var f32 angle_cos= normal_i_xy.Dot( normal_j_xy ) / ust::sqrt( lengths_square_product );
+						if( angle_cos < -c_half_sqrt_2 )
+						{
+							game_state.player.on_ground= true;
+							ust::max_assign(
+								ground_friction,
+								GetFrictionForMapQuad( global_data, map_data, collision_event_i.collision_quad_index ) );
+							ust::max_assign(
+								ground_friction,
+								GetFrictionForMapQuad( global_data, map_data, collision_event_j.collision_quad_index ) );
+						}
+					}
+				}
+			}
+		}
+	}
+
 	game_state.player.ground_friction= ground_friction;
 
 	// After the player was moved, add his collider back.
