@@ -471,16 +471,11 @@ fn CollisionStepMove(
 
 	for( auto mut i= 0u; i < collision_trace_clip_result.num_collision_events; ++i )
 	{
-		var CollisionTraceClipResult::CollisionEvent& collision_event= collision_trace_clip_result.collision_events[i];
-
-		var Vec3f& normal= collision_event.plane_normal;
+		var Vec3f& normal= collision_trace_clip_result.collision_events[i].plane_normal;
 		var f32 normal_length= normal.Length();
 		if( normal_length > 0.0f )
 		{
-			// Assume ground surfaces all surfaces with normal pointing mostly up.
-			// This value is tuned so that it's possible to jump on some steap ramps, where it's possible to jump in the original.
-
-			if( (-normal.z) / normal_length >= 0.67f )
+			if( (-normal.z) / normal_length >= c_ground_plane_min_normal_z )
 			{
 				ground_planes_mask|= 1u << i;
 			}
@@ -522,7 +517,7 @@ fn CollisionStepMove(
 			var f32 extra_z_movement= side_movement_vector.z;
 			side_movement_vector.z= 0.0f;
 
-			var CollisionTraceClipResult tweaked_collision_trace_clip_result=
+			var CollisionTraceClipResult mut tweaked_collision_trace_clip_result=
 				CollisionTraceAndClip(
 					map_data,
 					extra_colliders,
@@ -553,15 +548,48 @@ fn CollisionStepMove(
 					// Do not move down the whole distance to avoid landing exactly on edge of some collider.
 					position_with_step_movement.z+=
 						ust::max( 0.0f, ust::min( 1.0f, down_trace_result.clipped_move_distance ) * down_movement_vector.z - c_collider_plane_push_eps );
+
+					if( size_type( tweaked_collision_trace_clip_result.num_collision_events ) < CollisionTraceClipResult::c_max_collision_events )
+					{
+						tweaked_collision_trace_clip_result.collision_events[ tweaked_collision_trace_clip_result.num_collision_events ]=
+							 CollisionTraceClipResult::CollisionEvent
+							 {
+								.plane_normal= down_trace_result.collision_point_normal,
+								.collision_quad_index= down_trace_result.collision_quad_index,
+							 };
+						++tweaked_collision_trace_clip_result.num_collision_events;
+					}
 				}
 
-				// Update clip planes and result position.
-				collision_trace_clip_result= tweaked_collision_trace_clip_result;
-				collision_trace_clip_result.position_clipped= position_with_step_movement;
+				var u32 mut new_ground_planes_mask= 0u;
+
+				for( auto mut i= 0u; i < tweaked_collision_trace_clip_result.num_collision_events; ++i )
+				{
+					var Vec3f& normal= tweaked_collision_trace_clip_result.collision_events[i].plane_normal;
+					var f32 normal_length= normal.Length();
+					if( normal_length > 0.0f )
+					{
+						if( (-normal.z) / normal_length >= c_ground_plane_min_normal_z )
+						{
+							new_ground_planes_mask|= 1u << i;
+						}
+					}
+
+					// Assume only exactly vertical polygons to be walls.
+					// We can't assume even slightly-inclining polygons for performing step movement, since such movement doesn't look great.
+					collided_with_wall|= normal.z == 0.0f;
+				}
+
+				if( new_ground_planes_mask != 0u )
+				{
+					// Update clip planes and result position if has ground at step destination.
+					collision_trace_clip_result= tweaked_collision_trace_clip_result;
+					collision_trace_clip_result.position_clipped= position_with_step_movement;
+					ground_planes_mask= new_ground_planes_mask;
+				}
 			}
 		}
 	}
-
 	return CollisionStepMoveResult
 	{
 		.trace_clip_result= collision_trace_clip_result,
@@ -572,6 +600,10 @@ fn CollisionStepMove(
 // Push collision result slightly from collider planes using this amout.
 // It's necessary to avoid numerical precision issues when even a clopped collision leads to result position inside a collider.
 var f32 c_collider_plane_push_eps= 1.0f / 32.0f;
+
+// Assume ground surfaces all surfaces with normal pointing mostly up.
+// This value is tuned so that it's possible to jump on some steap ramps, where it's possible to jump in the original.
+var f32 c_ground_plane_min_normal_z= 0.67f;
 
 fn GetSlightlyExtendedClusterBBox( ZvoxCluster& cluster ) : BBox3f
 {
