@@ -1,10 +1,12 @@
 import "/main_wrapper.u"
+import "/hash_set.u"
 import "/path_utils.u"
 import "/stdout.u"
 import "/string_conversions.u"
 
 import "/common_lib/map_loading.uh"
 import "/common_lib/maps_description_file.uh"
+import "/common_lib/materials_file.uh"
 
 pretty_main
 {
@@ -31,6 +33,14 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 	}
 
 	var MapsDescription& maps_description= maps_description_opt.try_deref();
+
+	auto materials_description_opt = LoadMaterialsFile( maps_dir );
+	if( materials_description_opt.empty() )
+	{
+		return -1;
+	}
+
+	var MaterialsDescription& materials_description= materials_description_opt.try_deref();
 
 	var size_type mut max_clusters= 0s;
 	var u32 mut max_clusters_map= ~0u;
@@ -72,6 +82,8 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 	var [ i32, 3 ] mut max_cluster_dimensions[ 0, 0, 0 ];
 
 	var [ i32, 3 ] mut max_map_quad_dimensions[ 0, 0, 0 ];
+
+	var ust::hash_set</u32/> mut missing_materials;
 
 	for( auto mut map_index= 1u; size_type( map_index ) < maps_description.maps.size(); ++map_index )
 	{
@@ -302,6 +314,25 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 				ust::max_assign( max_map_quad_dimensions[i], i32( quad.bounding_box_half_size[i] ) * 2 );
 			}
 		}
+
+		if_var( &materials_block : materials_description.blocks.find( map_description.materials_block ) )
+		{
+			foreach( &q : map.zmap.quads ) label enumerate_quads
+			{
+				var u32 index( q.texture_id );
+				if( size_type( index ) >= 4s * ( materials_block.textures.size() - 1s ) )
+				{
+					foreach( known_texture_index : MaterialsDescription::c_special_material_texture_indices )
+					{
+						if( index == known_texture_index )
+						{
+							continue label enumerate_quads;
+						}
+					}
+					missing_materials.insert(index);
+				}
+			}
+		}
 	}
 
 	ust::stdout_print( "\nMap sequence is:\n" );
@@ -396,6 +427,16 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 			" ",
 			ust::to_string8( max_map_quad_dimensions[2] ),
 			"\n" ) );
+
+	if( !missing_materials.empty() )
+	{
+		ust::stdout_print( "\nMissing materials: " );
+		foreach( m : missing_materials )
+		{
+			ust::stdout_print( ust::concat( ust::to_string8( m ), " " ) );
+		}
+		ust::stdout_print( "\n" );
+	}
 
 	return 0;
 }
