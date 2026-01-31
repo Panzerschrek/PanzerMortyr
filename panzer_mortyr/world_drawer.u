@@ -33,6 +33,9 @@ fn WorldDrawer::constructor(
 		sky_background_shader_(
 			embed</char8/>( "shaders/sky_background.vert.glsl" ),
 			embed</char8/>( "shaders/sky_background.frag.glsl" ) ),
+		clouds_shader_(
+			embed</char8/>( "shaders/clouds.vert.glsl" ),
+			embed</char8/>( "shaders/clouds.frag.glsl" ) ),
 		test_primitive_shader_(
 			embed</char8/>( "shaders/test_primitive.vert.glsl" ),
 			embed</char8/>( "shaders/test_primitive.frag.glsl" ) ),
@@ -100,13 +103,14 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 
 	var Mat4f view_matrix= Mat4f::MakeTranslation( -drawing_info.camera_position ) * rotation_and_projection_matrix;
 
-	SetGLState( g_sky_background_gl_state );
 
 	{
+		SetGLState( g_sky_background_gl_state );
+
 		var Mat4f sky_background_matrix=
 			Mat4f::MakeRotationX( c_tau * 0.25f ) *
 			Mat4f::MakeRotationZ( -c_tau * 0.125f ) * // TODO - check this angle is correct.
-			Mat4f::MakeScale( Vec3f( c_sky_scale, c_sky_scale, c_sky_scale ) ) *
+			Mat4f::MakeScale( c_sky_scale ) *
 			rotation_and_projection_matrix;
 
 		sky_background_shader_.Bind();
@@ -120,6 +124,33 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 			GLint( map_data.sky_background_buffer.num_triangle_indices ),
 			GLenum( GL_UNSIGNED_SHORT ),
 			ust::nullptr</byte8/>() ) );
+	}
+
+	if( !map_data.sky_clouds_params.empty() && map_data.clouds_texture_layer != ~0u )
+	{
+		var SkyCloudsParams& clouds_params= map_data.sky_clouds_params.try_deref();
+
+		SetGLState(
+			( clouds_params.scale_colors_by_two
+				? g_clouds_double_blending_gl_state
+				: g_clouds_single_blending_gl_state ) );
+
+		var Mat4f clouds_matrix= Mat4f::MakeScale(c_clouds_scale ) * rotation_and_projection_matrix;
+
+		var u32 texture_slot= 0u;
+		unsafe( glActiveTexture( GLenum( GL_TEXTURE0 ) + GLenum(texture_slot) ) );
+		map_data.map_textures_array.Bind();
+
+		clouds_shader_.Bind();
+		clouds_shader_.SetUniform( "vu_matrix", clouds_matrix );
+		clouds_shader_.SetUniform( "fu_texture", texture_slot );
+		clouds_shader_.SetUniform( "fu_texture_layer", f32( map_data.clouds_texture_layer ) );
+		clouds_shader_.SetUniform( "fu_texture_scale", clouds_params.scale );
+		clouds_shader_.SetUniform(
+			"fu_texture_shift",
+			drawing_info.game_time_s * clouds_params.scroll_speed * Vec2f( 1.0f, 1.0f ) );
+
+		unsafe( glDrawArrays( GLenum( GL_TRIANGLES ), GLint(0), GLsizei(12) ) );
 	}
 
 	var ZvoxData& zvox_data= map_data.zvox_data.deref();
@@ -802,8 +833,10 @@ fn WorldDrawer::SetMap( mut this, u32 map_index )
 			.index_buffer= move(index_buffer),
 			// Do not bother using caching for map textures, since almost all maps (with a couple of exceptions) use their own texture files.
 			.map_textures_array= LoadMapTextures( materials_block, game_filesystem_ptr_, console_out_ ),
+			.clouds_texture_layer= materials_block.special_material_indices[ size_type( MaterialsDescription::SpecialMaterial::Sky ) ],
 			.clusters_draw_data= move(clusters_draw_data),
 			.sky_background_buffer= CreateSkyBackgroundBuffer( map_description ),
+			.sky_clouds_params= CreateSkyCloudsParams( map_description ),
 		} );
 }
 
@@ -927,6 +960,7 @@ fn CalculateCameraRotationAndProjectionMatrix( f32 aspect, f32 camera_azimuth, f
 var f32 c_z_near= 4.0f;
 var f32 c_z_far= 32768.0f;
 var f32 c_sky_scale= c_z_far / 2.0f;
+var f32 c_clouds_scale= c_sky_scale / 2.0f;
 
 var size_type c_max_test_primitive_vertices= 4096s;
 
@@ -952,6 +986,30 @@ var GLState g_sky_background_gl_state
 	.blending_enabled= false,
 	.blend_source_factor( GL_INVALID_ENUM ),
 	.blend_destination_factor( GL_INVALID_ENUM ),
+};
+
+var GLState g_clouds_single_blending_gl_state
+{
+	.depth_test_enabled= false,
+	.depth_test_func( GL_INVALID_ENUM ),
+	.depth_write_enabled= false,
+	.cull_face_enabled= false,
+	.cull_face( GL_INVALID_ENUM ),
+	.blending_enabled= true,
+	.blend_source_factor( GL_ZERO ),
+	.blend_destination_factor( GL_SRC_COLOR ),
+};
+
+var GLState g_clouds_double_blending_gl_state
+{
+	.depth_test_enabled= false,
+	.depth_test_func( GL_INVALID_ENUM ),
+	.depth_write_enabled= false,
+	.cull_face_enabled= false,
+	.cull_face( GL_INVALID_ENUM ),
+	.blending_enabled= true,
+	.blend_source_factor( GL_DST_COLOR ),
+	.blend_destination_factor( GL_SRC_COLOR ),
 };
 
 var GLState g_map_drawing_gl_state
