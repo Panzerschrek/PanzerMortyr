@@ -2,7 +2,9 @@ import "/math.u"
 import "/vector.u"
 import "gl_functions.uh"
 import "math_constants.uh"
+import "random.uh"
 import "sky.uh"
+import "vec.uh"
 import "vertex_formats.uh"
 
 namespace PM
@@ -206,6 +208,233 @@ fn CreateSkyCloudsParams( MapsDescription::MapDescription& map_description ) : u
 			return SkyCloudsParams{ .scale= 4.0f / 3.0f, .scroll_speed= 1.0f / 16.0f, .scale_colors_by_two= true };
 		},
 	}
+}
+
+fn CreateStarsBuffer( MapsDescription::MapDescription& map_description ) : StarsBuffer
+{
+	var ust::vector</StarVertex/> mut vertices;
+	var ust::vector</u16/> mut indices;
+
+	// Hardcoded texture coordinates.
+	// TODO - read "BLIKI.STD" file?
+	var f32 star_layer= 124.0f;
+	var [ f32, 2 ] star_tc_start[ 96.0f / 128.0f, 32.0f / 128.0f ], star_tc_end[ 112.0f / 128.0f, 48.0f / 128.0f ];
+	var f32 moon_layer= 125.0f;
+
+	if( map_description.sky_model == 0u | map_description.sky_model == 1u )
+	{
+		var PseudoRandomGenerator mut rand;
+
+		var size_type c_num_stars= 512s;
+
+		for( auto mut i= 0s; i < c_num_stars; ++i )
+		{
+			var Vec3f position(
+				f32( rand.Next() ) * ( 2.0f / f32( PseudoRandomGenerator::c_max ) ) - 1.0f,
+				f32( rand.Next() ) * ( 2.0f / f32( PseudoRandomGenerator::c_max ) ) - 1.0f,
+				// Generate stars only in upper hemisphere.
+				-ust::abs( f32( rand.Next() ) * ( 2.0f / f32( PseudoRandomGenerator::c_max ) ) - 1.0f ) );
+
+			// Reject points outside unit sphere to ensure equal angular density.
+			// Reject points too close to the camera (stars should be behind the clouds).
+			var f32 position_square_length= position.SquareLength();
+			if( position_square_length < 0.25f || position_square_length > 1.0f )
+			{
+				continue;
+			}
+
+			var Vec3f u_vec= position.Cross( Vec3f( 0.0f, 0.0f, 1.0f ) );
+			var Vec3f v_vec= u_vec.Cross( position );
+
+			var f32 u_vec_length= u_vec.Length();
+			var f32 v_vec_length= v_vec.Length();
+			if( u_vec_length == 0.0f | v_vec_length == 0.0f )
+			{
+				continue;
+			}
+
+			var f32 scale= f32( rand.Next() ) * ( 0.006f / f32( PseudoRandomGenerator::c_max ) )  + 0.002f;
+
+			var f32 vectors_scale= scale * ust::sqrt( position_square_length );
+
+			var Vec3f u_vec_normalized_and_scaled= u_vec * ( vectors_scale / u_vec_length );
+			var Vec3f v_vec_normalized_and_scaled= v_vec * ( vectors_scale / v_vec_length );
+
+			var [ Vec3f, 4 ] positions
+			[
+				position - u_vec_normalized_and_scaled - v_vec_normalized_and_scaled,
+				position + u_vec_normalized_and_scaled - v_vec_normalized_and_scaled,
+				position - u_vec_normalized_and_scaled + v_vec_normalized_and_scaled,
+				position + u_vec_normalized_and_scaled + v_vec_normalized_and_scaled,
+			];
+
+			var size_type base_vertex= vertices.size();
+
+			vertices.push_back(
+				StarVertex
+				{
+					.position[ positions[0].x, positions[0].y, positions[0].z ],
+					.padding12= zero_init,
+					.tex_coordinates[ star_tc_start[0], star_tc_start[1], star_layer ],
+					.light= zero_init,
+					.padding31= zero_init,
+				} );
+
+			vertices.push_back(
+				StarVertex
+				{
+					.position[ positions[1].x, positions[1].y, positions[1].z ],
+					.padding12= zero_init,
+					.tex_coordinates[ star_tc_end[0], star_tc_start[1], star_layer ],
+					.light= zero_init,
+					.padding31= zero_init,
+				} );
+
+			vertices.push_back(
+				StarVertex
+				{
+					.position[ positions[2].x, positions[2].y, positions[2].z ],
+					.padding12= zero_init,
+					.tex_coordinates[ star_tc_start[0], star_tc_end[1], star_layer ],
+					.light= zero_init,
+					.padding31= zero_init,
+				} );
+
+			vertices.push_back(
+				StarVertex
+				{
+					.position[ positions[3].x, positions[3].y, positions[3].z ],
+					.padding12= zero_init,
+					.tex_coordinates[ star_tc_end[0], star_tc_end[1], star_layer ],
+					.light= zero_init,
+					.padding31= zero_init,
+				} );
+
+			indices.push_back( u16( base_vertex + 0s ) );
+			indices.push_back( u16( base_vertex + 1s ) );
+			indices.push_back( u16( base_vertex + 2s ) );
+			indices.push_back( u16( base_vertex + 1s ) );
+			indices.push_back( u16( base_vertex + 2s ) );
+			indices.push_back( u16( base_vertex + 3s ) );
+		}
+	}
+
+	if( map_description.sky_model == 2u | map_description.sky_model == 3u )
+	{
+		var Vec3f position( 0.5f, 0.5f, -0.5f );
+
+		var Vec3f u_vec= position.Cross( Vec3f( 0.0f, 0.0f, 1.0f ) );
+		var Vec3f v_vec= u_vec.Cross( position );
+
+		var f32 vectors_scale= 0.125f;
+
+		var Vec3f u_vec_normalized_and_scaled= u_vec * ( vectors_scale / u_vec.Length() );
+		var Vec3f v_vec_normalized_and_scaled= v_vec * ( vectors_scale / v_vec.Length() );
+
+		var [ Vec3f, 4 ] positions
+		[
+			position - u_vec_normalized_and_scaled - v_vec_normalized_and_scaled,
+			position + u_vec_normalized_and_scaled - v_vec_normalized_and_scaled,
+			position - u_vec_normalized_and_scaled + v_vec_normalized_and_scaled,
+			position + u_vec_normalized_and_scaled + v_vec_normalized_and_scaled,
+		];
+
+		var size_type base_vertex= vertices.size();
+
+		vertices.push_back(
+			StarVertex
+			{
+				.position[ positions[0].x, positions[0].y, positions[0].z ],
+				.padding12= zero_init,
+				.tex_coordinates[ 0.0f, 0.0f, moon_layer ],
+				.light= zero_init,
+				.padding31= zero_init,
+			} );
+
+		vertices.push_back(
+			StarVertex
+			{
+				.position[ positions[1].x, positions[1].y, positions[1].z ],
+				.padding12= zero_init,
+				.tex_coordinates[ 1.0f, 0.0f, moon_layer ],
+				.light= zero_init,
+				.padding31= zero_init,
+			} );
+
+		vertices.push_back(
+			StarVertex
+			{
+				.position[ positions[2].x, positions[2].y, positions[2].z ],
+				.padding12= zero_init,
+				.tex_coordinates[ 0.0f, 1.0f, moon_layer ],
+				.light= zero_init,
+				.padding31= zero_init,
+			} );
+
+		vertices.push_back(
+			StarVertex
+			{
+				.position[ positions[3].x, positions[3].y, positions[3].z ],
+				.padding12= zero_init,
+				.tex_coordinates[ 1.0f, 1.0f, moon_layer ],
+				.light= zero_init,
+				.padding31= zero_init,
+			} );
+
+		indices.push_back( u16( base_vertex + 0s ) );
+		indices.push_back( u16( base_vertex + 1s ) );
+		indices.push_back( u16( base_vertex + 2s ) );
+		indices.push_back( u16( base_vertex + 1s ) );
+		indices.push_back( u16( base_vertex + 2s ) );
+		indices.push_back( u16( base_vertex + 3s ) );
+	}
+
+	var VertexArrayObject mut vertex_array_object;
+
+	var BufferObject mut vertex_buffer=
+		BufferObject::CreateStaticDrawBuffer(
+			GLenum( GL_ARRAY_BUFFER ), // Needed for a vertex attribute source.
+			vertices.range().to_byte8_range() );
+
+	var BufferObject mut index_buffer=
+		BufferObject::CreateStaticDrawBuffer(
+			GLenum( GL_ELEMENT_ARRAY_BUFFER ), // Needed for a triangle indices source.
+			indices.range().to_byte8_range() );
+
+	vertex_array_object.Bind();
+	vertex_buffer.Bind();
+
+	// These attribute numbers should match values in vertex shader!
+	var GLuint c_position_attrib= 0u;
+	var GLuint c_texture_coordinates_attrib= 1u;
+
+	unsafe( glEnableVertexAttribArray( c_position_attrib ) );
+
+	unsafe( glVertexAttribPointer(
+		c_position_attrib,
+		3,
+		GLenum( GL_FLOAT ),
+		GLboolean(0),
+		GLsizei( typeinfo</StarVertex/>.size_of ),
+		ust::nullptr</byte8/>() + GetStructFieldOffset</StarVertex, "position"/>() ) );
+
+	unsafe( glEnableVertexAttribArray( c_texture_coordinates_attrib ) );
+
+	unsafe( glVertexAttribPointer(
+		c_texture_coordinates_attrib,
+		3,
+		GLenum( GL_FLOAT ),
+		GLboolean(0),
+		GLsizei( typeinfo</StarVertex/>.size_of ),
+		ust::nullptr</byte8/>() + GetStructFieldOffset</StarVertex, "tex_coordinates"/>() ) );
+
+	return StarsBuffer
+	{
+		.vertex_array_object= move(vertex_array_object),
+		.vertex_buffer= move(vertex_buffer),
+		.index_buffer= move(index_buffer),
+		.num_triangle_indices= indices.size(),
+	};
 }
 
 } // namespace PM
