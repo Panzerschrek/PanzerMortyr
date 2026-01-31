@@ -152,9 +152,8 @@ PanzerMortyr rendering:
 * Apply additional tessellation for tessellated polygons in order to perform smoother light values interpolation (naively triangulating them doesn't produce good result always).
 * Draw water quads properly.
 * Draw underwater caustics properly.
-* Draw stars on sky where they should be (sky modes with stars).
-* Draw a moon - if one is enabled via a sky mode.
 * Draw non-black sky background for maps without sky colors specified (like maps 5, 6 or 34).
+* Ensure sun/moon position and size is exactly like in the original game.
 * Draw glass materials properly (with transparency).
 * Draw light source sprites (flames, coronas).
 * Draw fog where it should be.
