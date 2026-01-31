@@ -30,6 +30,9 @@ fn WorldDrawer::constructor(
 		model_shader_(
 			embed</char8/>( "shaders/model.vert.glsl" ),
 			embed</char8/>( "shaders/model.frag.glsl" ) ),
+		sky_background_shader_(
+			embed</char8/>( "shaders/sky_background.vert.glsl" ),
+			embed</char8/>( "shaders/sky_background.frag.glsl" ) ),
 		test_primitive_shader_(
 			embed</char8/>( "shaders/test_primitive.vert.glsl" ),
 			embed</char8/>( "shaders/test_primitive.frag.glsl" ) ),
@@ -85,12 +88,39 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 
 	var MapDrawData& map_data= map_data_.try_deref();
 
-	unsafe( glClearColor(
-		GLclampf( map_data.background_color[0] ),
-		GLclampf( map_data.background_color[1] ),
-		GLclampf( map_data.background_color[2] ), GLclampf(1.0) ) );
+	// Clear only depth buffer, but not color buffer.
+	// Clearing color isn't necessary, since we draw sky background geometry.
+	unsafe( glClear( GLbitfield( GL_DEPTH_BUFFER_BIT ) ) );
 
-	unsafe( glClear( GLbitfield( GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT ) ) );
+	var Mat4f rotation_and_projection_matrix=
+		CalculateCameraRotationAndProjectionMatrix(
+			viewport_info.view_aspect,
+			drawing_info.camera_azimuth,
+			drawing_info.camera_elevation );
+
+	var Mat4f view_matrix= Mat4f::MakeTranslation( -drawing_info.camera_position ) * rotation_and_projection_matrix;
+
+	SetGLState( g_sky_background_gl_state );
+
+	{
+		var Mat4f sky_background_matrix=
+			Mat4f::MakeRotationX( c_tau * 0.25f ) *
+			Mat4f::MakeRotationZ( -c_tau * 0.125f ) * // TODO - check this angle is correct.
+			Mat4f::MakeScale( Vec3f( c_sky_scale, c_sky_scale, c_sky_scale ) ) *
+			rotation_and_projection_matrix;
+
+		sky_background_shader_.Bind();
+		sky_background_shader_.SetUniform( "vu_matrix", sky_background_matrix );
+
+		map_data.sky_background_buffer.vertex_array_object.Bind();
+		map_data.sky_background_buffer.index_buffer.Bind();
+
+		unsafe( glDrawElements(
+			GLenum( GL_TRIANGLES ),
+			GLint( map_data.sky_background_buffer.num_triangle_indices ),
+			GLenum( GL_UNSIGNED_SHORT ),
+			ust::nullptr</byte8/>() ) );
+	}
 
 	var ZvoxData& zvox_data= map_data.zvox_data.deref();
 	var ZpozData& zpoz_data= map_data.zpoz_data.deref();
@@ -208,13 +238,6 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 
 	unsafe( glActiveTexture( GLenum( GL_TEXTURE0 ) + GLenum(texture_slot) ) );
 	map_data.map_textures_array.Bind();
-
-	var Mat4f view_matrix=
-		CalculateCameraMatrix(
-			viewport_info.view_aspect,
-			drawing_info.camera_position,
-			drawing_info.camera_azimuth,
-			drawing_info.camera_elevation );
 
 	map_shader_.Bind();
 	map_shader_.SetUniform( "vu_matrix", view_matrix );
@@ -523,6 +546,12 @@ fn WorldDrawer::SetMap( mut this, u32 map_index )
 
 			var size_type base_vertex_index= vertices.size() - cluser_first_vertex_index;
 
+			if( u32( quad.texture_id ) == MaterialsDescription::c_special_material_texture_indices[ size_type( MaterialsDescription::SpecialMaterial::Sky ) ] )
+			{
+				// Don't draw sky quads at all.
+				continue;
+			}
+
 			var f32 mut texture_id( quad.texture_id );
 
 			// TODO - use speacial passes for special materials.
@@ -774,12 +803,7 @@ fn WorldDrawer::SetMap( mut this, u32 map_index )
 			// Do not bother using caching for map textures, since almost all maps (with a couple of exceptions) use their own texture files.
 			.map_textures_array= LoadMapTextures( materials_block, game_filesystem_ptr_, console_out_ ),
 			.clusters_draw_data= move(clusters_draw_data),
-			.background_color
-			[
-				f32( map_description.sky_colors[0][2] ) / 255.0f,
-				f32( map_description.sky_colors[0][1] ) / 255.0f,
-				f32( map_description.sky_colors[0][0] ) / 255.0f
-			]
+			.sky_background_buffer= CreateSkyBackgroundBuffer( map_description ),
 		} );
 }
 
@@ -888,22 +912,21 @@ fn LoadMapTextures(
 	return texture;
 }
 
-fn CalculateCameraMatrix( f32 aspect, Vec3f& camera_position, f32 camera_azimuth, f32 camera_elevation ) : Mat4f
+fn CalculateCameraRotationAndProjectionMatrix( f32 aspect, f32 camera_azimuth, f32 camera_elevation ) : Mat4f
 {
 	var f32 fov= c_tau / 4.0f;
 
-	// TODO - tune near/far clip planes.
-	var f32 z_near= 1.0f;
-	var f32 z_far= 65536.0f;
-
-	var Mat4f translate_matrix= Mat4f::MakeTranslation( -camera_position );
 	var Mat4f rotation_matrix_z= Mat4f::MakeRotationZ( -camera_azimuth );
 	var Mat4f rotation_matrix_x= Mat4f::MakeRotationX( -camera_elevation + c_tau / 4.0f );
 	var Mat4f rotation_matrix= rotation_matrix_z * rotation_matrix_x;
-	var Mat4f perspective_matrix= Mat4f::MakePerspective( aspect, fov, z_near, z_far );
+	var Mat4f perspective_matrix= Mat4f::MakePerspective( aspect, fov, c_z_near, c_z_far );
 
-	return translate_matrix * rotation_matrix * perspective_matrix;
+	return rotation_matrix * perspective_matrix;
 }
+
+var f32 c_z_near= 4.0f;
+var f32 c_z_far= 32768.0f;
+var f32 c_sky_scale= c_z_far / 2.0f;
 
 var size_type c_max_test_primitive_vertices= 4096s;
 
@@ -912,6 +935,18 @@ var GLState g_buffer_clear_gl_state
 	.depth_test_enabled= false,
 	.depth_test_func( GL_INVALID_ENUM ),
 	.depth_write_enabled= true,
+	.cull_face_enabled= false,
+	.cull_face( GL_INVALID_ENUM ),
+	.blending_enabled= false,
+	.blend_source_factor( GL_INVALID_ENUM ),
+	.blend_destination_factor( GL_INVALID_ENUM ),
+};
+
+var GLState g_sky_background_gl_state
+{
+	.depth_test_enabled= false,
+	.depth_test_func( GL_INVALID_ENUM ),
+	.depth_write_enabled= false,
 	.cull_face_enabled= false,
 	.cull_face( GL_INVALID_ENUM ),
 	.blending_enabled= false,

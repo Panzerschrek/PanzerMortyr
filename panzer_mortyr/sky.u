@@ -1,0 +1,191 @@
+import "/math.u"
+import "/vector.u"
+import "gl_functions.uh"
+import "math_constants.uh"
+import "sky.uh"
+import "vertex_formats.uh"
+
+namespace PM
+{
+
+fn CreateSkyBackgroundBuffer( MapsDescription::MapDescription& map_description ) : SkyBackgroundBuffer
+{
+	if( map_description.sky_model == 0u )
+	{
+		// Sky mode 0 is always black.
+		var [ u8, 3 ] black= zero_init;
+		return CreateSkyBackgroundGradientBuffer( black, black );
+	}
+	else
+	{
+		// Other modes use gradient of two colors.
+		return CreateSkyBackgroundGradientBuffer( map_description.sky_colors[0], map_description.sky_colors[1] );
+	}
+}
+
+fn CreateSkyBackgroundGradientBuffer( [ u8, 3 ]& color0, [ u8, 3 ]& color1 ) : SkyBackgroundBuffer
+{
+	var ust::vector</SkyBackgroundVertex/> mut vertices;
+	var ust::vector</u16/> mut indices;
+
+	// Enough resolution to approximate angle-based gradient interpolation.
+	var size_type constexpr c_num_rings= 20s, constexpr c_num_stripes= 24s;
+
+	// Ring vertices.
+	for( auto mut r= 1s; r < c_num_rings; ++r )
+	{
+		var f32 elevation_angle= ( f32(r) *( 2.0f / f32( c_num_rings ) ) - 1.0f ) * ( c_tau * 0.25f );
+		var f32 elevation_angle_cos= ust::cos( elevation_angle );
+		var f32 elevation_angle_sin= ust::sin( elevation_angle );
+
+		var f32 azimuth_offset= f32( r & 1s ) * ( c_half_tau / f32(c_num_stripes) );
+
+		var [ u8, 3 ] mut ring_color= zero_init;
+		for( auto mut i= 0s; i < 3s; ++i )
+		{
+			ring_color[ 2s - i ]= u8( ( size_type( color0[i] ) * r + size_type( color1[i] ) * ( c_num_rings - r ) ) / c_num_rings );
+		}
+
+		for( auto mut s= 0s; s < c_num_stripes; ++s )
+		{
+			var f32 azimuth= f32(s) * ( c_tau / f32(c_num_stripes) ) + azimuth_offset;
+
+			vertices.push_back(
+				SkyBackgroundVertex
+				{
+					.position
+					[
+						elevation_angle_cos * ust::cos( azimuth ),
+						elevation_angle_cos * ust::sin( azimuth ),
+						elevation_angle_sin
+					],
+					.color= ring_color,
+					.padding15= zero_init,
+				} );
+		}
+	}
+
+	// Ring triangles.
+	for( auto mut r= 0s; r < c_num_rings - 2s; ++r )
+	{
+		var size_type offset0= c_num_stripes * r;
+		var size_type offset1= c_num_stripes * ( r + 1s );
+
+		for( auto mut s= 0s; s < c_num_stripes; ++s )
+		{
+			var size_type next_s= ( s + 1s ) % c_num_stripes;
+			var [ u16, 4 ] quad_indices
+			[
+				( offset0 + s ),
+				( offset0 + next_s ),
+				( offset1 + s ),
+				( offset1 + next_s ),
+			];
+
+			indices.push_back( quad_indices[0] );
+			indices.push_back( quad_indices[1] );
+			if( ( r & 1s ) == 0s )
+			{
+
+				indices.push_back( quad_indices[3] );
+				indices.push_back( quad_indices[0] );
+			}
+			else
+			{
+				indices.push_back( quad_indices[2] );
+				indices.push_back( quad_indices[1] );
+			}
+			indices.push_back( quad_indices[2] );
+			indices.push_back( quad_indices[3] );
+		}
+	}
+
+	// North cup.
+	{
+		var size_type pole_vertex_index= vertices.size();
+		vertices.push_back(
+			SkyBackgroundVertex
+			{
+				.position[ 0.0f, 0.0f, -1.0f ],
+				.color[ color1[2], color1[1], color1[0] ],
+				.padding15= zero_init,
+			} );
+
+		for( auto mut s= 0s; s < c_num_stripes; ++s )
+		{
+			indices.push_back( u16( pole_vertex_index ) );
+			indices.push_back( u16( s ) );
+			indices.push_back( u16( ( s + 1s ) % c_num_stripes ) );
+		}
+	}
+
+	// South cup.
+	{
+		var size_type pole_vertex_index= vertices.size();
+		vertices.push_back(
+			SkyBackgroundVertex
+			{
+				.position[ 0.0f, 0.0f, 1.0f ],
+				.color[ color0[2], color0[1], color0[0] ],
+				.padding15= zero_init,
+			} );
+
+		var size_type base_index= ( c_num_rings - 2s ) * c_num_stripes;
+
+		for( auto mut s= 0s; s < c_num_stripes; ++s )
+		{
+			indices.push_back( u16( pole_vertex_index ) );
+			indices.push_back( u16( base_index + s ) );
+			indices.push_back( u16( base_index + ( s + 1s ) % c_num_stripes ) );
+		}
+	}
+
+	var VertexArrayObject mut vertex_array_object;
+
+	var BufferObject mut vertex_buffer=
+		BufferObject::CreateStaticDrawBuffer(
+			GLenum( GL_ARRAY_BUFFER ), // Needed for a vertex attribute source.
+			vertices.range().to_byte8_range() );
+
+	var BufferObject mut index_buffer=
+		BufferObject::CreateStaticDrawBuffer(
+			GLenum( GL_ELEMENT_ARRAY_BUFFER ), // Needed for a triangle indices source.
+			indices.range().to_byte8_range() );
+
+	vertex_array_object.Bind();
+	vertex_buffer.Bind();
+
+	// These constants should match locations in the shader!
+	var u32 c_position_attrib= 0u;
+	var u32 c_color_attrib= 1u;
+
+	unsafe( glEnableVertexAttribArray( c_position_attrib ) );
+
+	unsafe( glVertexAttribPointer(
+		c_position_attrib,
+		3,
+		GLenum( GL_FLOAT ),
+		GLboolean(0),
+		GLsizei( typeinfo</SkyBackgroundVertex/>.size_of ),
+		ust::nullptr</byte8/>() + GetStructFieldOffset</ SkyBackgroundVertex, "position" />() ) );
+
+	unsafe( glEnableVertexAttribArray( c_color_attrib ) );
+
+	unsafe( glVertexAttribPointer(
+		c_color_attrib,
+		3,
+		GLenum( GL_UNSIGNED_BYTE ),
+		GLboolean(1),
+		GLsizei( typeinfo</SkyBackgroundVertex/>.size_of ),
+		ust::nullptr</byte8/>() + GetStructFieldOffset</ SkyBackgroundVertex, "color" />() ) );
+
+	return SkyBackgroundBuffer
+	{
+		.vertex_array_object= move(vertex_array_object),
+		.vertex_buffer= move(vertex_buffer),
+		.index_buffer= move(index_buffer),
+		.num_triangle_indices= indices.size(),
+	};
+}
+
+} // namespace PM
