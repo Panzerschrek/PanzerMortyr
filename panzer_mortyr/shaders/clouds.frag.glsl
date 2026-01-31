@@ -1,5 +1,8 @@
 #version 330
 
+uniform sampler2DArray fu_texture;
+uniform float fu_texture_layer= 35.0;
+
 in vec3 f_position;
 
 out vec4 color;
@@ -12,5 +15,5 @@ void main()
 	float z_adjusted= view_vec_normalized.z + horizon_level;
 	vec2 tc= view_vec_normalized.xy / ( abs(z_adjusted) + 0.05 );
 
-	color= vec4( fract( tc ), 0.0, 1.0 );
+	color= vec4( texture( fu_texture, vec3( tc, fu_texture_layer ) ).rgb, 1.0 );
 }
