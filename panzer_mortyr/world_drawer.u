@@ -103,7 +103,6 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 
 	var Mat4f view_matrix= Mat4f::MakeTranslation( -drawing_info.camera_position ) * rotation_and_projection_matrix;
 
-
 	{
 		SetGLState( g_sky_background_gl_state );
 
@@ -126,6 +125,29 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 			ust::nullptr</byte8/>() ) );
 	}
 
+	{
+		SetGLState( g_stars_gl_state );
+
+		var Mat4f stars_matrix= Mat4f::MakeScale( c_stars_scale ) * rotation_and_projection_matrix;
+
+		var u32 texture_slot= 0u;
+		unsafe( glActiveTexture( GLenum( GL_TEXTURE0 ) + GLenum(texture_slot) ) );
+		map_data.map_textures_array.Bind();
+
+		map_shader_.Bind();
+		map_shader_.SetUniform( "vu_matrix", stars_matrix );
+		map_shader_.SetUniform( "fu_texture", texture_slot );
+
+		map_data.stars_buffer.vertex_array_object.Bind();
+		map_data.stars_buffer.index_buffer.Bind();
+
+		unsafe( glDrawElements(
+			GLenum( GL_TRIANGLES ),
+			GLint( map_data.stars_buffer.num_triangle_indices ),
+			GLenum( GL_UNSIGNED_SHORT ),
+			ust::nullptr</byte8/>() ) );
+	}
+
 	if( !map_data.sky_clouds_params.empty() && map_data.clouds_texture_layer != ~0u )
 	{
 		var SkyCloudsParams& clouds_params= map_data.sky_clouds_params.try_deref();
@@ -135,7 +157,7 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 				? g_clouds_double_blending_gl_state
 				: g_clouds_single_blending_gl_state ) );
 
-		var Mat4f clouds_matrix= Mat4f::MakeScale(c_clouds_scale ) * rotation_and_projection_matrix;
+		var Mat4f clouds_matrix= Mat4f::MakeScale( c_clouds_scale ) * rotation_and_projection_matrix;
 
 		var u32 texture_slot= 0u;
 		unsafe( glActiveTexture( GLenum( GL_TEXTURE0 ) + GLenum(texture_slot) ) );
@@ -836,6 +858,7 @@ fn WorldDrawer::SetMap( mut this, u32 map_index )
 			.clouds_texture_layer= materials_block.special_material_indices[ size_type( MaterialsDescription::SpecialMaterial::Sky ) ],
 			.clusters_draw_data= move(clusters_draw_data),
 			.sky_background_buffer= CreateSkyBackgroundBuffer( map_description ),
+			.stars_buffer= CreateStarsBuffer(),
 			.sky_clouds_params= CreateSkyCloudsParams( map_description ),
 		} );
 }
@@ -960,7 +983,8 @@ fn CalculateCameraRotationAndProjectionMatrix( f32 aspect, f32 camera_azimuth, f
 var f32 c_z_near= 4.0f;
 var f32 c_z_far= 32768.0f;
 var f32 c_sky_scale= c_z_far / 2.0f;
-var f32 c_clouds_scale= c_sky_scale / 2.0f;
+var f32 c_stars_scale= c_sky_scale * 0.9f;
+var f32 c_clouds_scale= c_stars_scale / 4.0f;
 
 var size_type c_max_test_primitive_vertices= 4096s;
 
@@ -977,6 +1001,18 @@ var GLState g_buffer_clear_gl_state
 };
 
 var GLState g_sky_background_gl_state
+{
+	.depth_test_enabled= false,
+	.depth_test_func( GL_INVALID_ENUM ),
+	.depth_write_enabled= false,
+	.cull_face_enabled= false,
+	.cull_face( GL_INVALID_ENUM ),
+	.blending_enabled= false,
+	.blend_source_factor( GL_INVALID_ENUM ),
+	.blend_destination_factor( GL_INVALID_ENUM ),
+};
+
+var GLState g_stars_gl_state
 {
 	.depth_test_enabled= false,
 	.depth_test_func( GL_INVALID_ENUM ),
