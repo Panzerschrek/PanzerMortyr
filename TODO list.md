@@ -153,8 +153,8 @@ PanzerMortyr rendering:
 * Draw water quads properly.
 * Draw underwater caustics properly.
 * Draw stars on sky where they should be (sky modes with stars).
-* Draw clouds.
 * Draw a moon - if one is enabled via a sky mode.
+* Draw non-black sky background for maps without sky colors specified (like maps 5, 6 or 34).
 * Draw glass materials properly (with transparency).
 * Draw light source sprites (flames, coronas).
 * Draw fog where it should be.
