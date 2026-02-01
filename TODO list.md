@@ -153,7 +153,7 @@ PanzerMortyr rendering:
 * Draw water quads properly.
 * Draw underwater caustics properly.
 * Draw non-black sky background for maps without sky colors specified (like maps 5, 6 or 34).
-* Ensure sun/moon position and size is exactly like in the original game.
+* Fix too dark sun on map 7 or similar maps.
 * Draw glass materials properly (with transparency).
 * Draw light source sprites (flames, coronas).
 * Draw fog where it should be.
