@@ -152,7 +152,6 @@ PanzerMortyr rendering:
 * Apply additional tessellation for tessellated polygons in order to perform smoother light values interpolation (naively triangulating them doesn't produce good result always).
 * Draw water quads properly.
 * Draw underwater caustics properly.
-* Draw non-black sky background for maps without sky colors specified (like maps 5, 6 or 34).
 * Fix too dark sun on map 7 or similar maps.
 * Draw glass materials properly (with transparency).
 * Draw light source sprites (flames, coronas).
