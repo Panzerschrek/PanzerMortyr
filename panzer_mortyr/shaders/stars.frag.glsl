@@ -9,5 +9,6 @@ out vec4 color;
 
 void main()
 {
-	color= texture( fu_texture, vec3( f_texture_coordinates, f_texture_layer ) );
+	// Make stars/moon a little bit darker, in order to avoid overbright (we use additve blending for them).
+	color= texture( fu_texture, vec3( f_texture_coordinates, f_texture_layer ) ) * 0.7;
 }
