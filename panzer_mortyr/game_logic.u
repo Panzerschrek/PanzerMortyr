@@ -3,6 +3,7 @@ import "collisions.uh"
 import "game_constants.uh"
 import "game_logic.uh"
 import "geometry_utils.uh"
+import "mat.uh"
 import "math_constants.uh"
 
 namespace PM
@@ -16,6 +17,7 @@ fn CreateNewMapGameState( GameMapData& map_data ) : GameState
 		{
 			.position= Vec3f::MakeZero(),
 			.azimuth= 0.0f,
+			.view_elevation= 0.0f,
 			.velocity= Vec3f::MakeZero(),
 			.on_ground= false,
 			.in_liquid= false,
@@ -112,6 +114,7 @@ fn CreateNewMapGameState( GameMapData& map_data ) : GameState
 				{
 					.position( f32( entity.position[0] ), f32( entity.position[1] ), f32( entity.position[2] ) ),
 					.azimuth= Convert1024Angle( f32( entity.data[4] ) ),
+					.view_elevation= 0.0f,
 					.velocity= Vec3f::MakeZero(),
 					.on_ground= false,
 					.in_liquid= false,
@@ -176,6 +179,9 @@ fn CreateNewMapGameState( GameMapData& map_data ) : GameState
 fn ProcessGameLogicStep(
 	GameGlobalData& global_data, GameMapData& map_data, PlayerInput& player_input, GameState &mut game_state )
 {
+	game_state.player.azimuth= player_input.azimuth;
+	game_state.player.view_elevation= player_input.elevation;
+
 	PerformPlayerWeaponLogic( map_data, player_input, game_state );
 
 	PerformPlayerMovement( global_data, map_data, player_input, game_state );
@@ -252,6 +258,23 @@ fn PerformPlayerWeaponLogic( GameMapData& map_data, PlayerInput& player_input, G
 						if( ammo > 0u )
 						{
 							--ammo;
+
+							var Vec2f offset_xy( f32( shot[2] ), f32( shot[3] ) );
+							var f32 offset_z( shot[4] );
+
+							var Mat4f rotation_matrix=
+								Mat4f::MakeRotationX( game_state.player.view_elevation ) *
+								Mat4f::MakeRotationZ( game_state.player.azimuth );
+
+							var Vec3f offset_xy_transformed= Vec3f( offset_xy, 0.0f ) * rotation_matrix;
+
+							var Vec3f offset( offset_xy_transformed.xy(), offset_xy_transformed.z + offset_z );
+
+							game_state.projectiles.push_back(
+								Projectile
+								{
+									.position= game_state.player.position + offset,
+								} );
 						}
 						// TODO - maybe abort shooting if run out of ammo?
 					}
@@ -389,8 +412,6 @@ fn PerformPlayerWeaponLogic( GameMapData& map_data, PlayerInput& player_input, G
 fn PerformPlayerMovement(
 	GameGlobalData& global_data, GameMapData& map_data, PlayerInput& player_input, GameState &mut game_state )
 {
-	game_state.player.azimuth= player_input.azimuth;
-
 	// Remove player collider before moving the player - to avoid self-collisions.
 	RemovePlayerCollider( game_state );
 
