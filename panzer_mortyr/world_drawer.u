@@ -101,15 +101,19 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 	var Mat4f rotation_matrix=
 		CalculateCameraRotationMatrix( drawing_info.camera_azimuth, drawing_info.camera_elevation );
 
-	var Mat4f rotation_and_projection_matrix=
-		rotation_matrix * CalculateCameraProjectionMatrix( viewport_info.view_aspect );
+	var Mat4f camera_projection_matrix= CalculateCameraProjectionMatrix( viewport_info.view_aspect );
+
+	var Mat4f rotation_and_projection_matrix= rotation_matrix * camera_projection_matrix;
 
 	var Mat4f translation_matrix= Mat4f::MakeTranslation( -drawing_info.camera_position );
 
 	var Mat4f view_matrix= translation_matrix * rotation_and_projection_matrix;
 
-	var Mat4f weapon_view_matrix=
-		translation_matrix * rotation_matrix * CalculateCameraWeaponProjectionMatrix( viewport_info.view_aspect );
+	var Mat4f firt_person_weapon_view_matrix=
+		translation_matrix *
+		rotation_matrix *
+		CalculateFirstPersonWeaponProjectionDistortionMatrix() *
+		camera_projection_matrix;
 
 	{
 		SetGLState( g_sky_background_gl_state );
@@ -404,7 +408,7 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 			Mat4f::MakeTranslation( model_object.position );
 
 		var Mat4f model_full_matrix=
-			model_transormation_matrix * ( model_object.first_person_weapon ? weapon_view_matrix : view_matrix );
+			model_transormation_matrix * ( model_object.first_person_weapon ? firt_person_weapon_view_matrix : view_matrix );
 
 		model_shader_.SetUniform( "vu_matrix", model_full_matrix );
 
@@ -989,20 +993,20 @@ fn CalculateCameraRotationMatrix( f32 camera_azimuth, f32 camera_elevation ) : M
 
 fn CalculateCameraProjectionMatrix( f32 aspect ) : Mat4f
 {
-	// This value was carefully tuned to match the original game.
-	var f32 fov= 86.05f * ( c_tau / 360.0f );
-
-	return Mat4f::MakePerspective( aspect, fov, c_z_near, c_z_far );
+	return Mat4f::MakePerspective( aspect, c_fov, c_z_near, c_z_far );
 }
 
-fn CalculateCameraWeaponProjectionMatrix( f32 aspect ) : Mat4f
+fn CalculateFirstPersonWeaponProjectionDistortionMatrix() : Mat4f
 {
-	// This value was carefully tuned to match the original game.
-	var f32 fov= 50.0f * ( c_tau / 360.0f );
-
-	var Mat4f perspective_matrix= Mat4f::MakePerspective( aspect, fov, c_z_near, c_z_far );
-	return Mat4f::MakeTranslation( Vec3f( 0.0f, 0.0f, 16.0f ) ) * perspective_matrix;
+	// The original game distorts first-weapon model a bit.
+	// These parameters are experimentally found.
+	return
+		Mat4f::MakeTranslation( Vec3f( 0.0f, 0.0f, 16.0f ) ) *
+		Mat4f::MakeScale( Vec3f( 2.1f, 2.1f, 1.0f ) );
 }
+
+// This value was carefully tuned to match the original game.
+var f32 c_fov= 86.05f * ( c_tau / 360.0f );
 
 var f32 c_z_near= 4.0f;
 var f32 c_z_far= 32768.0f;
