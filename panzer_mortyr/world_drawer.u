@@ -98,13 +98,18 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 	// Clearing color isn't necessary, since we draw sky background geometry.
 	unsafe( glClear( GLbitfield( GL_DEPTH_BUFFER_BIT ) ) );
 
-	var Mat4f rotation_and_projection_matrix=
-		CalculateCameraRotationAndProjectionMatrix(
-			viewport_info.view_aspect,
-			drawing_info.camera_azimuth,
-			drawing_info.camera_elevation );
+	var Mat4f rotation_matrix=
+		CalculateCameraRotationMatrix( drawing_info.camera_azimuth, drawing_info.camera_elevation );
 
-	var Mat4f view_matrix= Mat4f::MakeTranslation( -drawing_info.camera_position ) * rotation_and_projection_matrix;
+	var Mat4f rotation_and_projection_matrix=
+		rotation_matrix * CalculateCameraProjectionMatrix( viewport_info.view_aspect );
+
+	var Mat4f translation_matrix= Mat4f::MakeTranslation( -drawing_info.camera_position );
+
+	var Mat4f view_matrix= translation_matrix * rotation_and_projection_matrix;
+
+	var Mat4f weapon_view_matrix=
+		translation_matrix * rotation_matrix * CalculateCameraWeaponProjectionMatrix( viewport_info.view_aspect );
 
 	{
 		SetGLState( g_sky_background_gl_state );
@@ -398,7 +403,10 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 			Mat4f::MakeRotationZ( model_object.azimuth ) *
 			Mat4f::MakeTranslation( model_object.position );
 
-		model_shader_.SetUniform( "vu_matrix", model_transormation_matrix * view_matrix );
+		var Mat4f model_full_matrix=
+			model_transormation_matrix * ( model_object.first_person_weapon ? weapon_view_matrix : view_matrix );
+
+		model_shader_.SetUniform( "vu_matrix", model_full_matrix );
 
 		unsafe( glDrawElements(
 			GLenum( GL_TRIANGLES ),
@@ -972,17 +980,28 @@ fn LoadMapTextures(
 	return texture;
 }
 
-fn CalculateCameraRotationAndProjectionMatrix( f32 aspect, f32 camera_azimuth, f32 camera_elevation ) : Mat4f
+fn CalculateCameraRotationMatrix( f32 camera_azimuth, f32 camera_elevation ) : Mat4f
+{
+	var Mat4f rotation_matrix_z= Mat4f::MakeRotationZ( -camera_azimuth );
+	var Mat4f rotation_matrix_x= Mat4f::MakeRotationX( -camera_elevation + c_tau / 4.0f );
+	return rotation_matrix_z * rotation_matrix_x;
+}
+
+fn CalculateCameraProjectionMatrix( f32 aspect ) : Mat4f
 {
 	// This value was carefully tuned to match the original game.
 	var f32 fov= 86.05f * ( c_tau / 360.0f );
 
-	var Mat4f rotation_matrix_z= Mat4f::MakeRotationZ( -camera_azimuth );
-	var Mat4f rotation_matrix_x= Mat4f::MakeRotationX( -camera_elevation + c_tau / 4.0f );
-	var Mat4f rotation_matrix= rotation_matrix_z * rotation_matrix_x;
-	var Mat4f perspective_matrix= Mat4f::MakePerspective( aspect, fov, c_z_near, c_z_far );
+	return Mat4f::MakePerspective( aspect, fov, c_z_near, c_z_far );
+}
 
-	return rotation_matrix * perspective_matrix;
+fn CalculateCameraWeaponProjectionMatrix( f32 aspect ) : Mat4f
+{
+	// This value was carefully tuned to match the original game.
+	var f32 fov= 50.0f * ( c_tau / 360.0f );
+
+	var Mat4f perspective_matrix= Mat4f::MakePerspective( aspect, fov, c_z_near, c_z_far );
+	return Mat4f::MakeTranslation( Vec3f( 0.0f, 0.0f, 16.0f ) ) * perspective_matrix;
 }
 
 var f32 c_z_near= 4.0f;
