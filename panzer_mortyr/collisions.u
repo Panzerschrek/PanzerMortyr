@@ -1,63 +1,28 @@
 import "collisions.uh"
-import "geometry_utils.uh"
 
 namespace PM
 {
 
-fn RayTrace(
-	ZmapData& zmap_data,
-	ZvoxData& zvox_data,
-	Vec3f& ray_start,
-	Vec3f& direction_vector ) : ust::optional</RayTraceResult/>
+fn LineTrace(
+	GameMapData& map_data,
+	Vec3f& start_point,
+	Vec3f& line_vector ) : ust::optional</LineTraceResult/>
 {
+	auto& clusters= map_data.zvox_data.deref().clusters;
+	auto& quads= map_data.zmap_data.deref().quads;
+
 	var f32 mut closest_distance= 1.0e38f;
 
 	var size_type mut hit_quad_index= ~0s, mut hit_quad_cluster_index= ~0s;
 
-	// Search for intersection with map geometry.
-
-	for( var size_type mut c= 0s; c < zvox_data.clusters.size(); ++c )
-	{
-		var ZvoxCluster& cluster= zvox_data.clusters[c];
-
-		if_var( intersection :
-			FindRayPolyhedronIntersection(
-				ray_start,
-				direction_vector,
-				CreateBBoxPlanes( GetSlightlyExtendedClusterBBox( cluster ) ) ) )
+	VisitQuadsHierarchyForLineSegment(
+		map_data.collider_quads_hierarchy,
+		start_point,
+		line_vector,
+		lambda[&]( size_type c, size_type q )
 		{
-			if( intersection.far_point_distance < 0.0f )
-			{
-				// This cluster is behind the back.
-
-				if( cluster.c.num_children_clusters > 0 )
-				{
-					// Jump over all children clusters - intersection with them isn't possible too.
-					c+= size_type( cluster.c.num_children_clusters );
-				}
-
-				continue;
-			}
-		}
-		else
-		{
-			// No intersection with this cluster at all - ignore it.
-
-			if( cluster.c.num_children_clusters > 0 )
-			{
-				// Jump over all children clusters - intersection with them isn't possible too.
-				c+= size_type( cluster.c.num_children_clusters );
-			}
-
-			continue;
-		}
-
-		for( var size_type mut q( cluster.c.first_quad_index ), q_end= size_type( cluster.c.first_quad_index ) + size_type( cluster.num_quads );
-			q < q_end;
-			++q )
-		{
-			var ZmapQuad& quad= zmap_data.quads[q];
-			// TODO - ignore quads with materials transparent for bullets (like water).
+			var ZvoxCluster& cluster= clusters[c];
+			var ZmapQuad& quad= quads[q];
 
 			auto& center= cluster.c.center;
 			auto& in_vertices= quad.vertices;
@@ -87,10 +52,10 @@ fn RayTrace(
 
 				var Planef plane= Planef::CreateFromNormalAndPoint( ( v1 - v0 ).Cross( v2 - v0 ), v0 );
 
-				var f32 direction_vector_plane_normal_dot= direction_vector.Dot( plane.normal );
+				var f32 direction_vector_plane_normal_dot= line_vector.Dot( plane.normal );
 				if( direction_vector_plane_normal_dot != 0.0f )
 				{
-					var f32 ray_start_distance_to_plane= plane.GetDistanceForPoint( ray_start );
+					var f32 ray_start_distance_to_plane= plane.GetDistanceForPoint( start_point );
 
 					// This distance is negative for intersection points behind current ray.
 					var f32 signed_distance_to_intersection_point= -ray_start_distance_to_plane / direction_vector_plane_normal_dot;
@@ -98,7 +63,7 @@ fn RayTrace(
 					if( signed_distance_to_intersection_point > 0.0f && // Process intersections only at the front of the ray.
 						signed_distance_to_intersection_point < closest_distance ) // Find the smallest positive distance.
 					{
-						var Vec3f intersection_point= ray_start + direction_vector * signed_distance_to_intersection_point;
+						var Vec3f intersection_point= start_point + line_vector * signed_distance_to_intersection_point;
 
 						// Check if ray-plane intersection lies within the triangle.
 						if( ( v1 - v0 ).Cross( intersection_point - v0 ).Dot( plane.normal ) >= 0.0f &&
@@ -112,12 +77,11 @@ fn RayTrace(
 					}
 				}
 			}
-		}
-	}
+		} );
 
-	if( hit_quad_index < zmap_data.quads.size() && hit_quad_cluster_index < zvox_data.clusters.size() )
+	if( hit_quad_index < quads.size() && hit_quad_cluster_index < clusters.size() && closest_distance <= 1.0f )
 	{
-		return RayTraceResult
+		return LineTraceResult
 		{
 			.quad_index( hit_quad_index ),
 			.cluster_index( hit_quad_cluster_index ),
@@ -198,7 +162,7 @@ fn CollisionTrace(
 	auto& clusters= map_data.zvox_data.deref().clusters;
 	auto& quads= map_data.zmap_data.deref().quads;
 
-	VisitQuadsHierarchy(
+	VisitQuadsHierarchyForBBox(
 		map_data.collider_quads_hierarchy,
 		movement_bbox,
 		lambda[&]( size_type c, size_type q )
@@ -294,11 +258,7 @@ fn CollisionTrace(
 			.max= extra_collider.bbox.max - bbox.min,
 		};
 
-		var [ Planef, 6 ] collider_planes= CreateBBoxPlanes( minkowski_sum_bbox );
-
-		// TODO - maybe use an optimized version of ray polyhedron intersection for boxes?
-
-		if_var( intersection : FindRayPolyhedronIntersection( start_position, movement_vector, collider_planes ) )
+		if_var( intersection : FindRayBBoxIntersection( start_position, movement_vector, minkowski_sum_bbox ) )
 		{
 			if( intersection.near_point_distance >= 0.0f )
 			{
@@ -307,7 +267,7 @@ fn CollisionTrace(
 				if( intersection.near_point_distance < trace_result.clipped_move_distance )
 				{
 					trace_result.clipped_move_distance= intersection.near_point_distance;
-					trace_result.collision_point_normal= collider_planes[ size_type( intersection.near_plane_index ) ].normal;
+					trace_result.collision_point_normal= intersection.near_point_normal;
 					trace_result.collision_quad_index= ~0u;
 				}
 			}
@@ -319,6 +279,7 @@ fn CollisionTrace(
 			else
 			{
 				// Is inside.
+				var [ Planef, 6 ] collider_planes= CreateBBoxPlanes( minkowski_sum_bbox );
 
 				// Apply extra push towards nearest collider plane.
 				// This is necessary if due to numerical errors or some other reasons we still somehow get inside a collider.
@@ -606,25 +567,5 @@ var f32 c_collider_plane_push_eps= 1.0f / 32.0f;
 // Assume ground surfaces all surfaces with normal pointing mostly up.
 // This value is tuned so that it's possible to jump on some steap ramps, where it's possible to jump in the original.
 var f32 c_ground_plane_min_normal_z= 0.67f;
-
-fn GetSlightlyExtendedClusterBBox( ZvoxCluster& cluster ) : BBox3f
-{
-	// Add a little bit size to fix numerical precision issues.
-
-	var f32 bbox_size_eps= 1.0f;
-
-	return
-		BBox3f
-		{
-			.min(
-				f32( cluster.c.center[0] - cluster.c.bounding_box_half_size[0] ) - bbox_size_eps,
-				f32( cluster.c.center[1] - cluster.c.bounding_box_half_size[1] ) - bbox_size_eps,
-				f32( cluster.c.center[2] - cluster.c.bounding_box_half_size[2] ) - bbox_size_eps ),
-			.max(
-				f32( cluster.c.center[0] + cluster.c.bounding_box_half_size[0] ) + bbox_size_eps,
-				f32( cluster.c.center[1] + cluster.c.bounding_box_half_size[1] ) + bbox_size_eps,
-				f32( cluster.c.center[2] + cluster.c.bounding_box_half_size[2] ) + bbox_size_eps ),
-		};
-}
 
 } // namespace PM

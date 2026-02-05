@@ -3,6 +3,7 @@ import "collisions.uh"
 import "game_constants.uh"
 import "game_logic.uh"
 import "geometry_utils.uh"
+import "mat.uh"
 import "math_constants.uh"
 
 namespace PM
@@ -182,6 +183,8 @@ fn ProcessGameLogicStep(
 
 	ProcessEntitiesLogicStep( map_data, game_state );
 
+	ProcessProjectilesLogicStep( map_data, game_state );
+
 	PickUpItems( map_data, game_state );
 }
 
@@ -189,7 +192,7 @@ fn PerformPlayerWeaponLogic( GameMapData& map_data, PlayerInput& player_input, G
 {
 	var EntitiesDescription& entities_description= map_data.entities_description.deref();
 
-	if_var( &shot_request : player_input.shot_request )
+	if( player_input.shot_requested )
 	{
 		// Check if we have no shooting active and the weapon switching is done.
 		if( game_state.player.weapon_state.num_active_shooting_steps.empty() &&
@@ -203,22 +206,12 @@ fn PerformPlayerWeaponLogic( GameMapData& map_data, PlayerInput& player_input, G
 			{
 				var EntitiesDescription::Tool& tool= entities_description.tools[ weapon_tool_index ];
 
-				// Check if has enough ammo, but only for weapons requiring ammo.
-				// TODO - what to do with weapons consuming multiple ammo per shot?
+				// Check if has enough ammo for at least one shot, but only for weapons requiring ammo.
 				var bool mut has_enough_ammo= true;
 				if( tool.ammo_item >= 0 && size_type( tool.ammo_item ) < entities_description.tools.size() )
 				{
 					var EntitiesDescription::Tool& ammo_tool= entities_description.tools[ size_type( tool.ammo_item ) ];
-					var u32 &mut ammo= game_state.player.inventory[ size_type( ammo_tool.tool_type ) ];
-					if( ammo > 0u )
-					{
-						--ammo;
-						has_enough_ammo= true;
-					}
-					else
-					{
-						has_enough_ammo= false;
-					}
+					has_enough_ammo= game_state.player.inventory[ size_type( ammo_tool.tool_type ) ] > 0u;
 				}
 
 				if( has_enough_ammo )
@@ -226,9 +219,6 @@ fn PerformPlayerWeaponLogic( GameMapData& map_data, PlayerInput& player_input, G
 					game_state.player.weapon_state.num_active_shooting_steps= 0u;
 					game_state.player.weapon_state.current_animation= PlayerWeaponState::WeaponAnimation::Shooting;
 					game_state.player.weapon_state.current_animation_step= u32( tool.weapon_data[6] );
-
-					// TODO - perform actual shooting.
-					ust::ignore_unused( shot_request );
 				}
 			}
 		}
@@ -242,6 +232,7 @@ fn PerformPlayerWeaponLogic( GameMapData& map_data, PlayerInput& player_input, G
 	if( !game_state.player.weapon_state.num_active_shooting_steps.empty() )
 	{
 		// Process shooting logic.
+		var u32 num_active_shooting_steps= game_state.player.weapon_state.num_active_shooting_steps.try_deref();
 		++game_state.player.weapon_state.num_active_shooting_steps.try_deref();
 
 		var size_type weapon_tool_index(
@@ -251,7 +242,61 @@ fn PerformPlayerWeaponLogic( GameMapData& map_data, PlayerInput& player_input, G
 		{
 			var EntitiesDescription::Tool& tool= entities_description.tools[ weapon_tool_index ];
 
-			if( game_state.player.weapon_state.num_active_shooting_steps.try_deref() >= tool.shooting )
+			var bool mut out_of_ammo= false;
+
+			foreach( &shot : tool.shot_data )
+			{
+				if( u32( shot[1] ) == num_active_shooting_steps )
+				{
+					// Perform the shot.
+
+					if( tool.ammo_item >= 0 && size_type( tool.ammo_item ) < entities_description.tools.size() )
+					{
+						var EntitiesDescription::Tool& ammo_tool= entities_description.tools[ size_type( tool.ammo_item ) ];
+						var u32 &mut ammo= game_state.player.inventory[ size_type( ammo_tool.tool_type ) ];
+						if( ammo > 0u )
+						{
+							--ammo;
+						}
+						else
+						{
+							out_of_ammo= true;
+						}
+					}
+
+					if( !out_of_ammo )
+					{
+						var Vec2f offset_xy( f32( shot[2] ), f32( shot[3] ) );
+						var f32 offset_z( shot[4] );
+
+						var Mat4f rotation_matrix=
+							Mat4f::MakeRotationX( player_input.elevation ) *
+							Mat4f::MakeRotationZ( player_input.azimuth );
+
+						var Vec3f offset_xy_transformed= Vec3f( offset_xy, 0.0f ) * rotation_matrix;
+
+						var Vec3f offset( offset_xy_transformed.xy(), offset_xy_transformed.z + offset_z );
+
+						// TODO - apply also random spread and constant per-shot rotation.
+						var Vec3f velocity( 0.0f, f32( tool.speed ), 0.0f );
+
+						var Vec3f velocity_transformed= velocity * rotation_matrix;
+
+						game_state.projectiles.push_back(
+							Projectile
+							{
+								.weapon= game_state.player.weapon_state.current_weapon,
+								.owner_entity_index= c_player_entity_index,
+								.age_steps= 0u,
+								.position= game_state.player.position + offset,
+								.velocity= velocity_transformed,
+								.hit_entity_index= ~0u,
+							} );
+					}
+				}
+			}
+
+			if( game_state.player.weapon_state.num_active_shooting_steps.try_deref() >= tool.shooting || out_of_ammo )
 			{
 				// Finish shooting.
 				game_state.player.weapon_state.num_active_shooting_steps.reset();
@@ -514,6 +559,17 @@ fn PerformPlayerMovement(
 			game_state.player.velocity.z= c_water_jump_vertical_velocity;
 		}
 	}
+
+	// Find possible collisions with projectiles caused by player movement.
+	// It isn't fully correct to use straight movement form old position to new one,
+	// since actual movement including clipping may be a little bit more complex.
+	// But it's mostly fine.
+	CollideMovedEntityWithProjectiles(
+		movement_start_position,
+		game_state.player.position,
+		player_bbox,
+		c_player_entity_index,
+		game_state.projectiles );
 }
 
 fn ApplyPlayerUnclippedMovement(
@@ -952,7 +1008,7 @@ fn ProcessEntitiesLogicStep( GameMapData& map_data, GameState &mut game_state )
 				entity_description.operations[ size_type( entity.current_operation ) ];
 
 			// Perform entity movement.
-			MoveEntity( map_data, game_state.colliders, entity, entity_description, operation );
+			MoveEntity( map_data, game_state.colliders, game_state.projectiles, entity, u32(entity_index), entity_description, operation );
 
 			// Calculate current frame based on animation params.
 			// TODO - perform different animation logic for different animation kinds.
@@ -998,6 +1054,112 @@ fn ProcessEntitiesLogicStep( GameMapData& map_data, GameState &mut game_state )
 			var size_type new_entity_index= game_state.entities.size();
 			game_state.entities.push_back( new_spawned_entity.try_take() );
 			AddEntityCollider( entities_description, new_entity_index, game_state );
+		}
+	}
+}
+
+fn ProcessProjectilesLogicStep( GameMapData& map_data, GameState &mut game_state )
+{
+	for( auto mut i= 0s; i < game_state.projectiles.size(); )
+	{
+		var bool mut need_to_remove= false;
+
+		{
+			var Projectile &mut projectile= game_state.projectiles[i];
+
+			if( projectile.hit_entity_index != ~0u )
+			{
+				// An entity hit this projectile previously.
+
+				// TODO - apply damage for hit entity if necessary.
+				// TODO - apply splash damage if necessary.
+				// TODO - spawn sparks and smoke effects (if enabled).
+				// TODO - spawn a dynamic light if necessary.
+				need_to_remove= true;
+			}
+
+			var f32 velocity_length= projectile.velocity.Length();
+			if( velocity_length > 0.0f )
+			{
+				// Find itersections using movement slightly longer than necessary.
+				// It's needed in order to fix possible numerical imprecisions.
+
+				var f32 c_elongation_eps= 1.0f;
+				var Vec3f velocity_slightly_elongated=
+					projectile.velocity * ( ( velocity_length + c_elongation_eps ) / velocity_length );
+
+				var f32 mut smallest_travelled_distance= ust::plus_inf</f32/>();
+
+				if_var( &line_trace_result : LineTrace( map_data, projectile.position, velocity_slightly_elongated ) )
+				{
+					if( line_trace_result.distance <= 1.0f )
+					{
+						smallest_travelled_distance= line_trace_result.distance;
+					}
+				}
+
+				foreach( &collider : game_state.colliders )
+				{
+					if( collider.entity_index == projectile.owner_entity_index )
+					{
+						// Don't collide with owner.
+						// This is needed for some entities or for the player,
+						// since sometimes their/his own projectiles are spawned within their/his bounding boxes.
+						// Also it's necessary for ricocheting projectiles and other projectiles with non-linear movement.
+						continue;
+					}
+
+					if_var( &intersection_result :
+						FindRayBBoxIntersection( projectile.position, velocity_slightly_elongated, collider.bbox ) )
+					{
+						if( !( intersection_result.near_point_distance > 1.0f | intersection_result.far_point_distance < 0.0f ) )
+						{
+							var f32 intersection_distance= ust::max( 0.0f, intersection_result.near_point_distance );
+							if( intersection_distance < smallest_travelled_distance )
+							{
+								smallest_travelled_distance= intersection_distance;
+								// TODO - memorize the nearest hit entity.
+							}
+						}
+					}
+				}
+
+				if( smallest_travelled_distance < ust::plus_inf</f32/>() )
+				{
+					// TODO - avoid spawning bullet holes where they shouldn't be.
+					game_state.bullet_holes.push_back(
+						projectile.position + velocity_slightly_elongated * smallest_travelled_distance );
+
+					// TODO - apply damage for hit entity if necessary.
+					// TODO - apply splash damage if necessary.
+					// TODO - spawn sparks and smoke effects (if enabled).
+					// TODO - spawn a dynamic light if necessary.
+
+					need_to_remove= true;
+				}
+			}
+
+			// TODO - spawn smoke trail particles (if enabled).
+
+			projectile.position+= projectile.velocity;
+
+			++projectile.age_steps;
+
+			if( projectile.age_steps >= c_max_projectile_age )
+			{
+				need_to_remove= true;
+			}
+		}
+
+		if( need_to_remove )
+		{
+			var size_type last_index= game_state.projectiles.size() - 1s;
+			game_state.projectiles.swap( i, last_index );
+			game_state.projectiles.drop_back();
+		}
+		else
+		{
+			++i;
 		}
 	}
 }
@@ -1078,6 +1240,53 @@ fn PickUpItems( GameMapData& map_data, GameState &mut game_state )
 	}
 }
 
+fn CollideMovedEntityWithProjectiles(
+	Vec3f& old_position,
+	Vec3f& new_position,
+	BBox3f& bbox,
+	u32 entity_index,
+	ust::array_view_mut</Projectile/> projectiles )
+{
+	if( projectiles.empty() )
+	{
+		return;
+	}
+
+	if( old_position == new_position )
+	{
+		return;
+	}
+
+	// Find intersections of moved entity bbox with projectile points.
+	// This is equivalent for calculating intersection of stationary bbox with a moved point.
+
+	var Vec3f inverse_movement_vec= old_position - new_position;
+
+	var BBox3f bbox_translated
+	{
+		.min= bbox.min + old_position,
+		.max= bbox.max + old_position,
+	};
+
+	foreach( &mut projectile : projectiles )
+	{
+		if( projectile.owner_entity_index == entity_index )
+		{
+			// Don't collide with owner.
+			continue;
+		}
+
+		if_var( &intersection_result :
+			FindRayBBoxIntersection( projectile.position, inverse_movement_vec, bbox_translated ) )
+		{
+			if( !( intersection_result.near_point_distance >= 1.0f | intersection_result.far_point_distance <= 0.0f ) )
+			{
+				projectile.hit_entity_index= entity_index;
+			}
+		}
+	}
+}
+
 fn AddPlayerCollider( EntitiesDescription& entities_description, GameState &mut game_state )
 {
 	debug_assert( game_state.player.collider_index == ~0u, "Adding collider for player, which already has one!" );
@@ -1096,8 +1305,7 @@ fn AddPlayerCollider( EntitiesDescription& entities_description, GameState &mut 
 	};
 
 	game_state.player.collider_index= u32( game_state.colliders.size() );
-	game_state.colliders.push_back(
-		Collider{ .bbox= move(bbox_translated), .entity_index= Collider::c_player_entity_index } );
+	game_state.colliders.push_back( Collider{ .bbox= move(bbox_translated), .entity_index= c_player_entity_index } );
 }
 
 fn RemovePlayerCollider( GameState &mut game_state )
@@ -1122,7 +1330,7 @@ fn RemovePlayerCollider( GameState &mut game_state )
 	{
 		var Collider mut last_collider= game_state.colliders.pop_back();
 
-		if( last_collider.entity_index == Collider::c_player_entity_index )
+		if( last_collider.entity_index == c_player_entity_index )
 		{
 			game_state.player.collider_index= collider_index;
 		}
@@ -1232,7 +1440,7 @@ fn RemoveEntityCollider(
 	{
 		var Collider mut last_collider= game_state.colliders.pop_back();
 
-		if( last_collider.entity_index == Collider::c_player_entity_index )
+		if( last_collider.entity_index == c_player_entity_index )
 		{
 			game_state.player.collider_index= collider_index;
 		}
@@ -1250,8 +1458,10 @@ fn RemoveEntityCollider(
 
 fn MoveEntity(
 	GameMapData& map_data,
-	ust::vector</Collider/> &mut colliders,
+	ust::array_view_imut</Collider/> colliders,
+	ust::array_view_mut</Projectile/> projectiles,
 	EntityState &mut entity,
+	u32 entity_index,
 	EntitiesDescription::EntityDescription& entity_description,
 	EntitiesDescription::Operation& current_operation )
 {
@@ -1304,7 +1514,7 @@ fn MoveEntity(
 		return;
 	}
 
-	var ust::optional</BBox3f/> mut collider_bbox;
+	var ust::optional</BBox3f/> mut collider_bbox_opt;
 
 	foreach( &anim : current_operation.animations )
 	{
@@ -1329,18 +1539,20 @@ fn MoveEntity(
 
 		// Usually we have only one collision box.
 		// The only exception is the tank enemy on map 24. In this case use the last one collider - it's good enough.
-		collider_bbox= BBox3f{ .min= bbox_center - bbox_half_size, .max= bbox_center + bbox_half_size };
+		collider_bbox_opt= BBox3f{ .min= bbox_center - bbox_half_size, .max= bbox_center + bbox_half_size };
 	}
 
-	if( collider_bbox.empty() )
+	if( collider_bbox_opt.empty() )
 	{
 		return;
 	}
 
+	var BBox3f& collider_bbox= collider_bbox_opt.try_deref();
+
 	// TODO - move non-enemy entities without stepping.
 
 	var CollisionStepMoveResult move_result=
-		CollisionStepMove( map_data, colliders, collider_bbox.try_deref(), old_position, new_position );
+		CollisionStepMove( map_data, colliders, collider_bbox, old_position, new_position );
 
 	// Clamp vertical velocity if necessary.
 	for( auto mut i= 0u; i < move_result.trace_clip_result.num_collision_events; ++i )
@@ -1355,6 +1567,19 @@ fn MoveEntity(
 	}
 
 	entity.position= move_result.trace_clip_result.position_clipped;
+
+	// Calculate collisions with projectiles.
+	// It's necessary to avoid missing collisions in some cases, especially for slow-moving projectiles.
+	if( entity.position != old_position &&
+		entity_description.mode != EntitiesDescription::EntityDescription::c_mode_pickup &&
+		collider_bbox.min.x != collider_bbox.max.x &&
+		collider_bbox.min.y != collider_bbox.max.y &&
+		collider_bbox.min.z != collider_bbox.max.z )
+	{
+		// Using straight movement from start to end isn't fully correct, since actual movement with clipping may be more complex.
+		// But it's mostly fine.
+		CollideMovedEntityWithProjectiles( old_position, entity.position, collider_bbox, entity_index, projectiles );
+	}
 }
 
 fn PerformEntityOwnMovement(

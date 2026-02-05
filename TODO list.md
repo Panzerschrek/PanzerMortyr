@@ -65,6 +65,7 @@ Gameplay investigation:
 * Investigate details of buttons and doors functioning.
 * Investigate how player's bounding box is altered when crouching.
 * Investigate what "BUTLA_TLENU" is.
+* Investigate how weapon spread works.
 
 PanzerMortyr general:
 
@@ -83,7 +84,8 @@ PanzerMortyr game logic:
 	This should include pushing of entities (if it's possible).
 * Implement doors and elevators triggered by touching.
 * Implement doors and elevators triggered by a button push, including buttons requiring a key.
-* Implement player's shooting (projectiles spawning, enemies damaging).
+* Damage enemies and the player via projectile hits.
+* Decrease armor and health properly while being damaged.
 * Implement player's death.
 * Implement transition to next level.
 * Implement game state save/loading.
@@ -96,7 +98,6 @@ PanzerMortyr game logic:
 * Implement collisions hack for the one-way passable wall on map 33.
 * Implement crouching for the player.
 * Implement fall damage for player and for entities.
-* Implement shooting logic - with shots colliding with walls and damaging enemies and the player.
 * Implement shooting by enemies.
 * Implement rare animation types - used for some entities.
 * Implement tank-related logic elements.
@@ -114,7 +115,6 @@ PanzerMortyr game logic:
 * Implement pushing pushable entities.
 * Perform camera Z coordinate smoothing while climbing steps, so that camera movement doesn't look jaggy.
 * Perform separate collisions calculation with glass quads - to skip broken glass quads.
-* Implement bullet projectiles (flying directly).
 * Implement grenade projectiles (affected by gravity and slightly bouncing).
 * Implement panzerfaust projectiles (slightly affected by gravity).
 * Implement ricocheting projectiles.
@@ -131,20 +131,21 @@ PanzerMortyr game logic:
 * Implement weapon amplifier tool.
 * Implement silencer tool.
 * Implement invisibility tool.
-* Leave shot marks on walls.
+* Spawn bullet holes on walls.
 * Leave blood makrs on walls.
 * Leave footsteps where they should be.
 * Implement bullet hit effects (smoke, sparkles).
 * Spawn smoke trail sprites.
-* Spawn Muzzle flash and napalm sprites.
+* Spawn muzzle flash and napalm sprites.
 * Implement flamethrower flames sticking to map geometry and entities and damaging them.
-* Implement shot recoil (where it should be).
+* Implement shot recoil (where it should be) for both player and enemies.
 * Implement weapon lowering on reloading for weapons where it's necessary (grenades).
 * Implement splash damage for projectiles.
 * Spawn light flashes while shooting.
 * Attach dynamic light sources to projectiles (where they should be).
 * Spawn bubble sprites while swimming in water.
 * Spawn bubble sprites for projectiles moving in water.
+* Display projectiles of various types properly (using billboards and sprites).
 
 
 PanzerMortyr rendering:
@@ -190,7 +191,7 @@ PanzerMortyr menus and HUD:
 * Implement menus.
 * Show low health and armor numbers in HUD using red color.
 * Display more than one active tool in HUD.
-* Display crosshair.
+* Display crosshair - both fixed version and version with position adjusted to actual intersection with map/entities geometry.
 * Display short game-related mesages (as the original does).
 
 PanzerMortyr sound:

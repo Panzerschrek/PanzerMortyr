@@ -1,7 +1,7 @@
 import "/variant.u"
 import "/vector.u"
 import "/common_lib/map_files.uh"
-import "bbox.uh"
+import "geometry_utils.uh"
 
 namespace PM
 {
@@ -72,13 +72,14 @@ fn BuildColliderQuadsHierarchy(
 
 // Input function should have two parameters of "size_type" for cluster index and quad index.
 template</type Func/>
-fn VisitQuadsHierarchy( QuadsHierarchy& hierarchy, BBox3f& bbox, Func& func )
+fn VisitQuadsHierarchyForBBox( QuadsHierarchy& hierarchy, BBox3f& bbox, Func& func )
 {
-	VisitQuadsHierarchy_r( hierarchy, 0u, bbox, func );
+	// TODO - consider replacing recursive routine with a stack.
+	VisitQuadsHierarchyForBBox_r( hierarchy, 0u, bbox, func );
 }
 
 template</type Func/>
-fn VisitQuadsHierarchy_r( QuadsHierarchy& hierarchy, u32 node_index, BBox3f& bbox, Func& func )
+fn VisitQuadsHierarchyForBBox_r( QuadsHierarchy& hierarchy, u32 node_index, BBox3f& bbox, Func& func )
 {
 	var QuadsHierarchy::Node& node= hierarchy.nodes[ size_type( node_index ) ];
 
@@ -91,7 +92,86 @@ fn VisitQuadsHierarchy_r( QuadsHierarchy& hierarchy, u32 node_index, BBox3f& bbo
 	{
 		foreach( child_node_index : branch_node_contents.children_nodes )
 		{
-			VisitQuadsHierarchy_r( hierarchy, child_node_index, bbox, func );
+			VisitQuadsHierarchyForBBox_r( hierarchy, child_node_index, bbox, func );
+		}
+	}
+	else if_var( &leaf_node_contents : node.contents.get</QuadsHierarchy::LeafNodeContents/>() )
+	{
+		foreach( &quad_index : hierarchy.quad_indices.range().subrange(
+			size_type( leaf_node_contents.first_quad_index ),
+			size_type( leaf_node_contents.first_quad_index ) + size_type( leaf_node_contents.num_quad_indices ) ) )
+		{
+			func( quad_index.GetClusterIndex(), quad_index.GetQuadIndex() );
+		}
+	}
+	else{ halt; }
+}
+
+// Input function should have two parameters of "size_type" for cluster index and quad index.
+template</type Func/>
+fn VisitQuadsHierarchyForLineSegment(
+	QuadsHierarchy& hierarchy,
+	Vec3f& start_point,
+	Vec3f& line_vector,
+	Func& func )
+{
+	var Vec3f end_point= start_point + line_vector;
+
+	// Expand box slightly to avoid numerical precision errors.
+	var f32 c_box_expand_eps= 1.0f;
+
+	var BBox3f line_bbox
+	{
+		.min(
+			ust::min( start_point.x, end_point.x ) - c_box_expand_eps,
+			ust::min( start_point.y, end_point.y ) - c_box_expand_eps,
+			ust::min( start_point.z, end_point.z ) - c_box_expand_eps ),
+		.max(
+			ust::max( start_point.x, end_point.x ) + c_box_expand_eps,
+			ust::max( start_point.y, end_point.y ) + c_box_expand_eps,
+			ust::max( start_point.z, end_point.z ) + c_box_expand_eps ),
+	};
+
+	// TODO - consider replacing recursive routine with a stack.
+
+	VisitQuadsHierarchyForLineSegment_r( hierarchy, 0u, line_bbox, start_point, line_vector, func );
+}
+
+template</type Func/>
+fn VisitQuadsHierarchyForLineSegment_r(
+	QuadsHierarchy& hierarchy,
+	u32 node_index,
+	BBox3f& line_bbox,
+	Vec3f& start_point,
+	Vec3f& line_vector,
+	Func& func )
+{
+var QuadsHierarchy::Node& node= hierarchy.nodes[ size_type( node_index ) ];
+
+	// First and cheap box with box test.
+	if( !line_bbox.InstersectsOrTouches( node.bbox ) )
+	{
+		return;
+	}
+
+	// More expensive ray with box test, which allows rejecting more nodes.
+	if_var( &intersection_result : FindRayBBoxIntersection( start_point, line_vector, node.bbox ) )
+	{
+		if( intersection_result.near_point_distance > 1.0f | intersection_result.far_point_distance < 0.0f )
+		{
+			return;
+		}
+	}
+	else
+	{
+		return;
+	}
+
+	if_var( &branch_node_contents : node.contents.get</QuadsHierarchy::BranchNodeContents/>() )
+	{
+		foreach( child_node_index : branch_node_contents.children_nodes )
+		{
+			VisitQuadsHierarchyForLineSegment_r( hierarchy, child_node_index, line_bbox, start_point, line_vector, func );
 		}
 	}
 	else if_var( &leaf_node_contents : node.contents.get</QuadsHierarchy::LeafNodeContents/>() )

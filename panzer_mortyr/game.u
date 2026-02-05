@@ -117,13 +117,13 @@ fn Game::Update(
 	[ i32, 2 ] mouse_motion )
 {
 	// Rotate camera each frame.
-	camera_rotation_controller_.Update( time_delta_s, keyboard_state, mouse_state, mouse_motion );
+	camera_rotation_controller_.Update( time_delta_s, keyboard_state, mouse_motion );
 
 	// Accumulate movement input each frame.
 	player_movement_controller_.Update(  time_delta_s, keyboard_state );
 
 	// Process tool requests each frame.
-	player_tool_controller_.Update( keyboard_state );
+	player_tool_controller_.Update( keyboard_state, mouse_state );
 
 	// Process game logic in fixed time steps.
 
@@ -148,13 +148,13 @@ fn Game::Update(
 			var PlayerInput player_input
 			{
 				.azimuth= camera_rotation_controller_.GetAzimuth(),
+				.elevation= camera_rotation_controller_.GetElevation(),
 				.move_wish_vector= player_movement_controller_.GetAccumulatedMoveWishVector(),
 				.jump_requested= player_movement_controller_.GetJumpRequested(),
 				.requested_weapon= player_tool_controller_.GetRequestedWeapon(),
-				.shot_request= camera_rotation_controller_.GetShotRequest(),
+				.shot_requested= player_tool_controller_.GetShotRequested(),
 			};
 
-			camera_rotation_controller_.Reset();
 			player_movement_controller_.Reset();
 			player_tool_controller_.Reset();
 
@@ -188,7 +188,7 @@ fn Game::ProcessMouseButtonPress( mut this, u32 button_index )
 		var f32 elevation_cos= ust::cos(elevation);
 		var f32 elevation_sin= ust::sin(elevation);
 
-		var Vec3f direction_vector( -ust::sin(azimuth) * elevation_cos, ust::cos(azimuth) * elevation_cos, elevation_sin );
+		var Vec3f direction_vector= 16384.0f * Vec3f( -ust::sin(azimuth) * elevation_cos, ust::cos(azimuth) * elevation_cos, elevation_sin );
 
 		var Vec3f ray_start= GetCameraPositionForPlayer( game_state.player );
 
@@ -197,14 +197,14 @@ fn Game::ProcessMouseButtonPress( mut this, u32 button_index )
 
 		test_sprites_.clear();
 
-		if_var( ray_trace_result : RayTrace( zmap_data, zvox_data, ray_start, direction_vector ) )
+		if_var( line_trace_result : LineTrace( map_data, ray_start, direction_vector ) )
 		{
-			var Vec3f closest_intersection_point= ray_start + direction_vector * ray_trace_result.distance;
+			var Vec3f closest_intersection_point= ray_start + direction_vector * line_trace_result.distance;
 
 			test_sprites_.push_back( closest_intersection_point );
 
-			auto& center= zvox_data.clusters[ size_type( ray_trace_result.cluster_index ) ].c.center;
-			auto& in_vertices= zmap_data.quads[ size_type( ray_trace_result.quad_index ) ].vertices;
+			auto& center= zvox_data.clusters[ size_type( line_trace_result.cluster_index ) ].c.center;
+			auto& in_vertices= zmap_data.quads[ size_type( line_trace_result.quad_index ) ].vertices;
 
 			var [ Vec3f, 4 ] vertices
 			[
@@ -320,8 +320,66 @@ fn Game::GetWorldDrawingInfo( this ) : WorldDrawingInfo
 						.azimuth= entity.azimuth,
 						.elevation= 0.0f,
 						.frame= pair.second,
+						.first_person_weapon= false,
 					} );
 				}
+		}
+
+		foreach( &projectile : game_state.projectiles )
+		{
+			var size_type weapon_tool_index(
+				entities_description.tool_type_to_index_map[ size_type( projectile.weapon ) ] );
+			if( weapon_tool_index < entities_description.tools.size() )
+			{
+				var EntitiesDescription::Tool& tool= entities_description.tools[ weapon_tool_index ];
+
+				if( tool.projectile_model >= 2000 )
+				{
+					// Projectiles for this weapon are drawn via a model.
+					var size_type animation_index( tool.projectile_model - 2000 );
+					if( animation_index < entities_description.animations.size() )
+					{
+						var EntitiesDescription::AnimationDescription& animation= entities_description.animations[ animation_index ];
+
+						// Calculate orientation based on velocity vector.
+						// It isn't ideal, but fine enough.
+						var f32 mut azimuth= 0.0f;
+						var f32 mut elevation= 0.0f;
+						var f32 velocity_xy_square_length= projectile.velocity.xy().SquareLength();
+						if( velocity_xy_square_length > 0.0f )
+						{
+							 azimuth= -ust::atan2( projectile.velocity.x, projectile.velocity.y );
+							 elevation= ust::atan2( projectile.velocity.z, ust::sqrt( velocity_xy_square_length ) );
+						}
+						else
+						{
+							elevation= ( projectile.velocity.z > 0.0f ? c_tau * 0.25f : -c_tau * 0.25f );
+						}
+
+						drawing_info.model_objects.push_back(
+							WorldDrawingInfo::ModelObject
+							{
+								.model_file_name= animation.model_file_name,
+								.position= projectile.position,
+								.azimuth= azimuth,
+								.elevation= elevation,
+								.frame= 0u,
+								.first_person_weapon= false,
+							} );
+					}
+				}
+				else
+				{
+					// TODO - draw projectiles properly.
+					drawing_info.test_sprites.push_back( projectile.position );
+				}
+			}
+		}
+
+		foreach( &bullet_hole : game_state.bullet_holes )
+		{
+			// TODO - draw bullet holes properly.
+			drawing_info.test_sprites.push_back( bullet_hole );
 		}
 
 		{
@@ -349,6 +407,7 @@ fn Game::GetWorldDrawingInfo( this ) : WorldDrawingInfo
 							.azimuth= camera_rotation_controller_.GetAzimuth(),
 							.elevation= camera_rotation_controller_.GetElevation() + elevation_add,
 							.frame= game_state.player.weapon_state.current_animation_step / c_num_steps_per_animation_frame,
+							.first_person_weapon= true,
 						} );
 				}
 			}
@@ -502,9 +561,10 @@ fn Game::process_give_all( mut this )
 
 fn GetCameraPositionForPlayer( PlayerState& player_state ) : Vec3f
 {
-	// Offset camera slightly relative to the player's position.
-	// TODO - use also slight horisontal shift as the original game does.
-	return player_state.position + Vec3f( 0.0f, 0.0f, c_camera_z_offset );
+	// The original game moves camera slightly backwards. Do exactly this.
+	// TODO - fine-tune this constant.
+	var Vec2f xy_offset= (-9.0f) * Vec2f( -ust::sin( player_state.azimuth ), ust::cos( player_state.azimuth ) );
+	return player_state.position + Vec3f( xy_offset, c_camera_z_offset );
 }
 
 fn GetNearestEntity( ust::array_view_mut</ ust::optional</EntityState/> /> entities, Vec3f& pos )
