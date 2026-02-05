@@ -363,7 +363,7 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 
 	unsafe( glActiveTexture( GLenum( GL_TEXTURE0 ) + GLenum(texture_slot) ) );
 
-	foreach( &model_object : drawing_info.model_objects )
+	foreach( &model_object : drawing_info.model_objects ) label model_objects_loop
 	{
 		// Fetch model from models hash-map or load it if it's not loaded yet.
 		// TODO - precache models to avoid doing loading outside map loading phase, since it may lead to frame lags.
@@ -431,26 +431,44 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 				Vec3f( frame_bbox.max.x, frame_bbox.max.y, frame_bbox.max.z ) * model_transormation_matrix,
 			];
 
-			var BBox3f mut bbox
+			// First perform fast check if this model is within visible clusters volume.
 			{
-				.min= bbox_corners_transformed[0],
-				.max= bbox_corners_transformed[1],
-			};
+				var BBox3f mut bbox
+				{
+					.min= bbox_corners_transformed[0],
+					.max= bbox_corners_transformed[1],
+				};
 
-			for( auto mut i= 1s; i < 8s; ++i )
-			{
-				var Vec3f& v= bbox_corners_transformed[i];
-				ust::min_assign( bbox.min.x, v.x );
-				ust::min_assign( bbox.min.y, v.y );
-				ust::min_assign( bbox.min.z, v.z );
-				ust::max_assign( bbox.max.x, v.x );
-				ust::max_assign( bbox.max.y, v.y );
-				ust::max_assign( bbox.max.z, v.z );
+				for( auto mut i= 1s; i < 8s; ++i )
+				{
+					var Vec3f& v= bbox_corners_transformed[i];
+					ust::min_assign( bbox.min.x, v.x );
+					ust::min_assign( bbox.min.y, v.y );
+					ust::min_assign( bbox.min.z, v.z );
+					ust::max_assign( bbox.max.x, v.x );
+					ust::max_assign( bbox.max.y, v.y );
+					ust::max_assign( bbox.max.z, v.z );
+				}
+
+				if( !visible_clusters_bbox.InstersectsOrTouches( bbox ) )
+				{
+					continue;
+				}
 			}
 
-			if( !visible_clusters_bbox.InstersectsOrTouches( bbox ) )
+			// Perform more costly check against camera clip planes.
+			foreach( &clip_plane : camera_clip_planes )
 			{
-				continue;
+				var f32 mut min_distance= ust::plus_inf</f32/>();
+				foreach( &v : bbox_corners_transformed )
+				{
+					ust::min_assign( min_distance, clip_plane.GetDistanceForPoint( v ) );
+				}
+
+				if( min_distance >= 0.0f )
+				{
+					continue label model_objects_loop;
+				}
 			}
 		}
 
