@@ -223,31 +223,15 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 		}
 	}
 
-	// Assume all clusters are visible if we failed to find current cluster (like in noclip mode).
-	var bool all_clusters_are_visible= camera_cluster_index_opt.empty();
-
-	// TODO - allocate it once at map start?
-	scoped_array bool mut visible_cluster_flags[ zvox_data.clusters.size() ]( all_clusters_are_visible );
+	// Perform visibility checks only for root clusters.
+	// Doing it for non-root clusters is too costly, since there are too many of them.
+	// TODO - allocate this  container once at map start?
+	scoped_array bool mut visible_root_cluster_flags[ zvox_data.clusters.size() ]( false );
 
 	if_var( camera_cluster_index : camera_cluster_index_opt )
 	{
 		// Mark as visible current cluster.
-		visible_cluster_flags[ camera_cluster_index ]= true;
-
-		{
-			// Mark as visible childen of current cluster.
-
-			var ZvoxCluster& camera_cluster= zvox_data.clusters[ camera_cluster_index ];
-			if( camera_cluster.c.num_children_clusters > 0 )
-			{
-				foreach( &mut b : visible_cluster_flags.subrange(
-					camera_cluster_index + 1s,
-					camera_cluster_index + 1s + size_type( camera_cluster.c.num_children_clusters ) ) )
-				{
-					b= true;
-				}
-			}
-		}
+		visible_root_cluster_flags[ camera_cluster_index ]= true;
 
 		var i32 bias= i32( zpoz_data.clusters.size() ) * 4;
 
@@ -275,25 +259,22 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 
 			foreach( range : ranges )
 			{
-				foreach( visible_cluster_index_src : range )
+				foreach( visible_cluster_index : range )
 				{
-					var size_type visible_cluster_index( visible_cluster_index_src );
-
 					// Mark cluster listed in visibility data as visible.
-					visible_cluster_flags[ visible_cluster_index ]= true;
-
-					// Mark children clusters of visible cluster as also visible.
-					var ZvoxCluster& visible_cluster= zvox_data.clusters[ visible_cluster_index ];
-					if( visible_cluster.c.num_children_clusters > 0 )
-					{
-						foreach( &mut b : visible_cluster_flags.subrange(
-							visible_cluster_index + 1s,
-							visible_cluster_index + 1s + size_type( visible_cluster.c.num_children_clusters ) ) )
-						{
-							b= true;
-						}
-					}
+					visible_root_cluster_flags[ size_type( visible_cluster_index ) ]= true;
 				}
+			}
+		}
+	}
+	else
+	{
+		// Assume all root clusters are visible if we failed to find current cluster (like in noclip mode).
+		for( auto mut i= 0s; i < zvox_data.clusters.size(); ++i )
+		{
+			if( zvox_data.clusters[i].c.num_children_clusters >= 0 )
+			{
+				visible_root_cluster_flags[i]= true;
 			}
 		}
 	}
@@ -309,16 +290,12 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 
 	for( auto mut i= 0s; i < zvox_data.clusters.size(); ++i )
 	{
-		if( !visible_cluster_flags[i] )
+		if( !visible_root_cluster_flags[i] )
 		{
 			continue;
 		}
 
 		var ZvoxCluster& cluster= zvox_data.clusters[i];
-		if( cluster.c.num_children_clusters < 0 )
-		{
-			continue;
-		}
 
 		ust::min_assign( visible_clusters_bbox.min.x, f32( cluster.c.center[0] - cluster.c.bounding_box_half_size[0] ) );
 		ust::min_assign( visible_clusters_bbox.min.y, f32( cluster.c.center[1] - cluster.c.bounding_box_half_size[1] ) );
@@ -342,21 +319,34 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 	map_data.vertex_array_object.Bind();
 	map_data.index_buffer.Bind();
 
-	for( auto mut i= 0s; i < zvox_data.clusters.size(); ++i )
+	for( auto mut i= 0s; i < zvox_data.clusters.size(); )
 	{
-		if( !visible_cluster_flags[i] )
+		var ZvoxCluster& root_cluster= zvox_data.clusters[i];
+		if( root_cluster.c.num_children_clusters < 0 )
 		{
+			++i;
 			continue;
 		}
 
-		auto& cluster_draw_data= map_data.clusters_draw_data[i];
+		// This root cluster and all his children.
+		var size_type num_clusters_in_group= size_type( root_cluster.c.num_children_clusters ) + 1s;
 
-		unsafe( glDrawElementsBaseVertex(
-			GLenum( GL_TRIANGLES ),
-			GLsizei( cluster_draw_data.num_indices ),
-			GLenum( GL_UNSIGNED_SHORT ),
-			ust::nullptr</byte8/>() + typeinfo</u16/>.size_of * cluster_draw_data.first_index,
-			GLint( cluster_draw_data.first_vertex_index ) ) );
+		if( visible_root_cluster_flags[i] )
+		{
+			for( auto mut j= 0s; j < num_clusters_in_group; ++j )
+			{
+				auto& cluster_draw_data= map_data.clusters_draw_data[ i + j ];
+
+				unsafe( glDrawElementsBaseVertex(
+					GLenum( GL_TRIANGLES ),
+					GLsizei( cluster_draw_data.num_indices ),
+					GLenum( GL_UNSIGNED_SHORT ),
+					ust::nullptr</byte8/>() + typeinfo</u16/>.size_of * cluster_draw_data.first_index,
+					GLint( cluster_draw_data.first_vertex_index ) ) );
+			}
+		}
+
+		i+= num_clusters_in_group;
 	}
 
 	SetGLState( g_models_drawing_gl_state );
