@@ -115,6 +115,13 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 		CalculateFirstPersonWeaponProjectionDistortionMatrix() *
 		camera_projection_matrix;
 
+	var[ Planef, 6 ] camera_clip_planes=
+		CreateCameraClipPlanes(
+			drawing_info.camera_position,
+			drawing_info.camera_azimuth,
+			drawing_info.camera_elevation,
+			viewport_info.view_aspect );
+
 	{
 		SetGLState( g_sky_background_gl_state );
 
@@ -1043,6 +1050,32 @@ fn LoadMapTextures(
 	unsafe( glTexParameteri( GLenum( GL_TEXTURE_2D_ARRAY ), GLenum( GL_TEXTURE_MAG_FILTER ), GLint( GL_LINEAR ) ) );
 
 	return texture;
+}
+
+fn CreateCameraClipPlanes( Vec3f& position, f32 azimuth, f32 elevation, f32 aspect ) : [ Planef, 6 ]
+{
+	var Mat4f rotation_matrix_x= Mat4f::MakeRotationX( elevation - c_tau / 4.0f );
+	var Mat4f rotation_matrix_z= Mat4f::MakeRotationZ( azimuth );
+	var Mat4f rotation_matrix= rotation_matrix_x * rotation_matrix_z;
+
+	var Vec3f front_plane_normal= Vec3f( 0.0f, 0.0f, -1.0f );
+	var Vec3f back_plane_normal = Vec3f( 0.0f, 0.0f,  1.0f );
+
+	var f32 half_fov_x= c_fov * 0.5f;
+	var Vec3f left_plane_normal = Vec3f( 0.0f, -ust::cos( half_fov_x ), -ust::sin( half_fov_x ) );
+	var Vec3f right_plane_normal= Vec3f( 0.0f,  ust::cos( half_fov_x ), -ust::sin( half_fov_x ) );
+
+	var f32 half_fov_y= ust::atan( ust::tan( half_fov_x ) * aspect );
+	var Vec3f upper_plane_normal= Vec3f( -ust::cos( half_fov_y ), 0.0f, -ust::sin( half_fov_y ) );
+	var Vec3f lower_plane_normal= Vec3f(  ust::cos( half_fov_y ), 0.0f, -ust::sin( half_fov_y ) );
+
+	return ust::make_array(
+		Planef::CreateFromNormalAndPoint( front_plane_normal * rotation_matrix, position + Vec3f( 0.0f, 0.0f, c_z_near ) * rotation_matrix ),
+		Planef::CreateFromNormalAndPoint( back_plane_normal  * rotation_matrix, position + Vec3f( 0.0f, 0.0f,  c_z_far ) * rotation_matrix ),
+		Planef::CreateFromNormalAndPoint( left_plane_normal  * rotation_matrix, position ),
+		Planef::CreateFromNormalAndPoint( right_plane_normal * rotation_matrix, position ),
+		Planef::CreateFromNormalAndPoint( upper_plane_normal * rotation_matrix, position ),
+		Planef::CreateFromNormalAndPoint( lower_plane_normal * rotation_matrix, position ) );
 }
 
 fn CalculateCameraRotationMatrix( f32 camera_azimuth, f32 camera_elevation ) : Mat4f
