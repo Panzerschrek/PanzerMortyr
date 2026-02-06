@@ -289,7 +289,7 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 	}
 
 	// Perform frustum culling for potentially-visible root clusters.
-	for( auto mut i= 0s; i < zvox_data.clusters.size(); ++i ) label clusters_loop
+	for( auto mut i= 0s; i < zvox_data.clusters.size(); ++i )
 	{
 		if( !visible_root_cluster_flags[i] )
 		{
@@ -320,19 +320,10 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 			( maxs.x, maxs.y, maxs.z ),
 		];
 
-		foreach( &clip_plane : camera_clip_planes )
+		if( AreBoxVerticesClippedByAtLeastOneCameraClipPlane( camera_clip_planes, bbox_corners ) )
 		{
-			var f32 mut min_distance= ust::plus_inf</f32/>();
-			foreach( &v : bbox_corners )
-			{
-				ust::min_assign( min_distance, clip_plane.GetDistanceForPoint( v ) );
-			}
-
-			if( min_distance >= 0.0f )
-			{
-				visible_root_cluster_flags[i]= false;
-				continue label clusters_loop;
-			}
+			visible_root_cluster_flags[i]= false;
+			continue;
 		}
 	}
 
@@ -418,7 +409,7 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 
 	unsafe( glActiveTexture( GLenum( GL_TEXTURE0 ) + GLenum(texture_slot) ) );
 
-	foreach( &model_object : drawing_info.model_objects ) label model_objects_loop
+	foreach( &model_object : drawing_info.model_objects )
 	{
 		// Fetch model from models hash-map or load it if it's not loaded yet.
 		// TODO - precache models to avoid doing loading outside map loading phase, since it may lead to frame lags.
@@ -513,18 +504,9 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 			}
 
 			// Perform more costly check against camera clip planes.
-			foreach( &clip_plane : camera_clip_planes )
+			if( AreBoxVerticesClippedByAtLeastOneCameraClipPlane( camera_clip_planes, bbox_corners_transformed ) )
 			{
-				var f32 mut min_distance= ust::plus_inf</f32/>();
-				foreach( &v : bbox_corners_transformed )
-				{
-					ust::min_assign( min_distance, clip_plane.GetDistanceForPoint( v ) );
-				}
-
-				if( min_distance >= 0.0f )
-				{
-					continue label model_objects_loop;
-				}
+				continue;
 			}
 		}
 
@@ -1131,7 +1113,9 @@ fn LoadMapTextures(
 	return texture;
 }
 
-fn CreateCameraClipPlanes( Vec3f& position, f32 azimuth, f32 elevation, f32 aspect ) : [ Planef, 6 ]
+type CameraClipPlanes= [ Planef, 6 ];
+
+fn CreateCameraClipPlanes( Vec3f& position, f32 azimuth, f32 elevation, f32 aspect ) : CameraClipPlanes
 {
 	var Mat4f rotation_matrix_x= Mat4f::MakeRotationX( elevation - c_tau / 4.0f );
 	var Mat4f rotation_matrix_z= Mat4f::MakeRotationZ( azimuth );
@@ -1155,6 +1139,25 @@ fn CreateCameraClipPlanes( Vec3f& position, f32 azimuth, f32 elevation, f32 aspe
 		Planef::CreateFromNormalAndPoint( right_plane_normal * rotation_matrix, position ),
 		Planef::CreateFromNormalAndPoint( upper_plane_normal * rotation_matrix, position ),
 		Planef::CreateFromNormalAndPoint( lower_plane_normal * rotation_matrix, position ) );
+}
+
+fn AreBoxVerticesClippedByAtLeastOneCameraClipPlane( CameraClipPlanes& clip_planes, [ Vec3f, 8 ]& vertices ) : bool
+{
+	foreach( &clip_plane : clip_planes )
+	{
+		var f32 mut min_distance= ust::plus_inf</f32/>();
+		foreach( &v : vertices )
+		{
+			ust::min_assign( min_distance, clip_plane.GetDistanceForPoint( v ) );
+		}
+
+		if( min_distance >= 0.0f )
+		{
+			return true;
+		}
+	}
+
+	return false;
 }
 
 fn CalculateCameraRotationMatrix( f32 camera_azimuth, f32 camera_elevation ) : Mat4f
