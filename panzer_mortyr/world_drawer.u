@@ -8,6 +8,7 @@ import "gl_functions.uh"
 import "gl_state.uh"
 import "image_loading.uh"
 import "math_constants.uh"
+import "plane.uh"
 import "vertex_formats.uh"
 import "world_drawer.uh"
 
@@ -77,8 +78,10 @@ fn WorldDrawer::constructor(
 		ust::nullptr</byte8/>() + GetStructFieldOffset</ TestPrimitiveVertex, "color" />() ) );
 }
 
-fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingViewportInfo& viewport_info )
+fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingViewportInfo& viewport_info ) : DrawingStats
 {
+	var DrawingStats mut drawing_stats= zero_init;
+
 	// Ensure we have actual map data.
 	SetMap( drawing_info.map_index );
 
@@ -89,7 +92,7 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 		unsafe( glClearColor( GLclampf(32.0 / 255.0), GLclampf(16.0 / 255.0), GLclampf(8.0f / 255.0f), GLclampf(1.0) ) );
 		unsafe( glClear( GLbitfield( GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT ) ) );
 
-		return;
+		return drawing_stats;
 	}
 
 	var MapDrawData& map_data= map_data_.try_deref();
@@ -114,6 +117,13 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 		rotation_matrix *
 		CalculateFirstPersonWeaponProjectionDistortionMatrix() *
 		camera_projection_matrix;
+
+	var CameraClipPlanes camera_clip_planes=
+		CreateCameraClipPlanes(
+			drawing_info.camera_position,
+			drawing_info.camera_azimuth,
+			drawing_info.camera_elevation,
+			viewport_info.view_aspect );
 
 	{
 		SetGLState( g_sky_background_gl_state );
@@ -204,50 +214,22 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 			continue;
 		}
 
-		var Vec3f mins(
-			f32( cluster.c.center[0] - cluster.c.bounding_box_half_size[0] ),
-			f32( cluster.c.center[1] - cluster.c.bounding_box_half_size[1] ),
-			f32( cluster.c.center[2] - cluster.c.bounding_box_half_size[2] ) );
-
-		var Vec3f maxs(
-			f32( cluster.c.center[0] + cluster.c.bounding_box_half_size[0] ),
-			f32( cluster.c.center[1] + cluster.c.bounding_box_half_size[1] ),
-			f32( cluster.c.center[2] + cluster.c.bounding_box_half_size[2] ) );
-
-		if( camera_position.x >= mins.x && camera_position.x <= maxs.x &&
-			camera_position.y >= mins.y && camera_position.y <= maxs.y &&
-			camera_position.z >= mins.z && camera_position.z <= maxs.z )
+		if( CreateClusterBBox( cluster ).PointIsInsideOrOnFace( camera_position ) )
 		{
 			camera_cluster_index_opt= i;
 			break;
 		}
 	}
 
-	// Assume all clusters are visible if we failed to find current cluster (like in noclip mode).
-	var bool all_clusters_are_visible= camera_cluster_index_opt.empty();
-
-	// TODO - allocate it once at map start?
-	scoped_array bool mut visible_cluster_flags[ zvox_data.clusters.size() ]( all_clusters_are_visible );
+	// Perform visibility checks only for root clusters.
+	// Doing it for non-root clusters is too costly, since there are too many of them.
+	// TODO - allocate this  container once at map start?
+	scoped_array bool mut visible_root_cluster_flags[ zvox_data.clusters.size() ]( false );
 
 	if_var( camera_cluster_index : camera_cluster_index_opt )
 	{
 		// Mark as visible current cluster.
-		visible_cluster_flags[ camera_cluster_index ]= true;
-
-		{
-			// Mark as visible childen of current cluster.
-
-			var ZvoxCluster& camera_cluster= zvox_data.clusters[ camera_cluster_index ];
-			if( camera_cluster.c.num_children_clusters > 0 )
-			{
-				foreach( &mut b : visible_cluster_flags.subrange(
-					camera_cluster_index + 1s,
-					camera_cluster_index + 1s + size_type( camera_cluster.c.num_children_clusters ) ) )
-				{
-					b= true;
-				}
-			}
-		}
+		visible_root_cluster_flags[ camera_cluster_index ]= true;
 
 		var i32 bias= i32( zpoz_data.clusters.size() ) * 4;
 
@@ -275,27 +257,71 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 
 			foreach( range : ranges )
 			{
-				foreach( visible_cluster_index_src : range )
+				foreach( visible_cluster_index : range )
 				{
-					var size_type visible_cluster_index( visible_cluster_index_src );
-
 					// Mark cluster listed in visibility data as visible.
-					visible_cluster_flags[ visible_cluster_index ]= true;
-
-					// Mark children clusters of visible cluster as also visible.
-					var ZvoxCluster& visible_cluster= zvox_data.clusters[ visible_cluster_index ];
-					if( visible_cluster.c.num_children_clusters > 0 )
-					{
-						foreach( &mut b : visible_cluster_flags.subrange(
-							visible_cluster_index + 1s,
-							visible_cluster_index + 1s + size_type( visible_cluster.c.num_children_clusters ) ) )
-						{
-							b= true;
-						}
-					}
+					visible_root_cluster_flags[ size_type( visible_cluster_index ) ]= true;
 				}
 			}
 		}
+	}
+	else
+	{
+		// Assume all root clusters are visible if we failed to find current cluster (like in noclip mode).
+		for( auto mut i= 0s; i < zvox_data.clusters.size(); ++i )
+		{
+			if( zvox_data.clusters[i].c.num_children_clusters >= 0 )
+			{
+				visible_root_cluster_flags[i]= true;
+			}
+		}
+	}
+
+	// Perform frustum culling for potentially-visible root clusters.
+	for( auto mut i= 0s; i < zvox_data.clusters.size(); ++i )
+	{
+		if( !visible_root_cluster_flags[i] )
+		{
+			continue;
+		}
+
+		var ZvoxCluster& cluster= zvox_data.clusters[i];
+
+		if( AreBoxVerticesClippedByAtLeastOneCameraClipPlane(
+				camera_clip_planes,
+				CreateClusterBBox(cluster).CreateCornerVertices() ) )
+		{
+			visible_root_cluster_flags[i]= false;
+			continue;
+		}
+	}
+
+	// Calculate bounding box including all visible clusters.
+	// It allows to perform rought rejection of things outside this box.
+
+	var BBox3f mut visible_clusters_bbox
+	{
+		.min= drawing_info.camera_position,
+		.max= drawing_info.camera_position,
+	};
+
+	for( auto mut i= 0s; i < zvox_data.clusters.size(); ++i )
+	{
+		if( !visible_root_cluster_flags[i] )
+		{
+			continue;
+		}
+
+		var ZvoxCluster& cluster= zvox_data.clusters[i];
+
+		var BBox3f cluster_bbox= CreateClusterBBox( cluster );
+
+		ust::min_assign( visible_clusters_bbox.min.x, cluster_bbox.min.x );
+		ust::min_assign( visible_clusters_bbox.min.y, cluster_bbox.min.y );
+		ust::min_assign( visible_clusters_bbox.min.z, cluster_bbox.min.z );
+		ust::max_assign( visible_clusters_bbox.max.x, cluster_bbox.max.x );
+		ust::max_assign( visible_clusters_bbox.max.y, cluster_bbox.max.y );
+		ust::max_assign( visible_clusters_bbox.max.z, cluster_bbox.max.z );
 	}
 
 	SetGLState( g_map_drawing_gl_state );
@@ -312,21 +338,39 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 	map_data.vertex_array_object.Bind();
 	map_data.index_buffer.Bind();
 
-	for( auto mut i= 0s; i < zvox_data.clusters.size(); ++i )
+	for( auto mut i= 0s; i < zvox_data.clusters.size(); )
 	{
-		if( !visible_cluster_flags[i] )
+		var ZvoxCluster& root_cluster= zvox_data.clusters[i];
+		if( root_cluster.c.num_children_clusters < 0 )
 		{
+			++i;
 			continue;
 		}
 
-		auto& cluster_draw_data= map_data.clusters_draw_data[i];
+		// This root cluster and all his children.
+		var size_type num_clusters_in_group= size_type( root_cluster.c.num_children_clusters ) + 1s;
 
-		unsafe( glDrawElementsBaseVertex(
-			GLenum( GL_TRIANGLES ),
-			GLsizei( cluster_draw_data.num_indices ),
-			GLenum( GL_UNSIGNED_SHORT ),
-			ust::nullptr</byte8/>() + typeinfo</u16/>.size_of * cluster_draw_data.first_index,
-			GLint( cluster_draw_data.first_vertex_index ) ) );
+		if( visible_root_cluster_flags[i] )
+		{
+			for( auto mut j= 0s; j < num_clusters_in_group; ++j )
+			{
+				auto& cluster_draw_data= map_data.clusters_draw_data[ i + j ];
+
+				unsafe( glDrawElementsBaseVertex(
+					GLenum( GL_TRIANGLES ),
+					GLsizei( cluster_draw_data.num_indices ),
+					GLenum( GL_UNSIGNED_SHORT ),
+					ust::nullptr</byte8/>() + typeinfo</u16/>.size_of * cluster_draw_data.first_index,
+					GLint( cluster_draw_data.first_vertex_index ) ) );
+
+				drawing_stats.num_visible_map_triangles+= u32( cluster_draw_data.num_indices ) / 3u;
+			}
+
+			++drawing_stats.num_root_visible_clusters;
+			drawing_stats.num_total_visible_clusters+= u32( num_clusters_in_group );
+		}
+
+		i+= num_clusters_in_group;
 	}
 
 	SetGLState( g_models_drawing_gl_state );
@@ -376,6 +420,66 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 
 		var GPUModel& model= model_opt.try_deref();
 
+		var Mat4f model_transormation_matrix=
+			Mat4f::MakeRotationX( model_object.elevation ) *
+			Mat4f::MakeRotationZ( model_object.azimuth ) *
+			Mat4f::MakeTranslation( model_object.position );
+
+		// It looks like frame numbers above maximum are replaced with zeros.
+		// This seems to be used by weapon shot animations.
+		var size_type in_frame( model_object.frame );
+		var size_type frame= ( in_frame < model.num_frames ? in_frame : 0s );
+
+		if( !model_object.first_person_weapon )
+		{
+			// Calculate  bounding box of the model in world space (including even rotations).
+
+			var BBox3f& frame_bbox= model.frame_bboxes[ frame ];
+			var [ Vec3f, 8 ] bbox_corners_transformed
+			[
+				Vec3f( frame_bbox.min.x, frame_bbox.min.y, frame_bbox.min.z ) * model_transormation_matrix,
+				Vec3f( frame_bbox.max.x, frame_bbox.min.y, frame_bbox.min.z ) * model_transormation_matrix,
+				Vec3f( frame_bbox.min.x, frame_bbox.max.y, frame_bbox.min.z ) * model_transormation_matrix,
+				Vec3f( frame_bbox.max.x, frame_bbox.max.y, frame_bbox.min.z ) * model_transormation_matrix,
+				Vec3f( frame_bbox.min.x, frame_bbox.min.y, frame_bbox.max.z ) * model_transormation_matrix,
+				Vec3f( frame_bbox.max.x, frame_bbox.min.y, frame_bbox.max.z ) * model_transormation_matrix,
+				Vec3f( frame_bbox.min.x, frame_bbox.max.y, frame_bbox.max.z ) * model_transormation_matrix,
+				Vec3f( frame_bbox.max.x, frame_bbox.max.y, frame_bbox.max.z ) * model_transormation_matrix,
+			];
+
+			// First perform fast check if this model is within visible clusters volume.
+			if( !model_object.disable_culling )
+			{
+				var BBox3f mut bbox
+				{
+					.min= bbox_corners_transformed[0],
+					.max= bbox_corners_transformed[0],
+				};
+
+				for( auto mut i= 1s; i < 8s; ++i )
+				{
+					var Vec3f& v= bbox_corners_transformed[i];
+					ust::min_assign( bbox.min.x, v.x );
+					ust::min_assign( bbox.min.y, v.y );
+					ust::min_assign( bbox.min.z, v.z );
+					ust::max_assign( bbox.max.x, v.x );
+					ust::max_assign( bbox.max.y, v.y );
+					ust::max_assign( bbox.max.z, v.z );
+				}
+
+				if( !visible_clusters_bbox.InstersectsOrTouches( bbox ) )
+				{
+					continue;
+				}
+			}
+
+			// Perform more costly check against camera clip planes.
+			if( AreBoxVerticesClippedByAtLeastOneCameraClipPlane( camera_clip_planes, bbox_corners_transformed ) )
+			{
+				continue;
+			}
+		}
+
 		model.textures.back().Bind();
 
 		model.vertex_array_object.Bind();
@@ -384,11 +488,6 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 
 		if( model.num_frames > 1s )
 		{
-			// It looks like frame numbers above maximum are replaced with zeros.
-			// This seems to be used by weapon shot animations.
-			var size_type in_frame( model_object.frame );
-			var size_type frame= ( in_frame < model.num_frames ? in_frame : 0s );
-
 			// Change vertex attrib pointer for positions to draw requirest frame.
 			// TODO - move this code into a separate function?
 			model.positions_buffer.Bind();
@@ -402,11 +501,6 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 				ust::nullptr</byte8/>() + frame * model.num_vertices * typeinfo</ObbVertexPosition/>.size_of ) );
 		}
 
-		var Mat4f model_transormation_matrix=
-			Mat4f::MakeRotationX( model_object.elevation ) *
-			Mat4f::MakeRotationZ( model_object.azimuth ) *
-			Mat4f::MakeTranslation( model_object.position );
-
 		var Mat4f model_full_matrix=
 			model_transormation_matrix * ( model_object.first_person_weapon ? firt_person_weapon_view_matrix : view_matrix );
 
@@ -417,6 +511,9 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 			GLsizei( model.num_triangles * 3s ),
 			GLenum( GL_UNSIGNED_SHORT ),
 			ust::nullptr</byte8/>() ) );
+
+		++drawing_stats.num_visible_models;
+		drawing_stats.num_visivle_model_triangles+= u32( model.num_triangles );
 	}
 
 	SetGLState( g_test_primitives_drawing_gl_state );
@@ -521,6 +618,8 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 
 		unsafe( glDrawArrays( GLenum( GL_LINES ), GLint(0), GLint( vertices_imut.size() ) ) );
 	}
+
+	return drawing_stats;
 }
 
 fn WorldDrawer::SetMap( mut this, u32 map_index )
@@ -984,6 +1083,73 @@ fn LoadMapTextures(
 	return texture;
 }
 
+fn CreateClusterBBox( ZvoxCluster& cluster ) : BBox3f
+{
+	return BBox3f
+	{
+		.min(
+			f32( cluster.c.center[0] - cluster.c.bounding_box_half_size[0] ),
+			f32( cluster.c.center[1] - cluster.c.bounding_box_half_size[1] ),
+			f32( cluster.c.center[2] - cluster.c.bounding_box_half_size[2] ) ),
+		.max(
+			f32( cluster.c.center[0] + cluster.c.bounding_box_half_size[0] ),
+			f32( cluster.c.center[1] + cluster.c.bounding_box_half_size[1] ),
+			f32( cluster.c.center[2] + cluster.c.bounding_box_half_size[2] ) ),
+	};
+}
+
+type CameraClipPlanes= [ Planef, 5 ];
+
+fn CreateCameraClipPlanes( Vec3f& position, f32 azimuth, f32 elevation, f32 aspect ) : CameraClipPlanes
+{
+	var Mat4f rotation_matrix_x= Mat4f::MakeRotationX( elevation - c_tau / 4.0f );
+	var Mat4f rotation_matrix_z= Mat4f::MakeRotationZ( azimuth );
+	var Mat4f rotation_matrix= rotation_matrix_x * rotation_matrix_z;
+
+	var Vec3f front_plane_normal= Vec3f( 0.0f, 0.0f, -1.0f );
+
+	var f32 half_fov_x= c_fov_x * 0.5f;
+	var f32 half_fov_x_cos= ust::cos( half_fov_x );
+	var f32 half_fov_x_sin= ust::sin( half_fov_x );
+
+	var Vec3f left_plane_normal = Vec3f( -half_fov_x_cos, 0.0f, -half_fov_x_sin );
+	var Vec3f right_plane_normal= Vec3f(  half_fov_x_cos, 0.0f, -half_fov_x_sin );
+
+	var f32 half_fov_y= ust::atan( ust::tan( half_fov_x ) / aspect );
+	var f32 half_fov_y_cos= ust::cos( half_fov_y );
+	var f32 half_fov_y_sin= ust::sin( half_fov_y );
+
+	var Vec3f upper_plane_normal= Vec3f( 0.0f, -half_fov_y_cos, -half_fov_y_sin );
+	var Vec3f lower_plane_normal= Vec3f( 0.0f,  half_fov_y_cos, -half_fov_y_sin );
+
+	return ust::make_array(
+		// First plane is front plane - in order to reject stuff behind the back first.
+		Planef::CreateFromNormalAndPoint( front_plane_normal * rotation_matrix, position + Vec3f( 0.0f, 0.0f, c_z_near ) * rotation_matrix ),
+		Planef::CreateFromNormalAndPoint( left_plane_normal  * rotation_matrix, position ),
+		Planef::CreateFromNormalAndPoint( right_plane_normal * rotation_matrix, position ),
+		Planef::CreateFromNormalAndPoint( upper_plane_normal * rotation_matrix, position ),
+		Planef::CreateFromNormalAndPoint( lower_plane_normal * rotation_matrix, position ) );
+}
+
+fn AreBoxVerticesClippedByAtLeastOneCameraClipPlane( CameraClipPlanes& clip_planes, [ Vec3f, 8 ]& vertices ) : bool
+{
+	foreach( &clip_plane : clip_planes )
+	{
+		var f32 mut min_distance= ust::plus_inf</f32/>();
+		foreach( &v : vertices )
+		{
+			ust::min_assign( min_distance, clip_plane.GetDistanceForPoint( v ) );
+		}
+
+		if( min_distance >= 0.0f )
+		{
+			return true;
+		}
+	}
+
+	return false;
+}
+
 fn CalculateCameraRotationMatrix( f32 camera_azimuth, f32 camera_elevation ) : Mat4f
 {
 	var Mat4f rotation_matrix_z= Mat4f::MakeRotationZ( -camera_azimuth );
@@ -993,7 +1159,7 @@ fn CalculateCameraRotationMatrix( f32 camera_azimuth, f32 camera_elevation ) : M
 
 fn CalculateCameraProjectionMatrix( f32 aspect ) : Mat4f
 {
-	return Mat4f::MakePerspective( aspect, c_fov, c_z_near, c_z_far );
+	return Mat4f::MakePerspective( aspect, c_fov_x, c_z_near, c_z_far );
 }
 
 fn CalculateFirstPersonWeaponProjectionDistortionMatrix() : Mat4f
@@ -1006,7 +1172,8 @@ fn CalculateFirstPersonWeaponProjectionDistortionMatrix() : Mat4f
 }
 
 // This value was carefully tuned to match the original game.
-var f32 c_fov= 86.05f * ( c_tau / 360.0f );
+// TODO - perform last bits of fine-tuning.
+var f32 c_fov_x= 102.4311f * ( c_tau / 360.0f );
 
 var f32 c_z_near= 4.0f;
 var f32 c_z_far= 32768.0f;

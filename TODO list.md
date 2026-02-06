@@ -169,9 +169,7 @@ PanzerMortyr rendering:
 * Implement dynamic lights (gun flashes, explosions).
 * Draw weather effects (rain, snow).
 * Draw breaking window animation (with falling splinters).
-* Perform frustum culling for clusters (root ones).
-* Perform frustum culling for models - calculate bounding boxes or spheres for them in order to do this.
-* Perform cluster clulling for models - draw only models located at least partially within visible clusters.
+* Consider using more advanced approach of model culling against map clusters compared to now used test with a bbox containing all visible clusters.
 * Group model objects by model file prior to draw them - in order to minimize amount of texture and vertex buffer switches.
 * Experiment with an algorithm for dynamic visible clusters search similar to one used in SquareWheel.
 * Add support for MSAA.
