@@ -105,6 +105,7 @@ fn Game::TeleportToMap( mut this, u32 map_index )
 
 	// Reset possible rotation and movement state.
 	camera_rotation_controller_= CameraRotationController( game_state_.try_deref().player.azimuth );
+	camera_zoom_controller_= CameraZoomController();
 	player_movement_controller_.Reset();
 	player_tool_controller_.Reset();
 }
@@ -118,6 +119,8 @@ fn Game::Update(
 {
 	// Rotate camera each frame.
 	camera_rotation_controller_.Update( time_delta_s, keyboard_state, mouse_motion );
+
+	camera_zoom_controller_.Update( time_delta_s, mouse_state );
 
 	// Accumulate movement input each frame.
 	player_movement_controller_.Update(  time_delta_s, keyboard_state );
@@ -237,9 +240,15 @@ fn Game::GetWorldDrawingInfo( this ) : WorldDrawingInfo
 	{
 		.game_time_s= prev_time_steps_ / f32( c_steps_per_second ),
 		.map_index= 0u,
-		.camera_position= Vec3f::MakeZero(),
-		.camera_azimuth= camera_rotation_controller_.GetAzimuth(),
-		.camera_elevation= camera_rotation_controller_.GetElevation(),
+		.camera_params
+		{
+			.position= Vec3f::MakeZero(),
+			.azimuth= camera_rotation_controller_.GetAzimuth(),
+			.elevation= camera_rotation_controller_.GetElevation(),
+			// This value was carefully tuned to match the original game.
+			// TODO - perform last bits of fine-tuning.
+			.fov_x= 102.4311f * ( c_tau / 360.0f ) * camera_zoom_controller_.GetFOVScale(),
+		},
 		.test_sprites= test_sprites_,
 		.test_triangles= test_triangles_,
 	};
@@ -250,7 +259,7 @@ fn Game::GetWorldDrawingInfo( this ) : WorldDrawingInfo
 		var GameState& game_state= game_state_.try_deref();
 
 		drawing_info.map_index= map_data.map_index;
-		drawing_info.camera_position= GetCameraPositionForPlayer( game_state.player );
+		drawing_info.camera_params.position= GetCameraPositionForPlayer( game_state.player );
 
 		var EntitiesDescription& entities_description= map_data.entities_description.deref();
 
@@ -384,7 +393,7 @@ fn Game::GetWorldDrawingInfo( this ) : WorldDrawingInfo
 						WorldDrawingInfo::ModelObject
 						{
 							.model_file_name= animation.model_file_name,
-							.position= drawing_info.camera_position,
+							.position= drawing_info.camera_params.position,
 							.azimuth= camera_rotation_controller_.GetAzimuth(),
 							.elevation= camera_rotation_controller_.GetElevation() + elevation_add,
 							.frame= game_state.player.weapon_state.current_animation_step / c_num_steps_per_animation_frame,
