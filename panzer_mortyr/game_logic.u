@@ -76,9 +76,7 @@ fn CreateNewMapGameState( GameMapData& map_data ) : GameState
 				.position( f32( in_entity.position[0] ), f32( in_entity.position[1] ), f32( in_entity.position[2] ) ),
 				.azimuth( Convert1024Angle( f32( in_entity.data[4] ) ) ),
 				.current_operation= c_start_operation,
-				.next_operation= ~0u,
 				.num_steps_since_operation_start= 0u,
-				.num_steps_left_to_next_operation= ~0u,
 				.navigation_info_index( in_entity.data[16] ),
 				.target_navigation_graph_node= ~0u,
 				.current_navigation_graph_node= ~0u,
@@ -807,6 +805,7 @@ fn ProcessEntitiesLogicStep( GameMapData& map_data, GameState &mut game_state )
 				entities_description.entities[ size_type( entity.kind ) ];
 
 			// Perform operation transition (if necessary).
+			var u32 mut next_operation= ~0u;
 
 			{
 				var EntitiesDescription::Operation& operation=
@@ -822,86 +821,73 @@ fn ProcessEntitiesLogicStep( GameMapData& map_data, GameState &mut game_state )
 						// Killed. Keep it first here (killed enemies should die).
 						if( entity.lost_energy_in_current_operation )
 						{
-							entity.next_operation= u32( energy_loss[2] );
-							entity.num_steps_left_to_next_operation= 0u;
+							next_operation= u32( energy_loss[2] );
 						}
 					}
 
-					if( entity.next_operation == ~0u )
+					if( next_operation == ~0u )
 					{
 						if_var( &player_visible : operation_control.player_visible )
 						{
 							if( entity.has_seen_player_in_current_operation )
 							{
-								entity.next_operation= u32( player_visible[2] );
-								if( player_visible[1] < 0 )
-								{
-									entity.num_steps_left_to_next_operation= 0u;
-								}
-								else
-								{
-									var u32 period( player_visible[1] );
-									entity.num_steps_left_to_next_operation= ( period - entity.num_steps_since_operation_start % period ) % period;
-								}
+								next_operation= u32( player_visible[2] );
+								// TODO - process delay properly.
 							}
 						}
 					}
-					if( entity.next_operation == ~0u )
+					if( next_operation == ~0u )
 					{
 						if_var( &inside_shooting_zone_b : operation_control.inside_shooting_zone_b )
 						{
 							if( entity.player_is_inside_shooting_zone )
 							{
-								entity.next_operation= u32( inside_shooting_zone_b[2] );
-
 								var u32 period( inside_shooting_zone_b[0] );
-								entity.num_steps_left_to_next_operation= ( period - entity.num_steps_since_operation_start % period ) % period;
+								if( period != 0u && entity.num_steps_since_operation_start % period == 0u )
+								{
+									next_operation= inside_shooting_zone_b[2];
+								}
 							}
 						}
 					}
-					if( entity.next_operation == ~0u )
+					if( next_operation == ~0u )
 					{
 						if_var( &convenient_position : operation_control.convenient_position )
 						{
-							if( entity.player_is_inside_shooting_zone )
+							// TODO - perform transition randomly.
+							if( entity.player_is_inside_shooting_zone &&
+								entity.num_steps_since_operation_start == convenient_position[0] )
 							{
-								entity.next_operation= u32( convenient_position[1] );
-
-								var u32 period( convenient_position[0] );
-								entity.num_steps_left_to_next_operation= ( period - entity.num_steps_since_operation_start % period ) % period;
+								next_operation= convenient_position[1];
 							}
 						}
 					}
-					if( entity.next_operation == ~0u )
+					if( next_operation == ~0u )
 					{
 						if_var( &randomness : operation_control.randomness )
 						{
-							// Random state transition.
-							var u32 period( randomness[0] );
-							if( entity.num_steps_since_operation_start == period )
+							// Random state transition with no outer condition.
+							if( entity.num_steps_since_operation_start == u32( randomness[0] ) )
 							{
 								if( randomness[2] >= 0 && game_state.random.Next() % 100u <= u32(randomness[1]) )
 								{
-									entity.next_operation= u32( randomness[2] );
-									entity.num_steps_left_to_next_operation= 0u;
+									next_operation= u32( randomness[2] );
 								}
 								else if( randomness[4] >= 0 && game_state.random.Next() % 100u <= u32(randomness[3]) )
 								{
-									entity.next_operation= u32( randomness[4] );
-									entity.num_steps_left_to_next_operation= 0u;
+									next_operation= u32( randomness[4] );
 								}
 							}
 						}
 					}
-					if( entity.next_operation == ~0u )
+					if( next_operation == ~0u )
 					{
 						if_var( & timeout : operation_control.timeout )
 						{
 							// Timeout should be (generally) the last checked option.
 							if( entity.num_steps_since_operation_start >= timeout[0] )
 							{
-								entity.next_operation= u32( timeout[1] );
-								entity.num_steps_left_to_next_operation= 0u;
+								next_operation= u32( timeout[1] );
 							}
 						}
 					}
@@ -912,8 +898,7 @@ fn ProcessEntitiesLogicStep( GameMapData& map_data, GameState &mut game_state )
 					if( if_alive.time != 0u &&
 						entity.num_steps_since_operation_start % if_alive.time == 0u )
 					{
-						entity.next_operation= ( entity.lost_energy_in_current_operation ? if_alive.new_operation[1] : if_alive.new_operation[0] );
-						entity.num_steps_left_to_next_operation= 0u;
+						next_operation= ( entity.lost_energy_in_current_operation ? if_alive.new_operation[1] : if_alive.new_operation[0] );
 					}
 				}
 
@@ -922,8 +907,7 @@ fn ProcessEntitiesLogicStep( GameMapData& map_data, GameState &mut game_state )
 					if( stopper.time != 0u &&
 						entity.num_steps_since_operation_start % stopper.time == 0u )
 					{
-						entity.next_operation= stopper.new_operation;
-						entity.num_steps_left_to_next_operation= 0u;
+						next_operation= stopper.new_operation;
 					}
 				}
 
@@ -933,12 +917,11 @@ fn ProcessEntitiesLogicStep( GameMapData& map_data, GameState &mut game_state )
 					entity.azimuth= Convert1024Angle( f32( object_rotation.rotation ) ) * f32( entity.num_steps_since_operation_start );
 
 					// It looks like object rotation also includes tomeout-based state transition.
-					if( entity.next_operation == ~0u )
+					if( next_operation == ~0u )
 					{
 						if( entity.num_steps_since_operation_start == object_rotation.time )
 						{
-							entity.next_operation= object_rotation.new_operation;
-							entity.num_steps_left_to_next_operation= 0u;
+							next_operation= object_rotation.new_operation;
 						}
 					}
 				}
@@ -965,9 +948,7 @@ fn ProcessEntitiesLogicStep( GameMapData& map_data, GameState &mut game_state )
 										.position= entity.position,
 										.azimuth= entity.azimuth,
 										.current_operation= c_start_operation,
-										.next_operation= ~0u,
 										.num_steps_since_operation_start= 0u,
-										.num_steps_left_to_next_operation= ~0u,
 										.navigation_info_index= ~0u,
 										.target_navigation_graph_node= ~0u,
 										.current_navigation_graph_node= ~0u,
@@ -983,14 +964,12 @@ fn ProcessEntitiesLogicStep( GameMapData& map_data, GameState &mut game_state )
 					}
 				}
 
-				if( entity.next_operation != ~0u && entity.num_steps_left_to_next_operation == 0u )
+				if( next_operation != ~0u )
 				{
-					if( size_type( entity.next_operation ) < entity_description.operations.size() )
+					if( size_type( next_operation ) < entity_description.operations.size() )
 					{
-						entity.current_operation= entity.next_operation;
-						entity.next_operation= ~0u;
+						entity.current_operation= next_operation;
 						entity.num_steps_since_operation_start= 0u;
-						entity.num_steps_left_to_next_operation= ~0u;
 						entity.has_seen_player_in_current_operation= false;
 						entity.player_is_inside_shooting_zone= false;
 						entity.lost_energy_in_current_operation= false;
@@ -1026,14 +1005,10 @@ fn ProcessEntitiesLogicStep( GameMapData& map_data, GameState &mut game_state )
 				pair.second= animation_step / c_num_steps_per_animation_frame;
 			}
 
-			// Increase/decrease step counters after doing any other logic.
+			// Increase step counter after doing any other logic.
 			// It's needed in order to make results (like animation frame) of step #0 observable.
 
 			++entity.num_steps_since_operation_start;
-			if( entity.num_steps_left_to_next_operation > 0u )
-			{
-				--entity.num_steps_left_to_next_operation;
-			}
 		}
 
 		if( need_to_remove_entity )
