@@ -995,7 +995,15 @@ fn ProcessEntitiesLogicStep( GameMapData& map_data, GameState &mut game_state )
 				entity_description.operations[ size_type( entity.current_operation ) ];
 
 			// Perform entity movement.
-			MoveEntity( map_data, game_state.colliders, game_state.projectiles, entity, u32(entity_index), entity_description, operation );
+			MoveEntity(
+				map_data,
+				game_state.colliders,
+				game_state.projectiles,
+				game_state.player,
+				entity,
+				u32(entity_index),
+				entity_description,
+				operation );
 
 			// Calculate current frame based on animation params.
 			// TODO - perform different animation logic for different animation kinds.
@@ -1542,6 +1550,7 @@ fn MoveEntity(
 	GameMapData& map_data,
 	ust::array_view_imut</Collider/> colliders,
 	ust::array_view_mut</Projectile/> projectiles,
+	PlayerState& player_state,
 	EntityState &mut entity,
 	u32 entity_index,
 	EntitiesDescription::EntityDescription& entity_description,
@@ -1549,7 +1558,7 @@ fn MoveEntity(
 {
 	var Vec3f old_position= entity.position;
 
-	PerformEntityOwnMovement( map_data.mapa_way_data.deref(), entity, current_operation );
+	PerformEntityOwnMovement( map_data.mapa_way_data.deref(), entity, current_operation, player_state );
 
 	var Vec3f mut new_position= entity.position;
 
@@ -1667,7 +1676,8 @@ fn MoveEntity(
 fn PerformEntityOwnMovement(
 	MapaWayData& mapa_way_data,
 	EntityState &mut entity,
-	EntitiesDescription::Operation& current_operation )
+	EntitiesDescription::Operation& current_operation,
+	PlayerState& player_state )
 {
 	if( current_operation.operation_control.empty() )
 	{
@@ -1694,32 +1704,57 @@ fn PerformEntityOwnMovement(
 		return;
 	}
 
-	if( entity.target_navigation_graph_node == ~0u )
+	if( entity.alarmed )
 	{
-		// Select a target if has no one.
-		// TODO - perform target selection depending on movement mode.
+		var f32 mut smallest_square_distance= ust::plus_inf</f32/>();
+		var u32 mut nearest_to_player_node_index= ~0u;
 
-		if( entity.current_navigation_graph_node != ~0u )
+		for( auto mut i= 0u; i < navigation_graph.num_nodes; ++i )
 		{
-			// If has current patrolling node, select next patrolling node.
-			for( auto mut i= entity.current_navigation_graph_node + 1u; i < navigation_graph.num_nodes; ++i )
+			// Navigation graph nodes are stored on floor.
+			// Player position is stored on floor too.
+			// So it has sense to measure distance between these positions.
+			var MapaWayNavigationGraphNode& node= navigation_graph.nodes[i];
+			var Vec3f node_position( f32( node.position[0] ), f32( node.position[1] ), f32( node.position[2] ) );
+			var f32 square_distance= ( node_position - player_state.position ).SquareLength();
+			if( square_distance < smallest_square_distance )
 			{
-				if( navigation_graph.nodes[i].unknown3 == -1 )
-				{
-					entity.target_navigation_graph_node= i;
-					break;
-				}
+				smallest_square_distance= square_distance;
+				nearest_to_player_node_index= i;
 			}
 		}
 
+		entity.target_navigation_graph_node= nearest_to_player_node_index;
+	}
+	else
+	{
 		if( entity.target_navigation_graph_node == ~0u )
 		{
-			for( auto mut i= 0u; i < navigation_graph.num_nodes; ++i )
+			// Select a target if has no one.
+			// TODO - perform target selection depending on movement mode.
+
+			if( entity.current_navigation_graph_node != ~0u )
 			{
-				if( navigation_graph.nodes[i].unknown3 == -1 )
+				// If has current patrolling node, select next patrolling node.
+				for( auto mut i= entity.current_navigation_graph_node + 1u; i < navigation_graph.num_nodes; ++i )
 				{
-					entity.target_navigation_graph_node= i;
-					break;
+					if( navigation_graph.nodes[i].unknown3 == -1 )
+					{
+						entity.target_navigation_graph_node= i;
+						break;
+					}
+				}
+			}
+
+			if( entity.target_navigation_graph_node == ~0u )
+			{
+				for( auto mut i= 0u; i < navigation_graph.num_nodes; ++i )
+				{
+					if( navigation_graph.nodes[i].unknown3 == -1 )
+					{
+						entity.target_navigation_graph_node= i;
+						break;
+					}
 				}
 			}
 		}
