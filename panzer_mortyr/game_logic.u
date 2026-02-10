@@ -999,7 +999,6 @@ fn ProcessEntitiesLogicStep( GameMapData& map_data, GameState &mut game_state )
 				map_data,
 				game_state.colliders,
 				game_state.projectiles,
-				game_state.player,
 				entity,
 				u32(entity_index),
 				entity_description,
@@ -1544,13 +1543,17 @@ fn UpdateEntityPlayerInSightFlag(
 	{
 		entity.player_is_in_sight= true;
 	}
+
+	if( entity.player_is_in_sight )
+	{
+		entity.last_seen_player_position= player_state.position;
+	}
 }
 
 fn MoveEntity(
 	GameMapData& map_data,
 	ust::array_view_imut</Collider/> colliders,
 	ust::array_view_mut</Projectile/> projectiles,
-	PlayerState& player_state,
 	EntityState &mut entity,
 	u32 entity_index,
 	EntitiesDescription::EntityDescription& entity_description,
@@ -1558,7 +1561,7 @@ fn MoveEntity(
 {
 	var Vec3f old_position= entity.position;
 
-	PerformEntityOwnMovement( map_data.mapa_way_data.deref(), entity, current_operation, player_state );
+	PerformEntityOwnMovement( map_data.mapa_way_data.deref(), entity, current_operation );
 
 	var Vec3f mut new_position= entity.position;
 
@@ -1676,8 +1679,7 @@ fn MoveEntity(
 fn PerformEntityOwnMovement(
 	MapaWayData& mapa_way_data,
 	EntityState &mut entity,
-	EntitiesDescription::Operation& current_operation,
-	PlayerState& player_state )
+	EntitiesDescription::Operation& current_operation )
 {
 	if( current_operation.operation_control.empty() )
 	{
@@ -1706,25 +1708,28 @@ fn PerformEntityOwnMovement(
 
 	if( entity.alarmed )
 	{
-		var f32 mut smallest_square_distance= ust::plus_inf</f32/>();
-		var u32 mut nearest_to_player_node_index= ~0u;
-
-		for( auto mut i= 0u; i < navigation_graph.num_nodes; ++i )
+		if_var( &player_position: entity.last_seen_player_position )
 		{
-			// Navigation graph nodes are stored on floor.
-			// Player position is stored on floor too.
-			// So it has sense to measure distance between these positions.
-			var MapaWayNavigationGraphNode& node= navigation_graph.nodes[i];
-			var Vec3f node_position( f32( node.position[0] ), f32( node.position[1] ), f32( node.position[2] ) );
-			var f32 square_distance= ( node_position - player_state.position ).SquareLength();
-			if( square_distance < smallest_square_distance )
-			{
-				smallest_square_distance= square_distance;
-				nearest_to_player_node_index= i;
-			}
-		}
+			var f32 mut smallest_square_distance= ust::plus_inf</f32/>();
+			var u32 mut nearest_to_player_node_index= ~0u;
 
-		entity.target_navigation_graph_node= nearest_to_player_node_index;
+			for( auto mut i= 0u; i < navigation_graph.num_nodes; ++i )
+			{
+				// Navigation graph nodes are stored on floor.
+				// Player position is stored on floor too.
+				// So it has sense to measure distance between these positions.
+				var MapaWayNavigationGraphNode& node= navigation_graph.nodes[i];
+				var Vec3f node_position( f32( node.position[0] ), f32( node.position[1] ), f32( node.position[2] ) );
+				var f32 square_distance= ( node_position - player_position ).SquareLength();
+				if( square_distance < smallest_square_distance )
+				{
+					smallest_square_distance= square_distance;
+					nearest_to_player_node_index= i;
+				}
+			}
+
+			entity.target_navigation_graph_node= nearest_to_player_node_index;
+		}
 	}
 	else
 	{
