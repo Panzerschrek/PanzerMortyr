@@ -1710,32 +1710,105 @@ fn PerformEntityOwnMovement(
 	{
 		if_var( &player_position : entity.last_seen_player_position )
 		{
-			var f32 mut smallest_square_distance= ust::plus_inf</f32/>();
-			var u32 mut nearest_to_player_node_index= ~0u;
-
-			for( auto mut i= 0u; i < navigation_graph.num_nodes; ++i )
+			if( entity.player_is_in_sight )
 			{
-				if( i == entity.current_navigation_graph_node )
+				// TODO - read these values from settings.
+				var f32 distance_scale= 28.0f;
+				var f32 distance_base= 4.0f;
+				var f32 optimal_distance_min= distance_scale * ( distance_base - 1.0f );
+				var f32 optimal_distance_max= distance_scale * ( distance_base + 2.0f );
+				var f32 good_enough_distance_min= distance_scale * ( distance_base - 2.0f );
+				var f32 good_enough_distance_max= distance_scale * ( distance_base + 3.0f );
+
+				// Check if currnet target node is good enough. If so - preserve it, otherwise reset it.
+				if( entity.target_navigation_graph_node != ~0u )
 				{
-					// Avoid selecting current navigation node as target.
-					// Doing so allows enemies to travel between two nearest points instead of staying at single nearest point.
-					continue;
+					var MapaWayNavigationGraphNode& node= navigation_graph.nodes[entity.target_navigation_graph_node];
+					var Vec3f node_position( f32( node.position[0] ), f32( node.position[1] ), f32( node.position[2] ) );
+					var f32 square_distance= ( node_position - player_position ).SquareLength();
+
+					var bool good_enough=
+						square_distance >= good_enough_distance_min * good_enough_distance_min &&
+						square_distance <= good_enough_distance_max * good_enough_distance_max;
+
+					if( !good_enough )
+					{
+						entity.target_navigation_graph_node= ~0u;
+					}
 				}
 
-				// Navigation graph nodes are stored on floor.
-				// Player position is stored on floor too.
-				// So it has sense to measure distance between these positions.
-				var MapaWayNavigationGraphNode& node= navigation_graph.nodes[i];
-				var Vec3f node_position( f32( node.position[0] ), f32( node.position[1] ), f32( node.position[2] ) );
-				var f32 square_distance= ( node_position - player_position ).SquareLength();
-				if( square_distance < smallest_square_distance )
+				if(  entity.target_navigation_graph_node == ~0u )
 				{
-					smallest_square_distance= square_distance;
-					nearest_to_player_node_index= i;
+					// Try selecting a point near the player.
+
+					// First fetch all nodes which are optimal by distance criteria.
+
+					var u32 c_max_candidate_nodes= 64u;
+					var [ u8, c_max_candidate_nodes ] mut candidate_nodes[ 255u8 ... ];
+					var u32 mut num_candidate_nodes= 0u;
+
+					for( auto mut i= 0u; i < navigation_graph.num_nodes; ++i )
+					{
+						var MapaWayNavigationGraphNode& node= navigation_graph.nodes[i];
+						var Vec3f node_position( f32( node.position[0] ), f32( node.position[1] ), f32( node.position[2] ) );
+						var f32 square_distance= ( node_position - player_position ).SquareLength();
+
+						var bool optimal=
+							square_distance >= optimal_distance_min * optimal_distance_min &&
+							square_distance <= optimal_distance_max * optimal_distance_max;
+
+						if( optimal )
+						{
+							candidate_nodes[ num_candidate_nodes ] = u8(i);
+							++num_candidate_nodes;
+							if( num_candidate_nodes == c_max_candidate_nodes )
+							{
+								break;
+							}
+						}
+					}
+
+					if( num_candidate_nodes > 0u )
+					{
+						// Select random point from candidates.
+						// TODO - perform random selection.
+						// TODO - reject by visibility check to the player.
+						entity.target_navigation_graph_node= u32( candidate_nodes[0u] );
+					}
 				}
 			}
+			else
+			{
+				// If player is not visible select the node nearest to his last seen position.
+				// This approach allows enemies reaching the player even if he is now out of the view.
 
-			entity.target_navigation_graph_node= nearest_to_player_node_index;
+				var f32 mut smallest_square_distance= ust::plus_inf</f32/>();
+				var u32 mut nearest_to_player_node_index= ~0u;
+
+				for( auto mut i= 0u; i < navigation_graph.num_nodes; ++i )
+				{
+					if( i == entity.current_navigation_graph_node )
+					{
+						// Avoid selecting current navigation node as target.
+						// Doing so allows enemies to travel between two nearest points instead of staying at single nearest point.
+						continue;
+					}
+
+					// Navigation graph nodes are stored on floor.
+					// Player position is stored on floor too.
+					// So it has sense to measure distance between these positions.
+					var MapaWayNavigationGraphNode& node= navigation_graph.nodes[i];
+					var Vec3f node_position( f32( node.position[0] ), f32( node.position[1] ), f32( node.position[2] ) );
+					var f32 square_distance= ( node_position - player_position ).SquareLength();
+					if( square_distance < smallest_square_distance )
+					{
+						smallest_square_distance= square_distance;
+						nearest_to_player_node_index= i;
+					}
+				}
+
+				entity.target_navigation_graph_node= nearest_to_player_node_index;
+			}
 		}
 	}
 	else
