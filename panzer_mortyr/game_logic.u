@@ -806,6 +806,8 @@ fn ProcessEntitiesLogicStep( GameMapData& map_data, GameState &mut game_state )
 
 			UpdateEntityPlayerInSightFlag( map_data, entity_description, entity, game_state.player );
 
+			UpdateEntityMovementTarget( map_data.mapa_way_data.deref(), entity_description, entity );
+
 			if( entity.player_is_in_sight )
 			{
 				// Go to alarmed state if saw the player at least once.
@@ -1550,147 +1552,18 @@ fn UpdateEntityPlayerInSightFlag(
 	}
 }
 
-fn MoveEntity(
-	GameMapData& map_data,
-	ust::array_view_imut</Collider/> colliders,
-	ust::array_view_mut</Projectile/> projectiles,
-	EntityState &mut entity,
-	u32 entity_index,
-	EntitiesDescription::EntityDescription& entity_description,
-	EntitiesDescription::Operation& current_operation )
-{
-	var Vec3f old_position= entity.position;
-
-	PerformEntityOwnMovement( map_data.mapa_way_data.deref(), entity, current_operation );
-
-	var Vec3f mut new_position= entity.position;
-
-	var bool mut affected_by_gravity= false;
-
-	// Players are affected by gravity.
-	affected_by_gravity|= entity_description.mode == EntitiesDescription::EntityDescription::c_mode_player;
-
-	// Enemies are affected by gravity.
-	affected_by_gravity|= entity_description.mode == EntitiesDescription::EntityDescription::c_mode_enemy;
-
-	// Pick-ups are affected by gravity.
-	affected_by_gravity|= entity_description.mode == EntitiesDescription::EntityDescription::c_mode_pickup;
-
-	// TODO - process here also projectiles.
-
-	// Decorations are affected by gravity, but only if they are pushable.
-	affected_by_gravity|=
-		entity_description.mode == EntitiesDescription::EntityDescription::c_mode_decoration &&
-		!entity_description.param_akt.empty() && entity_description.param_akt.try_deref()[3] != 0u;
-
-	if( current_operation.animations[ size_type( EntitiesDescription::Operation::AnimationKind::Landscape ) ].num_steps != 0u )
-	{
-		// Decorations like planes and airships shouldn't be affected by gravity.
-		affected_by_gravity= false;
-	}
-
-	if( affected_by_gravity )
-	{
-		entity.velocity_z+= c_gravity_per_step;
-		new_position.z+= entity.velocity_z;
-
-		// Don't fall into infinity.
-		ust::min_assign( new_position.z, 4096.0f );
-
-		// Limit vertical speed if necessary.
-		ust::min_assign( entity.velocity_z,  c_max_vertical_speed );
-		ust::max_assign( entity.velocity_z, -c_max_vertical_speed );
-	}
-
-	if( new_position == old_position )
-	{
-		// No movement is required.
-		return;
-	}
-
-	var ust::optional</BBox3f/> mut collider_bbox_opt;
-
-	foreach( &anim : current_operation.animations )
-	{
-		if( anim.num_steps == 0u )
-		{
-			continue;
-		}
-
-		var Vec3f mut bbox_half_size(
-			f32( anim.bounding_box_half_size_x ),
-			f32( anim.bounding_box_half_size_y ),
-			f32( anim.bounding_box_half_size_z ) );
-
-		RotateEntityBBox( bbox_half_size, entity.azimuth );
-
-		var Vec3f bbox_center=
-			Vec3f(
-				f32( anim.bounding_box_center_x ),
-				f32( anim.bounding_box_center_y ),
-				f32( anim.bounding_box_center_z ) );
-
-
-		// Usually we have only one collision box.
-		// The only exception is the tank enemy on map 24. In this case use the last one collider - it's good enough.
-		collider_bbox_opt= BBox3f{ .min= bbox_center - bbox_half_size, .max= bbox_center + bbox_half_size };
-	}
-
-	if( collider_bbox_opt.empty() )
-	{
-		return;
-	}
-
-	var BBox3f& collider_bbox= collider_bbox_opt.try_deref();
-
-	// TODO - move non-enemy entities without stepping.
-
-	var CollisionStepMoveResult move_result=
-		CollisionStepMove( map_data, colliders, collider_bbox, old_position, new_position );
-
-	// Clamp vertical velocity if necessary.
-	for( auto mut i= 0u; i < move_result.trace_clip_result.num_collision_events; ++i )
-	{
-		var Vec3f& normal= move_result.trace_clip_result.collision_events[i].plane_normal;
-
-		var f32 dot= entity.velocity_z * normal.z;
-		if( dot < 0.0f )
-		{
-			 entity.velocity_z-= normal.z * dot / normal.SquareLength();
-		}
-	}
-
-	entity.position= move_result.trace_clip_result.position_clipped;
-
-	// Calculate collisions with projectiles.
-	// It's necessary to avoid missing collisions in some cases, especially for slow-moving projectiles.
-	if( entity.position != old_position &&
-		entity_description.mode != EntitiesDescription::EntityDescription::c_mode_pickup &&
-		collider_bbox.min.x != collider_bbox.max.x &&
-		collider_bbox.min.y != collider_bbox.max.y &&
-		collider_bbox.min.z != collider_bbox.max.z )
-	{
-		// Using straight movement from start to end isn't fully correct, since actual movement with clipping may be more complex.
-		// But it's mostly fine.
-		CollideMovedEntityWithProjectiles( old_position, entity.position, collider_bbox, entity_index, projectiles );
-	}
-}
-
-fn PerformEntityOwnMovement(
+fn UpdateEntityMovementTarget(
 	MapaWayData& mapa_way_data,
-	EntityState &mut entity,
-	EntitiesDescription::Operation& current_operation )
+	EntitiesDescription::EntityDescription& entity_description,
+	EntityState &mut entity )
 {
-	if( current_operation.operation_control.empty() )
-	{
-		return;
-	}
+	auto& current_operation= entity_description.operations[ size_type( entity.current_operation ) ];
 
-	var EntitiesDescription::OperationControl& operation_control= current_operation.operation_control.try_deref();
-
-	if( operation_control.speed == 0u )
+	if( current_operation.operation_control.empty() ||
+		current_operation.operation_control.try_deref().speed == 0u )
 	{
-		// Do not move if has zero speed. TODO - maybe still allow rotation?
+		// Don't care selecting movement target if has zero speed.
+		// Select it later if movement is possible.
 		return;
 	}
 
@@ -1699,7 +1572,8 @@ fn PerformEntityOwnMovement(
 		return;
 	}
 
-	var MapaWayNavigationGraph& navigation_graph= mapa_way_data.navigation_graphs[ size_type( entity.navigation_info_index ) ];
+	var MapaWayNavigationGraph& navigation_graph=
+		mapa_way_data.navigation_graphs[ size_type( entity.navigation_info_index ) ];
 
 	if( navigation_graph.num_nodes == 0u )
 	{
@@ -1849,6 +1723,164 @@ fn PerformEntityOwnMovement(
 				}
 			}
 		}
+	}
+}
+
+fn MoveEntity(
+	GameMapData& map_data,
+	ust::array_view_imut</Collider/> colliders,
+	ust::array_view_mut</Projectile/> projectiles,
+	EntityState &mut entity,
+	u32 entity_index,
+	EntitiesDescription::EntityDescription& entity_description,
+	EntitiesDescription::Operation& current_operation )
+{
+	var Vec3f old_position= entity.position;
+
+	PerformEntityOwnMovement( map_data.mapa_way_data.deref(), entity, current_operation );
+
+	var Vec3f mut new_position= entity.position;
+
+	var bool mut affected_by_gravity= false;
+
+	// Players are affected by gravity.
+	affected_by_gravity|= entity_description.mode == EntitiesDescription::EntityDescription::c_mode_player;
+
+	// Enemies are affected by gravity.
+	affected_by_gravity|= entity_description.mode == EntitiesDescription::EntityDescription::c_mode_enemy;
+
+	// Pick-ups are affected by gravity.
+	affected_by_gravity|= entity_description.mode == EntitiesDescription::EntityDescription::c_mode_pickup;
+
+	// TODO - process here also projectiles.
+
+	// Decorations are affected by gravity, but only if they are pushable.
+	affected_by_gravity|=
+		entity_description.mode == EntitiesDescription::EntityDescription::c_mode_decoration &&
+		!entity_description.param_akt.empty() && entity_description.param_akt.try_deref()[3] != 0u;
+
+	if( current_operation.animations[ size_type( EntitiesDescription::Operation::AnimationKind::Landscape ) ].num_steps != 0u )
+	{
+		// Decorations like planes and airships shouldn't be affected by gravity.
+		affected_by_gravity= false;
+	}
+
+	if( affected_by_gravity )
+	{
+		entity.velocity_z+= c_gravity_per_step;
+		new_position.z+= entity.velocity_z;
+
+		// Don't fall into infinity.
+		ust::min_assign( new_position.z, 4096.0f );
+
+		// Limit vertical speed if necessary.
+		ust::min_assign( entity.velocity_z,  c_max_vertical_speed );
+		ust::max_assign( entity.velocity_z, -c_max_vertical_speed );
+	}
+
+	if( new_position == old_position )
+	{
+		// No movement is required.
+		return;
+	}
+
+	var ust::optional</BBox3f/> mut collider_bbox_opt;
+
+	foreach( &anim : current_operation.animations )
+	{
+		if( anim.num_steps == 0u )
+		{
+			continue;
+		}
+
+		var Vec3f mut bbox_half_size(
+			f32( anim.bounding_box_half_size_x ),
+			f32( anim.bounding_box_half_size_y ),
+			f32( anim.bounding_box_half_size_z ) );
+
+		RotateEntityBBox( bbox_half_size, entity.azimuth );
+
+		var Vec3f bbox_center=
+			Vec3f(
+				f32( anim.bounding_box_center_x ),
+				f32( anim.bounding_box_center_y ),
+				f32( anim.bounding_box_center_z ) );
+
+
+		// Usually we have only one collision box.
+		// The only exception is the tank enemy on map 24. In this case use the last one collider - it's good enough.
+		collider_bbox_opt= BBox3f{ .min= bbox_center - bbox_half_size, .max= bbox_center + bbox_half_size };
+	}
+
+	if( collider_bbox_opt.empty() )
+	{
+		return;
+	}
+
+	var BBox3f& collider_bbox= collider_bbox_opt.try_deref();
+
+	// TODO - move non-enemy entities without stepping.
+
+	var CollisionStepMoveResult move_result=
+		CollisionStepMove( map_data, colliders, collider_bbox, old_position, new_position );
+
+	// Clamp vertical velocity if necessary.
+	for( auto mut i= 0u; i < move_result.trace_clip_result.num_collision_events; ++i )
+	{
+		var Vec3f& normal= move_result.trace_clip_result.collision_events[i].plane_normal;
+
+		var f32 dot= entity.velocity_z * normal.z;
+		if( dot < 0.0f )
+		{
+			 entity.velocity_z-= normal.z * dot / normal.SquareLength();
+		}
+	}
+
+	entity.position= move_result.trace_clip_result.position_clipped;
+
+	// Calculate collisions with projectiles.
+	// It's necessary to avoid missing collisions in some cases, especially for slow-moving projectiles.
+	if( entity.position != old_position &&
+		entity_description.mode != EntitiesDescription::EntityDescription::c_mode_pickup &&
+		collider_bbox.min.x != collider_bbox.max.x &&
+		collider_bbox.min.y != collider_bbox.max.y &&
+		collider_bbox.min.z != collider_bbox.max.z )
+	{
+		// Using straight movement from start to end isn't fully correct, since actual movement with clipping may be more complex.
+		// But it's mostly fine.
+		CollideMovedEntityWithProjectiles( old_position, entity.position, collider_bbox, entity_index, projectiles );
+	}
+}
+
+fn PerformEntityOwnMovement(
+	MapaWayData& mapa_way_data,
+	EntityState &mut entity,
+	EntitiesDescription::Operation& current_operation )
+{
+	if( current_operation.operation_control.empty() )
+	{
+		return;
+	}
+
+	var EntitiesDescription::OperationControl& operation_control= current_operation.operation_control.try_deref();
+
+	if( operation_control.speed == 0u )
+	{
+		// Do not move if has zero speed. TODO - maybe still allow rotation?
+		return;
+	}
+
+	if( size_type( entity.navigation_info_index ) >= mapa_way_data.navigation_graphs.size() )
+	{
+		return;
+	}
+
+	var MapaWayNavigationGraph& navigation_graph=
+		mapa_way_data.navigation_graphs[ size_type( entity.navigation_info_index ) ];
+
+	if( navigation_graph.num_nodes == 0u )
+	{
+		return;
 	}
 
 	if( entity.target_navigation_graph_node == ~0u )
