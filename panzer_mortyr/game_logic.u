@@ -806,7 +806,7 @@ fn ProcessEntitiesLogicStep( GameMapData& map_data, GameState &mut game_state )
 
 			UpdateEntityPlayerInSightFlag( map_data, entity_description, entity, game_state.player );
 
-			UpdateEntityMovementTarget( map_data.mapa_way_data.deref(), entity_description, entity, game_state.random );
+			UpdateEntityMovementTarget( map_data, entity_description, entity, game_state.random );
 
 			if( entity.player_is_in_sight )
 			{
@@ -1483,16 +1483,8 @@ fn UpdateEntityPlayerInSightFlag(
 		return;
 	}
 
-	// Trace roughly from enemy head.
-	var Vec3f trace_end=
-		entity.position +
-		Vec3f(
-			f32( animation.bounding_box_center_x ),
-			f32( animation.bounding_box_center_y ),
-			f32( animation.bounding_box_center_z ) - 0.6f * f32( animation.bounding_box_half_size_z ) );
-
-	// Trace from player's head. Assume enemies can't see player's feet.
-	var Vec3f trace_start= player_state.position + Vec3f( 0.0f, 0.0f, c_camera_z_offset );
+	var Vec3f trace_end= GetEntityPointForPlayerVisibilityTrace( entity.position, animation );
+	var Vec3f trace_start= GetPlayerPointForEntityVisibilityTrace( player_state.position );
 
 	if( trace_start == trace_end )
 	{
@@ -1553,7 +1545,7 @@ fn UpdateEntityPlayerInSightFlag(
 }
 
 fn UpdateEntityMovementTarget(
-	MapaWayData& mapa_way_data,
+	GameMapData& map_data,
 	EntitiesDescription::EntityDescription& entity_description,
 	EntityState &mut entity,
 	PseudoRandomGenerator& mut random )
@@ -1568,6 +1560,8 @@ fn UpdateEntityMovementTarget(
 		// Select it later if movement is possible.
 		return;
 	}
+
+	var MapaWayData& mapa_way_data= map_data.mapa_way_data.deref();
 
 	if( size_type( entity.navigation_info_index ) >= mapa_way_data.navigation_graphs.size() )
 	{
@@ -1692,9 +1686,45 @@ fn UpdateEntityMovementTarget(
 
 					if( num_candidate_nodes > 0u )
 					{
-						// Select random point from candidates.
-						// TODO - reject by visibility check to the player.
-						entity.target_navigation_graph_node= u32( candidate_nodes[ random.Next() % num_candidate_nodes ] );
+						var Vec3f trace_start= GetPlayerPointForEntityVisibilityTrace( player_position );
+
+						for( auto mut i= 0u; i < num_candidate_nodes; ++i )
+						{
+							// Select random point from remaining candidates.
+							{
+								var u32 random_index= i + random.Next() % ( num_candidate_nodes - i );
+								auto prev= candidate_nodes[i];
+								candidate_nodes[i]= candidate_nodes[ random_index ];
+								candidate_nodes[ random_index ]= prev;
+							}
+
+							var u32 candidate_node( candidate_nodes[i] );
+
+							// Check if player is visible from the position of this node.
+							// It's necessary to avoid taking a position from which the player can't be seen.
+
+							var MapaWayNavigationGraphNode& node= navigation_graph.nodes[ candidate_node ];
+							var Vec3f node_position( f32( node.position[0] ), f32( node.position[1] ), f32( node.position[2] ) );
+
+							var Vec3f trace_end= GetEntityPointForPlayerVisibilityTrace( node_position, animation );
+
+							var bool mut is_visible= true;
+
+							if( trace_end != trace_start )
+							{
+								var Vec3f trace_vector= trace_end - trace_start;
+								if_var( &trace_result : LineTrace( map_data, trace_start, trace_vector ) )
+								{
+									is_visible= trace_result.distance >= 1.0f;
+								}
+							}
+
+							if( is_visible )
+							{
+								entity.target_navigation_graph_node= candidate_node;
+								break;
+							}
+						}
 					}
 
 					if( entity.target_navigation_graph_node == ~0u )
@@ -1805,6 +1835,25 @@ fn UpdateEntityMovementTarget(
 			}
 		}
 	}
+}
+
+fn GetPlayerPointForEntityVisibilityTrace( Vec3f& player_position ) : Vec3f
+{
+	// Trace from player's head. Assume enemies can't see player's feet.
+	return player_position + Vec3f( 0.0f, 0.0f, c_camera_z_offset );
+}
+
+fn GetEntityPointForPlayerVisibilityTrace(
+	Vec3f& position,
+	EntitiesDescription::OperationAnimationDescription& animation ) : Vec3f
+{
+	// Trace roughly from enemy head.
+	return
+		position +
+		Vec3f(
+			f32( animation.bounding_box_center_x ),
+			f32( animation.bounding_box_center_y ),
+			f32( animation.bounding_box_center_z ) - 0.6f * f32( animation.bounding_box_half_size_z ) );
 }
 
 fn MoveEntity(
