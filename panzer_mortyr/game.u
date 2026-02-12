@@ -18,7 +18,7 @@ fn Game::constructor(
 		console_out_= move(console_out),
 		global_data_= LoadGlobalData( caching_game_resources_loader_ptr ),
 		caching_game_resources_loader_ptr_= move( caching_game_resources_loader_ptr ),
-		camera_rotation_controller_( 0.0f ),
+		camera_controller_( 0.0f ),
 		prev_time_steps_= 0.0f,
 	)
 {
@@ -104,8 +104,7 @@ fn Game::TeleportToMap( mut this, u32 map_index )
 	game_state_= CreateNewMapGameState( map_data_.try_deref() );
 
 	// Reset possible rotation and movement state.
-	camera_rotation_controller_= CameraRotationController( game_state_.try_deref().player.azimuth );
-	camera_zoom_controller_= CameraZoomController();
+	camera_controller_= CameraController( game_state_.try_deref().player.azimuth );
 	player_movement_controller_.Reset();
 	player_tool_controller_.Reset();
 }
@@ -118,9 +117,7 @@ fn Game::Update(
 	[ i32, 2 ] mouse_motion )
 {
 	// Rotate camera each frame.
-	camera_rotation_controller_.Update( time_delta_s, keyboard_state, mouse_motion );
-
-	camera_zoom_controller_.Update( time_delta_s, mouse_state );
+	camera_controller_.Update( time_delta_s, keyboard_state, mouse_state, mouse_motion );
 
 	// Accumulate movement input each frame.
 	player_movement_controller_.Update(  time_delta_s, keyboard_state );
@@ -150,8 +147,8 @@ fn Game::Update(
 
 			var PlayerInput player_input
 			{
-				.azimuth= camera_rotation_controller_.GetAzimuth(),
-				.elevation= camera_rotation_controller_.GetElevation(),
+				.azimuth= camera_controller_.GetAzimuth(),
+				.elevation= camera_controller_.GetElevation(),
 				.move_wish_vector= player_movement_controller_.GetAccumulatedMoveWishVector(),
 				.jump_requested= player_movement_controller_.GetJumpRequested(),
 				.requested_weapon= player_tool_controller_.GetRequestedWeapon(),
@@ -185,8 +182,8 @@ fn Game::ProcessMouseButtonPress( mut this, u32 button_index )
 		var GameMapData& map_data= map_data_.try_deref();
 		var GameState& game_state= game_state_.try_deref();
 
-		var f32 azimuth= camera_rotation_controller_.GetAzimuth();
-		var f32 elevation= camera_rotation_controller_.GetElevation();
+		var f32 azimuth= camera_controller_.GetAzimuth();
+		var f32 elevation= camera_controller_.GetElevation();
 
 		var f32 elevation_cos= ust::cos(elevation);
 		var f32 elevation_sin= ust::sin(elevation);
@@ -243,11 +240,9 @@ fn Game::GetWorldDrawingInfo( this ) : WorldDrawingInfo
 		.camera_params
 		{
 			.position= Vec3f::MakeZero(),
-			.azimuth= camera_rotation_controller_.GetAzimuth(),
-			.elevation= camera_rotation_controller_.GetElevation(),
-			// This value was carefully tuned to match the original game.
-			// TODO - perform last bits of fine-tuning.
-			.fov_x= 102.4311f * ( c_tau / 360.0f ) * camera_zoom_controller_.GetFOVScale(),
+			.azimuth= camera_controller_.GetAzimuth(),
+			.elevation= camera_controller_.GetElevation(),
+			.fov_x= camera_controller_.GetFOV(),
 		},
 		.test_sprites= test_sprites_,
 		.test_triangles= test_triangles_,
@@ -394,8 +389,8 @@ fn Game::GetWorldDrawingInfo( this ) : WorldDrawingInfo
 						{
 							.model_file_name= animation.model_file_name,
 							.position= drawing_info.camera_params.position,
-							.azimuth= camera_rotation_controller_.GetAzimuth(),
-							.elevation= camera_rotation_controller_.GetElevation() + elevation_add,
+							.azimuth= camera_controller_.GetAzimuth(),
+							.elevation= camera_controller_.GetElevation() + elevation_add,
 							.frame= game_state.player.weapon_state.current_animation_step / c_num_steps_per_animation_frame,
 							.disable_culling= true,
 							.first_person_weapon= true,
@@ -493,7 +488,7 @@ fn Game::process_reset_position( mut this )
 		game_state.player.position= Vec3f::MakeZero();
 		game_state.player.velocity= Vec3f::MakeZero();
 	}
-	camera_rotation_controller_= CameraRotationController( 0.0f );
+	camera_controller_= CameraController( 0.0f );
 	player_movement_controller_.Reset();
 }
 

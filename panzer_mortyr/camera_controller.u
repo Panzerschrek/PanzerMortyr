@@ -1,20 +1,21 @@
 import "/math.u"
 import "/sdl/sdl_with_opengl.uh"
-import "camera_rotation_controller.uh"
+import "camera_controller.uh"
 import "math_constants.uh"
 
 namespace PM
 {
 
-fn CameraRotationController::constructor( f32 azimuth )
-	( azimuth_= azimuth, elevation_= 0.0f, azimuth_velocity_( 0.0f ), elevation_velocity_( 0.0f ) )
+fn CameraController::constructor( f32 azimuth )
+	( azimuth_= azimuth, elevation_= 0.0f, azimuth_velocity_( 0.0f ), elevation_velocity_( 0.0f ), zoom_fraction_= 0.0f )
 {
 }
 
-fn CameraRotationController::Update(
+fn CameraController::Update(
 	mut this,
 	f32 time_delta_s,
 	ust::array_view_imut</bool/> keyboard_state,
+	u32 mouse_state,
 	[ i32, 2 ] mouse_motion )
 {
 	// TODO - allow changig controls.
@@ -24,18 +25,27 @@ fn CameraRotationController::Update(
 		key_turn_up(SDL_SCANCODE_UP),
 		key_turn_down(SDL_SCANCODE_DOWN);
 
+	// TODO - allow configuring it.
+	var u32 c_zoom_button= 3u;
+
+	// Scale angular movement proportional to fov.
+	var f32 fov= GetFOV();
+
 	// Perform angular movement via keyboard keys with acceleration. It looks a little bit better.
 
-	var f32 constexpr angle_acceleration= 30.0f;
-	var f32 constexpr angle_deceleration= 20.0f;
+	var f32 angle_acceleration= 15.0f * fov;
+	var f32 angle_deceleration= 10.0f * fov;
 
-	var f32 constexpr max_angle_speed= c_tau * 3.0f / 4.0f;
+	var f32 max_angle_speed= 2.5f * fov;
+
 	var f32 constexpr max_elevation= c_tau / 4.0f;
 
 	// TODO - read it from settings.
 	// TODO - allow Y axis inversion.
-	var f32 constexpr mouse_sensitivity_x= 0.005f;
-	var f32 constexpr mouse_sensitivity_y= 0.005f;
+	var f32 mouse_sensitivity_x= 0.002f * fov;
+	var f32 mouse_sensitivity_y= 0.002f * fov;
+
+	var f32 constexpr c_zoom_speed= 4.0f;
 
 	if( key_turn_left < keyboard_state.size() && keyboard_state[ key_turn_left ] )
 	{
@@ -96,16 +106,36 @@ fn CameraRotationController::Update(
 	{
 		elevation_= -max_elevation;
 	}
+
+	if( ( mouse_state & ( 1u << ( c_zoom_button - 1u ) ) ) != 0u )
+	{
+		zoom_fraction_+= time_delta_s * c_zoom_speed;
+		ust::min_assign( zoom_fraction_, 1.0f );
+	}
+	else
+	{
+		zoom_fraction_-= time_delta_s * c_zoom_speed;
+		ust::max_assign( zoom_fraction_, 0.0f );
+	}
 }
 
-fn CameraRotationController::GetAzimuth( this ) : f32
+fn CameraController::GetAzimuth( this ) : f32
 {
 	return azimuth_;
 }
 
-fn CameraRotationController::GetElevation( this ) : f32
+fn CameraController::GetElevation( this ) : f32
 {
 	return elevation_;
+}
+
+fn CameraController::GetFOV( this ) : f32
+{
+	// This value was carefully tuned to match the original game.
+	// TODO - perform last bits of fine-tuning.
+	var f32 constexpr base_fov_x= 102.4311f * ( c_tau / 360.0f );
+
+	return base_fov_x * ( 1.0f - 0.7f * zoom_fraction_ );
 }
 
 } // namespace PM
