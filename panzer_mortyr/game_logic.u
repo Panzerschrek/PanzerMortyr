@@ -2009,19 +2009,19 @@ fn PerformEntityOwnMovement(
 		return;
 	}
 
+	var MapaWayNavigationGraph& navigation_graph=
+		mapa_way_data.navigation_graphs[ size_type( entity.navigation_info_index ) ];
+
+	if( navigation_graph.num_nodes == 0u )
+	{
+		return;
+	}
+
 	var ust::optional</Vec2f/> mut movement_target_opt;
 	var u32 mut waypoint_node_index= ~0u;
 
 	if( operation_control.functioning_mode == 1u || operation_control.functioning_mode == 11u )
 	{
-		var MapaWayNavigationGraph& navigation_graph=
-			mapa_way_data.navigation_graphs[ size_type( entity.navigation_info_index ) ];
-
-		if( navigation_graph.num_nodes == 0u )
-		{
-			return;
-		}
-
 		if( entity.target_navigation_graph_node == ~0u )
 		{
 			return;
@@ -2031,20 +2031,7 @@ fn PerformEntityOwnMovement(
 		{
 			// Attach to the navigation graph if has no current node.
 			// TODO - maybe do this in cases where current position is way too far away from the current node?
-			var u32 mut nearest_node_index= ~0u;
-			var f32 mut nearest_node_square_distance= 1.0e64f;
-			for( auto mut i= 0u; i < navigation_graph.num_nodes; ++i )
-			{
-				var MapaWayNavigationGraphNode& node= navigation_graph.nodes[i];
-				var Vec3f vec_to_node= entity.position - Vec3f( f32( node.position[0] ), f32( node.position[1] ), f32( node.position[2] ) );
-				var f32 square_distance_to_node= vec_to_node.SquareLength();
-				if( square_distance_to_node < nearest_node_square_distance )
-				{
-					nearest_node_square_distance= square_distance_to_node;
-					nearest_node_index= i;
-				}
-			}
-			entity.current_navigation_graph_node= nearest_node_index;
+			AttachEntityToNavigationGraph( entity, navigation_graph );
 		}
 
 		// Perform lookup from routing matrix to find next waypoint node which will eventually lead to the target node.
@@ -2140,6 +2127,32 @@ fn PerformEntityOwnMovement(
 			}
 		}
 	}
+
+	if( base_move_distance > 0.0f && operation_control.functioning_mode == 2u )
+	{
+		// If moving towards the player re-attach to the navigation graph on each step.
+		// It's necessary, since in this mode movements aren't constrained by the navigation graph.
+		// But it's rarely needed, since almost all enemies don't move while turning towards the player.
+		AttachEntityToNavigationGraph( entity, navigation_graph );
+	}
+}
+
+fn AttachEntityToNavigationGraph( EntityState& mut entity, MapaWayNavigationGraph& navigation_graph )
+{
+	var u32 mut nearest_node_index= ~0u;
+	var f32 mut nearest_node_square_distance= 1.0e64f;
+	for( auto mut i= 0u; i < navigation_graph.num_nodes; ++i )
+	{
+		var MapaWayNavigationGraphNode& node= navigation_graph.nodes[i];
+		var Vec3f vec_to_node= entity.position - Vec3f( f32( node.position[0] ), f32( node.position[1] ), f32( node.position[2] ) );
+		var f32 square_distance_to_node= vec_to_node.SquareLength();
+		if( square_distance_to_node < nearest_node_square_distance )
+		{
+			nearest_node_square_distance= square_distance_to_node;
+			nearest_node_index= i;
+		}
+	}
+	entity.current_navigation_graph_node= nearest_node_index;
 }
 
 fn GetEntityDirectionNormalizedVector( EntityState& entity ) : Vec2f
