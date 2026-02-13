@@ -858,7 +858,9 @@ fn ProcessEntitiesLogicStep( GameMapData& map_data, GameState &mut game_state )
 					{
 						if_var( &inside_shooting_zone_b : operation_control.inside_shooting_zone_b )
 						{
-							if( entity.player_is_in_sight )
+							// TODO - check what else condition is necessary.
+							// Maybe add some random element?
+							if(  entity.player_is_in_sight )
 							{
 								var u32 period( inside_shooting_zone_b[0] );
 								if( period != 0u && entity.num_steps_since_operation_start % period == 0u )
@@ -872,13 +874,25 @@ fn ProcessEntitiesLogicStep( GameMapData& map_data, GameState &mut game_state )
 					{
 						if_var( &convenient_position : operation_control.convenient_position )
 						{
-							// TODO - check if current position is good enough for attacking the player.
-							// Having only line of sight may be not enough.
+							// Assume player should be visible and be in optimal distance to trigger this state transition.
+
 							if( entity.player_is_in_sight &&
-								entity.num_steps_since_operation_start == convenient_position[0] &&
-								game_state.random.Next() % 10u < convenient_position[2] )
+								entity.num_steps_since_operation_start == convenient_position[0] )
 							{
-								next_operation= convenient_position[1];
+								if_var( &player_position : entity.last_seen_player_position )
+								{
+									var f32 square_distance= ( player_position - entity.position ).SquareLength();
+									var EntityDistanceRange optimal_range= GetEntityDistanceRanges( entity_description ).optimal;
+
+									if( square_distance >= optimal_range.distance_min * optimal_range.distance_min &&
+										square_distance <= optimal_range.distance_max * optimal_range.distance_max )
+									{
+										if( game_state.random.Next() % 10u < convenient_position[2] )
+										{
+											next_operation= convenient_position[1];
+										}
+									}
+								}
 							}
 						}
 					}
@@ -1593,21 +1607,16 @@ fn UpdateEntityMovementTarget(
 				var EntitiesDescription::OperationAnimationDescription& animation=
 					operation.animations[ size_type( EntitiesDescription::Operation::AnimationKind::Forward ) ];
 
-				// Hold-on distance is specified in configs in some strange units.
-				// Just assume scale for this unit.
-				var f32 constexpr distance_unit_scale= 24.0f;
+				var EntityDistanceRanges distance_ranges= GetEntityDistanceRanges( entity_description );
 
-				var f32 hold_on_distance( entity_description.hold_on_distance );
-
-				var f32 optimal_distance_min= distance_unit_scale * ust::max( 1.0f, hold_on_distance - 1.0f );
-				var f32 optimal_distance_max= distance_unit_scale * ( hold_on_distance + 4.0f );
-				var f32 good_enough_distance_min= distance_unit_scale * ust::max( 1.0f, hold_on_distance - 2.0f );
-				var f32 good_enough_distance_max= distance_unit_scale * ( hold_on_distance + 6.0f );
-
-				var f32 optimal_square_distance_min= optimal_distance_min * optimal_distance_min;
-				var f32 optimal_square_distance_max= optimal_distance_max * optimal_distance_max;
-				var f32 good_enough_square_distance_min= good_enough_distance_min * good_enough_distance_min;
-				var f32 good_enough_square_distance_max= good_enough_distance_max * good_enough_distance_max;
+				var f32 optimal_square_distance_min=
+					distance_ranges.optimal.distance_min * distance_ranges.optimal.distance_min;
+				var f32 optimal_square_distance_max=
+					distance_ranges.optimal.distance_max * distance_ranges.optimal.distance_max;
+				var f32 good_enough_square_distance_min=
+					distance_ranges.good_enough.distance_min * distance_ranges.good_enough.distance_min;
+				var f32 good_enough_square_distance_max=
+					distance_ranges.good_enough.distance_max * distance_ranges.good_enough.distance_max;
 
 				// Check if currnet target node is good enough. If so - preserve it, otherwise reset it.
 				// Also check if player is still visible from it.
@@ -1879,6 +1888,41 @@ fn GetEntityPointForPlayerVisibilityTrace(
 			f32( animation.bounding_box_center_x ),
 			f32( animation.bounding_box_center_y ),
 			f32( animation.bounding_box_center_z ) - 0.6f * f32( animation.bounding_box_half_size_z ) );
+}
+
+fn GetEntityDistanceRanges( EntitiesDescription::EntityDescription& entity_description ) : EntityDistanceRanges
+{
+	// Hold-on distance is specified in configs in some strange units.
+	// Just assume scale for this unit.
+	var f32 constexpr distance_unit_scale= 24.0f;
+
+	var f32 hold_on_distance( entity_description.hold_on_distance );
+
+	return EntityDistanceRanges
+	{
+		.optimal
+		{
+			.distance_min= distance_unit_scale * ust::max( 1.0f, hold_on_distance - 1.0f ),
+			.distance_max= distance_unit_scale * ( hold_on_distance + 4.0f ),
+		},
+		.good_enough
+		{
+			.distance_min= distance_unit_scale * ust::max( 1.0f, hold_on_distance - 2.0f ),
+			.distance_max= distance_unit_scale * ( hold_on_distance + 6.0f ),
+		},
+	};
+}
+
+struct EntityDistanceRanges
+{
+	EntityDistanceRange optimal;
+	EntityDistanceRange good_enough;
+}
+
+struct EntityDistanceRange
+{
+	f32 distance_min;
+	f32 distance_max;
 }
 
 fn MoveEntity(
