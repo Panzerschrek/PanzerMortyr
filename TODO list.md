@@ -93,8 +93,7 @@ PanzerMortyr game logic:
 * Implement multiplayer-specific game modes.
 * Make singleplayer mode tweaks for cooperative mode support.
 * Implement note items logic - show note text (it's actually an image) and pause the game while it's shown.
-* Implement enemy movement towards the player.
-* Implement decorations movement logic (with mode=11).
+* Implement sky decorations movement/turning logic (with mode=11).
 * Implement collisions hack for the one-way passable wall on map 33.
 * Implement crouching for the player.
 * Implement fall damage for player and for entities.
@@ -104,6 +103,8 @@ PanzerMortyr game logic:
 * Implement logic elements specific for dog enemies.
 * Implement logic elements specific for gestapo enemies.
 * Implement logic elements specific for nurses.
+* Implement logic elements specific for panzerfaust-guys.
+* Implement logic elements specific for volkssturm enemies (with grenades).
 * Implement logic specific for multiplayer entities.
 * Consider storing entities rotation using quaternions.
 * Consider extrapolating game logic one or two steps further, using extrapolated data to make movements and animations smooth (mix position, angle, animation) and correcting possible extrapolation errors.
@@ -111,7 +112,7 @@ PanzerMortyr game logic:
 * Implement birds.
 * Implement rats.
 * Spawn enemies having trigger box only when player touches this box (usually behind his back).
-* Implement entity state transition caused by injury (but not killing).
+* Implement entity state transition caused by injury (but not killing) by using "utrata_energi".
 * Implement pushing pushable entities.
 * Perform camera Z coordinate smoothing while climbing steps, so that camera movement doesn't look jaggy.
 * Perform separate collisions calculation with glass quads - to skip broken glass quads.
@@ -146,6 +147,14 @@ PanzerMortyr game logic:
 * Spawn bubble sprites while swimming in water.
 * Spawn bubble sprites for projectiles moving in water.
 * Display projectiles of various types properly (using billboards and sprites).
+* Do something with unconditional entity state transition "w_zasiegu_strzalu_b" - try making it somewhat random.
+* Don't perform player visibility check and target node update for dead entities (with zero energy).
+* Try dealing with cases where two enemies move in exactly opposite directions and block each other.
+* Consider calculating and using a better navigation graph (maybe even single graph for an entire map), which isn't so buggy as original per-entity navigation graphs.
+* Alarm enemies by nearby projectile hits.
+* Alarm enemies by hitting them with a projectile or by dealing splash damage.
+* Alarm enemies by shooting sounds.
+* Perform alarm-based enemy state transition with a delay (investigate how this delay is specified).
 
 
 PanzerMortyr rendering:
@@ -166,6 +175,7 @@ PanzerMortyr rendering:
 * Apply lighting for dynamic map polygons (doors, elevators, buttons).
 * Calculate normals for vertices of each model animation frame - original normals are sometimes broken.
 * Draw decals (bullet holes, blood).
+* Draw injured enemies covered with blood.
 * Implement dynamic lights (gun flashes, explosions).
 * Draw weather effects (rain, snow).
 * Draw breaking window animation (with falling splinters).
@@ -184,7 +194,7 @@ PanzerMortyr rendering:
 PanzerMortyr menus and HUD:
 
 * Implement loading screen.
-* Display console background image.
+* Display console background image (maybe even scroll it if it doesn't fit).
 * Extend existing setting menus/add new ones for extra options specific for PanzerMortyr.
 * Implement menus.
 * Show low health and armor numbers in HUD using red color.
