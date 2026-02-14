@@ -267,21 +267,12 @@ fn PerformPlayerWeaponLogic( GameMapData& map_data, PlayerInput& player_input, G
 
 					if( !out_of_ammo )
 					{
-						var Vec2f offset_xy( f32( shot[2] ), f32( shot[3] ) );
-						var f32 offset_z( shot[4] );
-
-						var Mat4f rotation_matrix=
-							Mat4f::MakeRotationX( player_input.elevation ) *
-							Mat4f::MakeRotationZ( player_input.azimuth );
-
-						var Vec3f offset_xy_transformed= Vec3f( offset_xy, 0.0f ) * rotation_matrix;
-
-						var Vec3f offset( offset_xy_transformed.xy(), offset_xy_transformed.z + offset_z );
-
-						// TODO - apply also random spread and constant per-shot rotation.
-						var Vec3f velocity( 0.0f, f32( tool.speed ), 0.0f );
-
-						var Vec3f velocity_transformed= velocity * rotation_matrix;
+						auto [ position, direction ]=
+							GetPlayerShotStartAndDirection(
+								shot,
+								game_state.player.position,
+								player_input.azimuth,
+								player_input.elevation );
 
 						game_state.projectiles.push_back(
 							Projectile
@@ -289,8 +280,8 @@ fn PerformPlayerWeaponLogic( GameMapData& map_data, PlayerInput& player_input, G
 								.weapon= game_state.player.weapon_state.current_weapon,
 								.owner_entity_index= c_player_entity_index,
 								.age_steps= 0u,
-								.position= game_state.player.position + offset,
-								.velocity= velocity_transformed,
+								.position= position,
+								.velocity= f32( tool.speed ) * direction,
 								.hit_entity_index= ~0u,
 							} );
 					}
@@ -2312,6 +2303,102 @@ fn GetPlayerColliderBBox( EntitiesDescription& entities_description ) : BBox3f
 	}
 
 	return bbox;
+}
+
+fn GetCrosshairPositionAndKind(
+	GameMapData& map_data,
+	GameState& game_state,
+	f32 camera_azimuth,
+	f32 camera_elevation ) : tup[ Vec3f, CrosshairDrawingInfo::HitPointKind ]
+{
+	var Vec3f mut position_sum= Vec3f::MakeZero(), mut direction_sum= Vec3f::MakeZero();
+	var size_type mut num_positions= 0s;
+
+	var EntitiesDescription& entities_description= map_data.entities_description.deref();
+
+	var size_type weapon_tool_index(
+		entities_description.tool_type_to_index_map[ size_type( game_state.player.weapon_state.current_weapon ) ] );
+
+	if( weapon_tool_index < entities_description.tools.size() )
+	{
+		var EntitiesDescription::Tool& tool= entities_description.tools[ weapon_tool_index ];
+
+		foreach( &shot : tool.shot_data )
+		{
+			auto [ position, direction ]=
+				GetPlayerShotStartAndDirection( shot, game_state.player.position, camera_azimuth, camera_elevation );
+			position_sum+= position;
+			direction_sum+= direction;
+			++num_positions;
+		}
+	}
+
+	if( num_positions == 0s )
+	{
+		return ust::make_tuple( Vec3f::MakeZero(), CrosshairDrawingInfo::HitPointKind::None );
+	}
+
+	var Vec3f trace_start= position_sum / f32( num_positions );
+	var Vec3f trace_vector= direction_sum * ( 16384.0f / f32( num_positions ) );
+
+	var f32 mut trace_min_distance= 1.0f;
+	var CrosshairDrawingInfo::HitPointKind mut hit_point_kind= CrosshairDrawingInfo::HitPointKind::Sky;
+
+	// Check for intersection with the world.
+
+	if_var( line_trace_result : LineTrace( map_data, trace_start, trace_vector ) )
+	{
+		if( line_trace_result.distance < trace_min_distance )
+		{
+			trace_min_distance= line_trace_result.distance;
+			hit_point_kind= CrosshairDrawingInfo::HitPointKind::World;
+		}
+	}
+
+	// Check for intersection with enemies and props, but exclude player itself.
+
+	foreach( &collider : game_state.colliders )
+	{
+		if( collider.entity_index == c_player_entity_index )
+		{
+			continue;
+		}
+
+		if_var( &intersection : FindRayBBoxIntersection( trace_start, trace_vector, collider.bbox ) )
+		{
+			if( intersection.far_point_distance >= 0.0f )
+			{
+				var f32 distance= ust::max( 0.0f, intersection.near_point_distance );
+				if( distance < trace_min_distance )
+				{
+					trace_min_distance= distance;
+					hit_point_kind= CrosshairDrawingInfo::HitPointKind::Entity;
+				}
+			}
+		}
+	}
+
+	return ust::make_tuple( trace_start + trace_vector * trace_min_distance, hit_point_kind );
+}
+
+fn GetPlayerShotStartAndDirection(
+	[ i32, 7 ]& shot, Vec3f& player_position, f32 camera_azimuth, f32 camera_elevation ) : [ Vec3f, 2 ]
+{
+	var Vec2f offset_xy( f32( shot[2] ), f32( shot[3] ) );
+	var f32 offset_z( shot[4] );
+
+	var Mat4f rotation_matrix=
+		Mat4f::MakeRotationX( camera_elevation ) *
+		Mat4f::MakeRotationZ( camera_azimuth );
+
+	var Vec3f offset_xy_transformed= Vec3f( offset_xy, 0.0f ) * rotation_matrix;
+
+	var Vec3f offset( offset_xy_transformed.xy(), offset_xy_transformed.z + offset_z );
+
+	return ust::make_array(
+		player_position + offset,
+		// TODO - apply also random spread and constant per-shot rotation.
+		Vec3f( 0.0f, 1.0f, 0.0f ) * rotation_matrix );
 }
 
 } // namespace PM

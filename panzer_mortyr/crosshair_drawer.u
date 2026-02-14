@@ -1,0 +1,96 @@
+import "crosshair_drawer.uh"
+import "mat.uh"
+import "math_constants.uh"
+
+namespace PM
+{
+
+fn DrawCrosshair(
+	SettingsPtr& settings,
+	TextDrawer &mut text_drawer,
+	[ u32, 2 ] viewport_size,
+	CrosshairDrawingInfo& drawing_info )
+{
+	if( drawing_info.hit_point_kind == CrosshairDrawingInfo::HitPointKind::None )
+	{
+		return;
+	}
+
+	var [ i32, 2 ] mut center[ ( viewport_size[0] / 2u ), ( viewport_size[1] / 2u ) ];
+
+	if( !settings.lock_imut().deref().r_fixed_crosshair )
+	{
+		var Mat4f view_matrix=
+			Mat4f::MakeTranslation( -drawing_info.camera_position ) *
+			Mat4f::MakeRotationZ( -drawing_info.camera_azimuth ) *
+			Mat4f::MakeRotationX( -drawing_info.camera_elevation + c_tau / 4.0f ) *
+			Mat4f::MakePerspective(
+				f32( viewport_size[0] ) / f32( viewport_size[1] ),
+				drawing_info.camera_fov,
+				1.0f,
+				1024.0f );
+
+		var Vec3f hit_point_transformed= drawing_info.hit_point * view_matrix;
+		var f32 hit_point_w=
+			drawing_info.hit_point.Dot(
+				Vec3f( view_matrix.values[0][3], view_matrix.values[1][3], view_matrix.values[2][3] ) ) +
+			view_matrix.values[3][3];
+
+		if( hit_point_w > 0.0f )
+		{
+			var Vec2f hit_screen_position( hit_point_transformed.x / hit_point_w, hit_point_transformed.y / hit_point_w );
+
+			center[0]= i32( ( hit_screen_position.x + 1.0f ) * 0.5f * f32( viewport_size[0] ) );
+			center[1]= i32( ( hit_screen_position.y + 1.0f ) * 0.5f * f32( viewport_size[1] ) );
+		}
+	}
+
+	// Don't bother drawing some pretty bitmap as crosshair. Just combine crosshair from character glyphs.
+
+	var TextDrawer::Settings text_settings
+	{
+		.scale( ust::max( 1, ust::min( i32( viewport_size[0] / 640u ), i32( viewport_size[1] / 480u ) ) ) ),
+		.foreground_color= GetColorForCrosshairHitPointKind( drawing_info.hit_point_kind ),
+		.background_color= zero_init,
+	};
+
+	AddCrosshairCross( text_drawer, center, text_settings );
+
+	// TODO - support other crosshair styles.
+}
+
+fn AddCrosshairCross( TextDrawer &mut text_drawer, [ i32, 2 ] center, TextDrawer::Settings& text_settings )
+{
+	var i32 scale( text_settings.scale );
+
+	// Left bar.
+	text_drawer.AddText( center[0] - 8 * scale, center[1] -  5 * scale, "-", text_settings );
+	text_drawer.AddText( center[0] - 7 * scale, center[1] -  5 * scale, "-", text_settings );
+	text_drawer.AddText( center[0] - 6 * scale, center[1] -  5 * scale, "_", text_settings );
+
+	// Right bar.
+	text_drawer.AddText( center[0] + 4 * scale, center[1] -  5 * scale, "_", text_settings );
+	text_drawer.AddText( center[0] + 7 * scale, center[1] -  5 * scale, "-", text_settings );
+	text_drawer.AddText( center[0] + 8 * scale, center[1] -  5 * scale, "-", text_settings );
+
+	// Bottom bar.
+	text_drawer.AddText( center[0] + 0 * scale, center[1] - 11 * scale, "I", text_settings );
+
+	// Top bar.
+	text_drawer.AddText( center[0] + 0 * scale, center[1] +  1 * scale, "I", text_settings );
+}
+
+fn GetColorForCrosshairHitPointKind( CrosshairDrawingInfo::HitPointKind kind ) : [ u8, 4 ]
+{
+	var u8 alpha= 144u8;
+
+	switch( kind )
+	{
+		CrosshairDrawingInfo::HitPointKind::None -> { return ust::make_array( 255u8, 255u8, 255u8, alpha ); },
+		CrosshairDrawingInfo::HitPointKind::Sky -> { return ust::make_array( 128u8, 255u8, 128u8, alpha ); },
+		CrosshairDrawingInfo::HitPointKind::World -> { return ust::make_array( 255u8, 255u8, 128u8, alpha ); },
+		CrosshairDrawingInfo::HitPointKind::Entity -> { return ust::make_array( 255u8, 128u8, 128u8, alpha ); },
+	}
+}
+
+} // namespace PM

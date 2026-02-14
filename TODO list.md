@@ -155,6 +155,7 @@ PanzerMortyr game logic:
 * Alarm enemies by hitting them with a projectile or by dealing splash damage.
 * Alarm enemies by shooting sounds.
 * Perform alarm-based enemy state transition with a delay (investigate how this delay is specified).
+* Fix shooting through walls, which is possible by staying too close to a wall and by using some weapons (like rifle).
 
 
 PanzerMortyr rendering:
@@ -199,7 +200,7 @@ PanzerMortyr menus and HUD:
 * Implement menus.
 * Show low health and armor numbers in HUD using red color.
 * Display more than one active tool in HUD.
-* Display crosshair - both fixed version and version with position adjusted to actual intersection with map/entities geometry.
+* Allow configuring crosshair kind, investigate what kinds of crosshairs are available in the original game.
 * Display short game-related mesages (as the original does).
 
 PanzerMortyr sound:
