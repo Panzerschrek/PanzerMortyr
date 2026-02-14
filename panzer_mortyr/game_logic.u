@@ -2305,8 +2305,11 @@ fn GetPlayerColliderBBox( EntitiesDescription& entities_description ) : BBox3f
 	return bbox;
 }
 
-fn GetCrosshairPosition(
-	GameMapData& map_data, GameState& game_state, f32 camera_azimuth, f32 camera_elevation ) : Vec3f
+fn GetCrosshairPositionAndKind(
+	GameMapData& map_data,
+	GameState& game_state,
+	f32 camera_azimuth,
+	f32 camera_elevation ) : tup[ Vec3f, CrosshairDrawingInfo::HitPointKind ]
 {
 	var Vec3f mut position_sum= Vec3f::MakeZero(), mut direction_sum= Vec3f::MakeZero();
 	var size_type mut num_positions= 0s;
@@ -2332,7 +2335,7 @@ fn GetCrosshairPosition(
 
 	if( num_positions == 0s )
 	{
-		return Vec3f::MakeZero();
+		return ust::make_tuple( Vec3f::MakeZero(), CrosshairDrawingInfo::HitPointKind::None );
 	}
 
 	var Vec3f average_position= position_sum / f32( num_positions );
@@ -2341,12 +2344,17 @@ fn GetCrosshairPosition(
 	var Vec3f trace_vector= 16384.0f * average_direction;
 
 	var f32 mut trace_min_distance= 1.0f;
+	var CrosshairDrawingInfo::HitPointKind mut hit_point_kind= CrosshairDrawingInfo::HitPointKind::Sky;
 
 	// Check for intersection with the world.
 
 	if_var( line_trace_result : LineTrace( map_data, average_position, trace_vector ) )
 	{
-		ust::min_assign( trace_min_distance, line_trace_result.distance );
+		if( line_trace_result.distance < trace_min_distance )
+		{
+			trace_min_distance= line_trace_result.distance;
+			hit_point_kind= CrosshairDrawingInfo::HitPointKind::World;
+		}
 	}
 
 	// Check for intersection with enemies and props, but exclude player itself.
@@ -2360,11 +2368,16 @@ fn GetCrosshairPosition(
 
 		if_var( &intersection : FindRayBBoxIntersection( average_position, trace_vector, collider.bbox ) )
 		{
-			ust::min_assign( trace_min_distance, ust::max( 0.0f, intersection.near_point_distance ) );
+			var f32 distance= ust::max( 0.0f, intersection.near_point_distance );
+			if( distance < trace_min_distance )
+			{
+				trace_min_distance= distance;
+				hit_point_kind= CrosshairDrawingInfo::HitPointKind::Entity;
+			}
 		}
 	}
 
-	return average_position + trace_vector * trace_min_distance;
+	return ust::make_tuple( average_position + trace_vector * trace_min_distance, hit_point_kind );
 }
 
 fn GetPlayerShotStartAndDirection(
