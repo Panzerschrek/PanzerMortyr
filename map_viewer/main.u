@@ -307,8 +307,15 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 
 		var size_type mut num_triangles_with_this_texture= 0s;
 
+		var u8 mut extra_ambient_light= 0u8;
+
 		foreach( &cluster : map.zvox.clusters )
 		{
+			if( cluster.c.num_children_clusters >= 0 )
+			{
+				extra_ambient_light= cluster.extra_ambient_light >> 1;
+			}
+
 			for( auto mut q= size_type( cluster.c.first_quad_index );
 				q < size_type( cluster.c.first_quad_index ) + size_type( cluster.num_quads );
 				++q )
@@ -351,10 +358,10 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 
 					var [ Color, 4 ] colors
 					[
-						{ .r(255), .g(255), .b(255), .a(255) },
-						{ .r(255), .g(255), .b(255), .a(255) },
-						{ .r(255), .g(255), .b(255), .a(255) },
-						{ .r(255), .g(255), .b(255), .a(255) },
+						{ .r(extra_ambient_light), .g(extra_ambient_light), .b(extra_ambient_light), .a(255) },
+						{ .r(extra_ambient_light), .g(extra_ambient_light), .b(extra_ambient_light), .a(255) },
+						{ .r(extra_ambient_light), .g(extra_ambient_light), .b(extra_ambient_light), .a(255) },
+						{ .r(extra_ambient_light), .g(extra_ambient_light), .b(extra_ambient_light), .a(255) },
 					];
 
 					var Vector3 mut u_vec{ .x= 0.0f, .y= 1.0f, .z= 0.0f };
@@ -1167,14 +1174,27 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 						{
 							var ZvoxLightSource& light= map.zvox.light_sources[ size_type( i ) ];
 
-							auto& src_color= game_params.light_colors[ ( u32(light.data1[0]) >> 3 ) & 31u ];
+							auto& src_color= game_params.light_colors[ ( u32(light.packed_corona_color_index) >> 3 ) & 31u ];
 
 							var Color color{ .r(src_color[2s]), .g(src_color[1s]), .b(src_color[0s]), .a(255) };
 
 							var Vector3 pos{ .x= f32(cluster.c.center[0] + light.offset[0s]) * scale, .y= f32(cluster.c.center[1] + light.offset[1s]) * scale, .z= f32(cluster.c.center[2] + light.offset[2s]) * -scale };
-							unsafe( DrawSphereWires( pos, 0.125f, 7, 9, color ) );
+							unsafe( DrawSphere( pos, 0.0625f, color ) );
 
-							if( ( u32( light.data1[0] ) & 7u ) == 0u )
+							if( true )
+							{
+								unsafe( draw_number( i32( light.power ), Vector3{ .x(cluster.c.center[0s] + light.offset[0s]), .y(cluster.c.center[1s] + light.offset[1s]), .z( i32(cluster.c.center[2s] + light.offset[2s] - 32 ) ) } ) );
+							}
+
+							// Experimental estimation of light power.
+							var i32 power= 160 -i32(light.power);
+
+							// Radius of area with equal light flux for given power.
+							var f32 radius= ust::sqrt( f32(power) ) * ( scale * 16.0f );
+
+							unsafe( DrawSphereWires( pos, radius, 8, 12, color ) );
+
+							if( ( u32( light.packed_corona_color_index ) & 7u ) == 0u )
 							{
 								unsafe( DrawBillboardPro(
 									camera,
@@ -1187,7 +1207,7 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 									0.0f,
 									Color{ .r(255), .g(255), .b(255), .a(200) } ) );
 							}
-							if( ( u32( light.data1[0] ) & 7u ) == 3u )
+							if( ( u32( light.packed_corona_color_index ) & 7u ) == 3u )
 							{
 								var u32 frame= u32( current_time * 6.0) % 24u;
 								var u32 tile_x= frame % 6u;
