@@ -1107,90 +1107,86 @@ fn ProcessProjectilesLogicStep( GameMapData& map_data, GameState &mut game_state
 		{
 			var Projectile &mut projectile= game_state.projectiles[i];
 
-			if( projectile.hit_entity_index == ~0u )
+			// Find itersections using movement slightly longer than necessary.
+			// It's needed in order to fix possible numerical imprecisions.
+
+			var f32 c_elongation_eps= 1.0f;
+			var f32 velocity_length= ust::max( 0.01f, projectile.velocity.Length() );
+			var Vec3f velocity_slightly_elongated=
+				projectile.velocity * ( ( velocity_length + c_elongation_eps ) / velocity_length );
+
+			var f32 mut smallest_travelled_distance= 1.0f;
+
+			if( projectile.hit_entity_index != ~0u )
 			{
-				var f32 velocity_length= projectile.velocity.Length();
-				if( velocity_length > 0.0f )
+				// An entity has collided with this projectile while performing its movement.
+				smallest_travelled_distance= 0.0f;
+			}
+			else
+			{
+				// Perform movement with collision check.
+
+				if_var( &line_trace_result : LineTrace( map_data, projectile.position, velocity_slightly_elongated ) )
 				{
-					// Find itersections using movement slightly longer than necessary.
-					// It's needed in order to fix possible numerical imprecisions.
-
-					var f32 c_elongation_eps= 1.0f;
-					var Vec3f velocity_slightly_elongated=
-						projectile.velocity * ( ( velocity_length + c_elongation_eps ) / velocity_length );
-
-					var f32 mut smallest_travelled_distance= ust::plus_inf</f32/>();
-
-					if_var( &line_trace_result : LineTrace( map_data, projectile.position, velocity_slightly_elongated ) )
+					if( line_trace_result.distance < 1.0f )
 					{
-						if( line_trace_result.distance <= 1.0f )
-						{
-							smallest_travelled_distance= line_trace_result.distance;
-						}
+						smallest_travelled_distance= line_trace_result.distance;
+					}
+				}
+
+				foreach( &collider : game_state.colliders )
+				{
+					if( collider.entity_index == projectile.owner_entity_index )
+					{
+						// Don't collide with owner.
+						// This is needed for some entities or for the player,
+						// since sometimes their/his own projectiles are spawned within their/his bounding boxes.
+						// Also it's necessary for ricocheting projectiles and other projectiles with non-linear movement.
+						continue;
 					}
 
-					foreach( &collider : game_state.colliders )
+					if_var( &intersection_result :
+						FindRayBBoxIntersection( projectile.position, velocity_slightly_elongated, collider.bbox ) )
 					{
-						if( collider.entity_index == projectile.owner_entity_index )
+						if( !( intersection_result.near_point_distance > 1.0f | intersection_result.far_point_distance < 0.0f ) )
 						{
-							// Don't collide with owner.
-							// This is needed for some entities or for the player,
-							// since sometimes their/his own projectiles are spawned within their/his bounding boxes.
-							// Also it's necessary for ricocheting projectiles and other projectiles with non-linear movement.
-							continue;
-						}
-
-						if_var( &intersection_result :
-							FindRayBBoxIntersection( projectile.position, velocity_slightly_elongated, collider.bbox ) )
-						{
-							if( !( intersection_result.near_point_distance > 1.0f | intersection_result.far_point_distance < 0.0f ) )
+							var f32 intersection_distance= ust::max( 0.0f, intersection_result.near_point_distance );
+							if( intersection_distance < smallest_travelled_distance )
 							{
-								var f32 intersection_distance= ust::max( 0.0f, intersection_result.near_point_distance );
-								if( intersection_distance < smallest_travelled_distance )
-								{
-									smallest_travelled_distance= intersection_distance;
-									projectile.hit_entity_index= collider.entity_index;
-								}
+								smallest_travelled_distance= intersection_distance;
+								projectile.hit_entity_index= collider.entity_index;
 							}
 						}
-					}
-
-					if( smallest_travelled_distance < ust::plus_inf</f32/>() )
-					{
-						if( projectile.hit_entity_index == ~0u )
-						{
-							// TODO - avoid spawning bullet holes where they shouldn't be.
-							game_state.bullet_holes.push_back(
-								projectile.position + velocity_slightly_elongated * smallest_travelled_distance );
-						}
-
-						// TODO - apply splash damage if necessary.
-						// TODO - spawn sparks and smoke effects (if enabled).
-						// TODO - spawn a dynamic light if necessary.
-
-						need_to_remove= true;
 					}
 				}
 			}
 
-			if( projectile.hit_entity_index != ~0u )
-			{
-				var u32 tool_index= entities_description.tool_type_to_index_map[ size_type( projectile.weapon ) ];
-				if( size_type( tool_index ) < entities_description.tools.size() )
-				{
-					var EntitiesDescription::Tool& weapon_tool=
-						entities_description.tools[ size_type( tool_index ) ];
+			// TODO - spawn smoke trail particles (if enabled).
 
-					if( weapon_tool.damage > 0u )
+			projectile.position+= velocity_slightly_elongated * smallest_travelled_distance;
+
+			if( smallest_travelled_distance < 1.0f )
+			{
+				// Collided with something.
+
+				if( projectile.hit_entity_index != ~0u )
+				{
+					// If has collision with an entity - damage it.
+
+					var u32 tool_index= entities_description.tool_type_to_index_map[ size_type( projectile.weapon ) ];
+					if( size_type( tool_index ) < entities_description.tools.size() )
 					{
-						if( projectile.hit_entity_index == c_player_entity_index )
+						var EntitiesDescription::Tool& weapon_tool=
+							entities_description.tools[ size_type( tool_index ) ];
+
+						if( weapon_tool.damage > 0u )
 						{
-							// TODO - use armor?
-							game_state.player.energy-= ust::min( weapon_tool.damage, game_state.player.energy );
-						}
-						else
-						{
-							if_var( &mut entity : game_state.entities[ size_type( projectile.hit_entity_index ) ] )
+							if( projectile.hit_entity_index == c_player_entity_index )
+							{
+								// TODO - use armor?
+								game_state.player.energy-= ust::min( weapon_tool.damage, game_state.player.energy );
+							}
+							else if_var( &mut entity : game_state.entities[ size_type( projectile.hit_entity_index ) ] )
 							{
 								if( entity.energy > 0u )
 								{
@@ -1203,15 +1199,23 @@ fn ProcessProjectilesLogicStep( GameMapData& map_data, GameState &mut game_state
 								}
 							}
 						}
+
+						// TODO - spawn blood particles.
 					}
 				}
+				else
+				{
+					// If collided with the world - add a bullet hole.
+					// TODO - check if it's appropriate for hit material.
+					game_state.bullet_holes.push_back( projectile.position );
+				}
+
+				// TODO - apply splash damage if necessary.
+				// TODO - spawn sparks and smoke effects (if enabled).
+				// TODO - spawn a dynamic light if necessary.
 
 				need_to_remove= true;
 			}
-
-			// TODO - spawn smoke trail particles (if enabled).
-
-			projectile.position+= projectile.velocity;
 
 			++projectile.age_steps;
 
