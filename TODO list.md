@@ -84,7 +84,6 @@ PanzerMortyr game logic:
 	This should include pushing of entities (if it's possible).
 * Implement doors and elevators triggered by touching.
 * Implement doors and elevators triggered by a button push, including buttons requiring a key.
-* Damage enemies and the player via projectile hits.
 * Decrease armor and health properly while being damaged.
 * Implement player's death.
 * Implement transition to next level.
@@ -112,7 +111,7 @@ PanzerMortyr game logic:
 * Implement birds.
 * Implement rats.
 * Spawn enemies having trigger box only when player touches this box (usually behind his back).
-* Implement entity state transition caused by injury (but not killing) by using "utrata_energi".
+* Fix ugly injury-based entity state transitions, when an injury operation is changed while some other injury operation is already in process.
 * Implement pushing pushable entities.
 * Perform camera Z coordinate smoothing while climbing steps, so that camera movement doesn't look jaggy.
 * Perform separate collisions calculation with glass quads - to skip broken glass quads.
@@ -120,7 +119,7 @@ PanzerMortyr game logic:
 * Implement panzerfaust projectiles (slightly affected by gravity).
 * Implement ricocheting projectiles.
 * Implement melee attacks (kick, knife).
-* Implement player's helath management.
+* Implement player's health management.
 * Implement player's armor management.
 * Implement inventory navigation and weapon/tool selection.
 * Implement jetpack tool.
@@ -134,6 +133,7 @@ PanzerMortyr game logic:
 * Implement invisibility tool.
 * Spawn bullet holes on walls.
 * Leave blood makrs on walls.
+* Spawn blood particles on player or entity damaging.
 * Leave footsteps where they should be.
 * Implement bullet hit effects (smoke, sparkles).
 * Spawn smoke trail sprites.
@@ -152,7 +152,7 @@ PanzerMortyr game logic:
 * Try dealing with cases where two enemies move in exactly opposite directions and block each other.
 * Consider calculating and using a better navigation graph (maybe even single graph for an entire map), which isn't so buggy as original per-entity navigation graphs.
 * Alarm enemies by nearby projectile hits.
-* Alarm enemies by hitting them with a projectile or by dealing splash damage.
+* Alarm enemies by dealing splash damage.
 * Alarm enemies by shooting sounds.
 * Perform alarm-based enemy state transition with a delay (investigate how this delay is specified).
 * Fix shooting through walls, which is possible by staying too close to a wall and by using some weapons (like rifle).

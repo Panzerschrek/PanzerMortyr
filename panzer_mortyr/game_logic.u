@@ -23,6 +23,7 @@ fn CreateNewMapGameState( GameMapData& map_data ) : GameState
 			.in_liquid= false,
 			.noclip= false,
 			.ground_friction= 0.0f,
+			.energy= 0u,
 			.collider_index= ~0u,
 			.inventory= zero_init,
 			.weapon_state
@@ -76,6 +77,7 @@ fn CreateNewMapGameState( GameMapData& map_data ) : GameState
 				.kind( in_entity.kind ),
 				.position( f32( in_entity.position[0] ), f32( in_entity.position[1] ), f32( in_entity.position[2] ) ),
 				.azimuth( Convert1024Angle( f32( in_entity.data[4] ) ) ),
+				.energy= entity_description.energy,
 				.current_operation= c_start_operation,
 				.num_steps_since_operation_start= 0u,
 				.navigation_info_index( in_entity.data[16] ),
@@ -117,6 +119,7 @@ fn CreateNewMapGameState( GameMapData& map_data ) : GameState
 					.in_liquid= false,
 					.noclip= false,
 					.ground_friction= 0.0f,
+					.energy= GetPlayerStartEnergy( entities_description ),
 					.collider_index= ~0u,
 					.inventory= zero_init,
 					.weapon_state
@@ -824,13 +827,42 @@ fn ProcessEntitiesLogicStep( GameMapData& map_data, GameState &mut game_state )
 
 				if_var( &operation_control : operation.operation_control )
 				{
-					// Always check if killed.
+					// Always check if damaged or killed.
+					// Keep it first here (killed enemies should die).
+					// TODO - check if we need some delay.
 					if_var( &energy_loss : operation_control.energy_loss )
 					{
-						// Killed. Keep it first here (killed enemies should die).
 						if( entity.lost_energy_in_current_operation )
 						{
-							next_operation= u32( energy_loss[2] );
+							if( entity.energy == 0u )
+							{
+								next_operation= u32( energy_loss[2] );
+							}
+							else
+							{
+								var bool can_use0=
+									energy_loss[0] >= 0 &&
+									size_type( energy_loss[0] ) < entity_description.operations.size() &&
+									energy_loss[0] != i32( entity.current_operation );
+
+								var bool can_use1=
+									energy_loss[1] >= 0 &&
+									size_type( energy_loss[1] ) < entity_description.operations.size() &&
+									energy_loss[1] != i32( entity.current_operation );
+
+								if( can_use0 && can_use1 )
+								{
+									next_operation= u32( energy_loss[ game_state.random.Next() & 1u ] );
+								}
+								else if( can_use0 )
+								{
+									next_operation= u32( energy_loss[0] );
+								}
+								else if( can_use1 )
+								{
+									next_operation= u32( energy_loss[1] );
+								}
+							}
 						}
 					}
 
@@ -923,7 +955,7 @@ fn ProcessEntitiesLogicStep( GameMapData& map_data, GameState &mut game_state )
 					if( if_alive.time != 0u &&
 						entity.num_steps_since_operation_start % if_alive.time == 0u )
 					{
-						next_operation= ( entity.lost_energy_in_current_operation ? if_alive.new_operation[1] : if_alive.new_operation[0] );
+						next_operation= ( entity.energy > 0u ? if_alive.new_operation[0] : if_alive.new_operation[1] );
 					}
 				}
 
@@ -972,6 +1004,7 @@ fn ProcessEntitiesLogicStep( GameMapData& map_data, GameState &mut game_state )
 										.kind= supply_drop.special_object,
 										.position= entity.position,
 										.azimuth= entity.azimuth,
+										.energy= new_entity_description.energy,
 										.current_operation= c_start_operation,
 										.num_steps_since_operation_start= 0u,
 										.navigation_info_index= ~0u,
@@ -1065,6 +1098,8 @@ fn ProcessEntitiesLogicStep( GameMapData& map_data, GameState &mut game_state )
 
 fn ProcessProjectilesLogicStep( GameMapData& map_data, GameState &mut game_state )
 {
+	var EntitiesDescription& entities_description= map_data.entities_description.deref();
+
 	for( auto mut i= 0s; i < game_state.projectiles.size(); )
 	{
 		var bool mut need_to_remove= false;
@@ -1072,32 +1107,28 @@ fn ProcessProjectilesLogicStep( GameMapData& map_data, GameState &mut game_state
 		{
 			var Projectile &mut projectile= game_state.projectiles[i];
 
+			// Find itersections using movement slightly longer than necessary.
+			// It's needed in order to fix possible numerical imprecisions.
+
+			var f32 c_elongation_eps= 1.0f;
+			var f32 velocity_length= ust::max( 0.01f, projectile.velocity.Length() );
+			var Vec3f velocity_slightly_elongated=
+				projectile.velocity * ( ( velocity_length + c_elongation_eps ) / velocity_length );
+
+			var f32 mut smallest_travelled_distance= 1.0f;
+
 			if( projectile.hit_entity_index != ~0u )
 			{
-				// An entity hit this projectile previously.
-
-				// TODO - apply damage for hit entity if necessary.
-				// TODO - apply splash damage if necessary.
-				// TODO - spawn sparks and smoke effects (if enabled).
-				// TODO - spawn a dynamic light if necessary.
-				need_to_remove= true;
+				// An entity has collided with this projectile while performing its movement.
+				smallest_travelled_distance= 0.0f;
 			}
-
-			var f32 velocity_length= projectile.velocity.Length();
-			if( velocity_length > 0.0f )
+			else
 			{
-				// Find itersections using movement slightly longer than necessary.
-				// It's needed in order to fix possible numerical imprecisions.
-
-				var f32 c_elongation_eps= 1.0f;
-				var Vec3f velocity_slightly_elongated=
-					projectile.velocity * ( ( velocity_length + c_elongation_eps ) / velocity_length );
-
-				var f32 mut smallest_travelled_distance= ust::plus_inf</f32/>();
+				// Perform movement with collision check.
 
 				if_var( &line_trace_result : LineTrace( map_data, projectile.position, velocity_slightly_elongated ) )
 				{
-					if( line_trace_result.distance <= 1.0f )
+					if( line_trace_result.distance < 1.0f )
 					{
 						smallest_travelled_distance= line_trace_result.distance;
 					}
@@ -1123,30 +1154,68 @@ fn ProcessProjectilesLogicStep( GameMapData& map_data, GameState &mut game_state
 							if( intersection_distance < smallest_travelled_distance )
 							{
 								smallest_travelled_distance= intersection_distance;
-								// TODO - memorize the nearest hit entity.
+								projectile.hit_entity_index= collider.entity_index;
 							}
 						}
 					}
-				}
-
-				if( smallest_travelled_distance < ust::plus_inf</f32/>() )
-				{
-					// TODO - avoid spawning bullet holes where they shouldn't be.
-					game_state.bullet_holes.push_back(
-						projectile.position + velocity_slightly_elongated * smallest_travelled_distance );
-
-					// TODO - apply damage for hit entity if necessary.
-					// TODO - apply splash damage if necessary.
-					// TODO - spawn sparks and smoke effects (if enabled).
-					// TODO - spawn a dynamic light if necessary.
-
-					need_to_remove= true;
 				}
 			}
 
 			// TODO - spawn smoke trail particles (if enabled).
 
-			projectile.position+= projectile.velocity;
+			projectile.position+= velocity_slightly_elongated * smallest_travelled_distance;
+
+			if( smallest_travelled_distance < 1.0f )
+			{
+				// Collided with something.
+
+				if( projectile.hit_entity_index != ~0u )
+				{
+					// If has collision with an entity - damage it.
+
+					var u32 tool_index= entities_description.tool_type_to_index_map[ size_type( projectile.weapon ) ];
+					if( size_type( tool_index ) < entities_description.tools.size() )
+					{
+						var EntitiesDescription::Tool& weapon_tool=
+							entities_description.tools[ size_type( tool_index ) ];
+
+						if( weapon_tool.damage > 0u )
+						{
+							if( projectile.hit_entity_index == c_player_entity_index )
+							{
+								// TODO - use armor?
+								game_state.player.energy-= ust::min( weapon_tool.damage, game_state.player.energy );
+							}
+							else if_var( &mut entity : game_state.entities[ size_type( projectile.hit_entity_index ) ] )
+							{
+								if( entity.energy > 0u )
+								{
+									// TODO - investigate whether enemies have armor.
+									entity.energy-= ust::min( weapon_tool.damage, entity.energy );
+									entity.lost_energy_in_current_operation= true;
+
+									// Alarm enemies being hit.
+									entity.alarmed= true;
+								}
+							}
+						}
+
+						// TODO - spawn blood particles.
+					}
+				}
+				else
+				{
+					// If collided with the world - add a bullet hole.
+					// TODO - check if it's appropriate for hit material.
+					game_state.bullet_holes.push_back( projectile.position );
+				}
+
+				// TODO - apply splash damage if necessary.
+				// TODO - spawn sparks and smoke effects (if enabled).
+				// TODO - spawn a dynamic light if necessary.
+
+				need_to_remove= true;
+			}
 
 			++projectile.age_steps;
 
@@ -1475,8 +1544,13 @@ fn UpdateEntityPlayerInSightFlag(
 		return;
 	}
 
+	if( entity.energy == 0u )
+	{
+		// Dead entities don't care about player visibility.
+		return;
+	}
+
 	// Check if player is in sight.
-	// TODO - avoid performing this check for dead enemies.
 
 	// Don't care about other entities (even decorations).
 	// Assume enemies can see through other entities and only map geometry blocks the view.
@@ -1560,6 +1634,12 @@ fn UpdateEntityMovementTarget(
 	EntityState &mut entity,
 	PseudoRandomGenerator& mut random )
 {
+	if( entity.energy == 0u )
+	{
+		// An optimization - no need to update movement target for dead enemies.
+		return;
+	}
+
 	var EntitiesDescription::Operation& operation=
 		entity_description.operations[ size_type( entity.current_operation ) ];
 
@@ -2303,6 +2383,19 @@ fn GetPlayerColliderBBox( EntitiesDescription& entities_description ) : BBox3f
 	}
 
 	return bbox;
+}
+
+fn GetPlayerStartEnergy( EntitiesDescription& entities_description ) : u32
+{
+	if( size_type( c_player_entity_kind ) < entities_description.entities.size() )
+	{
+		var EntitiesDescription::EntityDescription& entity_description=
+			entities_description.entities[ size_type( c_player_entity_kind ) ];
+
+		return entity_description.energy;
+	}
+
+	return 100u; // Some reasonable default.
 }
 
 fn GetCrosshairPositionAndKind(
