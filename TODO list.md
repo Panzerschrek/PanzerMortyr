@@ -8,15 +8,12 @@ Map format investigation:
 * Investigate meaning of remaining fields of "ZvoxTriggerVolume" struct.
 * Investigate meaning of remaining fields of "ZpozEntityNavigationInfo" struct.
 * Investigate what remaining fields of ZvoxCluster structure mean.
-* Ensure light color is properly read from ZvoxLightSource structure.
-* Investigate what data[1] of ZvoxLightSource means.
 * Investigate how exactly light-related sprites (flames, coronas) are defined.
-* Investigate how light source power is stored.
+* Investigate how exactly light source power depends on the value stored in the light source structure.
 * Investigate exact meaning of many ZpozEntity fields.
 * Investigate meaning of remaining fields of "ZpozMultiplayerSpawnPoint" struct.
 * Investigate what exact kind of visibility data is stored in ZPOZ file and why it seems to have 4 blocks of such data for each cluster.
 * Investigate exact meaning of per-cluster sky-related data in "ZMAP.LEM" file.
-* Investigate whether there is ambient light value stored somewhere on per-quad or per-cluster basis.
 * Investigate exact meaning of remaining fields of navigation graph structures.
 * Investigate what remaining fields of "ZmapLamRainDroplet" struct mean.
 
@@ -200,6 +197,7 @@ PanzerMortyr menus and HUD:
 * Implement menus.
 * Show low health and armor numbers in HUD using red color.
 * Display more than one active tool in HUD.
+* Consider displaying amounts of tools in inventory, at least important ones - health, ammo, keys.
 * Allow configuring crosshair kind, investigate what kinds of crosshairs are available in the original game.
 * Display short game-related mesages (as the original does).
 
