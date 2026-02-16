@@ -7,6 +7,7 @@ import "/common_lib/materials_file.uh"
 import "gl_functions.uh"
 import "gl_state.uh"
 import "image_loading.uh"
+import "lighting.uh"
 import "math_constants.uh"
 import "plane.uh"
 import "vertex_formats.uh"
@@ -425,22 +426,22 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 		var size_type in_frame( model_object.frame );
 		var size_type frame= ( in_frame < model.num_frames ? in_frame : 0s );
 
+		var BBox3f& frame_bbox= model.frame_bboxes[ frame ];
+		var [ Vec3f, 8 ] bbox_corners_transformed
+		[
+			Vec3f( frame_bbox.min.x, frame_bbox.min.y, frame_bbox.min.z ) * model_transormation_matrix,
+			Vec3f( frame_bbox.max.x, frame_bbox.min.y, frame_bbox.min.z ) * model_transormation_matrix,
+			Vec3f( frame_bbox.min.x, frame_bbox.max.y, frame_bbox.min.z ) * model_transormation_matrix,
+			Vec3f( frame_bbox.max.x, frame_bbox.max.y, frame_bbox.min.z ) * model_transormation_matrix,
+			Vec3f( frame_bbox.min.x, frame_bbox.min.y, frame_bbox.max.z ) * model_transormation_matrix,
+			Vec3f( frame_bbox.max.x, frame_bbox.min.y, frame_bbox.max.z ) * model_transormation_matrix,
+			Vec3f( frame_bbox.min.x, frame_bbox.max.y, frame_bbox.max.z ) * model_transormation_matrix,
+			Vec3f( frame_bbox.max.x, frame_bbox.max.y, frame_bbox.max.z ) * model_transormation_matrix,
+		];
+
 		if( !model_object.first_person_weapon )
 		{
 			// Calculate  bounding box of the model in world space (including even rotations).
-
-			var BBox3f& frame_bbox= model.frame_bboxes[ frame ];
-			var [ Vec3f, 8 ] bbox_corners_transformed
-			[
-				Vec3f( frame_bbox.min.x, frame_bbox.min.y, frame_bbox.min.z ) * model_transormation_matrix,
-				Vec3f( frame_bbox.max.x, frame_bbox.min.y, frame_bbox.min.z ) * model_transormation_matrix,
-				Vec3f( frame_bbox.min.x, frame_bbox.max.y, frame_bbox.min.z ) * model_transormation_matrix,
-				Vec3f( frame_bbox.max.x, frame_bbox.max.y, frame_bbox.min.z ) * model_transormation_matrix,
-				Vec3f( frame_bbox.min.x, frame_bbox.min.y, frame_bbox.max.z ) * model_transormation_matrix,
-				Vec3f( frame_bbox.max.x, frame_bbox.min.y, frame_bbox.max.z ) * model_transormation_matrix,
-				Vec3f( frame_bbox.min.x, frame_bbox.max.y, frame_bbox.max.z ) * model_transormation_matrix,
-				Vec3f( frame_bbox.max.x, frame_bbox.max.y, frame_bbox.max.z ) * model_transormation_matrix,
-			];
 
 			// First perform fast check if this model is within visible clusters volume.
 			if( !model_object.disable_culling )
@@ -499,10 +500,23 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 		var Mat4f model_full_matrix=
 			model_transormation_matrix * ( model_object.first_person_weapon ? firt_person_weapon_view_matrix : view_matrix );
 
+		var Vec3f bbox_center=
+			0.125f * (
+				bbox_corners_transformed[0] +
+				bbox_corners_transformed[1] +
+				bbox_corners_transformed[2] +
+				bbox_corners_transformed[3] +
+				bbox_corners_transformed[4] +
+				bbox_corners_transformed[5] +
+				bbox_corners_transformed[6] +
+				bbox_corners_transformed[7] );
+
+		var [ f32, 3 ] light= GetLightForPoint( zvox_data, bbox_center );
+
 		model_shader_.SetUniform( "vu_matrix", model_full_matrix );
 
 		// TODO - set proper light.
-		model_shader_.SetUniform( "fu_light", Vec3f( 2.0f, 0.5f, 2.0f ) );
+		model_shader_.SetUniform( "fu_light", Vec3f( light[0], light[1], light[2] ) );
 
 		unsafe( glDrawElements(
 			GLenum( GL_TRIANGLES ),
