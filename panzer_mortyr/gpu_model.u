@@ -2,6 +2,8 @@ import "/scoped_array.u"
 import "gl_functions.uh"
 import "gpu_model.uh"
 import "image_loading.uh"
+import "math_constants.uh"
+import "vertex_formats.uh"
 
 namespace PM
 {
@@ -15,10 +17,36 @@ fn CreateGPUModel( ModelData& model_data ) : GPUModel
 			GLenum( GL_ARRAY_BUFFER ), // Needed for a vertex attribute source.
 			model_data.texture_coordinates.range().to_byte8_range() );
 
+	// TODO - improve this, recalculate normals properly.
+	var ust::vector</ModelFrameVertex/> frame_vertices=
+		ust::make_vector_from_mapped_range(
+			model_data.vertex_positions_data,
+			lambda( ObbVertexPosition& v ) : ModelFrameVertex
+			{
+				var f32 azimuth= ( f32( v.packed_normal_angles & 127u )  ) * ( c_tau / 128.0f );
+				var f32 elevation= ( f32( v.packed_normal_angles >> 7u ) ) * ( c_tau / 128.0f );
+
+				var f32 azimut_sin= ust::sin( azimuth );
+				var f32 azimut_cos= ust::cos( azimuth );
+
+				var f32 elevation_sin= ust::sin( elevation );
+				var f32 elevation_cos= ust::cos( elevation );
+
+				var Vec3f normal( -elevation_cos * azimut_sin, -elevation_cos * azimut_cos, -elevation_sin );
+
+				return
+					ModelFrameVertex
+					{
+						.position= v.coords,
+						.normal[ ( normal.x * 127.0f ), ( normal.y * 127.0f ), ( normal.z * 127.0f ) ],
+						.padding15= zero_init,
+					};
+			} );
+
 	var BufferObject mut positions_buffer=
 		BufferObject::CreateStaticDrawBuffer(
 			GLenum( GL_ARRAY_BUFFER ), // Needed for a vertex attribute source.
-			model_data.vertex_positions_data.range().to_byte8_range() );
+			frame_vertices.range().to_byte8_range() );
 
 	// Create index buffer only for LOD0 triangles.
 	// We don't care about geometry of other LODs, even LOD0 models are pretty low-detail.
@@ -65,8 +93,18 @@ fn CreateGPUModel( ModelData& model_data ) : GPUModel
 		3,
 		GLenum( GL_FLOAT ),
 		GLboolean(0),
-		GLsizei( typeinfo</ObbVertexPosition/>.size_of ),
-		ust::nullptr</byte8/>() ) );
+		GLsizei( typeinfo</ModelFrameVertex/>.size_of ),
+		ust::nullptr</byte8/>() + GetStructFieldOffset</ ModelFrameVertex, "position" />() ) );
+
+	unsafe( glEnableVertexAttribArray( GPUModel::c_normal_attrib ) );
+
+	unsafe( glVertexAttribPointer(
+		GPUModel::c_normal_attrib,
+		3,
+		GLenum( GL_BYTE ),
+		GLboolean(1),
+		GLsizei( typeinfo</ModelFrameVertex/>.size_of ),
+		ust::nullptr</byte8/>() + GetStructFieldOffset</ ModelFrameVertex, "normal" />() ) );
 
 	index_buffer.Bind();
 
