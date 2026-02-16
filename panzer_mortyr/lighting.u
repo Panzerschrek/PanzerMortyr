@@ -3,12 +3,12 @@ import "lighting.uh"
 namespace PM
 {
 
-fn GetLightForPoint( ZvoxData& zvox_data, GameParams& game_params, Vec3f& point ) : [ f32, 3 ]
+fn GetLightForPoint( ZvoxData& zvox_data, GameParams& game_params, Vec3f& point ) :SphericalHarmonicsRGB
 {
-	var [ f32, 3 ] mut result_light[ 0.0f ... ];
+	var SphericalHarmonicsRGB mut result_light[ { .directional_components= Vec3f::MakeZero(), .constant_component= 0.0f } ... ];
 
 	// TODO - tune this.
-	var f32 c_light_power_scale= 1.0f / 16.0f;
+	var f32 c_light_power_scale= 1.0f / 2.0f;
 
 	var f32 c_min_light_sequare_distance= 8.0f * 8.0f;
 
@@ -32,18 +32,26 @@ fn GetLightForPoint( ZvoxData& zvox_data, GameParams& game_params, Vec3f& point 
 				f32( cluster.c.center[1] + light_source.offset[1] ),
 				f32( cluster.c.center[2] + light_source.offset[2] ) );
 
-			var f32 square_distance= ( point - light_source_position ).SquareLength();
+			var Vec3f vector_to_light= light_source_position - point;
 
-			var f32 power_at_given_distance=
-				c_light_power_scale * f32( power ) / ust::max( square_distance, c_min_light_sequare_distance );
+			// TODO - consider checking line of sight (don't count occludded lights).
+
+			var f32 square_distance= ust::max( vector_to_light.SquareLength(), c_min_light_sequare_distance );
+			var f32 distance= ust::sqrt( square_distance );
+
+			var f32 power_at_given_distance= c_light_power_scale * f32( power ) / square_distance;
+
+			var Vec3f normalized_light_direction= vector_to_light / distance;
 
 			auto& src_color= game_params.light_colors[ ( u32( light_source.packed_corona_color_index ) >> 3 ) & 31u ];
 
-			result_light[0]+= power_at_given_distance * f32( src_color[2] );
-			result_light[1]+= power_at_given_distance * f32( src_color[1] );
-			result_light[2]+= power_at_given_distance * f32( src_color[0] );
-
-			// TODO - consider checking line of sight (don't count occludded lights).
+			for( auto mut c= 0u; c < 3u; ++c )
+			{
+				// 0.5 is needed, because we have second order spherical harmonics.
+				var f32 scale= 0.5f * power_at_given_distance * f32( src_color[ 2u - c ] );
+				result_light[c].directional_components+= scale * normalized_light_direction;
+				result_light[c].constant_component+= scale * power_at_given_distance;
+			}
 		}
 	}
 
