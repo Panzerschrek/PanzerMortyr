@@ -1,3 +1,4 @@
+import "cluster_utils.uh"
 import "lighting.uh"
 
 namespace PM
@@ -5,6 +6,7 @@ namespace PM
 
 fn GetLightForPoint(
 	ZvoxData& zvox_data,
+	ZmapLemData& zmap_lem_data,
 	GameParams& game_params,
 	Vec3f& point,
 	Mat4f& inverse_rotation_matrix ) :SphericalHarmonicsRGB
@@ -61,6 +63,60 @@ fn GetLightForPoint(
 				result_light[c].constant_component+= scale * power_at_given_distance;
 			}
 		}
+	}
+
+	// Add sky light stored in "ZMAP*.LEM" file.
+	// TODO - optimize this, avoid enumerating all clusters.
+
+	foreach( pair : zvox_data.clusters.iter().zip( zmap_lem_data.clusters_sky_visibility_data.iter() ) )
+	{
+		var ZvoxCluster& cluster= pair.first;
+
+		if( cluster.c.num_children_clusters < 0 )
+		{
+			// Ignore non-root clusters.
+			continue;
+		}
+
+		var BBox3f bbox= CreateClusterBBox( cluster );
+
+		if( !bbox.PointIsInsideOrOnFace( point ) )
+		{
+			continue;
+		}
+
+		// Found cluster where point is located.
+
+		var Vec3f bbox_dimensions= bbox.GetDimensions();
+
+		if( bbox_dimensions.x <= 0.0f || bbox_dimensions.y <= 0.0f || bbox_dimensions.z <= 0.0f )
+		{
+			continue;
+		}
+
+		var Vec3f relative_position= point - bbox.min;
+
+		var u32 constexpr size= 4u;
+
+		var [ u32, 3 ] coords
+		[
+			( ust::max( 0.0f, ust::min( f32( size ) * relative_position.x / bbox_dimensions.x, 3.0f ) ) ),
+			( ust::max( 0.0f, ust::min( f32( size ) * relative_position.y / bbox_dimensions.y, 3.0f ) ) ),
+			( ust::max( 0.0f, ust::min( f32( size ) * relative_position.z / bbox_dimensions.z, 3.0f ) ) ),
+		];
+
+		var u32 color_brg=
+			pair.second.data[ coords[0] + coords[1] * size + coords[2] * ( size * size ) ];
+
+		if( color_brg != 0u )
+		{
+			result_light[0].constant_component+= f32( ( color_brg >> 16u ) & 255u ) / 255.0f;
+			result_light[1].constant_component+= f32( ( color_brg >>  8u ) & 255u ) / 255.0f;
+			result_light[2].constant_component+= f32( ( color_brg >>  0u ) & 255u ) / 255.0f;
+		}
+
+		// Break, sine we found the cluster where given point is located.
+		break;
 	}
 
 	return result_light;
