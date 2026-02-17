@@ -14,7 +14,7 @@ void main()
 
 	if( false )
 	{
-		texture_color= texture_color * 0.0001 + vec3( 0.5, 0.5, 0.5 );
+		texture_color= texture_color * 0.0001 + vec3( 0.75, 0.75, 0.75 );
 	}
 
 	color= vec4( texture_color * f_light, 1.0 );
