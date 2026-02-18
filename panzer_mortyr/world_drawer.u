@@ -4,6 +4,7 @@ import "/string_conversions.u"
 
 import "/common_lib/materials_file.uh"
 
+import "bounding_boxes_hierarchy_visiting.uh"
 import "cluster_utils.uh"
 import "gl_functions.uh"
 import "gl_state.uh"
@@ -454,7 +455,6 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 				Vec3f( frame_bbox.max.x, frame_bbox.max.y, frame_bbox.max.z ) * model_transormation_matrix,
 			];
 
-			// First perform fast check if this model is within visible clusters volume.
 			if( !model_object.disable_culling )
 			{
 				var BBox3f mut bbox
@@ -474,7 +474,30 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 					ust::max_assign( bbox.max.z, v.z );
 				}
 
+				// First perform fast check if this model is within the bbox containing all visible clusters.
 				if( !visible_clusters_bbox.InstersectsOrTouches( bbox ) )
+				{
+					continue;
+				}
+
+				// Then check if this model is within at least one visible cluster.
+				var bool mut is_within_visible_clusters= false;
+
+				var BBox3f& bbox_ref= bbox;
+
+				VisitBoundingBoxesHierarchyForBBox(
+					map_data.root_clusters_hierarchy.deref(),
+					bbox_ref,
+					lambda[&]( CluserIndexInHierarchy c )
+					{
+						if( visible_root_cluster_flags[ size_type(c) ] &&
+							CreateClusterBBox( zvox_data.clusters[ size_type(c) ] ).InstersectsOrTouches( bbox_ref ) )
+						{
+							is_within_visible_clusters= true;
+						}
+					} );
+
+				if( !is_within_visible_clusters )
 				{
 					continue;
 				}
@@ -728,13 +751,14 @@ fn WorldDrawer::SetMap( mut this, u32 map_index )
 	var GameResourceNullablePtr</ZpozData/> zpoz_data_nullable_ptr= caching_game_resources_loader.LoadZpozFile( map_index );
 	var GameResourceNullablePtr</ZmapLamData/> zmap_lam_data_nullable_ptr= caching_game_resources_loader.LoadZmapLamFile( map_index );
 	var GameResourceNullablePtr</ZmapLemData/> zmap_lem_data_nullable_ptr= caching_game_resources_loader.LoadZmapLemFile( map_index );
-
+	var GameResourceNullablePtr</RootClustersHierarchy/> root_clusters_hierarchy_nullable_ptr= caching_game_resources_loader.LoadRootClustersHierarchy( map_index );
 
 	if( zmap_data_nullable_ptr.empty() ||
 		zvox_data_nullable_ptr.empty() ||
 		zpoz_data_nullable_ptr.empty() ||
 		zmap_lam_data_nullable_ptr.empty() ||
-		zmap_lam_data_nullable_ptr.empty() )
+		zmap_lam_data_nullable_ptr.empty() ||
+		root_clusters_hierarchy_nullable_ptr.empty() )
 	{
 		return;
 	}
@@ -744,6 +768,7 @@ fn WorldDrawer::SetMap( mut this, u32 map_index )
 	var GameResourcePtr</ZpozData/> zpoz_data_ptr= zpoz_data_nullable_ptr.try_to_non_nullable();
 	var GameResourcePtr</ZmapLamData/> zmap_lam_data_ptr= zmap_lam_data_nullable_ptr.try_to_non_nullable();
 	var GameResourcePtr</ZmapLemData/> zmap_lem_data_ptr= zmap_lem_data_nullable_ptr.try_to_non_nullable();
+	var GameResourcePtr</RootClustersHierarchy/> root_clusters_hierarchy_ptr= root_clusters_hierarchy_nullable_ptr.try_to_non_nullable();
 
 	var ZmapData& zmap_data= zmap_data_ptr.deref();
 	var ZvoxData& zvox_data= zvox_data_ptr.deref();
@@ -1032,6 +1057,7 @@ fn WorldDrawer::SetMap( mut this, u32 map_index )
 			.zpoz_data= zpoz_data_ptr,
 			.zmap_lam_data= zmap_lam_data_ptr,
 			.zmap_lem_data= zmap_lem_data_ptr,
+			.root_clusters_hierarchy= root_clusters_hierarchy_ptr,
 			.vertex_array_object= move(vertex_array_object),
 			.vertex_buffer= move(vertex_buffer),
 			.index_buffer= move(index_buffer),
