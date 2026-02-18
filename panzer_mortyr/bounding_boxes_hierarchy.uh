@@ -30,10 +30,126 @@ struct BoundingBoxesHierarchy
 
 	struct LeafNodeContents
 	{
-		// Leaf elements are listed as indices in the "quad_indices" container.
+		// Leaf elements are listed as indices in the "elements" container.
 		u32 first_element_index;
 		u32 num_elements;
 	}
+}
+
+template</type ElementType, type Func/>
+fn BoundingBoxesHierarchyForBBox( BoundingBoxesHierarchy</ElementType/>& hierarchy, BBox3f& bbox, Func& func )
+{
+	// TODO - consider replacing recursive routine with a stack.
+	BoundingBoxesHierarchyForBBox_r( hierarchy, 0u, bbox, func );
+}
+
+template</type ElementType, type Func/>
+fn BoundingBoxesHierarchyForBBox_r(
+	BoundingBoxesHierarchy</ElementType/>& hierarchy, u32 node_index, BBox3f& bbox, Func& func )
+{
+	type HierarchyT= BoundingBoxesHierarchy</ElementType/>;
+
+	var HierarchyT::Node& node= hierarchy.nodes[ size_type( node_index ) ];
+
+	if( !bbox.InstersectsOrTouches( node.bbox ) )
+	{
+		return;
+	}
+
+	if_var( &branch_node_contents : node.contents.get</HierarchyT::BranchNodeContents/>() )
+	{
+		foreach( child_node_index : branch_node_contents.children_nodes )
+		{
+			BoundingBoxesHierarchyForBBox_r( hierarchy, child_node_index, bbox, func );
+		}
+	}
+	else if_var( &leaf_node_contents : node.contents.get</HierarchyT::LeafNodeContents/>() )
+	{
+		foreach( &element : hierarchy.elements.range().subrange(
+			size_type( leaf_node_contents.first_element_index ),
+			size_type( leaf_node_contents.first_element_index ) + size_type( leaf_node_contents.num_elements ) ) )
+		{
+			func( element );
+		}
+	}
+	else{ halt; }
+}
+
+template</type ElementType, type Func/>
+fn VisitBoundingBoxesHierarchyForLineSegment(
+	BoundingBoxesHierarchy</ElementType/>& hierarchy, Vec3f& start_point, Vec3f& line_vector, Func& func )
+{
+	var Vec3f end_point= start_point + line_vector;
+
+	// Expand box slightly to avoid numerical precision errors.
+	var f32 c_box_expand_eps= 1.0f;
+
+	var BBox3f line_bbox
+	{
+		.min(
+			ust::min( start_point.x, end_point.x ) - c_box_expand_eps,
+			ust::min( start_point.y, end_point.y ) - c_box_expand_eps,
+			ust::min( start_point.z, end_point.z ) - c_box_expand_eps ),
+		.max(
+			ust::max( start_point.x, end_point.x ) + c_box_expand_eps,
+			ust::max( start_point.y, end_point.y ) + c_box_expand_eps,
+			ust::max( start_point.z, end_point.z ) + c_box_expand_eps ),
+	};
+
+	// TODO - consider replacing recursive routine with a stack.
+
+	VisitBoundingBoxesHierarchyForLineSegment_r( hierarchy, 0u, line_bbox, start_point, line_vector, func );
+}
+
+template</type ElementType, type Func/>
+fn VisitBoundingBoxesHierarchyForLineSegment_r(
+	BoundingBoxesHierarchy</ElementType/>& hierarchy,
+	u32 node_index,
+	BBox3f& line_bbox,
+	Vec3f& start_point,
+	Vec3f& line_vector,
+	Func& func )
+{
+	type HierarchyT= BoundingBoxesHierarchy</ElementType/>;
+
+	var HierarchyT::Node& node= hierarchy.nodes[ size_type( node_index ) ];
+
+	// First and cheap box with box test.
+	if( !line_bbox.InstersectsOrTouches( node.bbox ) )
+	{
+		return;
+	}
+
+	// More expensive ray with box test, which allows rejecting more nodes.
+	if_var( &intersection_result : FindRayBBoxIntersection( start_point, line_vector, node.bbox ) )
+	{
+		if( intersection_result.near_point_distance > 1.0f | intersection_result.far_point_distance < 0.0f )
+		{
+			return;
+		}
+	}
+	else
+	{
+		return;
+	}
+
+	if_var( &branch_node_contents : node.contents.get</HierarchyT::BranchNodeContents/>() )
+	{
+		foreach( child_node_index : branch_node_contents.children_nodes )
+		{
+			VisitBoundingBoxesHierarchyForLineSegment_r( hierarchy, child_node_index, line_bbox, start_point, line_vector, func );
+		}
+	}
+	else if_var( &leaf_node_contents : node.contents.get</HierarchyT::LeafNodeContents/>() )
+	{
+		foreach( &element : hierarchy.elements.range().subrange(
+			size_type( leaf_node_contents.first_element_index ),
+			size_type( leaf_node_contents.first_element_index ) + size_type( leaf_node_contents.num_elements ) ) )
+		{
+			func( element );
+		}
+	}
+	else{ halt; }
 }
 
 } // namespace PM
