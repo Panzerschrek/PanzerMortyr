@@ -12,15 +12,19 @@ fn GetLightForPoint(
 	f32 radius,
 	Mat4f& inverse_rotation_matrix ) :SphericalHarmonicsRGB
 {
-	var SphericalHarmonicsRGB mut result_light[ { .directional_components= Vec3f::MakeZero(), .constant_component= 0.0f } ... ];
+	var SphericalHarmonicsRGB mut result_light
+	[
+		{ .directional_components= Vec3f::MakeZero(), .constant_component= 0.0f } ...
+	];
 
-	// TODO - tune this.
+	// A constant tuned so that light level of dynamic objects roughly matches light level of static map geometry.
 	var f32 c_point_lights_power_scale= 1.0f / 8.0f;
 
 	// Scale down sky light a little bit - it's sometimes too bright.
 	var f32 c_sky_light_power_scale= 0.3333f / 255.0f;
 
-	var f32 c_min_light_sequare_distance= 1.0f * 1.0f;
+	// Limit minimum distance to light to avoid division by zero.
+	var f32 c_min_light_square_distance= 1.0f * 1.0f;
 
 	// Limit light power coming from single source.
 	var f32 c_max_source_light_power= 1.0f / 128.0f;
@@ -30,9 +34,10 @@ fn GetLightForPoint(
 	// This allows having non-infinite radius and thus rejecting light sources too far away and speed-up computations.
 	var f32 c_light_source_power_down_bias= 1.0f / 256.0f / 256.0f;
 
-	// Limit overall brightness.
+	// Limit overall result brightness.
 	var f32 c_max_component_light_value= 2.0f;
 
+	// For now just enumerate all light sources. There are not so many of them - less than 1000 in the worst case.
 	// TODO - optimize this, avoid enumerating all light sources.
 
 	foreach( &cluster : zvox_data.clusters )
@@ -59,9 +64,11 @@ fn GetLightForPoint(
 
 			var Vec3f vector_to_light= light_source_position - point;
 
-			// TODO - consider checking line of sight (don't count occludded lights).
+			// Don't bother checking light of sight.
+			// It's too expensive and is in most cases useless, since light soruces of the original game aren't so bright.
+			// Even more, some light leaking allows adding some extra light in too dark areas.
 
-			var f32 square_distance= ust::max( vector_to_light.SquareLength(), c_min_light_sequare_distance );
+			var f32 square_distance= ust::max( vector_to_light.SquareLength(), c_min_light_square_distance );
 
 			var f32 power_at_given_distance=
 				ust::min( c_point_lights_power_scale * f32( power ) / square_distance, c_max_source_light_power ) -
@@ -115,7 +122,7 @@ fn GetLightForPoint(
 			continue;
 		}
 
-		// Found cluster where point is located.
+		// Found a cluster where the given point is located.
 
 		var Vec3f bbox_dimensions= bbox.GetDimensions();
 
@@ -126,17 +133,17 @@ fn GetLightForPoint(
 
 		var Vec3f relative_position= point - bbox.min;
 
-		var u32 constexpr size= 4u;
+		var u32 constexpr grid_size= 4u;
 
 		var [ u32, 3 ] coords
 		[
-			( ust::max( 0.0f, ust::min( f32( size ) * relative_position.x / bbox_dimensions.x, 3.0f ) ) ),
-			( ust::max( 0.0f, ust::min( f32( size ) * relative_position.y / bbox_dimensions.y, 3.0f ) ) ),
-			( ust::max( 0.0f, ust::min( f32( size ) * relative_position.z / bbox_dimensions.z, 3.0f ) ) ),
+			( ust::max( 0.0f, ust::min( f32( grid_size ) * relative_position.x / bbox_dimensions.x, 3.0f ) ) ),
+			( ust::max( 0.0f, ust::min( f32( grid_size ) * relative_position.y / bbox_dimensions.y, 3.0f ) ) ),
+			( ust::max( 0.0f, ust::min( f32( grid_size ) * relative_position.z / bbox_dimensions.z, 3.0f ) ) ),
 		];
 
 		var u32 color_brg=
-			pair.second.data[ coords[0] + coords[1] * size + coords[2] * ( size * size ) ];
+			pair.second.data[ coords[0] + coords[1] * grid_size + coords[2] * ( grid_size * grid_size ) ];
 
 		if( color_brg != 0u )
 		{
@@ -163,7 +170,7 @@ fn GetLightForPoint(
 		if( cluster.extra_ambient_light != 0u8 )
 		{
 			// Assume the light value stored in the cluster structure to be minimum light.
-			// It's not linear. The formula below approaximates light levels observed in the original game.
+			// It's not linear. The formula below approximates light levels observed in the original game.
 			var f32 minimal_light=
 				f32( u32( cluster.extra_ambient_light ) * u32( cluster.extra_ambient_light ) ) /
 				( 255.0f * 255.0f * 2.0f );
