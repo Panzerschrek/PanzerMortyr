@@ -1,7 +1,9 @@
+import "/hash_map.u"
 import "/scoped_array.u"
 import "gl_functions.uh"
 import "gpu_model.uh"
 import "image_loading.uh"
+import "vertex_formats.uh"
 
 namespace PM
 {
@@ -15,10 +17,12 @@ fn CreateGPUModel( ModelData& model_data ) : GPUModel
 			GLenum( GL_ARRAY_BUFFER ), // Needed for a vertex attribute source.
 			model_data.texture_coordinates.range().to_byte8_range() );
 
+	var ust::vector</ModelFrameVertex/> frame_vertices= CreateModelFrameVertices( model_data );
+
 	var BufferObject mut positions_buffer=
 		BufferObject::CreateStaticDrawBuffer(
 			GLenum( GL_ARRAY_BUFFER ), // Needed for a vertex attribute source.
-			model_data.vertex_positions_data.range().to_byte8_range() );
+			frame_vertices.range().to_byte8_range() );
 
 	// Create index buffer only for LOD0 triangles.
 	// We don't care about geometry of other LODs, even LOD0 models are pretty low-detail.
@@ -65,8 +69,18 @@ fn CreateGPUModel( ModelData& model_data ) : GPUModel
 		3,
 		GLenum( GL_FLOAT ),
 		GLboolean(0),
-		GLsizei( typeinfo</ObbVertexPosition/>.size_of ),
-		ust::nullptr</byte8/>() ) );
+		GLsizei( typeinfo</ModelFrameVertex/>.size_of ),
+		ust::nullptr</byte8/>() + GetStructFieldOffset</ ModelFrameVertex, "position" />() ) );
+
+	unsafe( glEnableVertexAttribArray( GPUModel::c_normal_attrib ) );
+
+	unsafe( glVertexAttribPointer(
+		GPUModel::c_normal_attrib,
+		3,
+		GLenum( GL_BYTE ),
+		GLboolean(1),
+		GLsizei( typeinfo</ModelFrameVertex/>.size_of ),
+		ust::nullptr</byte8/>() + GetStructFieldOffset</ ModelFrameVertex, "normal" />() ) );
 
 	index_buffer.Bind();
 
@@ -121,6 +135,91 @@ fn CreateModelTexture( ModelData::TextureData& texture_data ) : Texture
 	unsafe( glTexParameteri( GLenum( GL_TEXTURE_2D ), GLenum( GL_TEXTURE_MAG_FILTER ), GLint( GL_LINEAR ) ) );
 
 	return texture;
+}
+
+fn CreateModelFrameVertices( ModelData& model_data ) : ust::vector</ModelFrameVertex/>
+{
+	// Recalculate per-vertex normals.
+	// It's necessary, since normals stored in the original models aren't correct in many cases.
+
+	var ust::vector</ModelFrameVertex/> mut model_vertices(
+		model_data.vertex_positions_data.size(), ust::make_zeroed</ModelFrameVertex/>() );
+
+	var ust::hash_map</Vec3f, Vec3f/> mut vertex_positions_to_normals;
+
+	var f32 c_min_normal_length= 0.000001f;
+	var f32 c_stored_normal_scale= 127.0f;
+
+	for( auto mut frame_index= 0u; frame_index < model_data.num_frames; ++frame_index )
+	{
+		auto frame_src_vertices=
+			model_data.vertex_positions_data.range().subrange(
+				size_type( model_data.num_vertices * frame_index ),
+				size_type( model_data.num_vertices * ( frame_index + 1u ) ) );
+
+		auto frame_dst_vertices=
+			model_vertices.range().subrange(
+				size_type( model_data.num_vertices * frame_index ),
+				size_type( model_data.num_vertices * ( frame_index + 1u ) ) );
+
+		// Calculate per-triangle normals and accumulate these normals in each adjacent vertex.
+		// We need to use vertex position-based hash-map here,
+		// since some vertices may have identical positions but be distinct due to different texture coordinates.
+
+		vertex_positions_to_normals.clear();
+
+		foreach( &triangle : model_data.triangles.range().subrange_end( size_type( model_data.num_lod0_triangles ) ) )
+		{
+			var ObbVertexPosition
+				& src_v0= frame_src_vertices[ size_type( triangle[0] >> 1 ) ],
+				& src_v1= frame_src_vertices[ size_type( triangle[1] >> 1 ) ],
+				& src_v2= frame_src_vertices[ size_type( triangle[2] >> 1 ) ];
+
+			var Vec3f
+				v0( src_v0.coords[0], src_v0.coords[1], src_v0.coords[2] ),
+				v1( src_v1.coords[0], src_v1.coords[1], src_v1.coords[2] ),
+				v2( src_v2.coords[0], src_v2.coords[1], src_v2.coords[2] );
+
+			var Vec3f normal= ( v1 - v0 ).Cross( v2 - v1 );
+			var Vec3f normal_normalized= normal / ust::max( c_min_normal_length, normal.Length() );
+
+			vertex_positions_to_normals.find_or_construct_new( v0, Vec3f::MakeZero )+= normal_normalized;
+			vertex_positions_to_normals.find_or_construct_new( v1, Vec3f::MakeZero )+= normal_normalized;
+			vertex_positions_to_normals.find_or_construct_new( v2, Vec3f::MakeZero )+= normal_normalized;
+		}
+
+		// Normalize collected previously normals.
+
+		foreach( &pair : vertex_positions_to_normals )
+		{
+			var Vec3f &mut normal= pair.value();
+			normal/= ust::max( c_min_normal_length, normal.Length() );
+		}
+
+		// Store result normals together with vertices.
+
+		foreach( pair : frame_src_vertices.iter().zip( frame_dst_vertices.iter() ) )
+		{
+			var ObbVertexPosition& src_vertex= pair.first;
+			var ModelFrameVertex &mut dst_vertex= pair.second;
+
+			dst_vertex.position= src_vertex.coords;
+
+			if_var( &n :
+				vertex_positions_to_normals.find(
+					Vec3f( src_vertex.coords[0], src_vertex.coords[1], src_vertex.coords[2] ) ) )
+			{
+				dst_vertex.normal[0]=
+					i8( ust::max( -c_stored_normal_scale, ust::min( n.x * c_stored_normal_scale, c_stored_normal_scale ) ) );
+				dst_vertex.normal[1]=
+					i8( ust::max( -c_stored_normal_scale, ust::min( n.y * c_stored_normal_scale, c_stored_normal_scale ) ) );
+				dst_vertex.normal[2]=
+					i8( ust::max( -c_stored_normal_scale, ust::min( n.z * c_stored_normal_scale, c_stored_normal_scale ) ) );
+			}
+		}
+	}
+
+	return model_vertices;
 }
 
 fn CalculateModelFrameBBoxes( ModelData& model_data ) : ust::vector</BBox3f/>

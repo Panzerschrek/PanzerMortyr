@@ -1,0 +1,217 @@
+import "cluster_utils.uh"
+import "lighting.uh"
+
+namespace PM
+{
+
+fn GetLightForPoint(
+	ZvoxData& zvox_data,
+	ZmapLemData& zmap_lem_data,
+	GameParams& game_params,
+	Vec3f& point,
+	f32 radius,
+	Mat4f& inverse_rotation_matrix ) :SphericalHarmonicsRGB
+{
+	var SphericalHarmonicsRGB mut result_light
+	[
+		{ .directional_components= Vec3f::MakeZero(), .constant_component= 0.0f } ...
+	];
+
+	// A constant tuned so that light level of dynamic objects roughly matches light level of static map geometry.
+	var f32 c_point_lights_power_scale= 1.0f / 8.0f;
+
+	// Scale down sky light a little bit - it's sometimes too bright.
+	var f32 c_sky_light_power_scale= 0.3333f / 255.0f;
+
+	// Limit minimum distance to light to avoid division by zero.
+	var f32 c_min_light_square_distance= 1.0f * 1.0f;
+
+	// Limit light power coming from single source.
+	var f32 c_max_source_light_power= 1.0f / 128.0f;
+
+	// Subtract this value from result light power of a point light source in given point
+	// in order to reach zero light power at some non-infinite distance.
+	// This allows having non-infinite radius and thus rejecting light sources too far away and speed-up computations.
+	var f32 c_light_source_power_down_bias= 1.0f / 256.0f / 256.0f;
+
+	// Limit overall result brightness.
+	var f32 c_max_component_light_value= 2.0f;
+
+	// For now just enumerate all light sources. There are not so many of them - less than 1000 in the worst case.
+	// TODO - optimize this, avoid enumerating all light sources.
+
+	foreach( &cluster : zvox_data.clusters )
+	{
+		if( cluster.light_sources_begin >= cluster.light_sources_end )
+		{
+			continue;
+		}
+
+		foreach( &light_source : zvox_data.light_sources.range().subrange(
+			size_type( cluster.light_sources_begin ), size_type( cluster.light_sources_end ) ) )
+		{
+			// Experimental estimation of light power formula.
+			var i32 power= 160 - i32(light_source.power);
+			if( power <= 0 )
+			{
+				continue;
+			}
+
+			var Vec3f light_source_position(
+				f32( cluster.c.center[0] + light_source.offset[0] ),
+				f32( cluster.c.center[1] + light_source.offset[1] ),
+				f32( cluster.c.center[2] + light_source.offset[2] ) );
+
+			var Vec3f vector_to_light= light_source_position - point;
+
+			// Don't bother checking light of sight.
+			// It's too expensive and is in most cases useless, since light soruces of the original game aren't so bright.
+			// Even more, some light leaking allows adding some extra light in too dark areas.
+
+			var f32 square_distance= ust::max( vector_to_light.SquareLength(), c_min_light_square_distance );
+
+			var f32 power_at_given_distance=
+				ust::min( c_point_lights_power_scale * f32( power ) / square_distance, c_max_source_light_power ) -
+				c_light_source_power_down_bias;
+
+			if( power_at_given_distance <= 0.0f )
+			{
+				// Too far away and thus contribution of this light source is negligible.
+				continue;
+			}
+
+			var f32 distance= ust::sqrt( square_distance );
+
+			var Vec3f normalized_light_direction= ( vector_to_light / distance ) * inverse_rotation_matrix;
+
+			// If distance is less than object radius, reduce directional component weight,
+			// since now this light shines from within.
+			var f32 directional_component_weight= ust::min( distance / radius, 1.0f );
+
+			auto& src_color= game_params.light_colors[ ( u32( light_source.packed_corona_color_index ) >> 3 ) & 31u ];
+
+			for( auto mut c= 0u; c < 3u; ++c )
+			{
+				var f32 component_value= power_at_given_distance * f32( src_color[ 2u - c ] );
+
+				result_light[c].directional_components+=
+					( component_value * directional_component_weight ) * normalized_light_direction;
+
+				result_light[c].constant_component+= component_value;
+			}
+		}
+	}
+
+	// Add sky light stored in "ZMAP*.LEM" file.
+	// TODO - optimize this, avoid enumerating all clusters.
+
+	foreach( pair : zvox_data.clusters.iter().zip( zmap_lem_data.clusters_sky_visibility_data.iter() ) )
+	{
+		var ZvoxCluster& cluster= pair.first;
+
+		if( cluster.c.num_children_clusters < 0 )
+		{
+			// Ignore non-root clusters.
+			continue;
+		}
+
+		var BBox3f bbox= CreateClusterBBox( cluster );
+
+		if( !bbox.PointIsInsideOrOnFace( point ) )
+		{
+			continue;
+		}
+
+		// Found a cluster where the given point is located.
+
+		var Vec3f bbox_dimensions= bbox.GetDimensions();
+
+		if( bbox_dimensions.x <= 0.0f || bbox_dimensions.y <= 0.0f || bbox_dimensions.z <= 0.0f )
+		{
+			continue;
+		}
+
+		var Vec3f relative_position= point - bbox.min;
+
+		var u32 constexpr grid_size= 4u;
+
+		var [ u32, 3 ] coords
+		[
+			( ust::max( 0.0f, ust::min( f32( grid_size ) * relative_position.x / bbox_dimensions.x, 3.0f ) ) ),
+			( ust::max( 0.0f, ust::min( f32( grid_size ) * relative_position.y / bbox_dimensions.y, 3.0f ) ) ),
+			( ust::max( 0.0f, ust::min( f32( grid_size ) * relative_position.z / bbox_dimensions.z, 3.0f ) ) ),
+		];
+
+		var u32 color_brg=
+			pair.second.data[ coords[0] + coords[1] * grid_size + coords[2] * ( grid_size * grid_size ) ];
+
+		if( color_brg != 0u )
+		{
+			// Light from sky travels mostly down.
+			var Vec3f sky_light_direction= Vec3f( 0.0f, 0.0f, -1.0f ) * inverse_rotation_matrix;
+			var f32 directional_component_weight= 0.75f;
+
+			var [ f32, 3 ] component_values
+			[
+				f32( ( color_brg >> 16u ) & 255u ) * c_sky_light_power_scale,
+				f32( ( color_brg >>  8u ) & 255u ) * c_sky_light_power_scale,
+				f32( ( color_brg >>  0u ) & 255u ) * c_sky_light_power_scale,
+			];
+
+			for( auto mut i= 0s; i < 3s; ++i )
+			{
+				result_light[i].constant_component+= component_values[i];
+
+				result_light[i].directional_components+=
+					( component_values[i] * directional_component_weight ) * sky_light_direction;
+			}
+		}
+
+		if( cluster.extra_ambient_light != 0u8 )
+		{
+			// Assume the light value stored in the cluster structure to be minimum light.
+			// It's not linear. The formula below approximates light levels observed in the original game.
+			var f32 minimal_light=
+				f32( u32( cluster.extra_ambient_light ) * u32( cluster.extra_ambient_light ) ) /
+				( 255.0f * 255.0f * 2.0f );
+
+			foreach( &mut l : result_light )
+			{
+				ust::max_assign( l.constant_component, minimal_light );
+			}
+		}
+
+		// Break, sine we found the cluster where given point is located.
+		break;
+	}
+
+	// Limit result light. We should avoid overbrights.
+	{
+		var f32 mut max_component_light_value= 0.0f;
+		foreach( &c : result_light )
+		{
+			ust::max_assign(
+				max_component_light_value,
+				c.constant_component +
+					ust::max(
+						ust::abs( c.directional_components.x ),
+						ust::max(
+							ust::abs( c.directional_components.y ),
+							ust::abs( c.directional_components.z ) ) ) );
+		}
+
+		if( max_component_light_value > c_max_component_light_value )
+		{
+			var f32 scale= c_max_component_light_value / max_component_light_value;
+			foreach( &mut l : result_light )
+			{
+				l.directional_components*= scale;
+				l.constant_component*= scale;
+			}
+		}
+	}
+
+	return result_light;
+}
+
+} // namespace PM

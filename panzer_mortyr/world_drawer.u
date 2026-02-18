@@ -4,9 +4,11 @@ import "/string_conversions.u"
 
 import "/common_lib/materials_file.uh"
 
+import "cluster_utils.uh"
 import "gl_functions.uh"
 import "gl_state.uh"
 import "image_loading.uh"
+import "lighting.uh"
 import "math_constants.uh"
 import "plane.uh"
 import "vertex_formats.uh"
@@ -23,6 +25,12 @@ fn WorldDrawer::constructor(
 	(
 		settings_= move( settings ),
 		game_filesystem_ptr_= move( game_filesystem_ptr ),
+		game_params_=
+			lambda[&]() : GameResourcePtr</GameParams/>
+			{
+				auto mut lock= caching_game_resources_loader.lock_mut();
+				return lock.deref().LoadGameParams();
+			}(),
 		caching_game_resources_loader_ptr_= move( caching_game_resources_loader ),
 		console_out_= move(console_out),
 		map_shader_(
@@ -197,6 +205,7 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 
 	var ZvoxData& zvox_data= map_data.zvox_data.deref();
 	var ZpozData& zpoz_data= map_data.zpoz_data.deref();
+	var ZmapLemData& zmap_lem_data= map_data.zmap_lem_data.deref();
 
 	var ust::optional</size_type/> mut camera_cluster_index_opt;
 
@@ -368,6 +377,8 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 		i+= num_clusters_in_group;
 	}
 
+	var bool fullbright= settings_.lock_imut().deref().r_fullbright;
+
 	SetGLState( g_models_drawing_gl_state );
 
 	model_shader_.Bind();
@@ -415,21 +426,22 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 
 		var GPUModel& model= model_opt.try_deref();
 
-		var Mat4f model_transormation_matrix=
+		var Mat4f rotation_matrix=
 			Mat4f::MakeRotationX( model_object.elevation ) *
-			Mat4f::MakeRotationZ( model_object.azimuth ) *
-			Mat4f::MakeTranslation( model_object.position );
+			Mat4f::MakeRotationZ( model_object.azimuth );
+
+		var Mat4f model_transormation_matrix= rotation_matrix * Mat4f::MakeTranslation( model_object.position );
 
 		// It looks like frame numbers above maximum are replaced with zeros.
 		// This seems to be used by weapon shot animations.
 		var size_type in_frame( model_object.frame );
 		var size_type frame= ( in_frame < model.num_frames ? in_frame : 0s );
 
+		var BBox3f& frame_bbox= model.frame_bboxes[ frame ];
+
 		if( !model_object.first_person_weapon )
 		{
 			// Calculate  bounding box of the model in world space (including even rotations).
-
-			var BBox3f& frame_bbox= model.frame_bboxes[ frame ];
 			var [ Vec3f, 8 ] bbox_corners_transformed
 			[
 				Vec3f( frame_bbox.min.x, frame_bbox.min.y, frame_bbox.min.z ) * model_transormation_matrix,
@@ -499,7 +511,62 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 		var Mat4f model_full_matrix=
 			model_transormation_matrix * ( model_object.first_person_weapon ? firt_person_weapon_view_matrix : view_matrix );
 
+		var SphericalHarmonicsRGB mut light
+		[
+			{ .directional_components= Vec3f::MakeZero(), .constant_component= 1.0f } ...
+		];
+
+		if( !fullbright & !model_object.constant_lighting )
+		{
+			var Vec3f bbox_center= frame_bbox.GetCenter() * model_transormation_matrix;
+			var f32 radius= frame_bbox.GetDimensions().Length() * 0.5f;
+
+			// https://en.wikipedia.org/wiki/Rotation_matrix#Multiplication.
+			//   The inverse of a rotation matrix is its transpose, which is also a rotation matrix:
+			//
+			var Mat4f inverse_model_rotation_matrix= rotation_matrix.Transpose();
+
+			light=
+				GetLightForPoint(
+					zvox_data,
+					zmap_lem_data,
+					game_params_.deref(),
+					bbox_center,
+					radius,
+					inverse_model_rotation_matrix );
+
+			if( model_object.first_person_weapon )
+			{
+				foreach( &mut l : light )
+				{
+					// Always give some light for first-person weapon.
+					ust::max_assign( l.constant_component, 1.0f / 16.0f );
+				}
+			}
+		}
+
 		model_shader_.SetUniform( "vu_matrix", model_full_matrix );
+
+		model_shader_.SetUniform(
+			"fu_light_spherical_harmonics_r",
+			light[0].directional_components.x,
+			light[0].directional_components.y,
+			light[0].directional_components.z,
+			light[0].constant_component );
+
+		model_shader_.SetUniform(
+			"fu_light_spherical_harmonics_g",
+			light[1].directional_components.x,
+			light[1].directional_components.y,
+			light[1].directional_components.z,
+			light[1].constant_component );
+
+		model_shader_.SetUniform(
+			"fu_light_spherical_harmonics_b",
+			light[2].directional_components.x,
+			light[2].directional_components.y,
+			light[2].directional_components.z,
+			light[2].constant_component );
 
 		unsafe( glDrawElements(
 			GLenum( GL_TRIANGLES ),
@@ -660,10 +727,13 @@ fn WorldDrawer::SetMap( mut this, u32 map_index )
 	var GameResourceNullablePtr</ZvoxData/> zvox_data_nullable_ptr= caching_game_resources_loader.LoadZvoxFile( map_index );
 	var GameResourceNullablePtr</ZpozData/> zpoz_data_nullable_ptr= caching_game_resources_loader.LoadZpozFile( map_index );
 	var GameResourceNullablePtr</ZmapLamData/> zmap_lam_data_nullable_ptr= caching_game_resources_loader.LoadZmapLamFile( map_index );
+	var GameResourceNullablePtr</ZmapLemData/> zmap_lem_data_nullable_ptr= caching_game_resources_loader.LoadZmapLemFile( map_index );
+
 
 	if( zmap_data_nullable_ptr.empty() ||
 		zvox_data_nullable_ptr.empty() ||
 		zpoz_data_nullable_ptr.empty() ||
+		zmap_lam_data_nullable_ptr.empty() ||
 		zmap_lam_data_nullable_ptr.empty() )
 	{
 		return;
@@ -673,6 +743,7 @@ fn WorldDrawer::SetMap( mut this, u32 map_index )
 	var GameResourcePtr</ZvoxData/> zvox_data_ptr= zvox_data_nullable_ptr.try_to_non_nullable();
 	var GameResourcePtr</ZpozData/> zpoz_data_ptr= zpoz_data_nullable_ptr.try_to_non_nullable();
 	var GameResourcePtr</ZmapLamData/> zmap_lam_data_ptr= zmap_lam_data_nullable_ptr.try_to_non_nullable();
+	var GameResourcePtr</ZmapLemData/> zmap_lem_data_ptr= zmap_lem_data_nullable_ptr.try_to_non_nullable();
 
 	var ZmapData& zmap_data= zmap_data_ptr.deref();
 	var ZvoxData& zvox_data= zvox_data_ptr.deref();
@@ -960,6 +1031,7 @@ fn WorldDrawer::SetMap( mut this, u32 map_index )
 			.zvox_data= zvox_data_ptr,
 			.zpoz_data= zpoz_data_ptr,
 			.zmap_lam_data= zmap_lam_data_ptr,
+			.zmap_lem_data= zmap_lem_data_ptr,
 			.vertex_array_object= move(vertex_array_object),
 			.vertex_buffer= move(vertex_buffer),
 			.index_buffer= move(index_buffer),
@@ -1076,21 +1148,6 @@ fn LoadMapTextures(
 	unsafe( glTexParameteri( GLenum( GL_TEXTURE_2D_ARRAY ), GLenum( GL_TEXTURE_MAG_FILTER ), GLint( GL_LINEAR ) ) );
 
 	return texture;
-}
-
-fn CreateClusterBBox( ZvoxCluster& cluster ) : BBox3f
-{
-	return BBox3f
-	{
-		.min(
-			f32( cluster.c.center[0] - cluster.c.bounding_box_half_size[0] ),
-			f32( cluster.c.center[1] - cluster.c.bounding_box_half_size[1] ),
-			f32( cluster.c.center[2] - cluster.c.bounding_box_half_size[2] ) ),
-		.max(
-			f32( cluster.c.center[0] + cluster.c.bounding_box_half_size[0] ),
-			f32( cluster.c.center[1] + cluster.c.bounding_box_half_size[1] ),
-			f32( cluster.c.center[2] + cluster.c.bounding_box_half_size[2] ) ),
-	};
 }
 
 type CameraClipPlanes= [ Planef, 5 ];

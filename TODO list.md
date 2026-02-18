@@ -9,7 +9,6 @@ Map format investigation:
 * Investigate meaning of remaining fields of "ZpozEntityNavigationInfo" struct.
 * Investigate what remaining fields of ZvoxCluster structure mean.
 * Investigate how exactly light-related sprites (flames, coronas) are defined.
-* Investigate how exactly light source power depends on the value stored in the light source structure.
 * Investigate exact meaning of many ZpozEntity fields.
 * Investigate meaning of remaining fields of "ZpozMultiplayerSpawnPoint" struct.
 * Investigate what exact kind of visibility data is stored in ZPOZ file and why it seems to have 4 blocks of such data for each cluster.
@@ -36,7 +35,6 @@ Lighting investigation:
 
 * Investigate how sky quads affect surrounding lighting.
 * Investigate how dynamic lights work (weapon flashes, alarms) - including attenuation formula, line of sight check, surface angle-related attenuation.
-* Investigate how dynamic model objects (characters, pick-ups) are lit (both by static and dynamic lights).
 * Investigate how dynamic map objects (doors, lifts, buttons) are lit (both by static and dynamic lights).
 
 Other investigation:
@@ -160,7 +158,6 @@ PanzerMortyr rendering:
 * Apply additional tessellation for tessellated polygons in order to perform smoother light values interpolation (naively triangulating them doesn't produce good result always).
 * Draw water quads properly.
 * Draw underwater caustics properly.
-* Fix too dark sun on map 7 or similar maps.
 * Draw glass materials properly (with transparency).
 * Draw light source sprites (flames, coronas).
 * Draw fog where it should be.
@@ -169,9 +166,7 @@ PanzerMortyr rendering:
 * Draw polygons with animated textures (frame-based animation) properly.
 * Draw first-person weapon with some sort of depth hack and depth-based effects (like fog) working properly.
 * Use smooth animation for animated models (with two or more frames interpolation).
-* Apply lighting for models.
 * Apply lighting for dynamic map polygons (doors, elevators, buttons).
-* Calculate normals for vertices of each model animation frame - original normals are sometimes broken.
 * Draw decals (bullet holes, blood).
 * Draw injured enemies covered with blood.
 * Implement dynamic lights (gun flashes, explosions).
@@ -183,11 +178,14 @@ PanzerMortyr rendering:
 * Add support for MSAA.
 * Add support for nearest textures filtration.
 * Add support for anisorhropic textures filtration.
-* Support rendering texts with shadow.
 * Implement all smoke effects.
 * Implement all flame effects.
 * Draw light shafts - with colored gradient, some underlying texture and additive blending.
 * Somehow distort/colorize the whole image while swimming in water.
+* Optimize calculating sky light for models - avoid enumerating all root clusters.
+* Consider optimizing calculating light from point light sources for models - avoid enumerating all lights.
+* Consider drawing blob shadows under models (as some sort of decal?).
+* Allow changing brightness, maybe by tuning lights power.
 
 PanzerMortyr menus and HUD:
 
@@ -200,6 +198,7 @@ PanzerMortyr menus and HUD:
 * Consider displaying amounts of tools in inventory, at least important ones - health, ammo, keys.
 * Allow configuring crosshair kind, investigate what kinds of crosshairs are available in the original game.
 * Display short game-related mesages (as the original does).
+* Support rendering texts with shadow.
 
 PanzerMortyr sound:
 
