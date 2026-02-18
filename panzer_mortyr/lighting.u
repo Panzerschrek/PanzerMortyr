@@ -1,3 +1,4 @@
+import "bounding_boxes_hierarchy_visiting.uh"
 import "cluster_utils.uh"
 import "lighting.uh"
 
@@ -7,6 +8,7 @@ namespace PM
 fn GetLightForPoint(
 	ZvoxData& zvox_data,
 	ZmapLemData& zmap_lem_data,
+	RootClustersHierarchy& root_clusters_hierarchy,
 	GameParams& game_params,
 	Vec3f& point,
 	f32 radius,
@@ -103,35 +105,32 @@ fn GetLightForPoint(
 	}
 
 	// Add sky light stored in "ZMAP*.LEM" file.
-	// TODO - optimize this, avoid enumerating all clusters.
+	// Search for cluster where the given point is located first.
 
-	foreach( pair : zvox_data.clusters.iter().zip( zmap_lem_data.clusters_sky_light_data.iter() ) )
-	{
-		var ZvoxCluster& cluster= pair.first;
+	var ust::optional</size_type/> mut point_cluster_index_opt;
 
-		if( cluster.c.num_children_clusters < 0 )
+	VisitBoundingBoxesHierarchyForPoint(
+		root_clusters_hierarchy,
+		point,
+		lambda[&]( ClusterIndexInHierarchy c )
 		{
-			// Ignore non-root clusters.
-			continue;
-		}
+			var size_type cluster_index( c );
+
+			if( CreateClusterBBox( zvox_data.clusters[ cluster_index ] ).PointIsInsideOrOnFace( point ) )
+			{
+				point_cluster_index_opt= cluster_index;
+			}
+		} );
+
+	if_var( cluster_index : point_cluster_index_opt )
+	{
+		var ZvoxCluster& cluster= zvox_data.clusters[ cluster_index ];
+		var ZmapLemClusterSkyLightData& cluster_sky_light_data= zmap_lem_data.clusters_sky_light_data[ cluster_index ];
 
 		var BBox3f bbox= CreateClusterBBox( cluster );
 
-		if( !bbox.PointIsInsideOrOnFace( point ) )
-		{
-			continue;
-		}
-
-		// Found a cluster where the given point is located.
-
-		var Vec3f bbox_dimensions= bbox.GetDimensions();
-
-		if( bbox_dimensions.x <= 0.0f || bbox_dimensions.y <= 0.0f || bbox_dimensions.z <= 0.0f )
-		{
-			continue;
-		}
-
 		var Vec3f relative_position= point - bbox.min;
+		var Vec3f bbox_dimensions= bbox.GetDimensions();
 
 		var u32 constexpr grid_size= 4u;
 
@@ -143,7 +142,7 @@ fn GetLightForPoint(
 		];
 
 		var u32 color_brg=
-			pair.second.light[ coords[0] + coords[1] * grid_size + coords[2] * ( grid_size * grid_size ) ];
+			cluster_sky_light_data.light[ coords[0] + coords[1] * grid_size + coords[2] * ( grid_size * grid_size ) ];
 
 		if( color_brg != 0u )
 		{
@@ -180,9 +179,6 @@ fn GetLightForPoint(
 				ust::max_assign( l.constant_component, minimal_light );
 			}
 		}
-
-		// Break, sine we found the cluster where given point is located.
-		break;
 	}
 
 	// Limit result light. We should avoid overbrights.
