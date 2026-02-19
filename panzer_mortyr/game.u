@@ -1,6 +1,6 @@
 import "/string_conversions.u"
 import "collisions.uh"
-import "debug_visualization.uh"
+import "bounding_boxes_hierarchy_debug_visualization.uh"
 import "game.uh"
 import "game_constants.uh"
 import "game_logic.uh"
@@ -71,11 +71,13 @@ fn Game::TeleportToMap( mut this, u32 map_index )
 		var GameResourceNullablePtr</ZvoxData/> zvox_data_nullable= caching_game_resources_loader.LoadZvoxFile( map_index );
 		var GameResourceNullablePtr</ZpozData/> zpoz_data_nullable= caching_game_resources_loader.LoadZpozFile( map_index );
 		var GameResourceNullablePtr</MapaWayData/> mapa_way_data_nullable= caching_game_resources_loader.LoadMapaWayFile( map_index );
+		var GameResourceNullablePtr</RootClustersHierarchy/> root_clusters_hierarchy_nullable= caching_game_resources_loader.LoadRootClustersHierarchy( map_index );
 
 		if( zmap_data_nullable.empty() ||
 			zvox_data_nullable.empty() ||
 			zpoz_data_nullable.empty() ||
-			mapa_way_data_nullable.empty() )
+			mapa_way_data_nullable.empty() ||
+			root_clusters_hierarchy_nullable.empty() )
 		{
 			return;
 		}
@@ -89,7 +91,7 @@ fn Game::TeleportToMap( mut this, u32 map_index )
 				.map_index= map_index,
 				.entities_description= entities_description_ptr,
 				.collider_quads_hierarchy= BuildColliderQuadsHierarchy( zvox_data.deref().clusters, zmap_data.deref().quads ),
-				.liquid_cluster_indices= CollectLiquidClusters( zvox_data.deref().clusters ),
+				.root_clusters_hierarchy= root_clusters_hierarchy_nullable.try_to_non_nullable(),
 				.zmap_data= move(zmap_data),
 				.zvox_data= move(zvox_data),
 				.zpoz_data= zpoz_data_nullable.try_to_non_nullable(),
@@ -518,15 +520,23 @@ fn Game::GetWorldDrawingInfo( this ) : WorldDrawingInfo
 
 		if( settings_.lock_imut().deref().g_debug_show_quads_hierarchy )
 		{
-			CreateQuadsHierarchyLines(
+			CreateBoundingBoxesHierarchyLines(
 				map_data.collider_quads_hierarchy,
-				settings_.lock_imut().deref().g_debug_quads_hierarchy_level_to_show,
+				settings_.lock_imut().deref().g_debug_bounding_boxes_hierarchy_level_to_show,
+				drawing_info.test_lines );
+		}
+
+		if( settings_.lock_imut().deref().g_debug_show_root_clusters_hierarchy )
+		{
+			CreateBoundingBoxesHierarchyLines(
+				map_data.root_clusters_hierarchy.deref(),
+				settings_.lock_imut().deref().g_debug_bounding_boxes_hierarchy_level_to_show,
 				drawing_info.test_lines );
 		}
 
 		if( settings_.lock_imut().deref().g_debug_show_player_position_in_quads_hierarchy )
 		{
-			CreateLinesForPositionInQuadsHierarchy(
+			CreateLinesForPositionInBoundingBoxesHierarchy(
 				map_data.collider_quads_hierarchy, game_state.player.position, drawing_info.test_lines );
 		}
 	}
@@ -665,25 +675,6 @@ fn GetCameraPositionForPlayer( PlayerState& player_state ) : Vec3f
 	// TODO - fine-tune this constant.
 	var Vec2f xy_offset= (-9.0f) * Vec2f( -ust::sin( player_state.azimuth ), ust::cos( player_state.azimuth ) );
 	return player_state.position + Vec3f( xy_offset, c_camera_z_offset );
-}
-
-fn CollectLiquidClusters( ust::array_view_imut</ZvoxCluster/> clusters ) : ust::vector</u32/>
-{
-	var ust::vector</u32/> mut res;
-
-	for( auto mut c= 0s; c < clusters.size(); ++c )
-	{
-		var ZvoxCluster& cluster= clusters[c];
-
-		if( cluster.contents == ZvoxCluster::c_contents_water |
-			cluster.contents == ZvoxCluster::c_contents_acid |
-			cluster.contents == ZvoxCluster::c_contents_lava )
-		{
-			res.push_back( u32(c) );
-		}
-	}
-
-	return res;
 }
 
 fn LoadGlobalData( CachingGameResourcesLoaderPtr& caching_game_resources_loader_ptr ) : GameGlobalData

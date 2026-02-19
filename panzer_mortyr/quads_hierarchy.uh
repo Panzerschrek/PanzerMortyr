@@ -1,189 +1,43 @@
-import "/variant.u"
-import "/vector.u"
 import "/common_lib/map_files.uh"
-import "geometry_utils.uh"
+import "bounding_boxes_hierarchy.uh"
 
 namespace PM
 {
-
 // Bounding boxes binary tree for map quads.
 // It's helpful to find quads in some specific area with reasonable speed (without enumerating all quads).
-struct QuadsHierarchy
+type QuadsHierarchy= BoundingBoxesHierarchy</PackedQuadIndex/>;
+
+// Pack cluster index and quad index into single 32-bit value (for compactness).
+class PackedQuadIndex
 {
-	// Nodes of quads hierarchy. First node is root.
-	ust::vector</Node/> nodes;
+public:
+	fn constructor( size_type cluster_index, size_type quad_index )
+		( packed_index_( ( cluster_index << c_cluster_index_shift ) | quad_index ) )
+	{}
 
-	// Indices of quads. Each leaf have a subrange in this container.
-	ust::vector</PackedQuadIndex/> quad_indices;
+	fn constructor( mut this, PackedQuadIndex& other )= default;
+	op=( mut this, PackedQuadIndex& other )= default;
 
-	// Tree node with bounding box.
-	struct Node
+	fn GetClusterIndex( this ) : size_type
 	{
-		BBox3f bbox;
-		// Store a couple of children nodes or several quads.
-		ust::variant</ tup[ BranchNodeContents, LeafNodeContents ] /> contents;
+		return size_type( packed_index_ ) >> c_cluster_index_shift;
 	}
 
-	struct BranchNodeContents
+	fn GetQuadIndex( this ) : size_type
 	{
-		// Contains indices of child nodes.
-		[ u32, 2 ] children_nodes;
+		return size_type( packed_index_ ) & ( ( 1s << c_cluster_index_shift ) - 1s );
 	}
 
-	struct LeafNodeContents
-	{
-		// Leaf quads are listed as indices in the "quad_indices" container.
-		u32 first_quad_index;
-		u32 num_quad_indices;
-	}
+private:
+	var size_type c_cluster_index_shift= 16s;
 
-	// Pack cluster index and quad index into single 32-bit value (for compactness).
-	class PackedQuadIndex
-	{
-	public:
-		fn constructor( size_type cluster_index, size_type quad_index )
-			( packed_index_( ( cluster_index << c_cluster_index_shift ) | quad_index ) )
-		{}
-
-		fn constructor( mut this, PackedQuadIndex& other )= default;
-		op=( mut this, PackedQuadIndex& other )= default;
-
-		fn GetClusterIndex( this ) : size_type
-		{
-			return size_type( packed_index_ ) >> c_cluster_index_shift;
-		}
-
-		fn GetQuadIndex( this ) : size_type
-		{
-			return size_type( packed_index_ ) & ( ( 1s << c_cluster_index_shift ) - 1s );
-		}
-
-	private:
-		var size_type c_cluster_index_shift= 16s;
-
-	private:
-		u32 packed_index_;
-	}
+private:
+	u32 packed_index_;
 }
 
 fn BuildColliderQuadsHierarchy(
 	ust::array_view_imut</ZvoxCluster/> clusters,
 	ust::array_view_imut</ZmapQuad/> quads ) : QuadsHierarchy;
 
-// Input function should have two parameters of "size_type" for cluster index and quad index.
-template</type Func/>
-fn VisitQuadsHierarchyForBBox( QuadsHierarchy& hierarchy, BBox3f& bbox, Func& func )
-{
-	// TODO - consider replacing recursive routine with a stack.
-	VisitQuadsHierarchyForBBox_r( hierarchy, 0u, bbox, func );
-}
-
-template</type Func/>
-fn VisitQuadsHierarchyForBBox_r( QuadsHierarchy& hierarchy, u32 node_index, BBox3f& bbox, Func& func )
-{
-	var QuadsHierarchy::Node& node= hierarchy.nodes[ size_type( node_index ) ];
-
-	if( !bbox.InstersectsOrTouches( node.bbox ) )
-	{
-		return;
-	}
-
-	if_var( &branch_node_contents : node.contents.get</QuadsHierarchy::BranchNodeContents/>() )
-	{
-		foreach( child_node_index : branch_node_contents.children_nodes )
-		{
-			VisitQuadsHierarchyForBBox_r( hierarchy, child_node_index, bbox, func );
-		}
-	}
-	else if_var( &leaf_node_contents : node.contents.get</QuadsHierarchy::LeafNodeContents/>() )
-	{
-		foreach( &quad_index : hierarchy.quad_indices.range().subrange(
-			size_type( leaf_node_contents.first_quad_index ),
-			size_type( leaf_node_contents.first_quad_index ) + size_type( leaf_node_contents.num_quad_indices ) ) )
-		{
-			func( quad_index.GetClusterIndex(), quad_index.GetQuadIndex() );
-		}
-	}
-	else{ halt; }
-}
-
-// Input function should have two parameters of "size_type" for cluster index and quad index.
-template</type Func/>
-fn VisitQuadsHierarchyForLineSegment(
-	QuadsHierarchy& hierarchy,
-	Vec3f& start_point,
-	Vec3f& line_vector,
-	Func& func )
-{
-	var Vec3f end_point= start_point + line_vector;
-
-	// Expand box slightly to avoid numerical precision errors.
-	var f32 c_box_expand_eps= 1.0f;
-
-	var BBox3f line_bbox
-	{
-		.min(
-			ust::min( start_point.x, end_point.x ) - c_box_expand_eps,
-			ust::min( start_point.y, end_point.y ) - c_box_expand_eps,
-			ust::min( start_point.z, end_point.z ) - c_box_expand_eps ),
-		.max(
-			ust::max( start_point.x, end_point.x ) + c_box_expand_eps,
-			ust::max( start_point.y, end_point.y ) + c_box_expand_eps,
-			ust::max( start_point.z, end_point.z ) + c_box_expand_eps ),
-	};
-
-	// TODO - consider replacing recursive routine with a stack.
-
-	VisitQuadsHierarchyForLineSegment_r( hierarchy, 0u, line_bbox, start_point, line_vector, func );
-}
-
-template</type Func/>
-fn VisitQuadsHierarchyForLineSegment_r(
-	QuadsHierarchy& hierarchy,
-	u32 node_index,
-	BBox3f& line_bbox,
-	Vec3f& start_point,
-	Vec3f& line_vector,
-	Func& func )
-{
-var QuadsHierarchy::Node& node= hierarchy.nodes[ size_type( node_index ) ];
-
-	// First and cheap box with box test.
-	if( !line_bbox.InstersectsOrTouches( node.bbox ) )
-	{
-		return;
-	}
-
-	// More expensive ray with box test, which allows rejecting more nodes.
-	if_var( &intersection_result : FindRayBBoxIntersection( start_point, line_vector, node.bbox ) )
-	{
-		if( intersection_result.near_point_distance > 1.0f | intersection_result.far_point_distance < 0.0f )
-		{
-			return;
-		}
-	}
-	else
-	{
-		return;
-	}
-
-	if_var( &branch_node_contents : node.contents.get</QuadsHierarchy::BranchNodeContents/>() )
-	{
-		foreach( child_node_index : branch_node_contents.children_nodes )
-		{
-			VisitQuadsHierarchyForLineSegment_r( hierarchy, child_node_index, line_bbox, start_point, line_vector, func );
-		}
-	}
-	else if_var( &leaf_node_contents : node.contents.get</QuadsHierarchy::LeafNodeContents/>() )
-	{
-		foreach( &quad_index : hierarchy.quad_indices.range().subrange(
-			size_type( leaf_node_contents.first_quad_index ),
-			size_type( leaf_node_contents.first_quad_index ) + size_type( leaf_node_contents.num_quad_indices ) ) )
-		{
-			func( quad_index.GetClusterIndex(), quad_index.GetQuadIndex() );
-		}
-	}
-	else{ halt; }
-}
 
 } // namespace PM
