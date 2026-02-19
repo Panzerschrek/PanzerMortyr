@@ -172,7 +172,6 @@ PanzerMortyr rendering:
 * Implement dynamic lights (gun flashes, explosions).
 * Draw weather effects (rain, snow).
 * Draw breaking window animation (with falling splinters).
-* Consider using more advanced approach of model culling against map clusters compared to now used test with a bbox containing all visible clusters.
 * Group model objects by model file prior to draw them - in order to minimize amount of texture and vertex buffer switches.
 * Experiment with an algorithm for dynamic visible clusters search similar to one used in SquareWheel.
 * Add support for MSAA.
@@ -182,7 +181,6 @@ PanzerMortyr rendering:
 * Implement all flame effects.
 * Draw light shafts - with colored gradient, some underlying texture and additive blending.
 * Somehow distort/colorize the whole image while swimming in water.
-* Optimize calculating sky light for models - avoid enumerating all root clusters.
 * Consider optimizing calculating light from point light sources for models - avoid enumerating all lights.
 * Consider drawing blob shadows under models (as some sort of decal?).
 * Allow changing brightness, maybe by tuning lights power.
