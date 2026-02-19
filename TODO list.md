@@ -2,7 +2,6 @@ This list contains things to be done.
 
 Map format investigation:
 
-* Investigate the exact way per-quad texture scale is specified.
 * Investigate how surfaces with emissive flag work.
 * Investigate meaning of remaining fields of "ZvoxFogVolume" struct.
 * Investigate meaning of remaining fields of "ZvoxTriggerVolume" struct.
