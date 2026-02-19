@@ -165,7 +165,6 @@ PanzerMortyr rendering:
 * Draw polygons with animated textures (frame-based animation) properly.
 * Draw first-person weapon with some sort of depth hack and depth-based effects (like fog) working properly.
 * Use smooth animation for animated models (with two or more frames interpolation).
-* Apply lighting for dynamic map polygons (doors, elevators, buttons).
 * Draw decals (bullet holes, blood).
 * Draw injured enemies covered with blood.
 * Implement dynamic lights (gun flashes, explosions).
