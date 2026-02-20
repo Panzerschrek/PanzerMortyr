@@ -153,11 +153,8 @@ fn CollisionTrace(
 			var size_type c= packed_quad_index.GetClusterIndex();
 			var size_type q= packed_quad_index.GetQuadIndex();
 
-			var ZvoxCluster& cluster= clusters[c];
-			var ZmapQuad& quad= quads[q];
-
-			auto& center= cluster.c.center;
-			auto& in_vertices= quad.vertices;
+			auto& center= clusters[c].c.center;
+			auto& in_vertices= quads[q].vertices;
 
 			var [ Vec3f, 4 ] vertices
 			[
@@ -167,60 +164,44 @@ fn CollisionTrace(
 				Vec3f( f32( center[0] + i32( in_vertices[3][0] ) ), f32( center[1] + i32( in_vertices[3][1] ) ), f32( center[2] + i32( in_vertices[3][2] ) ) ),
 			];
 
-			CreateBBoxAndQuadMinkowskiSum( bbox, vertices, collision_polyhedron );
-
-			if( collision_polyhedron.num_planes >= 4u )
-			{
-				auto polyhedron_planes=
-					ust::array_view_imut</Planef/>( collision_polyhedron.planes ).subrange_end( size_type( collision_polyhedron.num_planes ) );
-
-				if_var( intersection : FindRayPolyhedronIntersection( start_position, movement_vector, polyhedron_planes ) )
-				{
-					if( intersection.near_point_distance >= 0.0f )
-					{
-						// Is outside and moving towards the quad volume.
-						// Clip movement by distance to the near intersection point.
-						if( intersection.near_point_distance < trace_result.clipped_move_distance )
-						{
-							trace_result.clipped_move_distance= intersection.near_point_distance;
-							trace_result.collision_point_normal= polyhedron_planes[ size_type( intersection.near_plane_index ) ].normal;
-							trace_result.collision_quad_index= u32(q);
-						}
-					}
-					else if( intersection.far_point_distance <= 0.0f )
-					{
-						// Is outside and moving from the quad volume.
-						// Nothing to do here.
-					}
-					else
-					{
-						// Is inside.
-
-						// Apply extra push towards quad plane.
-						// This is necessary if due to numerical errors or some other reasons we still somehow get inside a collider.
-						for( auto mut plane_index= 0s; plane_index < polyhedron_planes.size(); ++plane_index )
-						{
-							if( ( collision_polyhedron.primary_planes_mask & ( 1u << plane_index ) ) != 0u )
-							{
-								var Planef& push_plane= polyhedron_planes[ plane_index ];
-
-								var f32 distance= push_plane.GetDistanceForPoint( start_position + movement_vector );
-								if( distance < 0.0f )
-								{
-									var Vec3f this_quad_push= push_plane.normal * ( -distance / push_plane.normal.SquareLength() );
-									if( trace_result.extra_push.empty() ||
-										// Select smallest push of such kind.
-										this_quad_push.SquareLength() < trace_result.extra_push.try_deref().SquareLength() )
-									{
-										trace_result.extra_push= this_quad_push;
-									}
-								}
-							}
-						}
-					}
-				}
-			}
+			PerformCollisionWithQuad( bbox, start_position, movement_vector, u32(q), vertices, collision_polyhedron, trace_result );
 		} );
+
+	// Just test all dynamic cluster colliders one by one.
+	// There are not so many of them
+	foreach( & dynamic_cluster_collider : dynamic_cluster_colliders )
+	{
+		// Perform simple and cheap box test first.
+		// In the most cases we should have no intersection.
+		if( !movement_bbox.InstersectsOrTouches( dynamic_cluster_collider.bbox ) )
+		{
+			continue;
+		}
+
+		// Perform collision with all cluster quads.
+
+		var ZvoxCluster& cluster= clusters[ size_type( dynamic_cluster_collider.cluster_index ) ];
+
+		var Vec3f center= dynamic_cluster_collider.bbox.GetCenter();
+
+		for( var u32 mut q= cluster.c.first_quad_index, q_end= cluster.c.first_quad_index + u32( cluster.num_quads );
+			q < q_end;
+			++q )
+		{
+			var ZmapQuad& quad= quads[ size_type(q) ];
+			auto& in_vertices= quad.vertices;
+
+			var [ Vec3f, 4 ] vertices
+			[
+				center + Vec3f( f32( in_vertices[0][0] ), f32( in_vertices[0][1] ), f32(  in_vertices[0][2] ) ),
+				center + Vec3f( f32( in_vertices[1][0] ), f32( in_vertices[1][1] ), f32(  in_vertices[1][2] ) ),
+				center + Vec3f( f32( in_vertices[2][0] ), f32( in_vertices[2][1] ), f32(  in_vertices[2][2] ) ),
+				center + Vec3f( f32( in_vertices[3][0] ), f32( in_vertices[3][1] ), f32(  in_vertices[3][2] ) ),
+			];
+
+			PerformCollisionWithQuad( bbox, start_position, movement_vector, u32(q), vertices, collision_polyhedron, trace_result );
+		}
+	}
 
 	// Just test all extra colliders one by one.
 	// It isn't generally fast, since this introduces quadratic time complexity,
@@ -288,6 +269,72 @@ fn CollisionTrace(
 	}
 
 	return trace_result;
+}
+
+fn PerformCollisionWithQuad(
+	BBox3f& bbox,
+	Vec3f& start_position,
+	Vec3f& movement_vector,
+	u32 quad_index,
+	[ Vec3f, 4 ]& vertices,
+	CompactPolyhedron &mut collision_polyhedron, // Temporary variable. Reuse it, since creating it each time is costly.
+	TraceCollisionResult &mut trace_result )
+{
+	CreateBBoxAndQuadMinkowskiSum( bbox, vertices, collision_polyhedron );
+
+	if( collision_polyhedron.num_planes < 4u )
+	{
+		return;
+	}
+
+	auto polyhedron_planes=
+		ust::array_view_imut</Planef/>( collision_polyhedron.planes ).subrange_end( size_type( collision_polyhedron.num_planes ) );
+
+	if_var( intersection : FindRayPolyhedronIntersection( start_position, movement_vector, polyhedron_planes ) )
+	{
+		if( intersection.near_point_distance >= 0.0f )
+		{
+			// Is outside and moving towards the quad volume.
+			// Clip movement by distance to the near intersection point.
+			if( intersection.near_point_distance < trace_result.clipped_move_distance )
+			{
+				trace_result.clipped_move_distance= intersection.near_point_distance;
+				trace_result.collision_point_normal= polyhedron_planes[ size_type( intersection.near_plane_index ) ].normal;
+				trace_result.collision_quad_index= quad_index;
+			}
+		}
+		else if( intersection.far_point_distance <= 0.0f )
+		{
+			// Is outside and moving from the quad volume.
+			// Nothing to do here.
+		}
+		else
+		{
+			// Is inside.
+
+			// Apply extra push towards quad plane.
+			// This is necessary if due to numerical errors or some other reasons we still somehow get inside a collider.
+			for( auto mut plane_index= 0s; plane_index < polyhedron_planes.size(); ++plane_index )
+			{
+				if( ( collision_polyhedron.primary_planes_mask & ( 1u << plane_index ) ) != 0u )
+				{
+					var Planef& push_plane= polyhedron_planes[ plane_index ];
+
+					var f32 distance= push_plane.GetDistanceForPoint( start_position + movement_vector );
+					if( distance < 0.0f )
+					{
+						var Vec3f this_quad_push= push_plane.normal * ( -distance / push_plane.normal.SquareLength() );
+						if( trace_result.extra_push.empty() ||
+							// Select smallest push of such kind.
+							this_quad_push.SquareLength() < trace_result.extra_push.try_deref().SquareLength() )
+						{
+							trace_result.extra_push= this_quad_push;
+						}
+					}
+				}
+			}
+		}
+	}
 }
 
 fn CollisionTraceAndClip(
