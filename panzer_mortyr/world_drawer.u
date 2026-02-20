@@ -389,11 +389,32 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 	// Draw dynamic clusters with individual matrices.
 	foreach( &dynamic_cluster_object : drawing_info.dynamic_cluster_objects )
 	{
+		var size_type cluster_index( dynamic_cluster_object.cluster_index );
+
+		var ZvoxCluster& cluster= zvox_data.clusters[ cluster_index ];
+
+		var BBox3f mut bbox= CreateClusterBBox( cluster );
+		bbox.min+= dynamic_cluster_object.translation;
+		bbox.max+= dynamic_cluster_object.translation;
+
+		// First perform fast check if this dynamic cluster is within the bbox containing all visible clusters.
+		if( !visible_clusters_bbox.InstersectsOrTouches( bbox ) )
+		{
+			continue;
+		}
+
+		// Then check if this dynamic cluster is within at least one visible room cluster.
+		if( !IsBBoxWithinVisibleClusters(
+				zvox_data.clusters, room_clusters_hierarchy, visible_room_cluster_flags, bbox ) )
+		{
+			continue;
+		}
+
 		map_shader_.SetUniform(
 			"vu_matrix",
 			Mat4f::MakeTranslation( dynamic_cluster_object.translation ) * view_matrix );
 
-		auto& cluster_draw_data= map_data.clusters_draw_data[ size_type( dynamic_cluster_object.cluster_index ) ];
+		auto& cluster_draw_data= map_data.clusters_draw_data[ cluster_index ];
 
 		unsafe( glDrawElementsBaseVertex(
 			GLenum( GL_TRIANGLES ),
@@ -508,23 +529,8 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 				}
 
 				// Then check if this model is within at least one visible cluster.
-				var bool mut is_within_visible_clusters= false;
-
-				var BBox3f& bbox_ref= bbox;
-
-				VisitBoundingBoxesHierarchyForBBox(
-					room_clusters_hierarchy,
-					bbox_ref,
-					lambda[&]( ClusterIndexInHierarchy c )
-					{
-						if( visible_room_cluster_flags[ size_type(c) ] &&
-							CreateClusterBBox( zvox_data.clusters[ size_type(c) ] ).InstersectsOrTouches( bbox_ref ) )
-						{
-							is_within_visible_clusters= true;
-						}
-					} );
-
-				if( !is_within_visible_clusters )
+				if( !IsBBoxWithinVisibleClusters(
+						zvox_data.clusters, room_clusters_hierarchy, visible_room_cluster_flags, bbox ) )
 				{
 					continue;
 				}
@@ -1230,6 +1236,30 @@ fn LoadMapTextures(
 	unsafe( glTexParameteri( GLenum( GL_TEXTURE_2D_ARRAY ), GLenum( GL_TEXTURE_MAG_FILTER ), GLint( GL_LINEAR ) ) );
 
 	return texture;
+}
+
+fn IsBBoxWithinVisibleClusters(
+	ust::array_view_imut</ZvoxCluster/> clusters,
+	RoomClustersHierarchy& room_clusters_hierarchy,
+	ust::array_view_imut</bool/> visible_room_cluster_flags,
+	BBox3f& bbox ) : bool
+{
+	var bool mut is_within_visible_clusters= false;
+
+	VisitBoundingBoxesHierarchyForBBox(
+		room_clusters_hierarchy,
+		bbox,
+		lambda[&]( ClusterIndexInHierarchy c )
+		{
+			var size_type cluster_index(c);
+			if( visible_room_cluster_flags[ cluster_index ] &&
+				CreateClusterBBox( clusters[ cluster_index ] ).InstersectsOrTouches( bbox ) )
+			{
+				is_within_visible_clusters= true;
+			}
+		} );
+
+	return is_within_visible_clusters;
 }
 
 type CameraClipPlanes= [ Planef, 5 ];
