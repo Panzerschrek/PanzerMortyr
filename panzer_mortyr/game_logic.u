@@ -191,6 +191,7 @@ fn CreateNewMapGameState( GameMapData& map_data ) : GameState
 		game_state.dynamic_clusters.push_back(
 			DynamicClusterState
 			{
+				.movement_stage= DynamicClusterState::MovementStage::StayAtStart,
 				.distance_from_start= 0.0f,
 			} );
 
@@ -1143,7 +1144,38 @@ fn ProcessDynamicClustersLogicStep( GameMapData& map_data, GameState &mut game_s
 
 		var ZvoxCluster& cluster= clusters[ size_type( cluster_collider.cluster_index ) ];
 
-		cluster_state.distance_from_start+= movement_speed;
+		switch( cluster_state.movement_stage )
+		{
+			DynamicClusterState::MovementStage::StayAtStart ->
+			{
+				cluster_state.movement_stage= DynamicClusterState::MovementStage::MoveForward;
+			},
+			DynamicClusterState::MovementStage::MoveForward ->
+			{
+				cluster_state.distance_from_start+= movement_speed;
+
+				var f32 travel_distance( cluster.light_sources_begin );
+
+				if( cluster_state.distance_from_start >= travel_distance )
+				{
+					cluster_state.distance_from_start= travel_distance;
+					cluster_state.movement_stage= DynamicClusterState::MovementStage::StayAtEnd;
+				}
+			},
+			DynamicClusterState::MovementStage::StayAtEnd ->
+			{
+				cluster_state.movement_stage= DynamicClusterState::MovementStage::MoveBackward;
+			},
+			DynamicClusterState::MovementStage::MoveBackward ->
+			{
+				cluster_state.distance_from_start-= movement_speed;
+				if( cluster_state.distance_from_start <= 0.0f )
+				{
+					cluster_state.distance_from_start= 0.0f;
+					cluster_state.movement_stage= DynamicClusterState::MovementStage::StayAtStart;
+				}
+			},
+		}
 
 		cluster_collider.bbox=
 			CreateDynamicClusterBBox(
