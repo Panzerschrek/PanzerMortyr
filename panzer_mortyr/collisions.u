@@ -13,7 +13,7 @@ fn LineTrace(
 	auto& clusters= map_data.zvox_data.deref().clusters;
 	auto& quads= map_data.zmap_data.deref().quads;
 
-	var f32 mut closest_distance= 1.0e38f;
+	var f32 mut closest_distance= ust::plus_inf</f32/>();
 
 	var size_type mut hit_quad_index= ~0s, mut hit_quad_cluster_index= ~0s;
 
@@ -26,11 +26,8 @@ fn LineTrace(
 			var size_type c= packed_quad_index.GetClusterIndex();
 			var size_type q= packed_quad_index.GetQuadIndex();
 
-			var ZvoxCluster& cluster= clusters[c];
-			var ZmapQuad& quad= quads[q];
-
-			auto& center= cluster.c.center;
-			auto& in_vertices= quad.vertices;
+			auto& center= clusters[c].c.center;
+			auto& in_vertices= quads[q].vertices;
 
 			var [ Vec3f, 4 ] vertices
 			[
@@ -40,47 +37,13 @@ fn LineTrace(
 				Vec3f( f32( center[0] + i32( in_vertices[3][0] ) ), f32( center[1] + i32( in_vertices[3][1] ) ), f32( center[2] + i32( in_vertices[3][2] ) ) ),
 			];
 
-			// Process each triangle of a quad separately - in case if due to precision errors quads aren't planar.
-			// TODO - simplify this code for the majority of the cases with planar quads.
+			var f32 quad_closest_distance= CalculateIntersectionWithQuad( start_point, line_vector, vertices );
 
-			for( auto mut quad_triangle_index= 0s; quad_triangle_index < 2s; ++quad_triangle_index )
+			if( quad_closest_distance < closest_distance )
 			{
-				var Vec3f& v0= vertices[0];
-				var Vec3f& v1= vertices[quad_triangle_index + 1s];
-				var Vec3f& v2= vertices[quad_triangle_index + 2s];
-
-				// Don't process degenerate triangles, they are sometimes possible.
-				if( v0 == v1 || v0 == v2 || v1 == v2 )
-				{
-					continue;
-				}
-
-				var Planef plane= Planef::CreateFromNormalAndPoint( ( v1 - v0 ).Cross( v2 - v0 ), v0 );
-
-				var f32 direction_vector_plane_normal_dot= line_vector.Dot( plane.normal );
-				if( direction_vector_plane_normal_dot != 0.0f )
-				{
-					var f32 ray_start_distance_to_plane= plane.GetDistanceForPoint( start_point );
-
-					// This distance is negative for intersection points behind current ray.
-					var f32 signed_distance_to_intersection_point= -ray_start_distance_to_plane / direction_vector_plane_normal_dot;
-
-					if( signed_distance_to_intersection_point > 0.0f && // Process intersections only at the front of the ray.
-						signed_distance_to_intersection_point < closest_distance ) // Find the smallest positive distance.
-					{
-						var Vec3f intersection_point= start_point + line_vector * signed_distance_to_intersection_point;
-
-						// Check if ray-plane intersection lies within the triangle.
-						if( ( v1 - v0 ).Cross( intersection_point - v0 ).Dot( plane.normal ) >= 0.0f &&
-							( v2 - v1 ).Cross( intersection_point - v1 ).Dot( plane.normal ) >= 0.0f &&
-							( v0 - v2 ).Cross( intersection_point - v2 ).Dot( plane.normal ) >= 0.0f )
-						{
-							closest_distance= signed_distance_to_intersection_point;
-							hit_quad_index= q;
-							hit_quad_cluster_index= c;
-						}
-					}
-				}
+				closest_distance= quad_closest_distance;
+				hit_quad_index= q;
+				hit_quad_cluster_index= c;
 			}
 		} );
 
@@ -94,7 +57,36 @@ fn LineTrace(
 		{
 			if( !( bbox_intersection.near_point_distance > 1.0f | bbox_intersection.far_point_distance < 0.0f ) )
 			{
-				// TODO
+				// If has intersection with bbox of this dynamic cluster - check each quad.
+
+				var ZvoxCluster& cluster= clusters[ size_type( dynamic_cluster_collider.cluster_index ) ];
+
+				var Vec3f center= dynamic_cluster_collider.bbox.GetCenter();
+
+				for( var u32 mut q= cluster.c.first_quad_index, q_end= cluster.c.first_quad_index + u32( cluster.num_quads );
+					q < q_end;
+					++q )
+				{
+					var ZmapQuad& quad= quads[ size_type(q) ];
+					auto& in_vertices= quad.vertices;
+
+					var [ Vec3f, 4 ] vertices
+					[
+						center + Vec3f( f32( in_vertices[0][0] ), f32( in_vertices[0][1] ), f32(  in_vertices[0][2] ) ),
+						center + Vec3f( f32( in_vertices[1][0] ), f32( in_vertices[1][1] ), f32(  in_vertices[1][2] ) ),
+						center + Vec3f( f32( in_vertices[2][0] ), f32( in_vertices[2][1] ), f32(  in_vertices[2][2] ) ),
+						center + Vec3f( f32( in_vertices[3][0] ), f32( in_vertices[3][1] ), f32(  in_vertices[3][2] ) ),
+					];
+
+					var f32 quad_closest_distance= CalculateIntersectionWithQuad( start_point, line_vector, vertices );
+
+					if( quad_closest_distance < closest_distance )
+					{
+						closest_distance= quad_closest_distance;
+						hit_quad_index= size_type(q);
+						hit_quad_cluster_index= size_type( dynamic_cluster_collider.cluster_index );
+					}
+				}
 			}
 		}
 	}
@@ -110,6 +102,57 @@ fn LineTrace(
 	}
 
 	return ust::null_optional;
+}
+
+fn CalculateIntersectionWithQuad(
+	Vec3f& start_point,
+	Vec3f& line_vector,
+	[ Vec3f, 4 ]& vertices ) : f32
+{
+	var f32 mut closest_distance= ust::plus_inf</f32/>();
+
+	// Process each triangle of a quad separately - in case if due to precision errors quads aren't planar.
+	// TODO - simplify this code for the majority of the cases with planar quads.
+
+	for( auto mut quad_triangle_index= 0s; quad_triangle_index < 2s; ++quad_triangle_index )
+	{
+		var Vec3f& v0= vertices[0];
+		var Vec3f& v1= vertices[quad_triangle_index + 1s];
+		var Vec3f& v2= vertices[quad_triangle_index + 2s];
+
+		// Don't process degenerate triangles, they are sometimes possible.
+		if( v0 == v1 || v0 == v2 || v1 == v2 )
+		{
+			continue;
+		}
+
+		var Planef plane= Planef::CreateFromNormalAndPoint( ( v1 - v0 ).Cross( v2 - v0 ), v0 );
+
+		var f32 direction_vector_plane_normal_dot= line_vector.Dot( plane.normal );
+		if( direction_vector_plane_normal_dot != 0.0f )
+		{
+			var f32 ray_start_distance_to_plane= plane.GetDistanceForPoint( start_point );
+
+			// This distance is negative for intersection points behind current ray.
+			var f32 signed_distance_to_intersection_point= -ray_start_distance_to_plane / direction_vector_plane_normal_dot;
+
+			if( signed_distance_to_intersection_point > 0.0f && // Process intersections only at the front of the ray.
+				signed_distance_to_intersection_point < closest_distance ) // Find the smallest positive distance.
+			{
+				var Vec3f intersection_point= start_point + line_vector * signed_distance_to_intersection_point;
+
+				// Check if ray-plane intersection lies within the triangle.
+				if( ( v1 - v0 ).Cross( intersection_point - v0 ).Dot( plane.normal ) >= 0.0f &&
+					( v2 - v1 ).Cross( intersection_point - v1 ).Dot( plane.normal ) >= 0.0f &&
+					( v0 - v2 ).Cross( intersection_point - v2 ).Dot( plane.normal ) >= 0.0f )
+				{
+					closest_distance= signed_distance_to_intersection_point;
+				}
+			}
+		}
+	}
+
+	return closest_distance;
 }
 
 fn CollisionTrace(
