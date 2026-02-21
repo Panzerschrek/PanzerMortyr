@@ -330,6 +330,89 @@ fn CollisionTrace(
 	return trace_result;
 }
 
+fn CollisionTraceSingleDynamicCluster(
+	GameMapData& map_data,
+	DynamicClusterCollider& dynamic_cluster_collider,
+	// Bounding box of the collider.
+	BBox3f& bbox,
+	// Where to start movement.
+	Vec3f& start_position,
+	// Direction + distance of the movement.
+	Vec3f& movement_vector ) : TraceCollisionResult
+{
+	var TraceCollisionResult mut trace_result
+	{
+		.clipped_move_distance= ust::plus_inf</f32/>(),
+		.collision_point_normal= Vec3f::MakeZero(),
+		.collision_quad_index= ~0u
+	};
+
+	if( movement_vector.SquareLength() == 0.0f )
+	{
+		return trace_result;
+	}
+
+	var CompactPolyhedron mut collision_polyhedron
+	{
+		.num_planes= 0u,
+		.primary_planes_mask= 0u,
+		.planes[ { .normal= Vec3f::MakeZero(), .distance= 0.0f } ... ],
+	};
+
+	var Vec3f end_position= start_position + movement_vector;
+
+	// Box containing minimum and maximum coordinates of movement line.
+	var BBox3f movement_bbox
+	{
+		.min=
+			bbox.min +
+			Vec3f(
+				ust::min( start_position.x, end_position.x ),
+				ust::min( start_position.y, end_position.y ),
+				ust::min( start_position.z, end_position.z ) ),
+		.max=
+			bbox.max +
+			Vec3f(
+				ust::max( start_position.x, end_position.x ),
+				ust::max( start_position.y, end_position.y ),
+				ust::max( start_position.z, end_position.z ) ),
+	};
+
+	// Perform simple and cheap box test first.
+	// In the most cases we should have no intersection.
+	if( movement_bbox.InstersectsOrTouches( dynamic_cluster_collider.bbox ) )
+	{
+		// Perform collision with all cluster quads.
+
+		auto& clusters= map_data.zvox_data.deref().clusters;
+		auto& quads= map_data.zmap_data.deref().quads;
+
+		var ZvoxCluster& cluster= clusters[ size_type( dynamic_cluster_collider.cluster_index ) ];
+
+		var Vec3f center= dynamic_cluster_collider.bbox.GetCenter();
+
+		for( var u32 mut q= cluster.c.first_quad_index, q_end= cluster.c.first_quad_index + u32( cluster.num_quads );
+			q < q_end;
+			++q )
+		{
+			var ZmapQuad& quad= quads[ size_type(q) ];
+			auto& in_vertices= quad.vertices;
+
+			var [ Vec3f, 4 ] vertices
+			[
+				center + Vec3f( f32( in_vertices[0][0] ), f32( in_vertices[0][1] ), f32(  in_vertices[0][2] ) ),
+				center + Vec3f( f32( in_vertices[1][0] ), f32( in_vertices[1][1] ), f32(  in_vertices[1][2] ) ),
+				center + Vec3f( f32( in_vertices[2][0] ), f32( in_vertices[2][1] ), f32(  in_vertices[2][2] ) ),
+				center + Vec3f( f32( in_vertices[3][0] ), f32( in_vertices[3][1] ), f32(  in_vertices[3][2] ) ),
+			];
+
+			PerformCollisionWithQuad( bbox, start_position, movement_vector, u32(q), vertices, collision_polyhedron, trace_result );
+		}
+	}
+
+	return trace_result;
+}
+
 fn PerformCollisionWithQuad(
 	BBox3f& bbox,
 	Vec3f& start_position,
