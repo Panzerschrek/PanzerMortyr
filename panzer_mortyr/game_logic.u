@@ -1143,6 +1143,7 @@ fn ProcessDynamicClustersLogicStep( GameMapData& map_data, GameState &mut game_s
 		var ZvoxCluster& cluster= clusters[ size_type( cluster_collider.cluster_index ) ];
 
 		var f32 movement_speed= GetDynamicClustertMovementSpeed( cluster );
+		var Vec3f movement_direction= GetDynamicClustertMovementDirection( cluster );
 
 		switch( cluster_state.movement_stage )
 		{
@@ -1152,6 +1153,12 @@ fn ProcessDynamicClustersLogicStep( GameMapData& map_data, GameState &mut game_s
 			},
 			DynamicClusterState::MovementStage::MoveForward ->
 			{
+				PushMoveDynamicCluster(
+					map_data,
+					cluster_collider,
+					movement_direction * movement_speed,
+					game_state.colliders );
+
 				cluster_state.distance_from_start+= movement_speed;
 
 				var f32 travel_distance( cluster.light_sources_begin );
@@ -1168,6 +1175,12 @@ fn ProcessDynamicClustersLogicStep( GameMapData& map_data, GameState &mut game_s
 			},
 			DynamicClusterState::MovementStage::MoveBackward ->
 			{
+				PushMoveDynamicCluster(
+					map_data,
+					cluster_collider,
+					movement_direction * (-movement_speed),
+					game_state.colliders );
+
 				cluster_state.distance_from_start-= movement_speed;
 				if( cluster_state.distance_from_start <= 0.0f )
 				{
@@ -1180,7 +1193,7 @@ fn ProcessDynamicClustersLogicStep( GameMapData& map_data, GameState &mut game_s
 		cluster_collider.bbox=
 			CreateDynamicClusterBBox(
 				cluster,
-				GetDynamicClustertMovementDirection( cluster ) * cluster_state.distance_from_start );
+				movement_direction * cluster_state.distance_from_start );
 	}
 }
 
@@ -1210,6 +1223,36 @@ fn GetDynamicClustertMovementDirection( ZvoxCluster& cluster ) : Vec3f
 		     24u, 28u -> { return Vec3f(  0.0f,  0.0f,  1.0f ); },
 		16u, 26u, 30u -> { return Vec3f(  0.0f,  0.0f, -1.0f ); },
 		default -> { return Vec3f( 0.0f, 0.0f, 0.0f ); },
+	}
+}
+
+fn PushMoveDynamicCluster(
+	GameMapData& map_data,
+	DynamicClusterCollider &mut dynamic_cluster_collider,
+	Vec3f& movement_vector,
+	ust::array_view_mut</Collider/> colliders )
+{
+	// Move all entity colliders in opposite direction to find possible collisions with this dynamic cluster.
+
+	var Vec3f oppositve_movement_vector= -movement_vector;
+
+	for( auto mut i= 0s; i < colliders.size(); ++i )
+	{
+		var Collider& collider= colliders[i];
+
+		var TraceCollisionResult trace_collision_result=
+			CollisionTraceSingleDynamicCluster(
+				map_data,
+				dynamic_cluster_collider,
+				collider.bbox,
+				Vec3f::MakeZero(),
+				oppositve_movement_vector );
+
+		if( trace_collision_result.clipped_move_distance <= 1.0f )
+		{
+			// TODO
+			ust::ignore_unused( trace_collision_result );
+		}
 	}
 }
 
