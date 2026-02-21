@@ -1153,29 +1153,30 @@ fn ProcessDynamicClustersLogicStep( GameMapData& map_data, GameState &mut game_s
 			},
 			DynamicClusterState::MovementStage::MoveForward ->
 			{
-				var f32 relative_movement_distance=
-					PushMoveDynamicCluster(
+				if( PushMoveDynamicCluster(
 						map_data,
 						cluster_collider,
 						movement_direction * movement_speed,
 						game_state.colliders,
 						game_state.entities,
-						game_state.player );
-
-				cluster_state.distance_from_start+= relative_movement_distance * movement_speed;
-
-				var f32 travel_distance( cluster.light_sources_begin );
-
-				if( cluster_state.distance_from_start >= travel_distance )
+						game_state.player ) )
 				{
-					cluster_state.distance_from_start= travel_distance;
-					cluster_state.movement_stage= DynamicClusterState::MovementStage::StayAtEnd;
+					cluster_state.distance_from_start+= movement_speed;
+
+					var f32 travel_distance( cluster.light_sources_begin );
+
+					if( cluster_state.distance_from_start >= travel_distance )
+					{
+						cluster_state.distance_from_start= travel_distance;
+						cluster_state.movement_stage= DynamicClusterState::MovementStage::StayAtEnd;
+					}
 				}
-				else if( relative_movement_distance < 1.0f )
+				else
 				{
 					// Reverse movement if is blocked.
 					cluster_state.movement_stage= DynamicClusterState::MovementStage::MoveBackward;
 				}
+
 			},
 			DynamicClusterState::MovementStage::StayAtEnd ->
 			{
@@ -1183,22 +1184,23 @@ fn ProcessDynamicClustersLogicStep( GameMapData& map_data, GameState &mut game_s
 			},
 			DynamicClusterState::MovementStage::MoveBackward ->
 			{
-				var f32 relative_movement_distance=
-					PushMoveDynamicCluster(
+				if( PushMoveDynamicCluster(
 						map_data,
 						cluster_collider,
 						movement_direction * (-movement_speed),
 						game_state.colliders,
 						game_state.entities,
-						game_state.player );
-
-				cluster_state.distance_from_start-= movement_speed * relative_movement_distance;
-				if( cluster_state.distance_from_start <= 0.0f )
+						game_state.player ) )
 				{
-					cluster_state.distance_from_start= 0.0f;
-					cluster_state.movement_stage= DynamicClusterState::MovementStage::StayAtStart;
+					cluster_state.distance_from_start-= movement_speed;
+
+					if( cluster_state.distance_from_start <= 0.0f )
+					{
+						cluster_state.distance_from_start= 0.0f;
+						cluster_state.movement_stage= DynamicClusterState::MovementStage::StayAtStart;
+					}
 				}
-				else if( relative_movement_distance < 1.0f )
+				else
 				{
 					// Reverse movement if is blocked.
 					cluster_state.movement_stage= DynamicClusterState::MovementStage::MoveForward;
@@ -1242,14 +1244,14 @@ fn GetDynamicClustertMovementDirection( ZvoxCluster& cluster ) : Vec3f
 	}
 }
 
-// Returns relative movement distance in movement units. It's 1 if can travel the whole distance, 0 if is fully blocked.
+// Returns true if can move and false if movement is blocked.
 fn PushMoveDynamicCluster(
 	GameMapData& map_data,
 	DynamicClusterCollider& dynamic_cluster_collider,
 	Vec3f& movement_vector,
 	ust::array_view_mut</Collider/> colliders,
 	ust::array_view_mut</ ust::optional</EntityState/> /> entities,
-	PlayerState &mut player_state ) : f32
+	PlayerState &mut player_state ) : bool
 {
 	// Move all entity colliders in opposite direction to find possible collisions with this dynamic cluster.
 
@@ -1260,8 +1262,6 @@ fn PushMoveDynamicCluster(
 	// Collider index + relative distance to the collider.
 	var [ tup[ size_type, f32 ], c_max_pushed_colliders ] mut pushed_colliders= zero_init;
 	var size_type mut num_pushed_colliders= 0s;
-
-	var f32 mut min_possible_relative_movement_distance= 1.0f; // In movement vector units.
 
 	// Check all colliders of entities and players if they are in the way.
 	// It's not fully correct, since entities without permanent colliders (like pick-ups) are ignored, but it's mostly fine.
@@ -1277,52 +1277,41 @@ fn PushMoveDynamicCluster(
 
 		if( trace_collision_result.clipped_move_distance <= 1.0f )
 		{
-			if( num_pushed_colliders < c_max_pushed_colliders )
+			if( num_pushed_colliders >= c_max_pushed_colliders )
 			{
-				var f32 push_relative_distance= 1.0f - trace_collision_result.clipped_move_distance;
-				var Vec3f push_vector= oppositve_movement_vector * (-push_relative_distance);
-
-				// Check how far this collider can be pushed.
-				// Temporary move this collider itself near to infinity to avoid self-collisions.
-				var BBox3f collider_bbox= colliders[i].bbox;
-				colliders[i].bbox= BBox3f{ .min( 10000.0f, 10000.0f, 10000.0f ), .max( 10001.0f, 10001.0f, 10001.0f ) };
-
-				var TraceCollisionResult push_trace_collision_result=
-					CollisionTrace(
-						map_data,
-						ust::array_view_imut</DynamicClusterCollider/>(),
-						colliders,
-						collider_bbox,
-						Vec3f::MakeZero(),
-						push_vector );
-
-				if( push_trace_collision_result.clipped_move_distance <= 1.0f )
-				{
-					ust::min_assign(
-						min_possible_relative_movement_distance,
-						trace_collision_result.clipped_move_distance + push_trace_collision_result.clipped_move_distance * push_relative_distance );
-				}
-
-				pushed_colliders[num_pushed_colliders][0]= i;
-				pushed_colliders[num_pushed_colliders][1]= trace_collision_result.clipped_move_distance;
-				++num_pushed_colliders;
-
-				colliders[i].bbox= collider_bbox;
+				// Has too many colliders in the way. Assume to be blocked.
+				return false;
 			}
-			else
+
+			var f32 push_relative_distance= 1.0f - trace_collision_result.clipped_move_distance;
+			var Vec3f push_vector= oppositve_movement_vector * (-push_relative_distance);
+
+			// Check if this collider can be pushed the whole movement distance.
+			// Temporary move this collider itself near to infinity to avoid self-collisions.
+			var BBox3f collider_bbox= colliders[i].bbox;
+			colliders[i].bbox= BBox3f{ .min( 10000.0f, 10000.0f, 10000.0f ), .max( 10001.0f, 10001.0f, 10001.0f ) };
+
+			var TraceCollisionResult push_trace_collision_result=
+				CollisionTrace(
+					map_data,
+					ust::array_view_imut</DynamicClusterCollider/>(), // TODO - provide them.
+					colliders,
+					collider_bbox,
+					Vec3f::MakeZero(),
+					push_vector );
+
+			colliders[i].bbox= collider_bbox;
+
+			if( push_trace_collision_result.clipped_move_distance <= 1.0f )
 			{
-				// Has too many colliders in the way.
-				// Limit movement to distance to this collider without pushing it.
-				ust::min_assign(
-					min_possible_relative_movement_distance,
-					trace_collision_result.clipped_move_distance );
+				// Blocked.
+				return false;
 			}
+
+			pushed_colliders[num_pushed_colliders]=
+				ust::make_tuple( i, trace_collision_result.clipped_move_distance );
+			++num_pushed_colliders;
 		}
-	}
-
-	if( num_pushed_colliders == 0s )
-	{
-		return min_possible_relative_movement_distance;
 	}
 
 	// Push colliders in the way.
@@ -1334,10 +1323,10 @@ fn PushMoveDynamicCluster(
 
 		var Collider &mut collider= colliders[ collider_index ];
 
-		if( min_possible_relative_movement_distance > relative_distance_to_collider )
+		if( relative_distance_to_collider < 1.0f )
 		{
 			var Vec3f push_vector=
-				movement_vector * ( min_possible_relative_movement_distance - relative_distance_to_collider );
+				movement_vector * ( 1.0f - relative_distance_to_collider );
 
 			// Modify player/entity position directly.
 			if( collider.entity_index == c_player_entity_index )
@@ -1358,7 +1347,7 @@ fn PushMoveDynamicCluster(
 		}
 	}
 
-	return min_possible_relative_movement_distance;
+	return true;
 }
 
 fn ProcessProjectilesLogicStep( GameMapData& map_data, GameState &mut game_state )
