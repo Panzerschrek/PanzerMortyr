@@ -104,6 +104,72 @@ fn LineTrace(
 	return ust::null_optional;
 }
 
+
+fn LineTraceSingleDynamicCluster(
+	GameMapData& map_data,
+	DynamicClusterCollider& dynamic_cluster_collider,
+	Vec3f& start_point,
+	Vec3f& line_vector ) : ust::optional</LineTraceResult/>
+{
+	auto& clusters= map_data.zvox_data.deref().clusters;
+	auto& quads= map_data.zmap_data.deref().quads;
+
+	var f32 mut closest_distance= ust::plus_inf</f32/>();
+
+	var size_type mut hit_quad_index= ~0s, mut hit_quad_cluster_index= ~0s;
+
+	// Perform simple and cheap box test first.
+	// In the most cases we should have no intersection.
+	if_var( &bbox_intersection : FindRayBBoxIntersection( start_point, line_vector, dynamic_cluster_collider.bbox ) )
+	{
+		if( !( bbox_intersection.near_point_distance > 1.0f | bbox_intersection.far_point_distance < 0.0f ) )
+		{
+			// If has intersection with bbox of this dynamic cluster - check each quad.
+
+			var ZvoxCluster& cluster= clusters[ size_type( dynamic_cluster_collider.cluster_index ) ];
+
+			var Vec3f center= dynamic_cluster_collider.bbox.GetCenter();
+
+			for( var u32 mut q= cluster.c.first_quad_index, q_end= cluster.c.first_quad_index + u32( cluster.num_quads );
+				q < q_end;
+				++q )
+			{
+				var ZmapQuad& quad= quads[ size_type(q) ];
+				auto& in_vertices= quad.vertices;
+
+				var [ Vec3f, 4 ] vertices
+				[
+					center + Vec3f( f32( in_vertices[0][0] ), f32( in_vertices[0][1] ), f32(  in_vertices[0][2] ) ),
+					center + Vec3f( f32( in_vertices[1][0] ), f32( in_vertices[1][1] ), f32(  in_vertices[1][2] ) ),
+					center + Vec3f( f32( in_vertices[2][0] ), f32( in_vertices[2][1] ), f32(  in_vertices[2][2] ) ),
+					center + Vec3f( f32( in_vertices[3][0] ), f32( in_vertices[3][1] ), f32(  in_vertices[3][2] ) ),
+				];
+
+				var f32 quad_closest_distance= CalculateIntersectionWithQuad( start_point, line_vector, vertices );
+
+				if( quad_closest_distance < closest_distance )
+				{
+					closest_distance= quad_closest_distance;
+					hit_quad_index= size_type(q);
+					hit_quad_cluster_index= size_type( dynamic_cluster_collider.cluster_index );
+				}
+			}
+		}
+	}
+
+	if( hit_quad_index < quads.size() && hit_quad_cluster_index < clusters.size() && closest_distance <= 1.0f )
+	{
+		return LineTraceResult
+		{
+			.quad_index( hit_quad_index ),
+			.cluster_index( hit_quad_cluster_index ),
+			.distance= closest_distance,
+		};
+	}
+
+	return ust::null_optional;
+}
+
 fn CalculateIntersectionWithQuad(
 	Vec3f& start_point,
 	Vec3f& line_vector,
