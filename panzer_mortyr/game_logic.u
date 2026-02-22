@@ -1147,6 +1147,9 @@ fn ProcessDynamicClustersLogicStep( GameMapData& map_data, GameState &mut game_s
 	player_touch_bbox.min-= Vec3f( 1.0f, 1.0f, 1.0f );
 	player_touch_bbox.max+= Vec3f( 1.0f, 1.0f, 1.0f );
 
+	// We have only a few dynamic cluster extra infos. Store their activation flags in activation mask.
+	var u32 mut activation_mask= 0u;
+
 	for( auto mut i= 0s; i < game_state.dynamic_clusters.size(); ++i )
 	{
 		var DynamicClusterState &mut cluster_state= game_state.dynamic_clusters[i];
@@ -1154,6 +1157,7 @@ fn ProcessDynamicClustersLogicStep( GameMapData& map_data, GameState &mut game_s
 		var ZvoxCluster& cluster= clusters[ size_type( game_state.dynamic_cluster_colliders[i].cluster_index ) ];
 
 		var bool mut is_button_operated= false;
+		var u32 mut current_cluster_targets_activation_mask= 0u;
 
 		if( cluster.dynamic_cluster_extra_info_index >= 0 &&
 			size_type( cluster.dynamic_cluster_extra_info_index ) < dynamic_cluster_extra_infos.size() )
@@ -1162,6 +1166,12 @@ fn ProcessDynamicClustersLogicStep( GameMapData& map_data, GameState &mut game_s
 				dynamic_cluster_extra_infos[ size_type( cluster.dynamic_cluster_extra_info_index ) ];
 
 			is_button_operated= dynamic_cluster_extra_info.unknown3 != 0;
+
+			if( dynamic_cluster_extra_info.other_info_index >= 0 &&
+				dynamic_cluster_extra_info.other_info_index < 32 )
+			 {
+				current_cluster_targets_activation_mask= 1u << u32( dynamic_cluster_extra_info.other_info_index );
+			 }
 		}
 
 		var f32 movement_speed= GetDynamicClusterMovementSpeed( cluster );
@@ -1180,6 +1190,7 @@ fn ProcessDynamicClustersLogicStep( GameMapData& map_data, GameState &mut game_s
 					if( cluster_state.num_steps_to_movement_stage_transition == 0u )
 					{
 						cluster_state.movement_stage= DynamicClusterState::MovementStage::MoveForward;
+						activation_mask|= current_cluster_targets_activation_mask;
 					}
 				}
 				else if( !is_button_operated &&
@@ -1225,6 +1236,7 @@ fn ProcessDynamicClustersLogicStep( GameMapData& map_data, GameState &mut game_s
 					if( cluster_state.num_steps_to_movement_stage_transition == 0u )
 					{
 						cluster_state.movement_stage= DynamicClusterState::MovementStage::MoveBackward;
+						activation_mask|= current_cluster_targets_activation_mask;
 					}
 				}
 				else if( !is_button_operated &&
@@ -1265,6 +1277,42 @@ fn ProcessDynamicClustersLogicStep( GameMapData& map_data, GameState &mut game_s
 			CreateDynamicClusterBBox(
 				cluster,
 				movement_direction * cluster_state.distance_from_start );
+	}
+
+	// Activate dynamic clusters by other dynamic clusters.
+	if( activation_mask != 0u )
+	{
+		for( auto mut i= 0s; i < game_state.dynamic_clusters.size(); ++i )
+		{
+			var DynamicClusterState &mut cluster_state= game_state.dynamic_clusters[i];
+
+			var ZvoxCluster& cluster= clusters[ size_type( game_state.dynamic_cluster_colliders[i].cluster_index ) ];
+
+			if( cluster.dynamic_cluster_extra_info_index >= 0 &&
+				cluster.dynamic_cluster_extra_info_index < 32 &&
+				( activation_mask & ( 1u << size_type( cluster.dynamic_cluster_extra_info_index ) ) ) != 0u )
+			{
+				switch( cluster_state.movement_stage )
+				{
+					DynamicClusterState::MovementStage::StayAtStart,
+					DynamicClusterState::MovementStage::StayAtEnd ->
+					{
+						if( cluster_state.num_steps_to_movement_stage_transition == 0u )
+						{
+							cluster_state.num_steps_to_movement_stage_transition= c_dynamic_cluster_activation_delay_steps;
+						}
+					},
+					DynamicClusterState::MovementStage::MoveForward ->
+					{
+						// TODO - reverse movement?
+					},
+					DynamicClusterState::MovementStage::MoveBackward ->
+					{
+						// TODO - reverse movement?
+					},
+				}
+			}
+		}
 	}
 }
 
