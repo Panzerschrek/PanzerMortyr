@@ -356,7 +356,18 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 		{
 			for( auto mut j= 0s; j < num_clusters_in_group; ++j )
 			{
-				auto& cluster_draw_data= map_data.clusters_draw_data[ i + j ];
+				var size_type cluster_index= i + j;
+
+				var u8 cluster_type= zvox_data.clusters[ cluster_index ].cluster_type;
+				if( !(
+					cluster_type == ZvoxCluster::c_cluster_type_regular |
+					cluster_type == ZvoxCluster::c_cluster_type_notes ) )
+				{
+					// Draw dynamic clusters later.
+					continue;
+				}
+
+				auto& cluster_draw_data= map_data.clusters_draw_data[ cluster_index ];
 
 				unsafe( glDrawElementsBaseVertex(
 					GLenum( GL_TRIANGLES ),
@@ -373,6 +384,46 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 		}
 
 		i+= num_clusters_in_group;
+	}
+
+	// Draw dynamic clusters with individual matrices.
+	foreach( &dynamic_cluster_object : drawing_info.dynamic_cluster_objects )
+	{
+		var size_type cluster_index( dynamic_cluster_object.cluster_index );
+
+		var ZvoxCluster& cluster= zvox_data.clusters[ cluster_index ];
+
+		var BBox3f mut bbox= CreateClusterBBox( cluster );
+		bbox.min+= dynamic_cluster_object.translation;
+		bbox.max+= dynamic_cluster_object.translation;
+
+		// First perform fast check if this dynamic cluster is within the bbox containing all visible clusters.
+		if( !visible_clusters_bbox.InstersectsOrTouches( bbox ) )
+		{
+			continue;
+		}
+
+		// Then check if this dynamic cluster is within at least one visible room cluster.
+		if( !IsBBoxWithinVisibleClusters(
+				zvox_data.clusters, room_clusters_hierarchy, visible_room_cluster_flags, bbox ) )
+		{
+			continue;
+		}
+
+		map_shader_.SetUniform(
+			"vu_matrix",
+			Mat4f::MakeTranslation( dynamic_cluster_object.translation ) * view_matrix );
+
+		auto& cluster_draw_data= map_data.clusters_draw_data[ cluster_index ];
+
+		unsafe( glDrawElementsBaseVertex(
+			GLenum( GL_TRIANGLES ),
+			GLsizei( cluster_draw_data.num_indices ),
+			GLenum( GL_UNSIGNED_SHORT ),
+			ust::nullptr</byte8/>() + typeinfo</u16/>.size_of * cluster_draw_data.first_index,
+			GLint( cluster_draw_data.first_vertex_index ) ) );
+
+		drawing_stats.num_visible_map_triangles+= u32( cluster_draw_data.num_indices ) / 3u;
 	}
 
 	var bool fullbright= settings_.lock_imut().deref().r_fullbright;
@@ -478,23 +529,8 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 				}
 
 				// Then check if this model is within at least one visible cluster.
-				var bool mut is_within_visible_clusters= false;
-
-				var BBox3f& bbox_ref= bbox;
-
-				VisitBoundingBoxesHierarchyForBBox(
-					room_clusters_hierarchy,
-					bbox_ref,
-					lambda[&]( ClusterIndexInHierarchy c )
-					{
-						if( visible_room_cluster_flags[ size_type(c) ] &&
-							CreateClusterBBox( zvox_data.clusters[ size_type(c) ] ).InstersectsOrTouches( bbox_ref ) )
-						{
-							is_within_visible_clusters= true;
-						}
-					} );
-
-				if( !is_within_visible_clusters )
+				if( !IsBBoxWithinVisibleClusters(
+						zvox_data.clusters, room_clusters_hierarchy, visible_room_cluster_flags, bbox ) )
 				{
 					continue;
 				}
@@ -771,6 +807,11 @@ fn WorldDrawer::SetMap( mut this, u32 map_index )
 	var ZmapData& zmap_data= zmap_data_ptr.deref();
 	var ZvoxData& zvox_data= zvox_data_ptr.deref();
 	var ZmapLamData& zmap_lam_data= zmap_lam_data_ptr.deref();
+	var ZmapLemData& zmap_lem_data= zmap_lem_data_ptr.deref();
+	var RoomClustersHierarchy& room_clusters_hierarchy= room_clusters_hierarchy_ptr.deref();
+
+	var ust::vector</PointLightSource/> mut light_sources=
+		CreatePointLightSourcesForMapLightSources( zvox_data, game_params_.deref() );
 
 	var ust::vector</ MapVertex /> mut vertices;
 	var ust::vector</u16/> mut indices;
@@ -787,6 +828,10 @@ fn WorldDrawer::SetMap( mut this, u32 map_index )
 	foreach( &pair : zvox_data.clusters.iter().zip( clusters_draw_data.iter() ) )
 	{
 		var ZvoxCluster& cluster= pair.first;
+
+		var bool is_regular_cluster=
+			cluster.cluster_type == ZvoxCluster::c_cluster_type_regular |
+			cluster.cluster_type == ZvoxCluster::c_cluster_type_notes;
 
 		var size_type cluser_first_vertex_index= vertices.size();
 		var size_type cluster_first_index= indices.size();
@@ -834,6 +879,10 @@ fn WorldDrawer::SetMap( mut this, u32 map_index )
 				var Vec3f mut u_vec( 0.0f, 1.0f, 0.0f );
 				var Vec3f mut v_vec( 1.0f, 0.0f, 0.0f );
 
+				// Avoid applying texture roll for quads of dynamic clusters.
+				// This fixes incorrect texture coordinates for the floor hatch on map 11.
+				// No other dynamic cluster in the whole game has non-zero texture roll.
+				if( is_regular_cluster )
 				{
 					var f32 angle= f32( i32( quad.packed_texture_roll_scale ) & ~15 ) * ( -c_tau / 256.0f );
 					var f32 c= ust::cos(angle);
@@ -886,15 +935,29 @@ fn WorldDrawer::SetMap( mut this, u32 map_index )
 						f32( i32( vertex_shift[2] ) - i32( quad.vertices[0][2] ) )
 					);
 
+					var [ f32, 3 ] vertex_position
+					[
+						f32( cluster.c.center[0] + i32( vertex_shift[0] ) ),
+						f32( cluster.c.center[1] + i32( vertex_shift[1] ) ),
+						f32( cluster.c.center[2] + i32( vertex_shift[2] ) ),
+					];
+
+					// Calculate per-vertex light as for dynamic objects.
+					// It's static (doesn't change when an object is moving), but it's mostly fine.
+					var SphericalHarmonicsRGB light=
+						GetLightForPoint(
+							light_sources,
+							zvox_data.clusters,
+							zmap_lem_data.clusters_sky_light_data,
+							room_clusters_hierarchy,
+							Vec3f( vertex_position[0], vertex_position[1], vertex_position[2] ),
+							1.0f, // A vertex has very small radius.
+							Mat4f::MakeIdentity() );
+
 					vertices.push_back(
 						MapVertex
 						{
-							.position
-							[
-								f32( cluster.c.center[0] + i32( vertex_shift[0] ) ),
-								f32( cluster.c.center[1] + i32( vertex_shift[1] ) ),
-								f32( cluster.c.center[2] + i32( vertex_shift[2] ) ),
-							],
+							.position= vertex_position,
 							.padding12= zero_init,
 							.tex_coordinates
 							[
@@ -902,7 +965,14 @@ fn WorldDrawer::SetMap( mut this, u32 map_index )
 								tc_scale * ( vertex_relative_shift.Dot( v_vec ) + tc_offset.y ),
 								texture_id,
 							],
-							.light[ (255), (255), (255) ],
+							.light
+							[
+								// Use only constant component of light.
+								// TODO - maybe perform normal-based spherical harmonics fetch?
+								( ust::max( 0.0f, ust::min( light[0].constant_component * 255.0f, 255.0f ) ) ),
+								( ust::max( 0.0f, ust::min( light[1].constant_component * 255.0f, 255.0f ) ) ),
+								( ust::max( 0.0f, ust::min( light[2].constant_component * 255.0f, 255.0f ) ) ),
+							],
 							.padding31= zero_init,
 						} );
 				}
@@ -1057,7 +1127,7 @@ fn WorldDrawer::SetMap( mut this, u32 map_index )
 			.zmap_lam_data= zmap_lam_data_ptr,
 			.zmap_lem_data= zmap_lem_data_ptr,
 			.room_clusters_hierarchy= room_clusters_hierarchy_ptr,
-			.light_sources= CreatePointLightSourcesForMapLightSources( zvox_data, game_params_.deref() ),
+			.light_sources= move(light_sources),
 			.vertex_array_object= move(vertex_array_object),
 			.vertex_buffer= move(vertex_buffer),
 			.index_buffer= move(index_buffer),
@@ -1174,6 +1244,30 @@ fn LoadMapTextures(
 	unsafe( glTexParameteri( GLenum( GL_TEXTURE_2D_ARRAY ), GLenum( GL_TEXTURE_MAG_FILTER ), GLint( GL_LINEAR ) ) );
 
 	return texture;
+}
+
+fn IsBBoxWithinVisibleClusters(
+	ust::array_view_imut</ZvoxCluster/> clusters,
+	RoomClustersHierarchy& room_clusters_hierarchy,
+	ust::array_view_imut</bool/> visible_room_cluster_flags,
+	BBox3f& bbox ) : bool
+{
+	var bool mut is_within_visible_clusters= false;
+
+	VisitBoundingBoxesHierarchyForBBox(
+		room_clusters_hierarchy,
+		bbox,
+		lambda[&]( ClusterIndexInHierarchy c )
+		{
+			var size_type cluster_index(c);
+			if( visible_room_cluster_flags[ cluster_index ] &&
+				CreateClusterBBox( clusters[ cluster_index ] ).InstersectsOrTouches( bbox ) )
+			{
+				is_within_visible_clusters= true;
+			}
+		} );
+
+	return is_within_visible_clusters;
 }
 
 type CameraClipPlanes= [ Planef, 5 ];

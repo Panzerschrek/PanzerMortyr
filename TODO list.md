@@ -11,7 +11,6 @@ Map format investigation:
 * Investigate exact meaning of many ZpozEntity fields.
 * Investigate meaning of remaining fields of "ZpozMultiplayerSpawnPoint" struct.
 * Investigate what exact kind of visibility data is stored in ZPOZ file and why it seems to have 4 blocks of such data for each cluster.
-* Investigate exact meaning of per-cluster sky-related data in "ZMAP.LEM" file.
 * Investigate exact meaning of remaining fields of navigation graph structures.
 * Investigate what remaining fields of "ZmapLamRainDroplet" struct mean.
 
@@ -28,7 +27,6 @@ Models format investigation:
 * Find exact framerate of per-vertex model animations. Maybe it's stored somewhere, or is just hardcoded for all models.
 * Investigate how LODs are stored and processed in models in #5 format variant.
 * Investigate why HD textures are stored three times with no noticeable difference.
-* Calculate per-vertex normals based on triangle normals, since normals stored in the model file are sometimes broken
 
 Lighting investigation:
 
@@ -49,7 +47,6 @@ Other investigation:
 Gameplay investigation:
 
 * Investigate original game framerate.
-* Investigate how enemies select their target navigation graph node while they chase the player.
 * Investigate ammo/health kit search behavior of enemies.
 * Investigate exact pick-up radius for entities which can be picked up.
 * Investigate how enemies spot the player - their field of view, view distance, spot chance, etc.
@@ -74,8 +71,6 @@ PanzerMortyr general:
 
 PanzerMortyr game logic:
 
-* Implement proper collisions (for the player and entities) with quads of dynamic clusters like buttons, doors, elevators.
-	This should include pushing of entities (if it's possible).
 * Implement doors and elevators triggered by touching.
 * Implement doors and elevators triggered by a button push, including buttons requiring a key.
 * Decrease armor and health properly while being damaged.
@@ -142,7 +137,6 @@ PanzerMortyr game logic:
 * Spawn bubble sprites for projectiles moving in water.
 * Display projectiles of various types properly (using billboards and sprites).
 * Do something with unconditional entity state transition "w_zasiegu_strzalu_b" - try making it somewhat random.
-* Don't perform player visibility check and target node update for dead entities (with zero energy).
 * Try dealing with cases where two enemies move in exactly opposite directions and block each other.
 * Consider calculating and using a better navigation graph (maybe even single graph for an entire map), which isn't so buggy as original per-entity navigation graphs.
 * Alarm enemies by nearby projectile hits.
@@ -150,6 +144,7 @@ PanzerMortyr game logic:
 * Alarm enemies by shooting sounds.
 * Perform alarm-based enemy state transition with a delay (investigate how this delay is specified).
 * Fix shooting through walls, which is possible by staying too close to a wall and by using some weapons (like rifle).
+* Consider creating patches for ZINF-files for fixing some errors in them.
 
 
 PanzerMortyr rendering:
@@ -160,12 +155,11 @@ PanzerMortyr rendering:
 * Draw glass materials properly (with transparency).
 * Draw light source sprites (flames, coronas).
 * Draw fog where it should be.
-* Draw map polygons and other objects (models, sprites) requiring blending in back to front order.
+* Draw map polygons and other objects (billboards, sprites) requiring blending in back to front order.
 * Draw reflections in reflective surfaces (usually floors).
 * Draw polygons with animated textures (frame-based animation) properly.
 * Draw first-person weapon with some sort of depth hack and depth-based effects (like fog) working properly.
 * Use smooth animation for animated models (with two or more frames interpolation).
-* Apply lighting for dynamic map polygons (doors, elevators, buttons).
 * Draw decals (bullet holes, blood).
 * Draw injured enemies covered with blood.
 * Implement dynamic lights (gun flashes, explosions).
@@ -188,10 +182,12 @@ PanzerMortyr menus and HUD:
 
 * Implement loading screen.
 * Display console background image (maybe even scroll it if it doesn't fit).
-* Extend existing setting menus/add new ones for extra options specific for PanzerMortyr.
 * Implement menus.
+* Extend existing setting menus/add new ones for extra options specific for PanzerMortyr.
 * Show low health and armor numbers in HUD using red color.
 * Display more than one active tool in HUD.
+* Display note images.
+* Display images related to game events (secret found, gold/silver/blue key required).
 * Consider displaying amounts of tools in inventory, at least important ones - health, ammo, keys.
 * Allow configuring crosshair kind, investigate what kinds of crosshairs are available in the original game.
 * Display short game-related mesages (as the original does).
