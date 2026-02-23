@@ -193,6 +193,7 @@ fn CreateNewMapGameState( GameMapData& map_data ) : GameState
 			DynamicClusterState
 			{
 				.movement_stage= DynamicClusterState::MovementStage::StayAtStart,
+				.num_steps_to_movement_stage_transition= 0u,
 				.distance_from_start= 0.0f,
 			} );
 
@@ -1134,7 +1135,20 @@ fn ProcessEntitiesLogicStep( GameMapData& map_data, GameState &mut game_state )
 
 fn ProcessDynamicClustersLogicStep( GameMapData& map_data, GameState &mut game_state )
 {
-	auto clusters= map_data.zvox_data.deref().clusters;
+	auto clusters= map_data.zvox_data.deref().clusters.range();
+	auto dynamic_cluster_extra_infos= map_data.zvox_data.deref().dynamic_cluster_extra_infos.range();
+
+	var BBox3f mut player_touch_bbox=
+		( game_state.player.collider_index == ~0u ?
+			BBox3f{ .min( 10000.0f, 10000.0f, 10000.0f ), .max( 10001.0f, 10001.0f, 10001.0f ) } :
+			game_state.colliders[ size_type( game_state.player.collider_index ) ].bbox );
+
+	// Extend player touch bbox a little bit.
+	player_touch_bbox.min-= Vec3f( 1.0f, 1.0f, 1.0f );
+	player_touch_bbox.max+= Vec3f( 1.0f, 1.0f, 1.0f );
+
+	// We have only a few dynamic cluster extra infos. Store their activation flags in activation mask.
+	var u32 mut activation_mask= 0u;
 
 	for( auto mut i= 0s; i < game_state.dynamic_clusters.size(); ++i )
 	{
@@ -1142,17 +1156,47 @@ fn ProcessDynamicClustersLogicStep( GameMapData& map_data, GameState &mut game_s
 
 		var ZvoxCluster& cluster= clusters[ size_type( game_state.dynamic_cluster_colliders[i].cluster_index ) ];
 
+		var bool mut is_button_operated= false;
+		var u32 mut current_cluster_targets_activation_mask= 0u;
+
+		if( cluster.dynamic_cluster_extra_info_index >= 0 &&
+			size_type( cluster.dynamic_cluster_extra_info_index ) < dynamic_cluster_extra_infos.size() )
+		{
+			var ZvoxDynamicClusterExtraInfo& dynamic_cluster_extra_info=
+				dynamic_cluster_extra_infos[ size_type( cluster.dynamic_cluster_extra_info_index ) ];
+
+			is_button_operated= dynamic_cluster_extra_info.is_door_or_platform != 0;
+
+			if( dynamic_cluster_extra_info.other_info_index >= 0 &&
+				dynamic_cluster_extra_info.other_info_index < 32 )
+			 {
+				current_cluster_targets_activation_mask= 1u << u32( dynamic_cluster_extra_info.other_info_index );
+			 }
+		}
+
 		var f32 movement_speed= GetDynamicClusterMovementSpeed( cluster );
 		var Vec3f movement_direction= GetDynamicClusterMovementDirection( cluster );
-
-		// TODO - perform proper movement logic - with tounch-based and/or button-based activation.
-		// For now just perform cyclic movement.
 
 		switch( cluster_state.movement_stage )
 		{
 			DynamicClusterState::MovementStage::StayAtStart ->
 			{
-				cluster_state.movement_stage= DynamicClusterState::MovementStage::MoveForward;
+				if( cluster_state.num_steps_to_movement_stage_transition != 0u )
+				{
+					--cluster_state.num_steps_to_movement_stage_transition;
+					if( cluster_state.num_steps_to_movement_stage_transition == 0u )
+					{
+						cluster_state.movement_stage= DynamicClusterState::MovementStage::MoveForward;
+						activation_mask|= current_cluster_targets_activation_mask;
+					}
+				}
+				else if(
+					!is_button_operated &&
+					HasNecessaryKeyForDynamicCluster( cluster, game_state.player ) &&
+					game_state.dynamic_cluster_colliders[i].bbox.InstersectsOrTouches( player_touch_bbox ) )
+				{
+					cluster_state.num_steps_to_movement_stage_transition= c_dynamic_cluster_activation_delay_steps;
+				}
 			},
 			DynamicClusterState::MovementStage::MoveForward ->
 			{
@@ -1185,7 +1229,27 @@ fn ProcessDynamicClustersLogicStep( GameMapData& map_data, GameState &mut game_s
 			},
 			DynamicClusterState::MovementStage::StayAtEnd ->
 			{
-				cluster_state.movement_stage= DynamicClusterState::MovementStage::MoveBackward;
+				if( cluster_state.num_steps_to_movement_stage_transition != 0u )
+				{
+					--cluster_state.num_steps_to_movement_stage_transition;
+					if( cluster_state.num_steps_to_movement_stage_transition == 0u )
+					{
+						cluster_state.movement_stage= DynamicClusterState::MovementStage::MoveBackward;
+						activation_mask|= current_cluster_targets_activation_mask;
+					}
+				}
+				else if( !is_button_operated && GetDynamicClusterAutoReturn( cluster ) )
+				{
+					// Auto-return some dynamic clusters to their initial position.
+					cluster_state.num_steps_to_movement_stage_transition= c_dynamic_cluster_activation_delay_steps;
+				}
+				else if(
+					!is_button_operated &&
+					HasNecessaryKeyForDynamicCluster( cluster, game_state.player ) &&
+					game_state.dynamic_cluster_colliders[i].bbox.InstersectsOrTouches( player_touch_bbox ) )
+				{
+					cluster_state.num_steps_to_movement_stage_transition= c_dynamic_cluster_activation_delay_steps;
+				}
 			},
 			DynamicClusterState::MovementStage::MoveBackward ->
 			{
@@ -1219,6 +1283,42 @@ fn ProcessDynamicClustersLogicStep( GameMapData& map_data, GameState &mut game_s
 			CreateDynamicClusterBBox(
 				cluster,
 				movement_direction * cluster_state.distance_from_start );
+	}
+
+	// Activate dynamic clusters by other dynamic clusters.
+	if( activation_mask != 0u )
+	{
+		for( auto mut i= 0s; i < game_state.dynamic_clusters.size(); ++i )
+		{
+			var DynamicClusterState &mut cluster_state= game_state.dynamic_clusters[i];
+
+			var ZvoxCluster& cluster= clusters[ size_type( game_state.dynamic_cluster_colliders[i].cluster_index ) ];
+
+			if( cluster.dynamic_cluster_extra_info_index >= 0 &&
+				cluster.dynamic_cluster_extra_info_index < 32 &&
+				( activation_mask & ( 1u << size_type( cluster.dynamic_cluster_extra_info_index ) ) ) != 0u )
+			{
+				switch( cluster_state.movement_stage )
+				{
+					DynamicClusterState::MovementStage::StayAtStart,
+					DynamicClusterState::MovementStage::StayAtEnd ->
+					{
+						if( cluster_state.num_steps_to_movement_stage_transition == 0u )
+						{
+							cluster_state.num_steps_to_movement_stage_transition= c_dynamic_cluster_activation_delay_steps;
+						}
+					},
+					DynamicClusterState::MovementStage::MoveForward ->
+					{
+						// TODO - reverse movement?
+					},
+					DynamicClusterState::MovementStage::MoveBackward ->
+					{
+						// TODO - reverse movement?
+					},
+				}
+			}
+		}
 	}
 }
 
@@ -1281,6 +1381,49 @@ fn GetDynamicClusterMovementDirection( ZvoxCluster& cluster ) : Vec3f
 			-> { return Vec3f(  0.0f,  0.0f, -1.0f ); },
 		default
 			-> { return Vec3f( 0.0f, 0.0f, 0.0f ); },
+	}
+}
+
+fn GetDynamicClusterAutoReturn( ZvoxCluster& cluster ) : bool
+{
+	switch(  cluster.cluster_type )
+	{
+		// Doors and platforms with auto-return.
+		ZvoxCluster::c_cluster_type_z_minus_door_b,
+		ZvoxCluster::c_cluster_type_z_plus_door_b,
+		ZvoxCluster::c_cluster_type_z_minus_door_c
+			-> { return true; },
+		// Doors and platforms with no auto-return.
+		ZvoxCluster::c_cluster_type_z_minus_door_a,
+		ZvoxCluster::c_cluster_type_z_plus_door_a,
+		ZvoxCluster::c_cluster_type_y_minus_door_a,
+		ZvoxCluster::c_cluster_type_y_plus_door_a,
+		ZvoxCluster::c_cluster_type_x_minus_door_a
+			-> { return false; },
+		// Buttons have no auto-return. TODO - maybe add it?
+		ZvoxCluster::c_cluster_type_y_minus_button_a,
+		ZvoxCluster::c_cluster_type_y_plus_button_a,
+		ZvoxCluster::c_cluster_type_x_plus_button_a,
+		ZvoxCluster::c_cluster_type_x_minus_button_a,
+		ZvoxCluster::c_cluster_type_y_minus_button_b,
+		ZvoxCluster::c_cluster_type_y_plus_button_b,
+		ZvoxCluster::c_cluster_type_x_plus_button_b,
+		ZvoxCluster::c_cluster_type_x_minus_button_b
+			-> { return false; },
+		default
+			-> { return false; }
+	}
+}
+
+fn HasNecessaryKeyForDynamicCluster( ZvoxCluster& cluster, PlayerState& player_state ) : bool
+{
+	type TT= EntitiesDescription::ToolType;
+	switch( cluster.contents )
+	{
+		ZvoxCluster::c_contents_key_a -> { return player_state.inventory[ size_type( TT::KeyA ) ] > 0u; },
+		ZvoxCluster::c_contents_key_b -> { return player_state.inventory[ size_type( TT::KeyB ) ] > 0u; },
+		ZvoxCluster::c_contents_key_c -> { return player_state.inventory[ size_type( TT::KeyC ) ] > 0u; },
+		default -> { return true; } // No key required
 	}
 }
 
