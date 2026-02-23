@@ -47,6 +47,12 @@ This documents describes various interesting facts about the original game.
 * Gestapo officer is listed in the manual, but he isn't used in the singlplayer game. He is present only on cooperative map 36.
 * Nurse is listed in the manual, but she isn't used in the singlplayer game. Nurses are placed on maps 19, 24, 30, 37, but are disabled. Only on cooperative map 36 there are a couple of them.
 * Adolf Hitler isn't listed in the manual, he is missing in many versions of the game except one or two regional editions. But he is still present in game resources. On map 13 he is placed, but disabled.
+* There is a model METRO.OBB with a variation of the WCZAPCE.OBB model with slightly different texture.
+* There are models KL0-47.OBB, KL48-63.OBB and KL64-87.OBB with some unused enemy type.
+* There is a model TROOPE2.OBB with some unfinshed enemy.
+* There is a model BAZBRON.OBB with unfinished MG-42.
+* There is a model HUSAR.OBB with winged husar armor, which seems to be unused.
+* There is a model KOMIN.OBB, which seems to be unused.
 * Game files contain unfinished maps with indices 0, 22, 8000.
 * Map 0 is a raw version of maps 10 and 33 combined.
 * Map 22 contains elements of maps 1 and 11.
