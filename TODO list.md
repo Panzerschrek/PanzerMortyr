@@ -55,6 +55,7 @@ Gameplay investigation:
 * Investigate how player's bounding box is altered when crouching.
 * Investigate what "BUTLA_TLENU" is.
 * Investigate how weapon spread works.
+* Investigate misfire behavior.
 
 PanzerMortyr general:
 
@@ -81,7 +82,6 @@ PanzerMortyr game logic:
 * Implement collisions hack for the one-way passable wall on map 33.
 * Implement crouching for the player.
 * Implement fall damage for player and for entities.
-* Implement shooting by enemies.
 * Implement rare animation types - used for some entities.
 * Implement tank-related logic elements.
 * Implement logic elements specific for dog enemies.
@@ -141,6 +141,7 @@ PanzerMortyr game logic:
 * Perform alarm-based enemy state transition with a delay (investigate how this delay is specified).
 * Fix shooting through walls, which is possible by staying too close to a wall and by using some weapons (like rifle).
 * Consider creating patches for ZINF-files for fixing some errors in them.
+* Implement misfire - sometimes enemies don't shoot, even if shooting animation is played.
 
 
 PanzerMortyr rendering:

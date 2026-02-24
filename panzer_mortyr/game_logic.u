@@ -81,6 +81,7 @@ fn CreateNewMapGameState( GameMapData& map_data ) : GameState
 				.position( f32( in_entity.position[0] ), f32( in_entity.position[1] ), f32( in_entity.position[2] ) ),
 				.azimuth( Convert1024Angle( f32( in_entity.data[4] ) ) ),
 				.energy= entity_description.energy,
+				.ammo= entity_description.ammunition,
 				.current_operation= c_start_operation,
 				.num_steps_since_operation_start= 0u,
 				.navigation_info_index( in_entity.data[16] ),
@@ -919,7 +920,7 @@ fn ProcessEntitiesLogicStep( GameMapData& map_data, GameState &mut game_state )
 						{
 							// TODO - check what else condition is necessary.
 							// Maybe add some random element?
-							if(  entity.player_is_in_sight )
+							if( entity.player_is_in_sight && entity.ammo > 0u )
 							{
 								var u32 period( inside_shooting_zone_b[0] );
 								if( period != 0u && entity.num_steps_since_operation_start % period == 0u )
@@ -936,6 +937,7 @@ fn ProcessEntitiesLogicStep( GameMapData& map_data, GameState &mut game_state )
 							// Assume player should be visible and be in optimal distance to trigger this state transition.
 
 							if( entity.player_is_in_sight &&
+								entity.ammo > 0u &&
 								entity.num_steps_since_operation_start == convenient_position[0] )
 							{
 								if_var( &player_position : entity.last_seen_player_position )
@@ -981,6 +983,23 @@ fn ProcessEntitiesLogicStep( GameMapData& map_data, GameState &mut game_state )
 							if( entity.num_steps_since_operation_start >= timeout[0] )
 							{
 								next_operation= u32( timeout[1] );
+							}
+						}
+					}
+
+					if( next_operation == ~0u )
+					{
+						// Shoot if no operation transition is scheduled.
+						if_var( &item : operation_control.item )
+						{
+							if( entity.num_steps_since_operation_start == u32( item[4] ) )
+							{
+								EntityShoot(
+									entities_description,
+									item, entity,
+									u32( entity_index ),
+									game_state.player,
+									game_state.projectiles );
 							}
 						}
 					}
@@ -1041,6 +1060,7 @@ fn ProcessEntitiesLogicStep( GameMapData& map_data, GameState &mut game_state )
 										.position= entity.position,
 										.azimuth= entity.azimuth,
 										.energy= new_entity_description.energy,
+										.ammo= new_entity_description.ammunition,
 										.current_operation= c_start_operation,
 										.num_steps_since_operation_start= 0u,
 										.navigation_info_index= ~0u,
@@ -2510,6 +2530,70 @@ struct EntityDistanceRange
 {
 	f32 distance_min;
 	f32 distance_max;
+}
+
+fn EntityShoot(
+	EntitiesDescription& entities_description,
+	[ i32, 5 ]& item,
+	EntityState& mut entity,
+	u32 entity_index,
+	PlayerState& player_state,
+	ust::vector</Projectile/> &mut projectiles )
+{
+	if( entity.ammo == 0u )
+	{
+		return;
+	}
+
+	var i32 weapon_tool_index= item[0];
+
+	if( !( weapon_tool_index >= 0 && size_type( weapon_tool_index ) < entities_description.tools.size() ) )
+	{
+		return;
+	}
+
+	var EntitiesDescription::Tool& weapon_tool= entities_description.tools[ size_type( weapon_tool_index ) ];
+
+	if( !entity.player_is_in_sight )
+	{
+		// Can't see the player anymore, avoid shooting.
+		return;
+	}
+
+	var Vec3f target_position= player_state.position + GetPlayerColliderBBox( entities_description ).GetCenter();
+
+	var Mat4f rotation_matrix= Mat4f::MakeRotationZ( entity.azimuth );
+
+	var Vec3f shot_position=
+		entity.position +
+		Vec3f( f32( item[1] ), f32( item[2] ), f32( item[3] ) ) * rotation_matrix;
+
+	// Just shoot towards the target.
+	// Assume, that we have rotation towards the target,
+	// since shooting operations should include active rotation towards it.
+
+	var Vec3f vec_to_target= target_position - shot_position;
+	var f32 vec_to_target_length= vec_to_target.Length();
+
+	if( vec_to_target_length == 0.0f )
+	{
+		return;
+	}
+
+	projectiles.push_back(
+		Projectile
+		{
+			.weapon= weapon_tool.tool_type,
+			.owner_entity_index= entity_index,
+			.age_steps= 0u,
+			.position= shot_position,
+			// TODO - apply also random spread and constant per-shot rotation.
+			.velocity= vec_to_target * ( f32( weapon_tool.speed ) / vec_to_target_length ),
+			.hit_entity_index= ~0u,
+			.hit_by_dynamic_cluster= false,
+		} );
+
+	--entity.ammo;
 }
 
 fn MoveEntity(
