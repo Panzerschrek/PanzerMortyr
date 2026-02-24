@@ -4,7 +4,15 @@ namespace PM
 {
 
 fn Menu::constructor( [ u32, 2 ] viewport_size )
-	( viewport_size_= viewport_size, images_preloaded_= false, is_active_= true, time_s_= 0.0f, current_row_= 0u )
+	(
+		viewport_size_= viewport_size,
+		images_preloaded_= false,
+		is_active_= true,
+		current_page_= Page::MainMenu,
+		time_s_= 0.0f,
+		main_menu_current_row_= 0u,
+		new_game_current_row_= 0u,
+	)
 {
 }
 
@@ -17,15 +25,76 @@ fn Menu::ProcessKeyPress( mut this, SDL_Keysym& key_sym )
 {
 	if( key_sym.scancode == SDL_SCANCODE_ESCAPE )
 	{
-		is_active_= !is_active_;
+		if( !is_active_ )
+		{
+			is_active_= true;
+		}
+		else
+		{
+			switch( current_page_ )
+			{
+			Page::MainMenu -> { is_active_= false; },
+			Page::NewGame -> { current_page_= Page::MainMenu; },
+			}
+		}
+	}
+	else if( key_sym.scancode == SDL_SCANCODE_RETURN )
+	{
+		switch( current_page_ )
+		{
+			Page::MainMenu ->
+			{
+				switch( main_menu_current_row_ )
+				{
+					0u -> { current_page_= Page::NewGame; },
+					1u -> {},
+					2u -> {},
+					3u -> {},
+					4u -> {},
+					5u -> {},
+					default -> {},
+				}
+			},
+			Page::NewGame ->
+			{
+				current_page_= Page::MainMenu;
+				is_active_= false;
+				// TODO - start new game with selected skill here.
+			}
+		}
 	}
 	else if( key_sym.scancode == SDL_SCANCODE_UP )
 	{
-		current_row_= ( current_row_ + ( c_main_menu_num_rows - 1u ) ) % c_main_menu_num_rows;
+		switch( current_page_ )
+		{
+			Page::MainMenu ->
+			{
+				var u32 num_rows= page_num_rows[ size_type( current_page_ ) ];
+				main_menu_current_row_= ( main_menu_current_row_ + ( num_rows - 1u ) ) % num_rows;
+			},
+			Page::NewGame ->
+			{
+				var u32 num_rows= page_num_rows[ size_type( current_page_ ) ];
+				new_game_current_row_= ( new_game_current_row_ + ( num_rows - 1u ) ) % num_rows;
+			}
+		}
+
 	}
 	else if( key_sym.scancode == SDL_SCANCODE_DOWN )
 	{
-		current_row_= ( current_row_ + 1u ) % c_main_menu_num_rows;
+		switch( current_page_ )
+		{
+			Page::MainMenu ->
+			{
+				var u32 num_rows= page_num_rows[ size_type( current_page_ ) ];
+				main_menu_current_row_= ( main_menu_current_row_ + 1u ) % num_rows;
+			},
+			Page::NewGame ->
+			{
+				var u32 num_rows= page_num_rows[ size_type( current_page_ ) ];
+				new_game_current_row_= ( new_game_current_row_ + 1u ) % num_rows;
+			}
+		}
 	}
 }
 
@@ -57,29 +126,54 @@ fn Menu::Draw( mut this, ImageDrawer &mut image_drawer, TextDrawer &mut text_dra
 	var i32 offset_x= i32( ( viewport_size_[0] - c_base_menu_size[0] * scale ) / 2u );
 	var i32 offset_y= i32( ( viewport_size_[1] - c_base_menu_size[1] * scale ) * 3u / 4u );
 
-	image_drawer.DrawImage( MenuImages::main_menu_background, offset_x, offset_y, f32( scale ) );
+	var u32 cursor_frame= u32( time_s_ * 16.0f ) % 16u;
 
+	var u32 cursor_tile_x= cursor_frame % 8u;
+	var u32 cursor_tile_y= ( cursor_frame / 8u ) ^ 1u;
+
+	var u32 constexpr cursor_size= 24u;
+
+	var i32 cursor_offset_x= offset_x + i32( 65u * scale );
+
+	switch( current_page_ )
 	{
-		var i32 cursor_offset_x= offset_x + i32( 65u * scale );
-		var i32 cursor_offset_y= offset_y + i32( 50u * scale );
+		Page::MainMenu ->
+		{
+			image_drawer.DrawImage( MenuImages::main_menu_background, offset_x, offset_y, f32( scale ) );
 
-		var u32 cursor_frame= u32( time_s_ * 16.0f ) % 16u;
+			var i32 cursor_offset_y= offset_y + i32( 50u * scale );
 
-		var u32 cursor_tile_x= cursor_frame % 8u;
-		var u32 cursor_tile_y= ( cursor_frame / 8u ) ^ 1u;
+			var u32 constexpr cursor_step_size= 16u;
 
-		var u32 constexpr cursor_size= 24u;
-		var u32 constexpr cursor_step_size= 16u;
+			image_drawer.DrawImage(
+				MenuImages::cursor_frames,
+				cursor_offset_x,
+				cursor_offset_y + i32( cursor_step_size * scale * ( page_num_rows[ size_type( current_page_ ) ] - 1u - main_menu_current_row_ ) ),
+				f32( scale ),
+				cursor_tile_x * cursor_size,
+				cursor_tile_y * cursor_size,
+				cursor_size,
+				cursor_size );
 
-		image_drawer.DrawImage(
-			MenuImages::cursor_frames,
-			cursor_offset_x,
-			cursor_offset_y + i32( cursor_step_size * scale * ( c_main_menu_num_rows - 1u - current_row_ ) ),
-			f32( scale ),
-			cursor_tile_x * cursor_size,
-			cursor_tile_y * cursor_size,
-			cursor_size,
-			cursor_size );
+		},
+		Page::NewGame ->
+		{
+			image_drawer.DrawImage( MenuImages::new_game_background, offset_x, offset_y, f32( scale ) );
+
+			var i32 cursor_offset_y= offset_y + i32( 67u * scale );
+
+			var u32 constexpr cursor_step_size= 19u;
+
+			image_drawer.DrawImage(
+				MenuImages::cursor_frames,
+				cursor_offset_x,
+				cursor_offset_y + i32( cursor_step_size * scale * ( page_num_rows[ size_type( current_page_ ) ] - 1u - new_game_current_row_ ) ),
+				f32( scale ),
+				cursor_tile_x * cursor_size,
+				cursor_tile_y * cursor_size,
+				cursor_size,
+				cursor_size );
+		},
 	}
 
 	ust::ignore_unused( text_drawer ); // TODO - use it.
@@ -88,11 +182,10 @@ fn Menu::Draw( mut this, ImageDrawer &mut image_drawer, TextDrawer &mut text_dra
 fn PreloadMenuImages( ImageDrawer &mut image_drawer )
 {
 	image_drawer.PreloadImage( MenuImages::main_menu_background );
+	image_drawer.PreloadImage( MenuImages::new_game_background );
 	image_drawer.PreloadImage( MenuImages::cursor_frames );
 	image_drawer.PreloadImage( MenuImages::control_elements );
 }
-
-var u32 c_main_menu_num_rows= 6u;
 
 var [ u32, 2 ] c_base_menu_size[ 320u, 200u ];
 
@@ -101,6 +194,7 @@ namespace MenuImages
 
 var ResourceString
 	& main_menu_background= "MENU.BMP\0\0\0\0\0\0\0\0",
+	& new_game_background= "MENU_T.BMP\0\0\0\0\0\0",
 	& cursor_frames= "MENU_Z.BMP\0\0\0\0\0\0",
 	& control_elements= "OPTION2.BMP\0\0\0\0\0";
 
