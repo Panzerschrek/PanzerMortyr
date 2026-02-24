@@ -13,9 +13,18 @@ fn ImageDrawer::constructor( GameFilesystemPtr mut game_filesystem_ptr )
 			embed</char8/>( "shaders/image.vert.glsl" ),
 			embed</char8/>( "shaders/image.frag.glsl" ) ) )
 {
+}
+
+fn ImageDrawer::PreloadImage( mut this, ResourceString& image_file_name )
+{
+	if( textures_.exists( image_file_name ) )
+	{
+		return;
+	}
+
 	auto mut lock= game_filesystem_ptr_.lock_mut();
 
-	result_match( lock.deref().LoadFile( "BGR.BMP\0\0\0\0\0\0\0\0\0", LoadImageBMP ) )
+	result_match( lock.deref().LoadFile( image_file_name, LoadImageBMP ) )
 	{
 		Ok( image_data ) ->
 		{
@@ -37,24 +46,35 @@ fn ImageDrawer::constructor( GameFilesystemPtr mut game_filesystem_ptr )
 			unsafe( glTexParameteri( GLenum( GL_TEXTURE_2D ), GLenum( GL_TEXTURE_MIN_FILTER ), GLint( GL_LINEAR ) ) );
 			unsafe( glTexParameteri( GLenum( GL_TEXTURE_2D ), GLenum( GL_TEXTURE_MAG_FILTER ), GLint( GL_LINEAR ) ) );
 
-			texture_= move(texture);
+			textures_.insert_new( image_file_name, move(texture) );
 		},
 		Err(e) ->
 		{
 			// TODO - print error message.
 			ust::ignore_unused(e);
+
+			// Save a stub to avoid loading it again.
+			textures_.insert_new( image_file_name, ust::optional</Texture/>() );
 		}
 	}
 }
 
-fn ImageDrawer::DrawImage( mut this )
+fn ImageDrawer::DrawImage( mut this, ResourceString& image_file_name )
 {
+	auto texture_opt_opt= textures_.find( image_file_name );
+	if( texture_opt_opt.empty() || texture_opt_opt.try_deref().empty() )
+	{
+		return;
+	}
+
+	var Texture& texture= texture_opt_opt.try_deref().try_deref();
+
 	SetGLState( g_image_drawing_gl_state );
 
 	var u32 texture_slot= 0u;
 
 	unsafe( glActiveTexture( GLenum( GL_TEXTURE0 ) + GLenum(texture_slot) ) );
-	texture_.try_deref().Bind();
+	texture.Bind();
 
 	shader_.Bind();
 	shader_.SetUniform( "fu_texture", texture_slot );
