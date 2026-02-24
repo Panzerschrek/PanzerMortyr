@@ -6,9 +6,10 @@ import "image_loading.uh"
 namespace PM
 {
 
-fn ImageDrawer::constructor( GameFilesystemPtr mut game_filesystem_ptr )
+fn ImageDrawer::constructor( [ u32, 2 ] viewport_size, GameFilesystemPtr mut game_filesystem_ptr)
 	(
 		game_filesystem_ptr_= move(game_filesystem_ptr),
+		viewport_size_= viewport_size,
 		shader_(
 			embed</char8/>( "shaders/image.vert.glsl" ),
 			embed</char8/>( "shaders/image.frag.glsl" ) ) )
@@ -46,7 +47,7 @@ fn ImageDrawer::PreloadImage( mut this, ResourceString& image_file_name )
 			unsafe( glTexParameteri( GLenum( GL_TEXTURE_2D ), GLenum( GL_TEXTURE_MIN_FILTER ), GLint( GL_LINEAR ) ) );
 			unsafe( glTexParameteri( GLenum( GL_TEXTURE_2D ), GLenum( GL_TEXTURE_MAG_FILTER ), GLint( GL_LINEAR ) ) );
 
-			textures_.insert_new( image_file_name, move(texture) );
+			textures_.insert_new( image_file_name, TextureExt{ .texture= move(texture), .size= image_data.size } );
 		},
 		Err(e) ->
 		{
@@ -54,12 +55,12 @@ fn ImageDrawer::PreloadImage( mut this, ResourceString& image_file_name )
 			ust::ignore_unused(e);
 
 			// Save a stub to avoid loading it again.
-			textures_.insert_new( image_file_name, ust::optional</Texture/>() );
+			textures_.insert_new( image_file_name, ust::optional</TextureExt/>() );
 		}
 	}
 }
 
-fn ImageDrawer::DrawImage( mut this, ResourceString& image_file_name )
+fn ImageDrawer::DrawImage( mut this, ResourceString& image_file_name, i32 x, i32 y )
 {
 	auto texture_opt_opt= textures_.find( image_file_name );
 	if( texture_opt_opt.empty() || texture_opt_opt.try_deref().empty() )
@@ -67,16 +68,29 @@ fn ImageDrawer::DrawImage( mut this, ResourceString& image_file_name )
 		return;
 	}
 
-	var Texture& texture= texture_opt_opt.try_deref().try_deref();
+	var TextureExt& texture_ext= texture_opt_opt.try_deref().try_deref();
 
 	SetGLState( g_image_drawing_gl_state );
 
 	var u32 texture_slot= 0u;
 
 	unsafe( glActiveTexture( GLenum( GL_TEXTURE0 ) + GLenum(texture_slot) ) );
-	texture.Bind();
+	texture_ext.texture.Bind();
 
 	shader_.Bind();
+
+	shader_.SetUniform(
+		"vu_scale",
+		Vec2f(
+			2.0f * f32( texture_ext.size[0] ) / f32( viewport_size_[0] ),
+			2.0f * f32( texture_ext.size[1] ) / f32( viewport_size_[1] ) ) );
+
+	shader_.SetUniform(
+		"vu_offset",
+		Vec2f(
+			2.0f * f32(x) / f32( viewport_size_[0] ) - 1.0f,
+			2.0f * f32(y) / f32( viewport_size_[1] ) - 1.0f ) );
+
 	shader_.SetUniform( "fu_texture", texture_slot );
 
 	unsafe( glDrawArrays( GLenum( GL_TRIANGLES ), GLint(0), GLsizei(6) ) );
