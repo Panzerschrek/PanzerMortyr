@@ -1,21 +1,63 @@
 import "gl_functions.uh"
 import "gl_state.uh"
 import "image_drawer.uh"
+import "image_loading.uh"
 
 namespace PM
 {
 
-fn ImageDrawer::constructor()
-	( shader_(
-		embed</char8/>( "shaders/image.vert.glsl" ),
-		embed</char8/>( "shaders/image.frag.glsl" ) ) )
-{}
+fn ImageDrawer::constructor( GameFilesystemPtr mut game_filesystem_ptr )
+	(
+		game_filesystem_ptr_= move(game_filesystem_ptr),
+		shader_(
+			embed</char8/>( "shaders/image.vert.glsl" ),
+			embed</char8/>( "shaders/image.frag.glsl" ) ) )
+{
+	auto mut lock= game_filesystem_ptr_.lock_mut();
+
+	result_match( lock.deref().LoadFile( "BGR.BMP\0\0\0\0\0\0\0\0\0", LoadImageBMP ) )
+	{
+		Ok( image_data ) ->
+		{
+			var Texture mut texture= Texture::Create( GLenum( GL_TEXTURE_2D ) );
+			texture.Bind();
+
+			unsafe( glTexImage2D(
+				GLenum( GL_TEXTURE_2D ),
+				0,
+				GLint( GL_RGBA8 ),
+				GLsizei( image_data.size[0] ),
+				GLsizei( image_data.size[1] ),
+				0,
+				GLenum( GL_RGBA ),
+				GLenum( GL_UNSIGNED_BYTE ),
+				ust::ptr_cast_to_byte8( image_data.pixels.range().data() ) ) );
+
+			// Use linear filtration.
+			unsafe( glTexParameteri( GLenum( GL_TEXTURE_2D ), GLenum( GL_TEXTURE_MIN_FILTER ), GLint( GL_LINEAR ) ) );
+			unsafe( glTexParameteri( GLenum( GL_TEXTURE_2D ), GLenum( GL_TEXTURE_MAG_FILTER ), GLint( GL_LINEAR ) ) );
+
+			texture_= move(texture);
+		},
+		Err(e) ->
+		{
+			// TODO - print error message.
+			ust::ignore_unused(e);
+		}
+	}
+}
 
 fn ImageDrawer::DrawImage( mut this )
 {
 	SetGLState( g_image_drawing_gl_state );
 
+	var u32 texture_slot= 0u;
+
+	unsafe( glActiveTexture( GLenum( GL_TEXTURE0 ) + GLenum(texture_slot) ) );
+	texture_.try_deref().Bind();
+
 	shader_.Bind();
+	shader_.SetUniform( "fu_texture", texture_slot );
 
 	unsafe( glDrawArrays( GLenum( GL_TRIANGLES ), GLint(0), GLsizei(6) ) );
 }
