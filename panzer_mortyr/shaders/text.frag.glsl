@@ -10,6 +10,9 @@ out vec4 color;
 
 void main()
 {
-	// Font texture has single channel. Mix bacground and foreground colors based on texture value.
-	color= mix( f_background_color, f_foreground_color, texture( fu_texture, f_texture_coordinates ).r );
+	vec4 shadow_color= ( f_foreground_color + f_background_color ) * 0.5;
+
+	vec2 texture_value= texture( fu_texture, f_texture_coordinates ).rg;
+
+	color= mix( mix( f_background_color, shadow_color, texture_value.g ), f_foreground_color, texture_value.r );
 }

@@ -187,7 +187,6 @@ PanzerMortyr menus and HUD:
 * Consider displaying amounts of tools in inventory, at least important ones - health, ammo, keys.
 * Allow configuring crosshair kind, investigate what kinds of crosshairs are available in the original game.
 * Display short game-related mesages (as the original does).
-* Support rendering texts with shadow.
 
 PanzerMortyr sound:
 
