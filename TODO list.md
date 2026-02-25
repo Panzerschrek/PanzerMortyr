@@ -177,7 +177,6 @@ PanzerMortyr rendering:
 PanzerMortyr menus and HUD:
 
 * Implement loading screen.
-* Display console background image (maybe even scroll it if it doesn't fit).
 * Implement game save and loading menus.
 * Implement video modes menu.
 * Implement key bindings menu.
