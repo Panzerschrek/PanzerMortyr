@@ -8,6 +8,7 @@ import "console.uh"
 import "crosshair_drawer.uh"
 import "game.uh"
 import "hud_drawer.uh"
+import "menu.uh"
 import "opengl_window.uh"
 import "performance_counter.uh"
 import "world_drawer.uh"
@@ -70,9 +71,13 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 
 	var Console mut console( settings_ptr, console_out_ptr, window.GetViewportSize() );
 
+	var Menu mut menu( window.GetViewportSize() );
+
 	var HudDrawer mut hud_drawer( window.GetViewportSize(), game_filesystem_ptr, console_out_ptr );
 
 	var TextDrawer mut text_drawer( window.GetViewportSize(), game_filesystem_ptr, console_out_ptr );
+
+	var ImageDrawer mut image_drawer( window.GetViewportSize(), game_filesystem_ptr );
 
 	var WorldDrawer mut world_drawer(
 		settings_ptr,
@@ -124,6 +129,19 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 						{
 							console.Toggle();
 						}
+						else
+						{
+							var MenuCommandProcessor mut command_processor{ .game= game };
+							variant_visit( &v : menu.ProcessKeyPress( keyboard_event.keysym ) )
+							{
+								command_processor(v);
+							}
+
+							if( command_processor.quit_requested )
+							{
+								break label main_loop;
+							}
+						}
 					}
 					else if( keyboard_event.keysym.scancode == SDL_SCANCODE_GRAVE )
 					{
@@ -136,6 +154,19 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 						{
 							var HostCommandProcessor mut command_processor{ .game= game, .console_out_ptr= console_out_ptr };
 							console.ProcessKeyPress( keyboard_event.keysym, command_processor );
+
+							if( command_processor.quit_requested )
+							{
+								break label main_loop;
+							}
+						}
+						else if( menu.IsActive() )
+						{
+							var MenuCommandProcessor mut command_processor{ .game= game };
+							variant_visit( &v : menu.ProcessKeyPress( keyboard_event.keysym ) )
+							{
+								command_processor(v);
+							}
 
 							if( command_processor.quit_requested )
 							{
@@ -174,7 +205,8 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 			}
 		}
 
-		var bool mouse_enabled= settings_ptr.lock_imut().deref().in_mouse_enabled && !console.IsActive();
+		var bool mouse_enabled=
+			settings_ptr.lock_imut().deref().in_mouse_enabled && !console.IsActive() && !menu.IsActive();
 
 		unsafe( SDL_SetRelativeMouseMode( SDL_bool( ( mouse_enabled ? 1 : 0 ) ) ) );
 
@@ -183,7 +215,7 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 			mouse_motion= ust::make_array( 0, 0 );
 		}
 
-		if( console.IsActive() )
+		if( console.IsActive() || menu.IsActive() )
 		{
 			foreach( &mut b : keyboard_state )
 			{
@@ -211,7 +243,7 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 
 		prev_frame_start_time_point= cur_frame_start_time_point;
 
-		if( !console.IsActive() )
+		if( !console.IsActive() && !menu.IsActive() )
 		{
 			// Update game if no console/menu is active.
 			// TODO - update game in multiplayer mode always.
@@ -220,6 +252,8 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 		}
 
 		console.Update( time_delta_s );
+
+		menu.Update( time_delta_s );
 
 		auto viewport_size= window.GetViewportSize();
 
@@ -233,18 +267,27 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 			DrawWorldDrawingStats( text_drawer, viewport_size, world_drawing_stats );
 		}
 
-		console.Draw( text_drawer );
+		hud_drawer.Draw( game.GetHudDrawingInfo() );
+
+		if( console.IsVisible() )
+		{
+			console.Draw( image_drawer, text_drawer );
+		}
+		else if( menu.IsActive() )
+		{
+			// Draw menu only if console isn't visible.
+			// Having both console and menu on the screen is ugly.
+			menu.Draw( image_drawer, text_drawer );
+		}
+		else
+		{
+			// Draw crosshair only if no console or menu is present on the screen.
+			DrawCrosshair( settings_ptr, text_drawer, viewport_size, game.GetCrosshairDrawingInfo() );
+		}
 
 		if( settings_ptr.lock_imut().deref().r_show_fps )
 		{
 			DrawFPS( text_drawer, viewport_size, performance_counter );
-		}
-
-		hud_drawer.Draw( game.GetHudDrawingInfo() );
-
-		if( !console.IsActive() )
-		{
-			DrawCrosshair( settings_ptr, text_drawer, viewport_size, game.GetCrosshairDrawingInfo() );
 		}
 
 		text_drawer.DrawTexts();
@@ -339,6 +382,41 @@ struct HostCommandProcessor
 	bool quit_requested= false;
 	Game &mut @('a') game;
 	ConsoleOutPtr& @('b') console_out_ptr;
+}
+
+struct MenuCommandProcessor
+{
+	op()( this, Menu::CommandNone& c )
+	{
+		ust::ignore_unused(c);
+	}
+
+	op()( this, Menu::CommandNewGame& c )
+	{
+		ust::ignore_unused(c);
+		game.StartNewGame();
+	}
+
+	op()( this, Menu::CommandLoadGame& c )
+	{
+		ust::ignore_unused(c);
+		// TODO - load game.
+	}
+
+	op()( this, Menu::CommandSaveGame& c )
+	{
+		ust::ignore_unused(c);
+		// TODO - save game.
+	}
+
+	op()( mut this, Menu::CommandQuit c )
+	{
+		ust::ignore_unused(c);
+		quit_requested= true;
+	}
+
+	bool quit_requested= false;
+	Game &mut @('a') game;
 }
 
 fn DrawWorldDrawingStats( TextDrawer &mut text_drawer, [ u32, 2 ] viewport_size, WorldDrawer::DrawingStats& stats )

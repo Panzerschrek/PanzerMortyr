@@ -1,0 +1,700 @@
+import "menu.uh"
+
+namespace PM
+{
+
+fn Menu::constructor( [ u32, 2 ] viewport_size )
+	(
+		viewport_size_= viewport_size,
+		images_preloaded_= false,
+		current_page_= Page::MainMenu,
+		time_s_= 0.0f,
+		main_menu_current_row_= 0u,
+		new_game_current_row_= 0u,
+		load_save_game_current_row_= 0u,
+		options_current_row_= 0u,
+		options_mouse_sensitivity_= 0u, // TODO - read from settings.
+		controls_current_row_= 0u,
+		sound_settings_current_row_= 0u,
+		advanced_options_current_row_= 0u,
+		quit_message_index_= 1000u,
+	)
+{}
+
+fn Menu::IsActive( this ) : bool
+{
+	return current_page_ != Page::None;
+}
+
+fn nodiscard Menu::ProcessKeyPress( mut this, SDL_Keysym& key_sym ) : Command
+{
+	switch( key_sym.scancode )
+	{
+		SDL_SCANCODE_ESCAPE ->
+		{
+			switch( current_page_ )
+			{
+				Page::None -> { current_page_= Page::MainMenu; },
+				Page::MainMenu -> { current_page_= Page::None; },
+				Page::NewGame -> { current_page_= Page::MainMenu; },
+				Page::LoadGame -> { current_page_= Page::MainMenu; },
+				Page::SaveGame -> { current_page_= Page::MainMenu; },
+				Page::Options -> { current_page_= Page::MainMenu; },
+				Page::Controls -> { current_page_= Page::Options; },
+				Page::VideoSettings -> { current_page_= Page::Options; },
+				Page::SoundSettings -> { current_page_= Page::Options; },
+				Page::AdvancedOptions -> { current_page_= Page::Options; },
+				Page::Quit -> { current_page_= Page::MainMenu; },
+			}
+		},
+		SDL_SCANCODE_RETURN ->
+		{
+			switch( current_page_ )
+			{
+				Page::None -> {},
+				Page::MainMenu ->
+				{
+					switch( main_menu_current_row_ )
+					{
+						0u -> { current_page_= Page::NewGame; },
+						1u -> { current_page_= Page::LoadGame; },
+						2u -> { current_page_= Page::SaveGame; },
+						3u -> { /* TODO - switch to multiplayer page */ },
+						4u -> { current_page_= Page::Options; },
+						5u ->
+						{
+							current_page_= Page::Quit;
+
+							// Pseudo-random time-based selection of quit message.
+							var u32 mut new_index= u32( time_s_ * 17.0f ) % c_num_quit_messages;
+							if( new_index == quit_message_index_ )
+							{
+								new_index= ( new_index + 1u ) % c_num_quit_messages;
+							}
+
+							quit_message_index_= new_index;
+						},
+						default -> {},
+					}
+				},
+				Page::NewGame ->
+				{
+					current_page_= Page::None;
+
+					return CommandNewGame{ .skill= new_game_current_row_ };
+				},
+				Page::LoadGame ->
+				{
+					// TODO
+				},
+				Page::SaveGame ->
+				{
+					// TODO
+				},
+				Page::Options ->
+				{
+					switch( options_current_row_ )
+					{
+						0u -> { current_page_= Page::Controls; },
+						1u -> { current_page_= Page::VideoSettings; },
+						2u -> { current_page_= Page::SoundSettings; },
+						3u -> { /* Do nothing for mouse sensitivity. */ },
+						4u -> { /* TODO - change HUD position. */ },
+						5u -> { /* TODO - change crosshair. */ },
+						6u -> { /* TODO - switch to parental lock menu. */ },
+						7u-> { current_page_= Page::AdvancedOptions; },
+						default -> {},
+					}
+				},
+				Page::Controls ->
+				{
+					// TODO
+				},
+				Page::VideoSettings ->
+				{
+					// TODO
+				},
+				Page::SoundSettings ->
+				{
+					// TODO
+				},
+				Page::AdvancedOptions ->
+				{
+					// TODO
+				},
+				Page::Quit ->
+				{
+					return CommandQuit{};
+				},
+			}
+		},
+		SDL_SCANCODE_UP ->
+		{
+			switch( current_page_ )
+			{
+				Page::None -> {},
+				Page::MainMenu ->
+				{
+					DecrementRow( main_menu_current_row_, PageNumRows::main_menu );
+				},
+				Page::NewGame ->
+				{
+					DecrementRow( new_game_current_row_, PageNumRows::new_game );
+				},
+				Page::LoadGame, Page::SaveGame ->
+				{
+					DecrementRow( load_save_game_current_row_, PageNumRows::load_save );
+				},
+				Page::Options ->
+				{
+					DecrementRow( options_current_row_, PageNumRows::options );
+				},
+				Page::Controls ->
+				{
+					DecrementRow( controls_current_row_, PageNumRows::controls );
+				},
+				Page::VideoSettings ->
+				{
+					// TODO
+				},
+				Page::SoundSettings ->
+				{
+					DecrementRow( sound_settings_current_row_, PageNumRows::sound_settings );
+				},
+				Page::AdvancedOptions ->
+				{
+					DecrementRow( advanced_options_current_row_, PageNumRows::advanced_options );
+				},
+				Page::Quit -> {},
+			}
+		},
+		SDL_SCANCODE_DOWN ->
+		{
+			switch( current_page_ )
+			{
+				Page::None -> {},
+				Page::MainMenu ->
+				{
+					IncrementRow( main_menu_current_row_, PageNumRows::main_menu );
+				},
+				Page::NewGame ->
+				{
+					IncrementRow( new_game_current_row_, PageNumRows::new_game );
+				},
+				Page::LoadGame, Page::SaveGame ->
+				{
+					IncrementRow( load_save_game_current_row_, PageNumRows::load_save );
+				},
+				Page::Options ->
+				{
+					IncrementRow( options_current_row_, PageNumRows::options );
+				},
+				Page::Controls ->
+				{
+					IncrementRow( controls_current_row_, PageNumRows::controls );
+				},
+				Page::VideoSettings ->
+				{
+					// TODO
+				},
+				Page::SoundSettings ->
+				{
+					IncrementRow( sound_settings_current_row_, PageNumRows::sound_settings );
+				},
+				Page::AdvancedOptions ->
+				{
+					IncrementRow( advanced_options_current_row_, PageNumRows::advanced_options );
+				},
+				Page::Quit -> {},
+			}
+		},
+		SDL_SCANCODE_LEFT ->
+		{
+			switch( current_page_ )
+			{
+				Page::None -> {},
+				Page::MainMenu -> {},
+				Page::NewGame -> {},
+				Page::LoadGame, Page::SaveGame -> {},
+				Page::Options ->
+				{
+					switch( options_current_row_ )
+					{
+						// TODO - change boolean values.
+						3u ->
+						{
+							// TODO - update settings.
+							if( options_mouse_sensitivity_ > 0u )
+							{
+								--options_mouse_sensitivity_;
+							}
+						},
+						default -> {},
+					}
+				},
+				Page::Controls -> {},
+				Page::VideoSettings -> {},
+				Page::SoundSettings -> {},
+				Page::AdvancedOptions -> {},
+				Page::Quit -> {},
+			}
+		},
+		SDL_SCANCODE_RIGHT ->
+		{
+			switch( current_page_ )
+			{
+				Page::None -> {},
+				Page::MainMenu -> {},
+				Page::NewGame -> {},
+				Page::LoadGame, Page::SaveGame -> {},
+				Page::Options ->
+				{
+					switch( options_current_row_ )
+					{
+						// TODO - change boolean values.
+						3u ->
+						{
+							// TODO - update settings.
+							if( options_mouse_sensitivity_ < c_max_slider_value )
+							{
+								++options_mouse_sensitivity_;
+							}
+						},
+						default -> {},
+					}
+				},
+				Page::Controls -> {},
+				Page::VideoSettings -> {},
+				Page::SoundSettings -> {},
+				Page::AdvancedOptions -> {},
+				Page::Quit -> {},
+			}
+		},
+		SDL_SCANCODE_Y ->
+		{
+			if( current_page_ == Page::Quit )
+			{
+				return CommandQuit{};
+			}
+		},
+		SDL_SCANCODE_N ->
+		{
+			if( current_page_ == Page::Quit )
+			{
+				current_page_= Page::MainMenu;
+			}
+		},
+		default -> {},
+	}
+
+	return CommandNone{};
+}
+
+fn Menu::Update( mut this, f32 time_delta_s )
+{
+	time_s_+= time_delta_s;
+}
+
+fn Menu::Draw( mut this, ImageDrawer &mut image_drawer, TextDrawer &mut text_drawer )
+{
+	if( !images_preloaded_ )
+	{
+		PreloadMenuImages( image_drawer );
+		images_preloaded_= true;
+	}
+
+	if( !IsActive() )
+	{
+		return;
+	}
+
+	// Use only integer scale, since we need to draw scaled texts and they look nice only in integer scales.
+	var u32 scale= ust::max( 1u, ust::min( viewport_size_[0] / 400u, viewport_size_[1] / 300u ) );
+
+	// Center horizontally.
+	var i32 offset_x= i32( ( viewport_size_[0] - c_base_menu_size[0] * scale ) / 2u );
+	// Move menu slightly upper relative to the screen center.
+	var i32 offset_y= i32( ( viewport_size_[1] - c_base_menu_size[1] * scale ) * 3u / 4u );
+
+	var u32 cursor_frame= u32( time_s_ * 16.0f ) % 16u;
+	var u32 cursor_tile_x= cursor_frame % 8u;
+	var u32 cursor_tile_y= ( cursor_frame / 8u ) ^ 1u;
+
+	var u32 constexpr cursor_size= 24u;
+
+	var u32 constexpr
+		control_element_width= 80u,
+		control_element_height= 15u,
+		control_element_on_y= control_element_height * 9u,
+		control_element_off_y= control_element_height * 8u,
+		control_element_slider_background_y= control_element_height * 4u,
+		control_element_slider_y= control_element_height * 3u;
+
+	var i32 constexpr slider_start_offset= -64;
+	var u32 constexpr slider_increment= 2u;
+
+	var TextDrawer::Settings text_settings
+	{
+		.scale= scale,
+		.monospace= false,
+		.foreground_color[  20u8,  20u8,  20u8, 255u8 ],
+		.background_color[ 200u8, 120u8, 120u8,   0u8 ],
+	};
+
+	switch( current_page_ )
+	{
+		Page::None -> {},
+		Page::MainMenu ->
+		{
+			image_drawer.DrawImage( MenuImages::main_menu_page_background, offset_x, offset_y, f32( scale ) );
+
+			var i32 cursor_offset_x= offset_x + i32( 65u * scale );
+			var i32 cursor_offset_y= offset_y + i32( 50u * scale );
+
+			var u32 constexpr cursor_step_size= 16u;
+
+			image_drawer.DrawImage(
+				MenuImages::cursor_frames,
+				cursor_offset_x,
+				cursor_offset_y + i32( cursor_step_size * scale * ( PageNumRows::main_menu - 1u - main_menu_current_row_ ) ),
+				f32( scale ),
+				cursor_tile_x * cursor_size,
+				cursor_tile_y * cursor_size,
+				cursor_size,
+				cursor_size );
+		},
+		Page::NewGame ->
+		{
+			image_drawer.DrawImage( MenuImages::new_game_page_background, offset_x, offset_y, f32( scale ) );
+
+			var i32 cursor_offset_x= offset_x + i32( 65u * scale );
+			var i32 cursor_offset_y= offset_y + i32( 67u * scale );
+
+			var u32 constexpr cursor_step_size= 19u;
+
+			image_drawer.DrawImage(
+				MenuImages::cursor_frames,
+				cursor_offset_x,
+				cursor_offset_y + i32( cursor_step_size * scale * ( PageNumRows::new_game - 1u - new_game_current_row_ ) ),
+				f32( scale ),
+				cursor_tile_x * cursor_size,
+				cursor_tile_y * cursor_size,
+				cursor_size,
+				cursor_size );
+		},
+		Page::LoadGame ->
+		{
+			image_drawer.DrawImage( MenuImages::load_game_page_background, offset_x, offset_y, f32( scale ) );
+
+			// TODO - draw cursor
+			// TODO - draw slots
+
+			text_drawer.AddText( offset_x + 32 * i32(scale), offset_y + 100 * i32(scale), "Loading is not implemented yet", text_settings );
+		},
+		Page::SaveGame ->
+		{
+			image_drawer.DrawImage( MenuImages::save_game_page_background, offset_x, offset_y, f32( scale ) );
+
+			// TODO - draw cursor
+			// TODO - draw slots
+
+			text_drawer.AddText( offset_x + 32 * i32(scale), offset_y + 100 * i32(scale), "Saving is not implemented yet", text_settings );
+		},
+		Page::Options ->
+		{
+			image_drawer.DrawImage( MenuImages::options_page_background, offset_x, offset_y, f32( scale ) );
+
+			var i32 cursor_offset_x= offset_x + i32( 16u * scale );
+			var i32 cursor_offset_y= offset_y + i32( 46u * scale );
+
+			var u32 constexpr cursor_step_size= 15u;
+
+			image_drawer.DrawImage(
+				MenuImages::cursor_frames,
+				cursor_offset_x,
+				cursor_offset_y + i32( cursor_step_size * scale * ( PageNumRows::options - 1u - options_current_row_ ) ),
+				f32( scale ),
+				cursor_tile_x * cursor_size,
+				cursor_tile_y * cursor_size,
+				cursor_size,
+				cursor_size );
+
+			var i32 control_elements_offset_x= offset_x + i32( 230u * scale );
+			var i32 control_elements_offset_y= offset_y + i32( 50u * scale );
+
+			image_drawer.DrawImage(
+				MenuImages::control_elements,
+				control_elements_offset_x,
+				control_elements_offset_y + i32( scale * cursor_step_size * 4u ),
+				f32( scale ),
+				0u,
+				control_element_slider_background_y,
+				control_element_width,
+				control_element_height );
+
+			image_drawer.DrawImage(
+				MenuImages::control_elements,
+				control_elements_offset_x + slider_start_offset * i32( scale ) + i32( options_mouse_sensitivity_ * slider_increment * scale ),
+				control_elements_offset_y + i32( scale * cursor_step_size * 4u ),
+				f32( scale ),
+				0u,
+				control_element_slider_y,
+				control_element_width,
+				control_element_height );
+
+			// TODO - draw crosshair.
+
+			// TODO - draw hud alignment.
+		},
+		Page::Controls ->
+		{
+			image_drawer.DrawImage( MenuImages::controls_page_background, offset_x, offset_y, f32( scale ) );
+
+			text_drawer.AddText( offset_x + 32 * i32(scale), offset_y + 100 * i32(scale), "Control settings are not implemented yet", text_settings );
+		},
+		Page::VideoSettings ->
+		{
+			image_drawer.DrawImage( MenuImages::video_settings_page_background, offset_x, offset_y, f32( scale ) );
+
+			// TODO - implement proper video settings.
+
+			text_drawer.AddText( offset_x + 32 * i32(scale), offset_y + 100 * i32(scale), "Video settings are not implemented yet", text_settings );
+		},
+		Page::SoundSettings ->
+		{
+			image_drawer.DrawImage( MenuImages::sound_settings_page_background, offset_x, offset_y, f32( scale ) );
+
+			var i32 cursor_offset_x= offset_x + i32( 16u * scale );
+			var i32 cursor_offset_y= offset_y + i32( 51u * scale );
+
+			var u32 constexpr cursor_step_size= 15u;
+
+			image_drawer.DrawImage(
+				MenuImages::cursor_frames,
+				cursor_offset_x,
+				cursor_offset_y + i32( cursor_step_size * scale * ( PageNumRows::sound_settings - 1u - sound_settings_current_row_ ) ),
+				f32( scale ),
+				cursor_tile_x * cursor_size,
+				cursor_tile_y * cursor_size,
+				cursor_size,
+				cursor_size );
+
+			var i32 control_elements_offset_x= offset_x + i32( 230u * scale );
+			var i32 control_elements_offset_y= offset_y + i32( 56u * scale );
+
+			// TODO - display real values. For now just display stubs.
+
+			image_drawer.DrawImage(
+				MenuImages::control_elements,
+				control_elements_offset_x,
+				control_elements_offset_y + i32( scale * cursor_step_size * 6u ),
+				f32( scale ),
+				0u,
+				control_element_on_y,
+				control_element_width,
+				control_element_height );
+
+			image_drawer.DrawImage(
+				MenuImages::control_elements,
+				control_elements_offset_x,
+				control_elements_offset_y + i32( scale * cursor_step_size * 5u ),
+				f32( scale ),
+				0u,
+				control_element_on_y,
+				control_element_width,
+				control_element_height );
+
+			image_drawer.DrawImage(
+				MenuImages::control_elements,
+				control_elements_offset_x,
+				control_elements_offset_y + i32( scale * cursor_step_size * 4u ),
+				f32( scale ),
+				0u,
+				control_element_slider_background_y,
+				control_element_width,
+				control_element_height );
+
+			image_drawer.DrawImage(
+				MenuImages::control_elements,
+				control_elements_offset_x + slider_start_offset * i32( scale ) + i32( 17u * slider_increment * scale ),
+				control_elements_offset_y + i32( scale * cursor_step_size * 4u ),
+				f32( scale ),
+				0u,
+				control_element_slider_y,
+				control_element_width,
+				control_element_height );
+
+			image_drawer.DrawImage(
+				MenuImages::control_elements,
+				control_elements_offset_x,
+				control_elements_offset_y + i32( scale * cursor_step_size * 3u ),
+				f32( scale ),
+				0u,
+				control_element_slider_background_y,
+				control_element_width,
+				control_element_height );
+
+			image_drawer.DrawImage(
+				MenuImages::control_elements,
+				control_elements_offset_x + slider_start_offset * i32( scale ) + i32( 25u * slider_increment * scale ),
+				control_elements_offset_y + i32( scale * cursor_step_size * 3u ),
+				f32( scale ),
+				0u,
+				control_element_slider_y,
+				control_element_width,
+				control_element_height );
+
+			image_drawer.DrawImage(
+				MenuImages::control_elements,
+				control_elements_offset_x,
+				control_elements_offset_y + i32( scale * cursor_step_size * 2u ),
+				f32( scale ),
+				0u,
+				control_element_on_y,
+				control_element_width,
+				control_element_height );
+
+			image_drawer.DrawImage(
+				MenuImages::control_elements,
+				control_elements_offset_x,
+				control_elements_offset_y + i32( scale * cursor_step_size * 1u ),
+				f32( scale ),
+				0u,
+				control_element_on_y,
+				control_element_width,
+				control_element_height );
+
+			image_drawer.DrawImage(
+				MenuImages::control_elements,
+				control_elements_offset_x,
+				control_elements_offset_y + i32( scale * cursor_step_size * 0u ),
+				f32( scale ),
+				0u,
+				control_element_off_y,
+				control_element_width,
+				control_element_height );
+		},
+		Page::AdvancedOptions ->
+		{
+			image_drawer.DrawImage( MenuImages::advanced_options_page_background, offset_x, offset_y, f32( scale ) );
+
+			var i32 cursor_offset_x= offset_x + i32( 18u * scale );
+			var i32 cursor_offset_y= offset_y + i32( 30u * scale );
+
+			var u32 constexpr cursor_step_size= 15u;
+
+			image_drawer.DrawImage(
+				MenuImages::cursor_frames,
+				cursor_offset_x,
+				cursor_offset_y + i32( cursor_step_size * scale * ( PageNumRows::advanced_options - 1u - advanced_options_current_row_ ) ),
+				f32( scale ),
+				cursor_tile_x * cursor_size,
+				cursor_tile_y * cursor_size,
+				cursor_size,
+				cursor_size );
+
+			var i32 control_elements_offset_x= offset_x + i32( 230u * scale );
+			var i32 control_elements_offset_y= offset_y + i32( 34u * scale );
+
+			// TODO - use real states.
+			var [ bool, PageNumRows::advanced_options ] row_states[ false, true, true, false, true, true, true, false, false ];
+
+			for( auto mut i= 0u; i < PageNumRows::advanced_options; ++i )
+			{
+				image_drawer.DrawImage(
+					MenuImages::control_elements,
+					control_elements_offset_x,
+					control_elements_offset_y + i32( scale * cursor_step_size * i ),
+					f32( scale ),
+					0u,
+					( row_states[i] ? control_element_on_y : control_element_off_y ),
+					control_element_width,
+					control_element_height );
+			}
+		},
+		Page::Quit ->
+		{
+			if_var( &image_size : image_drawer.GetImageSize( MenuImages::quit_texts ) )
+			{
+				var u32 message_height= image_size[1] / c_num_quit_messages;
+
+				image_drawer.DrawImage(
+					MenuImages::quit_texts,
+					// Draw the message slightly above screen center.
+					i32( ( viewport_size_[0] - image_size[0] * scale ) / 2u ),
+					i32( viewport_size_[1] / 2u ),
+					f32( scale ),
+					0u,
+					message_height * quit_message_index_,
+					image_size[0],
+					message_height );
+			}
+		},
+	}
+}
+
+fn IncrementRow( u32 &mut row, u32 num_rows )
+{
+	row= ( row + 1u ) % num_rows;
+}
+
+fn DecrementRow( u32 &mut row, u32 num_rows )
+{
+	row= ( row + ( num_rows - 1u ) ) % num_rows;
+}
+
+fn PreloadMenuImages( ImageDrawer &mut image_drawer )
+{
+	image_drawer.PreloadImage( MenuImages::main_menu_page_background );
+	image_drawer.PreloadImage( MenuImages::new_game_page_background );
+	image_drawer.PreloadImage( MenuImages::load_game_page_background );
+	image_drawer.PreloadImage( MenuImages::save_game_page_background );
+	image_drawer.PreloadImage( MenuImages::options_page_background );
+	image_drawer.PreloadImage( MenuImages::controls_page_background );
+	image_drawer.PreloadImage( MenuImages::video_settings_page_background );
+	image_drawer.PreloadImage( MenuImages::sound_settings_page_background );
+	image_drawer.PreloadImage( MenuImages::advanced_options_page_background );
+	image_drawer.PreloadImage( MenuImages::cursor_frames );
+	image_drawer.PreloadImage( MenuImages::control_elements );
+	image_drawer.PreloadImage( MenuImages::quit_texts );
+}
+
+var [ u32, 2 ] c_base_menu_size[ 320u, 200u ];
+
+var u32 c_num_quit_messages= 8u;
+
+var u32 c_max_slider_value= 33u;
+
+namespace PageNumRows
+{
+
+var u32
+	main_menu= 6u,
+	new_game= 4u,
+	load_save= 10u,
+	options= 8u,
+	controls= 10u,
+	sound_settings= 7u,
+	advanced_options= 9u;
+} // namespace PageNumRows
+
+namespace MenuImages
+{
+
+var ResourceString
+	& main_menu_page_background= "MENU.BMP\0\0\0\0\0\0\0\0",
+	& new_game_page_background= "MENU_T.BMP\0\0\0\0\0\0",
+	& load_game_page_background= "LOADG.BMP\0\0\0\0\0\0\0",
+	& save_game_page_background= "SAVEG.BMP\0\0\0\0\0\0\0",
+	& options_page_background= "OPTION.BMP\0\0\0\0\0\0",
+	& controls_page_background= "KLAWISZ.BMP\0\0\0\0\0",
+	& video_settings_page_background= "MODES.BMP\0\0\0\0\0\0\0",
+	& sound_settings_page_background= "SOUND.BMP\0\0\0\0\0\0\0",
+	& advanced_options_page_background= "ADVANC.BMP\0\0\0\0\0\0",
+	& cursor_frames= "MENU_Z.BMP\0\0\0\0\0\0",
+	& control_elements= "OPTION2.BMP\0\0\0\0\0",
+	& quit_texts= "QUIT.BMP\0\0\0\0\0\0\0\0";
+
+} // namespace MenuImages
+
+} // namespace PM

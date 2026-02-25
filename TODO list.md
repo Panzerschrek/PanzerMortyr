@@ -38,7 +38,6 @@ Other investigation:
 * Investigate how exactly visuals are changed when nightvision or infravision are active.
 * Investigate save files format - it may be useful.
 * Investigate differences between regional versions.
-* Investigate how many menu pages the original game has and what state pieces are preserved in transition between menu pages.
 * Investigate how original game console works (supported commands, history).
 * Invisitage command-line options of the original game.
 * Investigate contents of the BLIKI.STD file.
@@ -179,7 +178,14 @@ PanzerMortyr menus and HUD:
 
 * Implement loading screen.
 * Display console background image (maybe even scroll it if it doesn't fit).
-* Implement menus.
+* Implement game save and loading menus.
+* Implement video modes menu.
+* Implement key bindings menu.
+* Make sound options menu functional.
+* Allow changing HUD position via settings menu.
+* Allow changing crosshair via settings menu.
+* Implement some stub page for parental lock menu.
+* Make advanced options menu functinal.
 * Extend existing setting menus/add new ones for extra options specific for PanzerMortyr.
 * Show low health and armor numbers in HUD using red color.
 * Display more than one active tool in HUD.
