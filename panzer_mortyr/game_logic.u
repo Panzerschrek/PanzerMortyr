@@ -11,10 +11,11 @@ import "math_constants.uh"
 namespace PM
 {
 
-fn CreateNewMapGameState( GameMapData& map_data ) : GameState
+fn CreateNewMapGameState( GameMapData& map_data, u32 skill ) : GameState
 {
 	var GameState mut game_state
 	{
+		.skill= skill,
 		.step_index= 0u,
 		.player
 		{
@@ -216,7 +217,7 @@ fn ProcessGameLogicStep(
 
 	PerformPlayerMovement( global_data, map_data, player_input, game_state );
 
-	ProcessEntitiesLogicStep( map_data, game_state );
+	ProcessEntitiesLogicStep( global_data, map_data, game_state );
 
 	ProcessDynamicClustersLogicStep( map_data, game_state );
 
@@ -312,6 +313,9 @@ fn PerformPlayerWeaponLogic( GameMapData& map_data, PlayerInput& player_input, G
 								player_input.azimuth,
 								player_input.elevation );
 
+						var Vec3f direction_with_random_spread=
+							RandomOffsetShotVector( direction, tool.player_weapon_accuracy, game_state.random );
+
 						game_state.projectiles.push_back(
 							Projectile
 							{
@@ -319,7 +323,7 @@ fn PerformPlayerWeaponLogic( GameMapData& map_data, PlayerInput& player_input, G
 								.owner_entity_index= c_player_entity_index,
 								.age_steps= 0u,
 								.position= position,
-								.velocity= f32( tool.speed ) * direction,
+								.velocity= f32( tool.speed ) * direction_with_random_spread,
 								.hit_entity_index= ~0u,
 								.hit_by_dynamic_cluster= false,
 							} );
@@ -814,8 +818,9 @@ fn GetFrictionForMapQuad( GameGlobalData& global_data, GameMapData& map_data, u3
 	return default_friction;
 }
 
-fn ProcessEntitiesLogicStep( GameMapData& map_data, GameState &mut game_state )
+fn ProcessEntitiesLogicStep( GameGlobalData& game_global_data, GameMapData& map_data, GameState &mut game_state )
 {
+	var GameParams& game_params= game_global_data.game_params.deref();
 	var EntitiesDescription& entities_description= map_data.entities_description.deref();
 
 	// Use index-based loop to be able to insert entities.
@@ -995,10 +1000,13 @@ fn ProcessEntitiesLogicStep( GameMapData& map_data, GameState &mut game_state )
 							if( entity.num_steps_since_operation_start == u32( item[4] ) )
 							{
 								EntityShoot(
+									game_params,
 									entities_description,
-									item, entity,
+									game_state.skill,
+									item,
+									entity,
 									u32( entity_index ),
-									game_state.player,
+									game_state.random,
 									game_state.projectiles );
 							}
 						}
@@ -2533,11 +2541,13 @@ struct EntityDistanceRange
 }
 
 fn EntityShoot(
+	GameParams& game_params,
 	EntitiesDescription& entities_description,
+	u32 skill,
 	[ i32, 5 ]& item,
 	EntityState& mut entity,
 	u32 entity_index,
-	PlayerState& player_state,
+	PseudoRandomGenerator &mut rand,
 	ust::vector</Projectile/> &mut projectiles )
 {
 	if( entity.ammo == 0u )
@@ -2554,13 +2564,14 @@ fn EntityShoot(
 
 	var EntitiesDescription::Tool& weapon_tool= entities_description.tools[ size_type( weapon_tool_index ) ];
 
-	if( !entity.player_is_in_sight )
+	if( !entity.player_is_in_sight || entity.last_seen_player_position.empty() )
 	{
 		// Can't see the player anymore, avoid shooting.
 		return;
 	}
 
-	var Vec3f target_position= player_state.position + GetPlayerColliderBBox( entities_description ).GetCenter();
+	var Vec3f target_position=
+		entity.last_seen_player_position.try_deref() + GetPlayerColliderBBox( entities_description ).GetCenter();
 
 	var Mat4f rotation_matrix= Mat4f::MakeRotationZ( entity.azimuth );
 
@@ -2573,12 +2584,13 @@ fn EntityShoot(
 	// since shooting operations should include active rotation towards it.
 
 	var Vec3f vec_to_target= target_position - shot_position;
-	var f32 vec_to_target_length= vec_to_target.Length();
 
-	if( vec_to_target_length == 0.0f )
-	{
-		return;
-	}
+	// Accuracy is specified on per-weapon basis.
+	// Additionally there is a skill-based extra bullet spread.
+	var u32 accuracy= weapon_tool.enemy_weapon_accuracy + game_params.bullet_spread[ skill ];
+
+	var Vec3f direction_with_random_spread=
+		RandomOffsetShotVector( vec_to_target, accuracy, rand );
 
 	projectiles.push_back(
 		Projectile
@@ -2587,8 +2599,7 @@ fn EntityShoot(
 			.owner_entity_index= entity_index,
 			.age_steps= 0u,
 			.position= shot_position,
-			// TODO - apply also random spread and constant per-shot rotation.
-			.velocity= vec_to_target * ( f32( weapon_tool.speed ) / vec_to_target_length ),
+			.velocity= direction_with_random_spread * f32( weapon_tool.speed ),
 			.hit_entity_index= ~0u,
 			.hit_by_dynamic_cluster= false,
 		} );
@@ -3105,6 +3116,72 @@ fn GetPlayerShotStartAndDirection(
 		player_position + offset,
 		// TODO - apply also random spread and constant per-shot rotation.
 		Vec3f( 0.0f, 1.0f, 0.0f ) * rotation_matrix );
+}
+
+// Input vector may be non-normalized.
+fn RandomOffsetShotVector( Vec3f& shot_vector, u32 accuracy, PseudoRandomGenerator &mut rand ) : Vec3f
+{
+	var [ Vec3f, 3 ] basis= GetShotVectorBasis( shot_vector );
+
+	// Accuracy is given in some unknown units. So, assume it's some sort of angle.
+	// Scale it down using this factor. It was tweaked to roughly match weapon spread of the original game.
+	var f32 accuracy_scale_factor= 16384.0f;
+
+	var f32 spread_half_angle= f32( accuracy ) * ( c_tau / accuracy_scale_factor );
+
+	// Select random longitude in any direction and random deviation angle from shot direction.
+	// Result distribution has more density at center, which is nice and is somewhat realistic.
+	var f32 longitude= f32( rand.Next() ) * ( c_tau / f32( PseudoRandomGenerator::c_max_plus_one ) );
+	var f32 latitude= c_tau / 4.0f - f32( rand.Next() ) * ( spread_half_angle / f32( PseudoRandomGenerator::c_max_plus_one ) );
+
+	var f32 longitude_cos= ust::cos( longitude );
+	var f32 longitude_sin= ust::sin( longitude );
+	var f32 latitude_cos= ust::cos( latitude );
+	var f32 latitude_sin= ust::sin( latitude );
+
+	return
+		basis[0] * latitude_sin +
+		basis[1] * ( longitude_cos * latitude_cos ) +
+		basis[2] * ( longitude_sin * latitude_cos );
+}
+
+// Input vector may be non-normalized.
+fn GetShotVectorBasis( Vec3f& shot_vector ) : [ Vec3f, 3 ]
+{
+	var Vec3f basis_vector_a= shot_vector;
+	var f32 basis_vector_a_length= basis_vector_a.Length();
+	if( basis_vector_a_length == 0.0f )
+	{
+		return ust::make_array( Vec3f( 1.0f, 0.0f, 0.0f ), Vec3f( 0.0f, 1.0f, 0.0f ), Vec3f( 0.0f, 0.0f, 1.0f ) );
+	}
+
+	var Vec3f basis_vector_b= shot_vector.Cross( Vec3f( 0.0f, 0.0f, 1.0f ) );
+	var f32 basis_vector_b_length= basis_vector_b.Length();
+	if( basis_vector_b_length == 0.0f )
+	{
+		return
+			ust::make_array(
+				basis_vector_a / basis_vector_a_length,
+				Vec3f( 0.0f, 1.0f, 0.0f ),
+				Vec3f( 0.0f, 0.0f, 1.0f ) );
+	}
+
+	var Vec3f basis_vector_c= basis_vector_b.Cross( shot_vector );
+	var f32 basis_vector_c_length= basis_vector_c.Length();
+	if( basis_vector_c_length == 0.0f )
+	{
+		return
+			ust::make_array(
+				basis_vector_a / basis_vector_a_length,
+				basis_vector_b / basis_vector_b_length,
+				Vec3f( 0.0f, 0.0f, 1.0f ) );
+	}
+
+	return
+		ust::make_array(
+			basis_vector_a / basis_vector_a_length,
+			basis_vector_b / basis_vector_b_length,
+			basis_vector_c / basis_vector_c_length );
 }
 
 } // namespace PM

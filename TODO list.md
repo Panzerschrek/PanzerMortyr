@@ -53,7 +53,6 @@ Gameplay investigation:
 * Investigate how different entity parameters affect their behavior.
 * Investigate how player's bounding box is altered when crouching.
 * Investigate what "BUTLA_TLENU" is.
-* Investigate how weapon spread works.
 * Investigate misfire behavior.
 
 PanzerMortyr general:
@@ -65,7 +64,6 @@ PanzerMortyr general:
 * Allow setting fullscreen mode with possible resolution changing and/or in "desktop fullscreen" mode.
 * Play cinematics at start.
 * Cache or even preload weapon models to avoid reloading them after level transition.
-* Implement multiple skill levels.
 
 PanzerMortyr game logic:
 
@@ -94,6 +92,7 @@ PanzerMortyr game logic:
 * Consider using fixed point arithmetic for game calculations in order to make game logic deterministic (across different machines) and thus allowing multiplayer mode with client-side game logic calculations.
 * Implement birds.
 * Implement rats.
+* Avoid spawning some enemies based on current skill level (investigate how the original game does this).
 * Spawn enemies having trigger box only when player touches this box (usually behind his back).
 * Fix ugly injury-based entity state transitions, when an injury operation is changed while some other injury operation is already in process.
 * Implement pushing pushable entities.
