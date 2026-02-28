@@ -1,5 +1,6 @@
 import "/enum_string_conversions.u"
 import "/scoped_array.u"
+import "/sort.u"
 import "/string_conversions.u"
 
 import "/common_lib/materials_file.uh"
@@ -93,6 +94,10 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 	// Ensure we have actual map data.
 	SetMap( drawing_info.map_index );
 
+	// Load models in use.
+	// TODO - precache models to avoid doing loading outside map loading phase, since it may lead to frame lags.
+	LoadModelsIfNecessary( drawing_info.model_objects, game_filesystem_ptr_, console_out_, models_ );
+
 	SetGLState( g_buffer_clear_gl_state );
 
 	if( map_data_.empty() )
@@ -130,344 +135,74 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 	var CameraClipPlanes camera_clip_planes=
 		CreateCameraClipPlanes( drawing_info.camera_params, viewport_info.view_aspect );
 
-	{
-		SetGLState( g_sky_background_gl_state );
-
-		var Mat4f sky_background_matrix=
-			Mat4f::MakeRotationX( c_tau * 0.25f ) *
-			Mat4f::MakeRotationZ( -c_tau * 0.125f ) * // TODO - check this angle is correct.
-			Mat4f::MakeScale( c_sky_scale ) *
-			rotation_and_projection_matrix;
-
-		sky_background_shader_.Bind();
-		sky_background_shader_.SetUniform( "vu_matrix", sky_background_matrix );
-
-		map_data.sky_background_buffer.vertex_array_object.Bind();
-		map_data.sky_background_buffer.index_buffer.Bind();
-
-		unsafe( glDrawElements(
-			GLenum( GL_TRIANGLES ),
-			GLint( map_data.sky_background_buffer.num_triangle_indices ),
-			GLenum( GL_UNSIGNED_SHORT ),
-			ust::nullptr</byte8/>() ) );
-	}
+	DrawSkyBackground( map_data.sky_background_buffer, sky_background_shader_, rotation_and_projection_matrix );
 
 	if( !map_data.sky_clouds_params.empty() && map_data.clouds_texture_layer != ~0u )
 	{
-		var SkyCloudsParams& clouds_params= map_data.sky_clouds_params.try_deref();
-
-		SetGLState(
-			( clouds_params.scale_colors_by_two
-				? g_clouds_double_blending_gl_state
-				: g_clouds_single_blending_gl_state ) );
-
-		var Mat4f clouds_matrix= Mat4f::MakeScale( c_clouds_scale ) * rotation_and_projection_matrix;
-
-		var u32 texture_slot= 0u;
-		unsafe( glActiveTexture( GLenum( GL_TEXTURE0 ) + GLenum(texture_slot) ) );
-		map_data.map_textures_array.Bind();
-
-		clouds_shader_.Bind();
-		clouds_shader_.SetUniform( "vu_matrix", clouds_matrix );
-		clouds_shader_.SetUniform( "fu_texture", texture_slot );
-		clouds_shader_.SetUniform( "fu_texture_layer", f32( map_data.clouds_texture_layer ) );
-		clouds_shader_.SetUniform( "fu_texture_scale", clouds_params.scale );
-		clouds_shader_.SetUniform(
-			"fu_texture_shift",
-			drawing_info.game_time_s * clouds_params.scroll_speed * Vec2f( 1.0f, 1.0f ) );
-
-		unsafe( glDrawArrays( GLenum( GL_TRIANGLES ), GLint(0), GLsizei(12) ) );
+		DrawClouds(
+			map_data.sky_clouds_params.try_deref(),
+			clouds_shader_,
+			map_data.map_textures_array,
+			map_data.clouds_texture_layer,
+			rotation_and_projection_matrix,
+			drawing_info.game_time_s );
 	}
 
 	// Draw stars/moon AFTER clouds. This isn't fully correct, but this allows to draw sun/moon with proper brightness.
-	{
-		SetGLState( g_stars_gl_state );
+	DrawStarsAndSun(
+		map_data.stars_buffer, stars_shader_, map_data.map_textures_array, rotation_and_projection_matrix );
 
-		var Mat4f stars_matrix= Mat4f::MakeScale( c_stars_scale ) * rotation_and_projection_matrix;
+	var ust::array_view_imut</ZvoxCluster/> clusters= map_data.zvox_data.deref().clusters;
 
-		var u32 texture_slot= 0u;
-		unsafe( glActiveTexture( GLenum( GL_TEXTURE0 ) + GLenum(texture_slot) ) );
-		map_data.map_textures_array.Bind();
+	var ust::array_view_imut</ZmapLemClusterSkyLightData/> clusters_sky_light_data=
+		map_data.zmap_lem_data.deref().clusters_sky_light_data;
 
-		stars_shader_.Bind();
-		stars_shader_.SetUniform( "vu_matrix", stars_matrix );
-		stars_shader_.SetUniform( "fu_texture", texture_slot );
-
-		map_data.stars_buffer.vertex_array_object.Bind();
-		map_data.stars_buffer.index_buffer.Bind();
-
-		unsafe( glDrawElements(
-			GLenum( GL_TRIANGLES ),
-			GLint( map_data.stars_buffer.num_triangle_indices ),
-			GLenum( GL_UNSIGNED_SHORT ),
-			ust::nullptr</byte8/>() ) );
-	}
-
-	var ZvoxData& zvox_data= map_data.zvox_data.deref();
-	var ZpozData& zpoz_data= map_data.zpoz_data.deref();
-	var ZmapLemData& zmap_lem_data= map_data.zmap_lem_data.deref();
 	var RoomClustersHierarchy& room_clusters_hierarchy= map_data.room_clusters_hierarchy.deref();
-
-	var ust::optional</size_type/> mut camera_cluster_index_opt;
-
-	VisitBoundingBoxesHierarchyForPoint(
-		room_clusters_hierarchy,
-		drawing_info.camera_params.position,
-		lambda[&]( ClusterIndexInHierarchy c )
-		{
-			var size_type cluster_index(c);
-			if( CreateClusterBBox( zvox_data.clusters[ cluster_index ] ).PointIsInsideOrOnFace(
-				drawing_info.camera_params.position ) )
-			{
-				camera_cluster_index_opt= cluster_index;
-			}
-		} );
 
 	// Perform visibility checks only for room clusters.
 	// Doing it for non-room clusters is too costly, since there are too many of them.
 	// TODO - allocate this  container once at map start?
-	scoped_array bool mut visible_room_cluster_flags[ zvox_data.clusters.size() ]( false );
+	scoped_array bool mut visible_room_cluster_flags[ clusters.size() ]( false );
 
-	if_var( camera_cluster_index : camera_cluster_index_opt )
-	{
-		// Mark as visible current cluster.
-		visible_room_cluster_flags[ camera_cluster_index ]= true;
-
-		var i32 bias= i32( zpoz_data.clusters.size() ) * 4;
-
-		var ZpozClusterVisibilityData& visibility_data= zpoz_data.clusters_visibility_data[ camera_cluster_index ];
-
-		// TODO - check if we should use data[2] and not data[0] or even both.
-		var i32 data_start= visibility_data.data[2];
-
-		if( data_start != -1 )
-		{
-			var size_type visibility_data_offset( data_start - bias );
-
-			// We have 2 subranges for both offsets.
-			// Since we don't know which is correct, use both of them.
-			var size_type subrange0_size( zpoz_data.cluster_indices[ visibility_data_offset  ] );
-			var size_type subrange0_start= visibility_data_offset + 8s;
-			var size_type subrange1_size( zpoz_data.cluster_indices[ subrange0_start + subrange0_size ] );
-			var size_type subrange1_start= subrange0_start + size_type(subrange0_size) + 8s;
-
-			var [ ust::array_view_imut</i32/>, 2 ] ranges
-			[
-				zpoz_data.cluster_indices.range().subrange( subrange0_start, subrange0_start + subrange0_size ),
-				zpoz_data.cluster_indices.range().subrange( subrange1_start, subrange1_start + subrange1_size )
-			];
-
-			foreach( range : ranges )
-			{
-				foreach( visible_cluster_index : range )
-				{
-					// Mark cluster listed in visibility data as visible.
-					visible_room_cluster_flags[ size_type( visible_cluster_index ) ]= true;
-				}
-			}
-		}
-	}
-	else
-	{
-		// Assume all room clusters are visible if we failed to find current cluster (like in noclip mode).
-		for( auto mut i= 0s; i < zvox_data.clusters.size(); ++i )
-		{
-			if( zvox_data.clusters[i].c.num_children_clusters >= 0 )
-			{
-				visible_room_cluster_flags[i]= true;
-			}
-		}
-	}
+	MarkVisibleRoomClusters(
+		room_clusters_hierarchy,
+		clusters,
+		map_data.zpoz_data.deref(),
+		drawing_info.camera_params.position,
+		visible_room_cluster_flags );
 
 	// Perform frustum culling for potentially-visible room clusters.
-	for( auto mut i= 0s; i < zvox_data.clusters.size(); ++i )
-	{
-		if( !visible_room_cluster_flags[i] )
-		{
-			continue;
-		}
-
-		var ZvoxCluster& cluster= zvox_data.clusters[i];
-
-		if( AreBoxVerticesClippedByAtLeastOneCameraClipPlane(
-				camera_clip_planes,
-				CreateClusterBBox(cluster).CreateCornerVertices() ) )
-		{
-			visible_room_cluster_flags[i]= false;
-			continue;
-		}
-	}
+	RejectVisibleRoomClustersUsingCameraPlanes( clusters, camera_clip_planes, visible_room_cluster_flags );
 
 	// Calculate bounding box including all visible clusters.
 	// It allows to perform rought rejection of things outside this box.
 
-	var BBox3f mut visible_clusters_bbox
-	{
-		.min= drawing_info.camera_params.position,
-		.max= drawing_info.camera_params.position,
-	};
+	var BBox3f visible_clusters_bbox=
+		CalculateVisibleClustersBBox( clusters, visible_room_cluster_flags, drawing_info.camera_params.position );
 
-	for( auto mut i= 0s; i < zvox_data.clusters.size(); ++i )
-	{
-		if( !visible_room_cluster_flags[i] )
-		{
-			continue;
-		}
+	DrawMapPolygons(
+		map_data,
+		visible_room_cluster_flags,
+		visible_clusters_bbox,
+		drawing_info.dynamic_cluster_objects,
+		map_shader_,
+		view_matrix,
+		drawing_stats );
 
-		var ZvoxCluster& cluster= zvox_data.clusters[i];
-
-		var BBox3f cluster_bbox= CreateClusterBBox( cluster );
-
-		ust::min_assign( visible_clusters_bbox.min.x, cluster_bbox.min.x );
-		ust::min_assign( visible_clusters_bbox.min.y, cluster_bbox.min.y );
-		ust::min_assign( visible_clusters_bbox.min.z, cluster_bbox.min.z );
-		ust::max_assign( visible_clusters_bbox.max.x, cluster_bbox.max.x );
-		ust::max_assign( visible_clusters_bbox.max.y, cluster_bbox.max.y );
-		ust::max_assign( visible_clusters_bbox.max.z, cluster_bbox.max.z );
-	}
-
-	SetGLState( g_map_drawing_gl_state );
-
-	var u32 texture_slot= 0u;
-
-	unsafe( glActiveTexture( GLenum( GL_TEXTURE0 ) + GLenum(texture_slot) ) );
-	map_data.map_textures_array.Bind();
-
-	map_shader_.Bind();
-	map_shader_.SetUniform( "vu_matrix", view_matrix );
-	map_shader_.SetUniform( "fu_texture", texture_slot );
-
-	map_data.vertex_array_object.Bind();
-	map_data.index_buffer.Bind();
-
-	for( auto mut i= 0s; i < zvox_data.clusters.size(); )
-	{
-		var ZvoxCluster& room_cluster= zvox_data.clusters[i];
-		if( room_cluster.c.num_children_clusters < 0 )
-		{
-			++i;
-			continue;
-		}
-
-		// This room cluster and all his children.
-		var size_type num_clusters_in_group= size_type( room_cluster.c.num_children_clusters ) + 1s;
-
-		if( visible_room_cluster_flags[i] )
-		{
-			for( auto mut j= 0s; j < num_clusters_in_group; ++j )
-			{
-				var size_type cluster_index= i + j;
-
-				var u8 cluster_type= zvox_data.clusters[ cluster_index ].cluster_type;
-				if( !(
-					cluster_type == ZvoxCluster::c_cluster_type_regular |
-					cluster_type == ZvoxCluster::c_cluster_type_notes ) )
-				{
-					// Draw dynamic clusters later.
-					continue;
-				}
-
-				auto& cluster_draw_data= map_data.clusters_draw_data[ cluster_index ];
-
-				unsafe( glDrawElementsBaseVertex(
-					GLenum( GL_TRIANGLES ),
-					GLsizei( cluster_draw_data.num_indices ),
-					GLenum( GL_UNSIGNED_SHORT ),
-					ust::nullptr</byte8/>() + typeinfo</u16/>.size_of * cluster_draw_data.first_index,
-					GLint( cluster_draw_data.first_vertex_index ) ) );
-
-				drawing_stats.num_visible_map_triangles+= u32( cluster_draw_data.num_indices ) / 3u;
-			}
-
-			++drawing_stats.num_room_visible_clusters;
-			drawing_stats.num_total_visible_clusters+= u32( num_clusters_in_group );
-		}
-
-		i+= num_clusters_in_group;
-	}
-
-	// Draw dynamic clusters with individual matrices.
-	foreach( &dynamic_cluster_object : drawing_info.dynamic_cluster_objects )
-	{
-		var size_type cluster_index( dynamic_cluster_object.cluster_index );
-
-		var ZvoxCluster& cluster= zvox_data.clusters[ cluster_index ];
-
-		var BBox3f mut bbox= CreateClusterBBox( cluster );
-		bbox.min+= dynamic_cluster_object.translation;
-		bbox.max+= dynamic_cluster_object.translation;
-
-		// First perform fast check if this dynamic cluster is within the bbox containing all visible clusters.
-		if( !visible_clusters_bbox.InstersectsOrTouches( bbox ) )
-		{
-			continue;
-		}
-
-		// Then check if this dynamic cluster is within at least one visible room cluster.
-		if( !IsBBoxWithinVisibleClusters(
-				zvox_data.clusters, room_clusters_hierarchy, visible_room_cluster_flags, bbox ) )
-		{
-			continue;
-		}
-
-		map_shader_.SetUniform(
-			"vu_matrix",
-			Mat4f::MakeTranslation( dynamic_cluster_object.translation ) * view_matrix );
-
-		auto& cluster_draw_data= map_data.clusters_draw_data[ cluster_index ];
-
-		unsafe( glDrawElementsBaseVertex(
-			GLenum( GL_TRIANGLES ),
-			GLsizei( cluster_draw_data.num_indices ),
-			GLenum( GL_UNSIGNED_SHORT ),
-			ust::nullptr</byte8/>() + typeinfo</u16/>.size_of * cluster_draw_data.first_index,
-			GLint( cluster_draw_data.first_vertex_index ) ) );
-
-		drawing_stats.num_visible_map_triangles+= u32( cluster_draw_data.num_indices ) / 3u;
-	}
+	// Prepare list of models to draw.
 
 	var bool fullbright= settings_.lock_imut().deref().r_fullbright;
 
-	SetGLState( g_models_drawing_gl_state );
-
-	model_shader_.Bind();
-	model_shader_.SetUniform( "fu_texture", texture_slot );
-
-	unsafe( glActiveTexture( GLenum( GL_TEXTURE0 ) + GLenum(texture_slot) ) );
-
 	foreach( &model_object : drawing_info.model_objects )
 	{
-		// Fetch model from models hash-map or load it if it's not loaded yet.
-		// TODO - precache models to avoid doing loading outside map loading phase, since it may lead to frame lags.
+		var ust::optional_ref_imut</ ust::optional</GPUModel/> /> model_opt_opt= models_.find( model_object.model_file_name );
 
-		var ResourceString& file_name= model_object.model_file_name;
+		if( model_opt_opt.empty() )
+		{
+			continue;
+		}
 
-		var ust::optional</GPUModel/>& model_opt=
-			models_.find_or_construct_new(
-				file_name,
-				lambda[ &fs= game_filesystem_ptr_, &file_name, &co= console_out_ ] () : ust::optional</GPUModel/>
-				{
-					auto mut lock= fs.lock_mut();
-					result_match(
-						lock.deref().LoadFile(
-							file_name,
-							( fn( ust::file_readable &mut f ) : ust::io_result</ModelData/> )( LoadModel ) ) )
-					{
-						Ok(m) -> { return CreateGPUModel( m ); },
-						Err(e) ->
-						{
-							ConsoleOutAddTextLine(
-								co,
-								ust::concat(
-									"Failed to load model file \"",
-									ConvertResourceStringToStringView( file_name ),
-									"\"! Error: ",
-									ust::enum_to_string( e ) ) );
-							return ust::null_optional;
-						},
-					}
-				} );
-
+		var ust::optional</GPUModel/>& model_opt= model_opt_opt.try_deref();
 		if( model_opt.empty() )
 		{
 			continue;
@@ -530,7 +265,7 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 
 				// Then check if this model is within at least one visible cluster.
 				if( !IsBBoxWithinVisibleClusters(
-						zvox_data.clusters, room_clusters_hierarchy, visible_room_cluster_flags, bbox ) )
+						clusters, room_clusters_hierarchy, visible_room_cluster_flags, bbox ) )
 				{
 					continue;
 				}
@@ -541,27 +276,6 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 			{
 				continue;
 			}
-		}
-
-		model.textures.back().Bind();
-
-		model.vertex_array_object.Bind();
-
-		model.index_buffer.Bind();
-
-		if( model.num_frames > 1s )
-		{
-			// Change vertex attrib pointer for positions to draw requirest frame.
-			// TODO - move this code into a separate function?
-			model.positions_buffer.Bind();
-
-			unsafe( glVertexAttribPointer(
-				GPUModel::c_position_attrib,
-				3,
-				GLenum( GL_FLOAT ),
-				GLboolean(0),
-				GLsizei( typeinfo</ObbVertexPosition/>.size_of ),
-				ust::nullptr</byte8/>() + frame * model.num_vertices * typeinfo</ObbVertexPosition/>.size_of ) );
 		}
 
 		var Mat4f model_full_matrix=
@@ -585,8 +299,8 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 			light=
 				GetLightForPoint(
 					map_data.light_sources,
-					zvox_data.clusters,
-					zmap_lem_data.clusters_sky_light_data,
+					clusters,
+					clusters_sky_light_data,
 					room_clusters_hierarchy,
 					bbox_center,
 					radius,
@@ -602,141 +316,46 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 			}
 		}
 
-		model_shader_.SetUniform( "vu_matrix", model_full_matrix );
-
-		model_shader_.SetUniform(
-			"fu_light_spherical_harmonics_r",
-			light[0].directional_components.x,
-			light[0].directional_components.y,
-			light[0].directional_components.z,
-			light[0].constant_component );
-
-		model_shader_.SetUniform(
-			"fu_light_spherical_harmonics_g",
-			light[1].directional_components.x,
-			light[1].directional_components.y,
-			light[1].directional_components.z,
-			light[1].constant_component );
-
-		model_shader_.SetUniform(
-			"fu_light_spherical_harmonics_b",
-			light[2].directional_components.x,
-			light[2].directional_components.y,
-			light[2].directional_components.z,
-			light[2].constant_component );
-
-		unsafe( glDrawElements(
-			GLenum( GL_TRIANGLES ),
-			GLsizei( model.num_triangles * 3s ),
-			GLenum( GL_UNSIGNED_SHORT ),
-			ust::nullptr</byte8/>() ) );
-
-		++drawing_stats.num_visible_models;
-		drawing_stats.num_visivle_model_triangles+= u32( model.num_triangles );
+		models_to_draw_.push_back(
+			ModelToDraw
+			{
+				.file_name= model_object.model_file_name,
+				.frame( frame ),
+				.matrix= model_full_matrix,
+				.light= light,
+			} );
 	}
 
-	SetGLState( g_test_primitives_drawing_gl_state );
-
-	// Draw test sprites.
-
-	if( !drawing_info.test_sprites.empty() )
-	{
-		unsafe( glPointSize( 8.0f ) );
-
-		test_primitive_vertex_array_object_.Bind();
-		test_primitive_vertex_buffer_object_.Bind();
-
-		scoped_array TestPrimitiveVertex vertices[ drawing_info.test_sprites.size() ](
-			drawing_info.test_sprites.iter().map(
-				lambda( Vec3f& p ) : TestPrimitiveVertex
+	// Group models by file name to avoid switching textures and vertex buffers too often.
+	ust::sort(
+		models_to_draw_.range(),
+		lambda( ModelToDraw& l, ModelToDraw& r ) : bool
+		{
+			// TODO - avoid comparing strings character by character.
+			for( auto mut i= 0s; i < typeinfo</ResourceString/>.element_count; ++i )
+			{
+				var char8 c_l= l.file_name[i];
+				var char8 c_r= r.file_name[i];
+				if( c_l != c_r )
 				{
-					return TestPrimitiveVertex
-					{
-						.position[ p.x, p.y, p.z ],
-						.color[ 0u8, 255u8, 0u8 ],
-						.padding15= zero_init,
-					};
-				} ) );
-
-		auto range= vertices.to_byte8_range();
-
-		unsafe( glBufferSubData( GLenum( GL_ARRAY_BUFFER ), GLintptr(0), GLsizeiptr( range.size() ), range.data() ) );
-
-		test_primitive_shader_.Bind();
-		test_primitive_shader_.SetUniform( "vu_matrix", view_matrix );
-
-		unsafe( glDrawArrays( GLenum( GL_POINTS ), GLint(0), GLint( vertices.size() ) ) );
-
-		unsafe( glPointSize( 1.0f ) );
-	}
-
-	// Draw test triangles.
-	if( !drawing_info.test_triangles.empty() )
-	{
-		test_primitive_vertex_array_object_.Bind();
-		test_primitive_vertex_buffer_object_.Bind();
-
-		scoped_array TestPrimitiveVertex mut vertices[ drawing_info.test_triangles.size() * 3s ]( ust::make_zeroed</TestPrimitiveVertex/>() );
-
-		for( auto mut i= 0s; i < drawing_info.test_triangles.size(); ++i )
-		{
-			var WorldDrawingInfo::TestTriangle& triangle= drawing_info.test_triangles[i];
-
-			for( auto mut j= 0s; j < 3s; ++j )
-			{
-				var TestPrimitiveVertex &mut v= vertices[ i * 3s + j ];
-				var Vec3f& pos= triangle.vertices[j];
-				v.position[0]= pos.x;
-				v.position[1]= pos.y;
-				v.position[2]= pos.z;
-				v.color= triangle.color;
+					return c_l < c_r;
+				}
 			}
-		}
+			return false;
+		} );
 
-		var ust::array_view_imut</TestPrimitiveVertex/> vertices_imut= vertices.subrange_end( c_max_test_primitive_vertices );
+	// Perform actual models drawing.
+	DrawModels( models_, models_to_draw_, model_shader_, drawing_stats );
+	models_to_draw_.clear();
 
-		auto range= vertices_imut.to_byte8_range();
-		unsafe( glBufferSubData( GLenum( GL_ARRAY_BUFFER ), GLintptr(0), GLsizeiptr( range.size() ), range.data() ) );
-
-		test_primitive_shader_.Bind();
-		test_primitive_shader_.SetUniform( "vu_matrix", view_matrix );
-
-		unsafe( glDrawArrays( GLenum( GL_TRIANGLES ), GLint(0), GLint( vertices_imut.size() ) ) );
-	}
-
-	// Draw test lines.
-	if( !drawing_info.test_lines.empty() )
-	{
-		test_primitive_vertex_array_object_.Bind();
-		test_primitive_vertex_buffer_object_.Bind();
-
-		scoped_array TestPrimitiveVertex mut vertices[ drawing_info.test_lines.size() * 2s ]( ust::make_zeroed</TestPrimitiveVertex/>() );
-
-		for( auto mut i= 0s; i < drawing_info.test_lines.size(); ++i )
-		{
-			var WorldDrawingInfo::TestLine& line= drawing_info.test_lines[i];
-
-			for( auto mut j= 0s; j < 2s; ++j )
-			{
-				var TestPrimitiveVertex &mut v= vertices[ i * 2s + j ];
-				var Vec3f& pos= line.vertices[j];
-				v.position[0]= pos.x;
-				v.position[1]= pos.y;
-				v.position[2]= pos.z;
-				v.color= line.color;
-			}
-		}
-
-		var ust::array_view_imut</TestPrimitiveVertex/> vertices_imut= vertices.subrange_end( c_max_test_primitive_vertices );
-
-		auto range= vertices_imut.to_byte8_range();
-		unsafe( glBufferSubData( GLenum( GL_ARRAY_BUFFER ), GLintptr(0), GLsizeiptr( range.size() ), range.data() ) );
-
-		test_primitive_shader_.Bind();
-		test_primitive_shader_.SetUniform( "vu_matrix", view_matrix );
-
-		unsafe( glDrawArrays( GLenum( GL_LINES ), GLint(0), GLint( vertices_imut.size() ) ) );
-	}
+	DrawTestPrimitives(
+		drawing_info.test_sprites,
+		drawing_info.test_triangles,
+		drawing_info.test_lines,
+		test_primitive_vertex_array_object_,
+		test_primitive_vertex_buffer_object_,
+		test_primitive_shader_,
+		view_matrix );
 
 	return drawing_stats;
 }
@@ -1141,6 +760,214 @@ fn WorldDrawer::SetMap( mut this, u32 map_index )
 		} );
 }
 
+fn WorldDrawer::DrawMapPolygons(
+	MapDrawData& map_data,
+	ust::array_view_imut</bool/> visible_room_cluster_flags,
+	BBox3f& visible_clusters_bbox,
+	ust::array_view_imut</WorldDrawingInfo::DynamicClusterObject/> dynamic_cluster_objects,
+	ShaderProgram &mut shader,
+	Mat4f& view_matrix,
+	DrawingStats &mut drawing_stats )
+{
+	var ust::array_view_imut</ZvoxCluster/> clusters= map_data.zvox_data.deref().clusters.range();
+
+	SetGLState( g_map_drawing_gl_state );
+
+	var u32 texture_slot= 0u;
+
+	unsafe( glActiveTexture( GLenum( GL_TEXTURE0 ) + GLenum(texture_slot) ) );
+	map_data.map_textures_array.Bind();
+
+	shader.Bind();
+	shader.SetUniform( "vu_matrix", view_matrix );
+	shader.SetUniform( "fu_texture", texture_slot );
+
+	map_data.vertex_array_object.Bind();
+	map_data.index_buffer.Bind();
+
+	for( auto mut i= 0s; i < clusters.size(); )
+	{
+		var ZvoxCluster& room_cluster= clusters[i];
+		if( room_cluster.c.num_children_clusters < 0 )
+		{
+			++i;
+			continue;
+		}
+
+		// This room cluster and all his children.
+		var size_type num_clusters_in_group= size_type( room_cluster.c.num_children_clusters ) + 1s;
+
+		if( visible_room_cluster_flags[i] )
+		{
+			for( auto mut j= 0s; j < num_clusters_in_group; ++j )
+			{
+				var size_type cluster_index= i + j;
+
+				var u8 cluster_type= clusters[ cluster_index ].cluster_type;
+				if( !(
+					cluster_type == ZvoxCluster::c_cluster_type_regular |
+					cluster_type == ZvoxCluster::c_cluster_type_notes ) )
+				{
+					// Draw dynamic clusters later.
+					continue;
+				}
+
+				auto& cluster_draw_data= map_data.clusters_draw_data[ cluster_index ];
+
+				unsafe( glDrawElementsBaseVertex(
+					GLenum( GL_TRIANGLES ),
+					GLsizei( cluster_draw_data.num_indices ),
+					GLenum( GL_UNSIGNED_SHORT ),
+					ust::nullptr</byte8/>() + typeinfo</u16/>.size_of * cluster_draw_data.first_index,
+					GLint( cluster_draw_data.first_vertex_index ) ) );
+
+				drawing_stats.num_visible_map_triangles+= u32( cluster_draw_data.num_indices ) / 3u;
+			}
+
+			++drawing_stats.num_room_visible_clusters;
+			drawing_stats.num_total_visible_clusters+= u32( num_clusters_in_group );
+		}
+
+		i+= num_clusters_in_group;
+	}
+
+	var RoomClustersHierarchy& room_clusters_hierarchy= map_data.room_clusters_hierarchy.deref();
+
+	// Draw dynamic clusters with individual matrices.
+	foreach( &dynamic_cluster_object : dynamic_cluster_objects )
+	{
+		var size_type cluster_index( dynamic_cluster_object.cluster_index );
+
+		var ZvoxCluster& cluster= clusters[ cluster_index ];
+
+		var BBox3f mut bbox= CreateClusterBBox( cluster );
+		bbox.min+= dynamic_cluster_object.translation;
+		bbox.max+= dynamic_cluster_object.translation;
+
+		// First perform fast check if this dynamic cluster is within the bbox containing all visible clusters.
+		if( !visible_clusters_bbox.InstersectsOrTouches( bbox ) )
+		{
+			continue;
+		}
+
+		// Then check if this dynamic cluster is within at least one visible room cluster.
+		if( !IsBBoxWithinVisibleClusters( clusters, room_clusters_hierarchy, visible_room_cluster_flags, bbox ) )
+		{
+			continue;
+		}
+
+		shader.SetUniform( "vu_matrix", Mat4f::MakeTranslation( dynamic_cluster_object.translation ) * view_matrix );
+
+		auto& cluster_draw_data= map_data.clusters_draw_data[ cluster_index ];
+
+		unsafe( glDrawElementsBaseVertex(
+			GLenum( GL_TRIANGLES ),
+			GLsizei( cluster_draw_data.num_indices ),
+			GLenum( GL_UNSIGNED_SHORT ),
+			ust::nullptr</byte8/>() + typeinfo</u16/>.size_of * cluster_draw_data.first_index,
+			GLint( cluster_draw_data.first_vertex_index ) ) );
+
+		drawing_stats.num_visible_map_triangles+= u32( cluster_draw_data.num_indices ) / 3u;
+	}
+}
+
+fn WorldDrawer::DrawModels(
+	ModelsMap& models_map,
+	ust::array_view_imut</ModelToDraw/> models_to_draw,
+	ShaderProgram &mut shader,
+	DrawingStats &mut drawing_stats )
+{
+	var ResourceString mut prev_model_file_name= zero_init;
+
+	SetGLState( g_models_drawing_gl_state );
+
+	var u32 texture_slot= 0u;
+
+	shader.Bind();
+	shader.SetUniform( "fu_texture", texture_slot );
+
+	unsafe( glActiveTexture( GLenum( GL_TEXTURE0 ) + GLenum(texture_slot) ) );
+
+	foreach( &model_to_draw : models_to_draw )
+	{
+		var ust::optional_ref_imut</ ust::optional</GPUModel/> /> model_opt_opt=
+			models_map.find( model_to_draw.file_name );
+
+		if( model_opt_opt.empty() )
+		{
+			continue;
+		}
+
+		var ust::optional</GPUModel/>& model_opt= model_opt_opt.try_deref();
+		if( model_opt.empty() )
+		{
+			continue;
+		}
+
+		var GPUModel& model= model_opt.try_deref();
+
+		if( model_to_draw.file_name != prev_model_file_name )
+		{
+			// Rebind textures/vertex arrays only if we have a model different from previously drawn one.
+
+			prev_model_file_name= model_to_draw.file_name;
+
+			model.textures.back().Bind();
+
+			model.vertex_array_object.Bind();
+
+			model.index_buffer.Bind();
+		}
+
+		if( model.num_frames > 1s )
+		{
+			// Change vertex attrib pointer for positions to draw requirest frame.
+			// TODO - move this code into a separate function?
+			model.positions_buffer.Bind();
+
+			unsafe( glVertexAttribPointer(
+				GPUModel::c_position_attrib,
+				3,
+				GLenum( GL_FLOAT ),
+				GLboolean(0),
+				GLsizei( typeinfo</ObbVertexPosition/>.size_of ),
+				ust::nullptr</byte8/>() + size_type( model_to_draw.frame ) * model.num_vertices * typeinfo</ObbVertexPosition/>.size_of ) );
+		}
+
+		shader.SetUniform( "vu_matrix", model_to_draw.matrix );
+
+		shader.SetUniform(
+			"fu_light_spherical_harmonics_r",
+			model_to_draw.light[0].directional_components.x,
+			model_to_draw.light[0].directional_components.y,
+			model_to_draw.light[0].directional_components.z,
+			model_to_draw.light[0].constant_component );
+
+		shader.SetUniform(
+			"fu_light_spherical_harmonics_g",
+			model_to_draw.light[1].directional_components.x,
+			model_to_draw.light[1].directional_components.y,
+			model_to_draw.light[1].directional_components.z,
+			model_to_draw.light[1].constant_component );
+
+		shader.SetUniform(
+			"fu_light_spherical_harmonics_b",
+			model_to_draw.light[2].directional_components.x,
+			model_to_draw.light[2].directional_components.y,
+			model_to_draw.light[2].directional_components.z,
+			model_to_draw.light[2].constant_component );
+
+		unsafe( glDrawElements(
+			GLenum( GL_TRIANGLES ),
+			GLsizei( model.num_triangles * 3s ),
+			GLenum( GL_UNSIGNED_SHORT ),
+			ust::nullptr</byte8/>() ) );
+
+		++drawing_stats.num_visible_models;
+		drawing_stats.num_visivle_model_triangles+= u32( model.num_triangles );
+	}
+}
+
 fn LoadMapTextures(
 	MaterialsDescription::Block& materials_block,
 	GameFilesystemPtr& game_filesystem_ptr,
@@ -1244,6 +1071,372 @@ fn LoadMapTextures(
 	unsafe( glTexParameteri( GLenum( GL_TEXTURE_2D_ARRAY ), GLenum( GL_TEXTURE_MAG_FILTER ), GLint( GL_LINEAR ) ) );
 
 	return texture;
+}
+
+fn DrawSkyBackground(
+	SkyBackgroundBuffer& sky_background_buffer, ShaderProgram &mut shader, Mat4f& rotation_and_projection_matrix )
+{
+	SetGLState( g_sky_background_gl_state );
+
+	var Mat4f sky_background_matrix=
+		Mat4f::MakeRotationX( c_tau * 0.25f ) *
+		Mat4f::MakeRotationZ( -c_tau * 0.125f ) * // TODO - check this angle is correct.
+		Mat4f::MakeScale( c_sky_scale ) *
+		rotation_and_projection_matrix;
+
+	shader.Bind();
+	shader.SetUniform( "vu_matrix", sky_background_matrix );
+
+	sky_background_buffer.vertex_array_object.Bind();
+	sky_background_buffer.index_buffer.Bind();
+
+	unsafe( glDrawElements(
+		GLenum( GL_TRIANGLES ),
+		GLint( sky_background_buffer.num_triangle_indices ),
+		GLenum( GL_UNSIGNED_SHORT ),
+		ust::nullptr</byte8/>() ) );
+}
+
+fn DrawClouds(
+	SkyCloudsParams& clouds_params,
+	ShaderProgram &mut shader,
+	Texture& map_textures_array,
+	u32 clouds_texture_layer,
+	Mat4f& rotation_and_projection_matrix,
+	f32 time_s )
+{
+	SetGLState(
+		( clouds_params.scale_colors_by_two
+			? g_clouds_double_blending_gl_state
+			: g_clouds_single_blending_gl_state ) );
+
+	var u32 texture_slot= 0u;
+	unsafe( glActiveTexture( GLenum( GL_TEXTURE0 ) + GLenum(texture_slot) ) );
+	map_textures_array.Bind();
+
+	shader.Bind();
+	shader.SetUniform( "vu_matrix", Mat4f::MakeScale( c_clouds_scale ) * rotation_and_projection_matrix );
+	shader.SetUniform( "fu_texture", texture_slot );
+	shader.SetUniform( "fu_texture_layer", f32( clouds_texture_layer ) );
+	shader.SetUniform( "fu_texture_scale", clouds_params.scale );
+	shader.SetUniform( "fu_texture_shift",  time_s * clouds_params.scroll_speed * Vec2f( 1.0f, 1.0f ) );
+
+	unsafe( glDrawArrays( GLenum( GL_TRIANGLES ), GLint(0), GLsizei(12) ) );
+}
+
+fn DrawStarsAndSun(
+	StarsBuffer& stars_buffer,
+	ShaderProgram &mut shader,
+	Texture& map_textures_array,
+	Mat4f& rotation_and_projection_matrix )
+{
+	SetGLState( g_stars_gl_state );
+
+	var u32 texture_slot= 0u;
+	unsafe( glActiveTexture( GLenum( GL_TEXTURE0 ) + GLenum(texture_slot) ) );
+	map_textures_array.Bind();
+
+	shader.Bind();
+	shader.SetUniform( "vu_matrix", Mat4f::MakeScale( c_stars_scale ) * rotation_and_projection_matrix );
+	shader.SetUniform( "fu_texture", texture_slot );
+
+	stars_buffer.vertex_array_object.Bind();
+	stars_buffer.index_buffer.Bind();
+
+	unsafe( glDrawElements(
+		GLenum( GL_TRIANGLES ),
+		GLint( stars_buffer.num_triangle_indices ),
+		GLenum( GL_UNSIGNED_SHORT ),
+		ust::nullptr</byte8/>() ) );
+}
+
+fn DrawTestPrimitives(
+	ust::array_view_imut</Vec3f/> test_sprites,
+	ust::array_view_imut</WorldDrawingInfo::TestTriangle/> test_triangles,
+	ust::array_view_imut</WorldDrawingInfo::TestLine/> test_lines,
+	VertexArrayObject& test_primitive_vertex_array_object,
+	BufferObject &mut test_primitive_vertex_buffer_object,
+	ShaderProgram &mut shader,
+	Mat4f& view_matrix )
+{
+	SetGLState( g_test_primitives_drawing_gl_state );
+
+	// Draw test sprites.
+	if( !test_sprites.empty() )
+	{
+		unsafe( glPointSize( 8.0f ) );
+
+		test_primitive_vertex_array_object.Bind();
+		test_primitive_vertex_buffer_object.Bind();
+
+		scoped_array TestPrimitiveVertex vertices[ test_sprites.size() ](
+			test_sprites.iter().map(
+				lambda( Vec3f& p ) : TestPrimitiveVertex
+				{
+					return TestPrimitiveVertex
+					{
+						.position[ p.x, p.y, p.z ],
+						.color[ 0u8, 255u8, 0u8 ],
+						.padding15= zero_init,
+					};
+				} ) );
+
+		auto range= vertices.to_byte8_range();
+
+		unsafe( glBufferSubData( GLenum( GL_ARRAY_BUFFER ), GLintptr(0), GLsizeiptr( range.size() ), range.data() ) );
+
+		shader.Bind();
+		shader.SetUniform( "vu_matrix", view_matrix );
+
+		unsafe( glDrawArrays( GLenum( GL_POINTS ), GLint(0), GLint( vertices.size() ) ) );
+
+		unsafe( glPointSize( 1.0f ) );
+	}
+
+	// Draw test triangles.
+	if( !test_triangles.empty() )
+	{
+		test_primitive_vertex_array_object.Bind();
+		test_primitive_vertex_buffer_object.Bind();
+
+		scoped_array TestPrimitiveVertex mut vertices[ test_triangles.size() * 3s ]( ust::make_zeroed</TestPrimitiveVertex/>() );
+
+		for( auto mut i= 0s; i < test_triangles.size(); ++i )
+		{
+			var WorldDrawingInfo::TestTriangle& triangle= test_triangles[i];
+
+			for( auto mut j= 0s; j < 3s; ++j )
+			{
+				var TestPrimitiveVertex &mut v= vertices[ i * 3s + j ];
+				var Vec3f& pos= triangle.vertices[j];
+				v.position[0]= pos.x;
+				v.position[1]= pos.y;
+				v.position[2]= pos.z;
+				v.color= triangle.color;
+			}
+		}
+
+		var ust::array_view_imut</TestPrimitiveVertex/> vertices_imut= vertices.subrange_end( c_max_test_primitive_vertices );
+
+		auto range= vertices_imut.to_byte8_range();
+		unsafe( glBufferSubData( GLenum( GL_ARRAY_BUFFER ), GLintptr(0), GLsizeiptr( range.size() ), range.data() ) );
+
+		shader.Bind();
+		shader.SetUniform( "vu_matrix", view_matrix );
+
+		unsafe( glDrawArrays( GLenum( GL_TRIANGLES ), GLint(0), GLint( vertices_imut.size() ) ) );
+	}
+
+	// Draw test lines.
+	if( !test_lines.empty() )
+	{
+		test_primitive_vertex_array_object.Bind();
+		test_primitive_vertex_buffer_object.Bind();
+
+		scoped_array TestPrimitiveVertex mut vertices[ test_lines.size() * 2s ]( ust::make_zeroed</TestPrimitiveVertex/>() );
+
+		for( auto mut i= 0s; i < test_lines.size(); ++i )
+		{
+			var WorldDrawingInfo::TestLine& line= test_lines[i];
+
+			for( auto mut j= 0s; j < 2s; ++j )
+			{
+				var TestPrimitiveVertex &mut v= vertices[ i * 2s + j ];
+				var Vec3f& pos= line.vertices[j];
+				v.position[0]= pos.x;
+				v.position[1]= pos.y;
+				v.position[2]= pos.z;
+				v.color= line.color;
+			}
+		}
+
+		var ust::array_view_imut</TestPrimitiveVertex/> vertices_imut= vertices.subrange_end( c_max_test_primitive_vertices );
+
+		auto range= vertices_imut.to_byte8_range();
+		unsafe( glBufferSubData( GLenum( GL_ARRAY_BUFFER ), GLintptr(0), GLsizeiptr( range.size() ), range.data() ) );
+
+		shader.Bind();
+		shader.SetUniform( "vu_matrix", view_matrix );
+
+		unsafe( glDrawArrays( GLenum( GL_LINES ), GLint(0), GLint( vertices_imut.size() ) ) );
+	}
+}
+
+fn LoadModelsIfNecessary(
+	ust::array_view_imut</WorldDrawingInfo::ModelObject/> model_objects,
+	GameFilesystemPtr& game_filesystem_ptr,
+	ConsoleOutPtr& console_out_ptr,
+	ust::hash_map</ ResourceString, ust::optional</GPUModel/> /> &mut models )
+{
+	foreach( &model_object : model_objects )
+	{
+		// Load it if it's not loaded yet.
+
+		var ResourceString& file_name= model_object.model_file_name;
+
+		models.find_or_construct_new(
+			file_name,
+			lambda[&] () : ust::optional</GPUModel/>
+			{
+				auto mut lock= game_filesystem_ptr.lock_mut();
+				result_match(
+					lock.deref().LoadFile(
+						file_name,
+						( fn( ust::file_readable &mut f ) : ust::io_result</ModelData/> )( LoadModel ) ) )
+				{
+					Ok(m) -> { return CreateGPUModel( m ); },
+					Err(e) ->
+					{
+						ConsoleOutAddTextLine(
+							console_out_ptr,
+							ust::concat(
+								"Failed to load model file \"",
+								ConvertResourceStringToStringView( file_name ),
+								"\"! Error: ",
+								ust::enum_to_string( e ) ) );
+						return ust::null_optional;
+					},
+				}
+			} );
+	}
+}
+
+fn MarkVisibleRoomClusters(
+	RoomClustersHierarchy& room_clusters_hierarchy,
+	ust::array_view_imut</ZvoxCluster/> clusters,
+	ZpozData& zpoz_data,
+	Vec3f& camera_position,
+	ust::array_view_mut</bool/> visible_room_cluster_flags )
+{
+	if_var( camera_cluster_index : GetCameraRoomCluster( room_clusters_hierarchy, clusters, camera_position ) )
+	{
+		// Mark as visible current cluster.
+		visible_room_cluster_flags[ camera_cluster_index ]= true;
+
+		var i32 bias= i32( clusters.size() ) * 4;
+
+		var ZpozClusterVisibilityData& visibility_data= zpoz_data.clusters_visibility_data[ camera_cluster_index ];
+
+		// TODO - check if we should use data[2] and not data[0] or even both.
+		var i32 data_start= visibility_data.data[2];
+
+		if( data_start != -1 )
+		{
+			var size_type visibility_data_offset( data_start - bias );
+
+			// We have 2 subranges for both offsets.
+			// Since we don't know which is correct, use both of them.
+			var size_type subrange0_size( zpoz_data.cluster_indices[ visibility_data_offset  ] );
+			var size_type subrange0_start= visibility_data_offset + 8s;
+			var size_type subrange1_size( zpoz_data.cluster_indices[ subrange0_start + subrange0_size ] );
+			var size_type subrange1_start= subrange0_start + size_type(subrange0_size) + 8s;
+
+			var [ ust::array_view_imut</i32/>, 2 ] ranges
+			[
+				zpoz_data.cluster_indices.range().subrange( subrange0_start, subrange0_start + subrange0_size ),
+				zpoz_data.cluster_indices.range().subrange( subrange1_start, subrange1_start + subrange1_size )
+			];
+
+			foreach( range : ranges )
+			{
+				foreach( visible_cluster_index : range )
+				{
+					// Mark cluster listed in visibility data as visible.
+					visible_room_cluster_flags[ size_type( visible_cluster_index ) ]= true;
+				}
+			}
+		}
+	}
+	else
+	{
+		// Assume all room clusters are visible if we failed to find current cluster (like in noclip mode).
+		for( auto mut i= 0s; i < clusters.size(); ++i )
+		{
+			if( clusters[i].c.num_children_clusters >= 0 )
+			{
+				visible_room_cluster_flags[i]= true;
+			}
+		}
+	}
+}
+
+fn GetCameraRoomCluster(
+	RoomClustersHierarchy& room_clusters_hierarchy,
+	ust::array_view_imut</ZvoxCluster/> clusters,
+	Vec3f& camera_position ) : ust::optional</size_type/>
+{
+	var ust::optional</size_type/> mut camera_cluster_index_opt;
+
+	VisitBoundingBoxesHierarchyForPoint(
+		room_clusters_hierarchy,
+		camera_position,
+		lambda[&]( ClusterIndexInHierarchy c )
+		{
+			var size_type cluster_index(c);
+			if( CreateClusterBBox( clusters[ cluster_index ] ).PointIsInsideOrOnFace( camera_position ) )
+			{
+				camera_cluster_index_opt= cluster_index;
+			}
+		} );
+
+	return camera_cluster_index_opt;
+}
+
+fn RejectVisibleRoomClustersUsingCameraPlanes(
+	ust::array_view_imut</ZvoxCluster/> clusters,
+	CameraClipPlanes& camera_clip_planes,
+	ust::array_view_mut</bool/> visible_room_cluster_flags )
+{
+	for( auto mut i= 0s; i < clusters.size(); ++i )
+	{
+		if( !visible_room_cluster_flags[i] )
+		{
+			continue;
+		}
+
+		var ZvoxCluster& cluster= clusters[i];
+
+		if( AreBoxVerticesClippedByAtLeastOneCameraClipPlane(
+				camera_clip_planes,
+				CreateClusterBBox(cluster).CreateCornerVertices() ) )
+		{
+			visible_room_cluster_flags[i]= false;
+			continue;
+		}
+	}
+}
+
+fn CalculateVisibleClustersBBox(
+	ust::array_view_imut</ZvoxCluster/> clusters,
+	ust::array_view_imut</bool/> visible_room_cluster_flags,
+	Vec3f& camera_position ) : BBox3f
+{
+	var BBox3f mut visible_clusters_bbox
+	{
+		.min= camera_position,
+		.max= camera_position,
+	};
+
+	for( auto mut i= 0s; i < clusters.size(); ++i )
+	{
+		if( !visible_room_cluster_flags[i] )
+		{
+			continue;
+		}
+
+		var ZvoxCluster& cluster= clusters[i];
+
+		var BBox3f cluster_bbox= CreateClusterBBox( cluster );
+
+		ust::min_assign( visible_clusters_bbox.min.x, cluster_bbox.min.x );
+		ust::min_assign( visible_clusters_bbox.min.y, cluster_bbox.min.y );
+		ust::min_assign( visible_clusters_bbox.min.z, cluster_bbox.min.z );
+		ust::max_assign( visible_clusters_bbox.max.x, cluster_bbox.max.x );
+		ust::max_assign( visible_clusters_bbox.max.y, cluster_bbox.max.y );
+		ust::max_assign( visible_clusters_bbox.max.z, cluster_bbox.max.z );
+	}
+
+	return visible_clusters_bbox;
 }
 
 fn IsBBoxWithinVisibleClusters(

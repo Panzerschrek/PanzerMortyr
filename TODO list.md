@@ -159,7 +159,6 @@ PanzerMortyr rendering:
 * Implement dynamic lights (gun flashes, explosions).
 * Draw weather effects (rain, snow).
 * Draw breaking window animation (with falling splinters).
-* Group model objects by model file prior to draw them - in order to minimize amount of texture and vertex buffer switches.
 * Experiment with an algorithm for dynamic visible clusters search similar to one used in SquareWheel.
 * Add support for MSAA.
 * Add support for nearest textures filtration.
