@@ -148,7 +148,6 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 		map_data.stars_buffer, stars_shader_, map_data.map_textures_array, rotation_and_projection_matrix );
 
 	var ZvoxData& zvox_data= map_data.zvox_data.deref();
-	var ZpozData& zpoz_data= map_data.zpoz_data.deref();
 	var ZmapLemData& zmap_lem_data= map_data.zmap_lem_data.deref();
 	var RoomClustersHierarchy& room_clusters_hierarchy= map_data.room_clusters_hierarchy.deref();
 
@@ -157,57 +156,12 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 	// TODO - allocate this  container once at map start?
 	scoped_array bool mut visible_room_cluster_flags[ zvox_data.clusters.size() ]( false );
 
-	if_var( camera_cluster_index :
-		GetCameraRoomCluster( room_clusters_hierarchy, zvox_data.clusters, drawing_info.camera_params.position ) )
-	{
-		// Mark as visible current cluster.
-		visible_room_cluster_flags[ camera_cluster_index ]= true;
-
-		var i32 bias= i32( zpoz_data.clusters.size() ) * 4;
-
-		var ZpozClusterVisibilityData& visibility_data= zpoz_data.clusters_visibility_data[ camera_cluster_index ];
-
-		// TODO - check if we should use data[2] and not data[0] or even both.
-		var i32 data_start= visibility_data.data[2];
-
-		if( data_start != -1 )
-		{
-			var size_type visibility_data_offset( data_start - bias );
-
-			// We have 2 subranges for both offsets.
-			// Since we don't know which is correct, use both of them.
-			var size_type subrange0_size( zpoz_data.cluster_indices[ visibility_data_offset  ] );
-			var size_type subrange0_start= visibility_data_offset + 8s;
-			var size_type subrange1_size( zpoz_data.cluster_indices[ subrange0_start + subrange0_size ] );
-			var size_type subrange1_start= subrange0_start + size_type(subrange0_size) + 8s;
-
-			var [ ust::array_view_imut</i32/>, 2 ] ranges
-			[
-				zpoz_data.cluster_indices.range().subrange( subrange0_start, subrange0_start + subrange0_size ),
-				zpoz_data.cluster_indices.range().subrange( subrange1_start, subrange1_start + subrange1_size )
-			];
-
-			foreach( range : ranges )
-			{
-				foreach( visible_cluster_index : range )
-				{
-					// Mark cluster listed in visibility data as visible.
-					visible_room_cluster_flags[ size_type( visible_cluster_index ) ]= true;
-				}
-			}
-		}
-	}
-	else
-	{
-		// Assume all room clusters are visible if we failed to find current cluster (like in noclip mode).
-		for( auto mut i= 0s; i < zvox_data.clusters.size(); ++i )
-		{
-			if( zvox_data.clusters[i].c.num_children_clusters >= 0 )
-			{
-				visible_room_cluster_flags[i]= true;
-			}
-		}
-	}
+	MarkVisibleRoomClusters(
+		room_clusters_hierarchy,
+		zvox_data.clusters,
+		map_data.zpoz_data.deref(),
+		drawing_info.camera_params.position,
+		visible_room_cluster_flags );
 
 	// Perform frustum culling for potentially-visible room clusters.
 	for( auto mut i= 0s; i < zvox_data.clusters.size(); ++i )
@@ -1257,6 +1211,65 @@ fn DrawStarsAndSun(
 		GLint( stars_buffer.num_triangle_indices ),
 		GLenum( GL_UNSIGNED_SHORT ),
 		ust::nullptr</byte8/>() ) );
+}
+
+fn MarkVisibleRoomClusters(
+	RoomClustersHierarchy& room_clusters_hierarchy,
+	ust::array_view_imut</ZvoxCluster/> clusters,
+	ZpozData& zpoz_data,
+	Vec3f camera_position,
+	ust::array_view_mut</bool/> visible_room_cluster_flags )
+{
+	if_var( camera_cluster_index : GetCameraRoomCluster( room_clusters_hierarchy, clusters, camera_position ) )
+	{
+		// Mark as visible current cluster.
+		visible_room_cluster_flags[ camera_cluster_index ]= true;
+
+		var i32 bias= i32( clusters.size() ) * 4;
+
+		var ZpozClusterVisibilityData& visibility_data= zpoz_data.clusters_visibility_data[ camera_cluster_index ];
+
+		// TODO - check if we should use data[2] and not data[0] or even both.
+		var i32 data_start= visibility_data.data[2];
+
+		if( data_start != -1 )
+		{
+			var size_type visibility_data_offset( data_start - bias );
+
+			// We have 2 subranges for both offsets.
+			// Since we don't know which is correct, use both of them.
+			var size_type subrange0_size( zpoz_data.cluster_indices[ visibility_data_offset  ] );
+			var size_type subrange0_start= visibility_data_offset + 8s;
+			var size_type subrange1_size( zpoz_data.cluster_indices[ subrange0_start + subrange0_size ] );
+			var size_type subrange1_start= subrange0_start + size_type(subrange0_size) + 8s;
+
+			var [ ust::array_view_imut</i32/>, 2 ] ranges
+			[
+				zpoz_data.cluster_indices.range().subrange( subrange0_start, subrange0_start + subrange0_size ),
+				zpoz_data.cluster_indices.range().subrange( subrange1_start, subrange1_start + subrange1_size )
+			];
+
+			foreach( range : ranges )
+			{
+				foreach( visible_cluster_index : range )
+				{
+					// Mark cluster listed in visibility data as visible.
+					visible_room_cluster_flags[ size_type( visible_cluster_index ) ]= true;
+				}
+			}
+		}
+	}
+	else
+	{
+		// Assume all room clusters are visible if we failed to find current cluster (like in noclip mode).
+		for( auto mut i= 0s; i < clusters.size(); ++i )
+		{
+			if( clusters[i].c.num_children_clusters >= 0 )
+			{
+				visible_room_cluster_flags[i]= true;
+			}
+		}
+	}
 }
 
 fn GetCameraRoomCluster(
