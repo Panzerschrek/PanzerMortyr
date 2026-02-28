@@ -151,34 +151,33 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 	DrawStarsAndSun(
 		map_data.stars_buffer, stars_shader_, map_data.map_textures_array, rotation_and_projection_matrix );
 
-	var ZvoxData& zvox_data= map_data.zvox_data.deref();
-	var ZmapLemData& zmap_lem_data= map_data.zmap_lem_data.deref();
+	var ust::array_view_imut</ZvoxCluster/> clusters= map_data.zvox_data.deref().clusters;
+
+	var ust::array_view_imut</ZmapLemClusterSkyLightData/> clusters_sky_light_data=
+		map_data.zmap_lem_data.deref().clusters_sky_light_data;
+
 	var RoomClustersHierarchy& room_clusters_hierarchy= map_data.room_clusters_hierarchy.deref();
 
 	// Perform visibility checks only for room clusters.
 	// Doing it for non-room clusters is too costly, since there are too many of them.
 	// TODO - allocate this  container once at map start?
-	scoped_array bool mut visible_room_cluster_flags[ zvox_data.clusters.size() ]( false );
+	scoped_array bool mut visible_room_cluster_flags[ clusters.size() ]( false );
 
 	MarkVisibleRoomClusters(
 		room_clusters_hierarchy,
-		zvox_data.clusters,
+		clusters,
 		map_data.zpoz_data.deref(),
 		drawing_info.camera_params.position,
 		visible_room_cluster_flags );
 
 	// Perform frustum culling for potentially-visible room clusters.
-	RejectVisibleRoomClustersUsingCameraPlanes(
-		zvox_data.clusters,
-		camera_clip_planes,
-		visible_room_cluster_flags );
+	RejectVisibleRoomClustersUsingCameraPlanes( clusters, camera_clip_planes, visible_room_cluster_flags );
 
 	// Calculate bounding box including all visible clusters.
 	// It allows to perform rought rejection of things outside this box.
 
 	var BBox3f visible_clusters_bbox=
-		CalculateVisibleClustersBBox(
-			zvox_data.clusters, visible_room_cluster_flags, drawing_info.camera_params.position );
+		CalculateVisibleClustersBBox( clusters, visible_room_cluster_flags, drawing_info.camera_params.position );
 
 	DrawMapPolygons(
 		map_data,
@@ -272,7 +271,7 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 
 				// Then check if this model is within at least one visible cluster.
 				if( !IsBBoxWithinVisibleClusters(
-						zvox_data.clusters, room_clusters_hierarchy, visible_room_cluster_flags, bbox ) )
+						clusters, room_clusters_hierarchy, visible_room_cluster_flags, bbox ) )
 				{
 					continue;
 				}
@@ -327,8 +326,8 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 			light=
 				GetLightForPoint(
 					map_data.light_sources,
-					zvox_data.clusters,
-					zmap_lem_data.clusters_sky_light_data,
+					clusters,
+					clusters_sky_light_data,
 					room_clusters_hierarchy,
 					bbox_center,
 					radius,
@@ -885,9 +884,7 @@ fn WorldDrawer::DrawMapPolygons(
 			continue;
 		}
 
-		shader.SetUniform(
-			"vu_matrix",
-			Mat4f::MakeTranslation( dynamic_cluster_object.translation ) * view_matrix );
+		shader.SetUniform( "vu_matrix", Mat4f::MakeTranslation( dynamic_cluster_object.translation ) * view_matrix );
 
 		auto& cluster_draw_data= map_data.clusters_draw_data[ cluster_index ];
 
@@ -1044,14 +1041,12 @@ fn DrawClouds(
 			? g_clouds_double_blending_gl_state
 			: g_clouds_single_blending_gl_state ) );
 
-	var Mat4f clouds_matrix= Mat4f::MakeScale( c_clouds_scale ) * rotation_and_projection_matrix;
-
 	var u32 texture_slot= 0u;
 	unsafe( glActiveTexture( GLenum( GL_TEXTURE0 ) + GLenum(texture_slot) ) );
 	map_textures_array.Bind();
 
 	shader.Bind();
-	shader.SetUniform( "vu_matrix", clouds_matrix );
+	shader.SetUniform( "vu_matrix", Mat4f::MakeScale( c_clouds_scale ) * rotation_and_projection_matrix );
 	shader.SetUniform( "fu_texture", texture_slot );
 	shader.SetUniform( "fu_texture_layer", f32( clouds_texture_layer ) );
 	shader.SetUniform( "fu_texture_scale", clouds_params.scale );
@@ -1070,14 +1065,12 @@ fn DrawStarsAndSun(
 {
 	SetGLState( g_stars_gl_state );
 
-	var Mat4f stars_matrix= Mat4f::MakeScale( c_stars_scale ) * rotation_and_projection_matrix;
-
 	var u32 texture_slot= 0u;
 	unsafe( glActiveTexture( GLenum( GL_TEXTURE0 ) + GLenum(texture_slot) ) );
 	map_textures_array.Bind();
 
 	shader.Bind();
-	shader.SetUniform( "vu_matrix", stars_matrix );
+	shader.SetUniform( "vu_matrix", Mat4f::MakeScale( c_stars_scale ) * rotation_and_projection_matrix );
 	shader.SetUniform( "fu_texture", texture_slot );
 
 	stars_buffer.vertex_array_object.Bind();
@@ -1245,7 +1238,7 @@ fn MarkVisibleRoomClusters(
 	RoomClustersHierarchy& room_clusters_hierarchy,
 	ust::array_view_imut</ZvoxCluster/> clusters,
 	ZpozData& zpoz_data,
-	Vec3f camera_position,
+	Vec3f& camera_position,
 	ust::array_view_mut</bool/> visible_room_cluster_flags )
 {
 	if_var( camera_cluster_index : GetCameraRoomCluster( room_clusters_hierarchy, clusters, camera_position ) )
@@ -1303,7 +1296,7 @@ fn MarkVisibleRoomClusters(
 fn GetCameraRoomCluster(
 	RoomClustersHierarchy& room_clusters_hierarchy,
 	ust::array_view_imut</ZvoxCluster/> clusters,
-	Vec3f camera_position ) : ust::optional</size_type/>
+	Vec3f& camera_position ) : ust::optional</size_type/>
 {
 	var ust::optional</size_type/> mut camera_cluster_index_opt;
 
