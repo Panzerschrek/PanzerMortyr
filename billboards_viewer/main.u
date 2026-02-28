@@ -1,0 +1,151 @@
+import "/hash_map.u"
+import "/main_wrapper.u"
+import "/path_utils.u"
+import "/stdout.u"
+
+import "/raylib_wrapper/raylib.uh"
+
+import "/common_lib/billboards_description_file.uh"
+
+pretty_main
+{
+	return PM::Main( args );
+}
+
+namespace PM
+{
+
+fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
+{
+	if( args.size() < 2s )
+	{
+		ust::stderr_print( "Not enough arguments!\n" );
+		return -1;
+	}
+
+	var ust::filesystem_path_view data_dir= args[1s];
+
+	auto billboards_description_opt= LoadBillboardsDescriptionFile( data_dir );
+	if( billboards_description_opt.empty() )
+	{
+		return -1;
+	}
+
+	var BillboardsDescription& billboards_description= billboards_description_opt.try_deref();
+
+	unsafe( SetTraceLogLevel( i32( LOG_WARNING ) ) ); // Disable info and verbose log messages from Raylib.
+
+	var u32 screen_width = 1440u;
+	var u32 screen_height = 900u;
+	unsafe( InitWindow( i32( screen_width ), i32( screen_height ), $<( cast_mut( "PanzerMortyr BillboardsViewer\0"[0] ) ) ) );
+
+	unsafe( SetTargetFPS(60) );
+
+	var u32 c_num_textures= 5u;
+	var [ Texture, c_num_textures ] mut textures= zero_init;
+
+	for( auto mut i= 0u; i < c_num_textures; ++i )
+	{
+		auto mut name= "ZBRA000.BMP\0";
+		name[6]= char8( u32( '0' ) + i );
+		var ust::filesystem_path mut path= ust::path::join( data_dir, name );
+		textures[i]= unsafe( LoadTexture( path.data() ) );
+		unsafe( GenTextureMipmaps( $<( textures[i] ) ) );
+		unsafe( SetTextureFilter( textures[i], 2 ) );
+	}
+
+	var ust::hash_map</u32, u32/> mut texture_number_to_index_map;
+	texture_number_to_index_map.insert_new( 997u, 0u );
+	texture_number_to_index_map.insert_new( 621u, 1u );
+	texture_number_to_index_map.insert_new( 721u, 1u );
+	texture_number_to_index_map.insert_new( 998u, 1u );
+	texture_number_to_index_map.insert_new( 818u, 4u );
+
+	var ust::hash_map</u32, Color/> mut colors_map;
+	colors_map.insert_new( 997u, Color{ .r(255), .g(  0), .b(  0), .a(255) } );
+	colors_map.insert_new( 621u, Color{ .r(255), .g(255), .b(  0), .a(255) } );
+	colors_map.insert_new( 721u, Color{ .r(  0), .g(255), .b(  0), .a(255) } );
+	colors_map.insert_new( 998u, Color{ .r(  0), .g(255), .b(255), .a(255) } );
+	colors_map.insert_new( 818u, Color{ .r(  0), .g(  0), .b(255), .a(255) } );
+
+	while( ! unsafe( WindowShouldClose() ) )
+	{
+		unsafe( BeginDrawing() );
+		{
+			unsafe( ClearBackground( Color{ .r(32), .g(16), .b(8), .a(0) } ) );
+
+			var Color white{ .r(255), .g(255), .b(255), .a(255) };
+
+			var u32 padding_x= 2u, padding_y= 10u, billboard_y_offset= 9u;
+			var u32 mut x= padding_x, mut y= 0u;
+			var u32 mut max_size_y_in_current_row= 0u;
+
+			for( auto mut i= 0s; i < billboards_description.size(); ++i )
+			{
+				var BillboardDescription& billboard= billboards_description[i];
+
+				var bool is_texture_2_tile= billboard.tek >= 801u && billboard.tek <= 816u;
+
+				var u32 size_x= ust::max( 12u, billboard.dx * 2u );
+				var u32 size_y= ust::max( 12u, billboard.dy * 2u );
+
+				if( x + size_x + padding_x > screen_width )
+				{
+					x= padding_x;
+					y+= max_size_y_in_current_row;
+					y+= padding_y;
+					max_size_y_in_current_row= 0u;
+				}
+
+				var [ char8, 4 ] mut num= "000\0";
+				num[0]= char8( i / 100s % 10s + size_type( '0' ) );
+				num[1]= char8( i /  10s % 10s + size_type( '0' ) );
+				num[2]= char8( i /   1s % 10s + size_type( '0' ) );
+
+				var Color mut text_color= white;
+				if_var( c : colors_map.find( billboard.tek ) )
+				{
+					text_color= c;
+				}
+
+				unsafe( DrawText( $<( num[0] ), i32( x + size_x / 2u ) - 8, i32( y ), 8, text_color ) );
+
+				if_var( texture_index : texture_number_to_index_map.find( billboard.tek ) )
+				{
+					unsafe( DrawTexturePro(
+						textures[ texture_index ],
+						Rectangle{ .x( billboard.xp ), .y( billboard.yp ), .width( billboard.xk - billboard.xp ), .height( billboard.yk - billboard.yp ) },
+						Rectangle{ .x(x), .y( y + billboard_y_offset ), .width( size_x ), .height( size_y ) },
+						Vector2{ .x= 0.0f, .y= 0.0f },
+						0.0f,
+						white ) );
+				}
+				else if( is_texture_2_tile )
+				{
+					var u32 tile_x= ( billboard.tek - 801u ) % 4u * 64u;
+					var u32 tile_y= ( billboard.tek - 801u ) / 4u * 64u;
+					unsafe( DrawTexturePro(
+						textures[ 2u ],
+						Rectangle{ .x( tile_x + billboard.xp / 4u ), .y( tile_y + billboard.yp / 4u ), .width( ( billboard.xk - billboard.xp ) / 4u ), .height( ( billboard.yk - billboard.yp ) / 4u ) },
+						Rectangle{ .x(x), .y( y + billboard_y_offset ), .width( size_x ), .height( size_y ) },
+						Vector2{ .x= 0.0f, .y= 0.0f },
+						0.0f,
+						white ) );
+				}
+
+				x+= ust::max( 24u, size_x + padding_x );
+				ust::max_assign( max_size_y_in_current_row, size_y );
+			}
+		}
+		unsafe( EndDrawing() );
+	}
+
+	// Do not care freeng here raylib objects like meshes, materials, textures.
+	// We quit anyway and this should release all resoources (even GPU-related ones).
+
+	unsafe( CloseWindow() );
+
+	return 0;
+}
+
+} // namespace PM

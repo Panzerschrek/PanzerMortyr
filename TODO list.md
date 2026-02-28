@@ -40,7 +40,6 @@ Other investigation:
 * Investigate differences between regional versions.
 * Investigate how original game console works (supported commands, history).
 * Invisitage command-line options of the original game.
-* Investigate contents of the BLIKI.STD file.
 
 Gameplay investigation:
 
