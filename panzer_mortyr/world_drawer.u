@@ -93,6 +93,10 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 	// Ensure we have actual map data.
 	SetMap( drawing_info.map_index );
 
+	// Load models in use.
+	// TODO - precache models to avoid doing loading outside map loading phase, since it may lead to frame lags.
+	LoadModelsIfNecessary( drawing_info.model_objects, game_filesystem_ptr_, console_out_, models_ );
+
 	SetGLState( g_buffer_clear_gl_state );
 
 	if( map_data_.empty() )
@@ -198,37 +202,14 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 
 	foreach( &model_object : drawing_info.model_objects )
 	{
-		// Fetch model from models hash-map or load it if it's not loaded yet.
-		// TODO - precache models to avoid doing loading outside map loading phase, since it may lead to frame lags.
+		var ust::optional_ref_imut</ ust::optional</GPUModel/> /> model_opt_opt= models_.find( model_object.model_file_name );
 
-		var ResourceString& file_name= model_object.model_file_name;
+		if( model_opt_opt.empty() )
+		{
+			continue;
+		}
 
-		var ust::optional</GPUModel/>& model_opt=
-			models_.find_or_construct_new(
-				file_name,
-				lambda[ &fs= game_filesystem_ptr_, &file_name, &co= console_out_ ] () : ust::optional</GPUModel/>
-				{
-					auto mut lock= fs.lock_mut();
-					result_match(
-						lock.deref().LoadFile(
-							file_name,
-							( fn( ust::file_readable &mut f ) : ust::io_result</ModelData/> )( LoadModel ) ) )
-					{
-						Ok(m) -> { return CreateGPUModel( m ); },
-						Err(e) ->
-						{
-							ConsoleOutAddTextLine(
-								co,
-								ust::concat(
-									"Failed to load model file \"",
-									ConvertResourceStringToStringView( file_name ),
-									"\"! Error: ",
-									ust::enum_to_string( e ) ) );
-							return ust::null_optional;
-						},
-					}
-				} );
-
+		var ust::optional</GPUModel/>& model_opt= model_opt_opt.try_deref();
 		if( model_opt.empty() )
 		{
 			continue;
@@ -1218,6 +1199,45 @@ fn DrawTestPrimitives(
 		shader.SetUniform( "vu_matrix", view_matrix );
 
 		unsafe( glDrawArrays( GLenum( GL_LINES ), GLint(0), GLint( vertices_imut.size() ) ) );
+	}
+}
+
+fn LoadModelsIfNecessary(
+	ust::array_view_imut</WorldDrawingInfo::ModelObject/> model_objects,
+	GameFilesystemPtr& game_filesystem_ptr,
+	ConsoleOutPtr& console_out_ptr,
+	ust::hash_map</ ResourceString, ust::optional</GPUModel/> /> &mut models )
+{
+	foreach( &model_object : model_objects )
+	{
+		// Load it if it's not loaded yet.
+
+		var ResourceString& file_name= model_object.model_file_name;
+
+		models.find_or_construct_new(
+			file_name,
+			lambda[&] () : ust::optional</GPUModel/>
+			{
+				auto mut lock= game_filesystem_ptr.lock_mut();
+				result_match(
+					lock.deref().LoadFile(
+						file_name,
+						( fn( ust::file_readable &mut f ) : ust::io_result</ModelData/> )( LoadModel ) ) )
+				{
+					Ok(m) -> { return CreateGPUModel( m ); },
+					Err(e) ->
+					{
+						ConsoleOutAddTextLine(
+							console_out_ptr,
+							ust::concat(
+								"Failed to load model file \"",
+								ConvertResourceStringToStringView( file_name ),
+								"\"! Error: ",
+								ust::enum_to_string( e ) ) );
+						return ust::null_optional;
+					},
+				}
+			} );
 	}
 }
 
