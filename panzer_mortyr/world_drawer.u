@@ -396,108 +396,14 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 		drawing_stats.num_visivle_model_triangles+= u32( model.num_triangles );
 	}
 
-	SetGLState( g_test_primitives_drawing_gl_state );
-
-	// Draw test sprites.
-
-	if( !drawing_info.test_sprites.empty() )
-	{
-		unsafe( glPointSize( 8.0f ) );
-
-		test_primitive_vertex_array_object_.Bind();
-		test_primitive_vertex_buffer_object_.Bind();
-
-		scoped_array TestPrimitiveVertex vertices[ drawing_info.test_sprites.size() ](
-			drawing_info.test_sprites.iter().map(
-				lambda( Vec3f& p ) : TestPrimitiveVertex
-				{
-					return TestPrimitiveVertex
-					{
-						.position[ p.x, p.y, p.z ],
-						.color[ 0u8, 255u8, 0u8 ],
-						.padding15= zero_init,
-					};
-				} ) );
-
-		auto range= vertices.to_byte8_range();
-
-		unsafe( glBufferSubData( GLenum( GL_ARRAY_BUFFER ), GLintptr(0), GLsizeiptr( range.size() ), range.data() ) );
-
-		test_primitive_shader_.Bind();
-		test_primitive_shader_.SetUniform( "vu_matrix", view_matrix );
-
-		unsafe( glDrawArrays( GLenum( GL_POINTS ), GLint(0), GLint( vertices.size() ) ) );
-
-		unsafe( glPointSize( 1.0f ) );
-	}
-
-	// Draw test triangles.
-	if( !drawing_info.test_triangles.empty() )
-	{
-		test_primitive_vertex_array_object_.Bind();
-		test_primitive_vertex_buffer_object_.Bind();
-
-		scoped_array TestPrimitiveVertex mut vertices[ drawing_info.test_triangles.size() * 3s ]( ust::make_zeroed</TestPrimitiveVertex/>() );
-
-		for( auto mut i= 0s; i < drawing_info.test_triangles.size(); ++i )
-		{
-			var WorldDrawingInfo::TestTriangle& triangle= drawing_info.test_triangles[i];
-
-			for( auto mut j= 0s; j < 3s; ++j )
-			{
-				var TestPrimitiveVertex &mut v= vertices[ i * 3s + j ];
-				var Vec3f& pos= triangle.vertices[j];
-				v.position[0]= pos.x;
-				v.position[1]= pos.y;
-				v.position[2]= pos.z;
-				v.color= triangle.color;
-			}
-		}
-
-		var ust::array_view_imut</TestPrimitiveVertex/> vertices_imut= vertices.subrange_end( c_max_test_primitive_vertices );
-
-		auto range= vertices_imut.to_byte8_range();
-		unsafe( glBufferSubData( GLenum( GL_ARRAY_BUFFER ), GLintptr(0), GLsizeiptr( range.size() ), range.data() ) );
-
-		test_primitive_shader_.Bind();
-		test_primitive_shader_.SetUniform( "vu_matrix", view_matrix );
-
-		unsafe( glDrawArrays( GLenum( GL_TRIANGLES ), GLint(0), GLint( vertices_imut.size() ) ) );
-	}
-
-	// Draw test lines.
-	if( !drawing_info.test_lines.empty() )
-	{
-		test_primitive_vertex_array_object_.Bind();
-		test_primitive_vertex_buffer_object_.Bind();
-
-		scoped_array TestPrimitiveVertex mut vertices[ drawing_info.test_lines.size() * 2s ]( ust::make_zeroed</TestPrimitiveVertex/>() );
-
-		for( auto mut i= 0s; i < drawing_info.test_lines.size(); ++i )
-		{
-			var WorldDrawingInfo::TestLine& line= drawing_info.test_lines[i];
-
-			for( auto mut j= 0s; j < 2s; ++j )
-			{
-				var TestPrimitiveVertex &mut v= vertices[ i * 2s + j ];
-				var Vec3f& pos= line.vertices[j];
-				v.position[0]= pos.x;
-				v.position[1]= pos.y;
-				v.position[2]= pos.z;
-				v.color= line.color;
-			}
-		}
-
-		var ust::array_view_imut</TestPrimitiveVertex/> vertices_imut= vertices.subrange_end( c_max_test_primitive_vertices );
-
-		auto range= vertices_imut.to_byte8_range();
-		unsafe( glBufferSubData( GLenum( GL_ARRAY_BUFFER ), GLintptr(0), GLsizeiptr( range.size() ), range.data() ) );
-
-		test_primitive_shader_.Bind();
-		test_primitive_shader_.SetUniform( "vu_matrix", view_matrix );
-
-		unsafe( glDrawArrays( GLenum( GL_LINES ), GLint(0), GLint( vertices_imut.size() ) ) );
-	}
+	DrawTestPrimitives(
+		drawing_info.test_sprites,
+		drawing_info.test_triangles,
+		drawing_info.test_lines,
+		test_primitive_vertex_array_object_,
+		test_primitive_vertex_buffer_object_,
+		test_primitive_shader_,
+		view_matrix );
 
 	return drawing_stats;
 }
@@ -1201,6 +1107,118 @@ fn DrawStarsAndSun(
 		GLint( stars_buffer.num_triangle_indices ),
 		GLenum( GL_UNSIGNED_SHORT ),
 		ust::nullptr</byte8/>() ) );
+}
+
+fn DrawTestPrimitives(
+	ust::array_view_imut</Vec3f/> test_sprites,
+	ust::array_view_imut</WorldDrawingInfo::TestTriangle/> test_triangles,
+	ust::array_view_imut</WorldDrawingInfo::TestLine/> test_lines,
+	VertexArrayObject& test_primitive_vertex_array_object,
+	BufferObject &mut test_primitive_vertex_buffer_object,
+	ShaderProgram &mut shader,
+	Mat4f& view_matrix )
+{
+	SetGLState( g_test_primitives_drawing_gl_state );
+
+	// Draw test sprites.
+	if( !test_sprites.empty() )
+	{
+		unsafe( glPointSize( 8.0f ) );
+
+		test_primitive_vertex_array_object.Bind();
+		test_primitive_vertex_buffer_object.Bind();
+
+		scoped_array TestPrimitiveVertex vertices[ test_sprites.size() ](
+			test_sprites.iter().map(
+				lambda( Vec3f& p ) : TestPrimitiveVertex
+				{
+					return TestPrimitiveVertex
+					{
+						.position[ p.x, p.y, p.z ],
+						.color[ 0u8, 255u8, 0u8 ],
+						.padding15= zero_init,
+					};
+				} ) );
+
+		auto range= vertices.to_byte8_range();
+
+		unsafe( glBufferSubData( GLenum( GL_ARRAY_BUFFER ), GLintptr(0), GLsizeiptr( range.size() ), range.data() ) );
+
+		shader.Bind();
+		shader.SetUniform( "vu_matrix", view_matrix );
+
+		unsafe( glDrawArrays( GLenum( GL_POINTS ), GLint(0), GLint( vertices.size() ) ) );
+
+		unsafe( glPointSize( 1.0f ) );
+	}
+
+	// Draw test triangles.
+	if( !test_triangles.empty() )
+	{
+		test_primitive_vertex_array_object.Bind();
+		test_primitive_vertex_buffer_object.Bind();
+
+		scoped_array TestPrimitiveVertex mut vertices[ test_triangles.size() * 3s ]( ust::make_zeroed</TestPrimitiveVertex/>() );
+
+		for( auto mut i= 0s; i < test_triangles.size(); ++i )
+		{
+			var WorldDrawingInfo::TestTriangle& triangle= test_triangles[i];
+
+			for( auto mut j= 0s; j < 3s; ++j )
+			{
+				var TestPrimitiveVertex &mut v= vertices[ i * 3s + j ];
+				var Vec3f& pos= triangle.vertices[j];
+				v.position[0]= pos.x;
+				v.position[1]= pos.y;
+				v.position[2]= pos.z;
+				v.color= triangle.color;
+			}
+		}
+
+		var ust::array_view_imut</TestPrimitiveVertex/> vertices_imut= vertices.subrange_end( c_max_test_primitive_vertices );
+
+		auto range= vertices_imut.to_byte8_range();
+		unsafe( glBufferSubData( GLenum( GL_ARRAY_BUFFER ), GLintptr(0), GLsizeiptr( range.size() ), range.data() ) );
+
+		shader.Bind();
+		shader.SetUniform( "vu_matrix", view_matrix );
+
+		unsafe( glDrawArrays( GLenum( GL_TRIANGLES ), GLint(0), GLint( vertices_imut.size() ) ) );
+	}
+
+	// Draw test lines.
+	if( !test_lines.empty() )
+	{
+		test_primitive_vertex_array_object.Bind();
+		test_primitive_vertex_buffer_object.Bind();
+
+		scoped_array TestPrimitiveVertex mut vertices[ test_lines.size() * 2s ]( ust::make_zeroed</TestPrimitiveVertex/>() );
+
+		for( auto mut i= 0s; i < test_lines.size(); ++i )
+		{
+			var WorldDrawingInfo::TestLine& line= test_lines[i];
+
+			for( auto mut j= 0s; j < 2s; ++j )
+			{
+				var TestPrimitiveVertex &mut v= vertices[ i * 2s + j ];
+				var Vec3f& pos= line.vertices[j];
+				v.position[0]= pos.x;
+				v.position[1]= pos.y;
+				v.position[2]= pos.z;
+				v.color= line.color;
+			}
+		}
+
+		var ust::array_view_imut</TestPrimitiveVertex/> vertices_imut= vertices.subrange_end( c_max_test_primitive_vertices );
+
+		auto range= vertices_imut.to_byte8_range();
+		unsafe( glBufferSubData( GLenum( GL_ARRAY_BUFFER ), GLintptr(0), GLsizeiptr( range.size() ), range.data() ) );
+
+		shader.Bind();
+		shader.SetUniform( "vu_matrix", view_matrix );
+
+		unsafe( glDrawArrays( GLenum( GL_LINES ), GLint(0), GLint( vertices_imut.size() ) ) );
+	}
 }
 
 fn MarkVisibleRoomClusters(
