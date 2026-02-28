@@ -134,29 +134,13 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 
 	if( !map_data.sky_clouds_params.empty() && map_data.clouds_texture_layer != ~0u )
 	{
-		var SkyCloudsParams& clouds_params= map_data.sky_clouds_params.try_deref();
-
-		SetGLState(
-			( clouds_params.scale_colors_by_two
-				? g_clouds_double_blending_gl_state
-				: g_clouds_single_blending_gl_state ) );
-
-		var Mat4f clouds_matrix= Mat4f::MakeScale( c_clouds_scale ) * rotation_and_projection_matrix;
-
-		var u32 texture_slot= 0u;
-		unsafe( glActiveTexture( GLenum( GL_TEXTURE0 ) + GLenum(texture_slot) ) );
-		map_data.map_textures_array.Bind();
-
-		clouds_shader_.Bind();
-		clouds_shader_.SetUniform( "vu_matrix", clouds_matrix );
-		clouds_shader_.SetUniform( "fu_texture", texture_slot );
-		clouds_shader_.SetUniform( "fu_texture_layer", f32( map_data.clouds_texture_layer ) );
-		clouds_shader_.SetUniform( "fu_texture_scale", clouds_params.scale );
-		clouds_shader_.SetUniform(
-			"fu_texture_shift",
-			drawing_info.game_time_s * clouds_params.scroll_speed * Vec2f( 1.0f, 1.0f ) );
-
-		unsafe( glDrawArrays( GLenum( GL_TRIANGLES ), GLint(0), GLsizei(12) ) );
+		DrawClouds(
+			map_data.sky_clouds_params.try_deref(),
+			clouds_shader_,
+			map_data.map_textures_array,
+			map_data.clouds_texture_layer,
+			rotation_and_projection_matrix,
+			drawing_info.game_time_s );
 	}
 
 	// Draw stars/moon AFTER clouds. This isn't fully correct, but this allows to draw sun/moon with proper brightness.
@@ -1248,6 +1232,37 @@ fn DrawSkyBackground(
 		GLint( sky_background_buffer.num_triangle_indices ),
 		GLenum( GL_UNSIGNED_SHORT ),
 		ust::nullptr</byte8/>() ) );
+}
+
+fn DrawClouds(
+	SkyCloudsParams& clouds_params,
+	ShaderProgram &mut shader,
+	Texture& map_textures_array,
+	u32 clouds_texture_layer,
+	Mat4f& rotation_and_projection_matrix,
+	f32 time_s )
+{
+	SetGLState(
+		( clouds_params.scale_colors_by_two
+			? g_clouds_double_blending_gl_state
+			: g_clouds_single_blending_gl_state ) );
+
+	var Mat4f clouds_matrix= Mat4f::MakeScale( c_clouds_scale ) * rotation_and_projection_matrix;
+
+	var u32 texture_slot= 0u;
+	unsafe( glActiveTexture( GLenum( GL_TEXTURE0 ) + GLenum(texture_slot) ) );
+	map_textures_array.Bind();
+
+	shader.Bind();
+	shader.SetUniform( "vu_matrix", clouds_matrix );
+	shader.SetUniform( "fu_texture", texture_slot );
+	shader.SetUniform( "fu_texture_layer", f32( clouds_texture_layer ) );
+	shader.SetUniform( "fu_texture_scale", clouds_params.scale );
+	shader.SetUniform(
+		"fu_texture_shift",
+		 time_s * clouds_params.scroll_speed * Vec2f( 1.0f, 1.0f ) );
+
+	unsafe( glDrawArrays( GLenum( GL_TRIANGLES ), GLint(0), GLsizei(12) ) );
 }
 
 fn IsBBoxWithinVisibleClusters(
