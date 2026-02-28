@@ -176,109 +176,20 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 		CalculateVisibleClustersBBox(
 			zvox_data.clusters, visible_room_cluster_flags, drawing_info.camera_params.position );
 
-	SetGLState( g_map_drawing_gl_state );
-
-	var u32 texture_slot= 0u;
-
-	unsafe( glActiveTexture( GLenum( GL_TEXTURE0 ) + GLenum(texture_slot) ) );
-	map_data.map_textures_array.Bind();
-
-	map_shader_.Bind();
-	map_shader_.SetUniform( "vu_matrix", view_matrix );
-	map_shader_.SetUniform( "fu_texture", texture_slot );
-
-	map_data.vertex_array_object.Bind();
-	map_data.index_buffer.Bind();
-
-	for( auto mut i= 0s; i < zvox_data.clusters.size(); )
-	{
-		var ZvoxCluster& room_cluster= zvox_data.clusters[i];
-		if( room_cluster.c.num_children_clusters < 0 )
-		{
-			++i;
-			continue;
-		}
-
-		// This room cluster and all his children.
-		var size_type num_clusters_in_group= size_type( room_cluster.c.num_children_clusters ) + 1s;
-
-		if( visible_room_cluster_flags[i] )
-		{
-			for( auto mut j= 0s; j < num_clusters_in_group; ++j )
-			{
-				var size_type cluster_index= i + j;
-
-				var u8 cluster_type= zvox_data.clusters[ cluster_index ].cluster_type;
-				if( !(
-					cluster_type == ZvoxCluster::c_cluster_type_regular |
-					cluster_type == ZvoxCluster::c_cluster_type_notes ) )
-				{
-					// Draw dynamic clusters later.
-					continue;
-				}
-
-				auto& cluster_draw_data= map_data.clusters_draw_data[ cluster_index ];
-
-				unsafe( glDrawElementsBaseVertex(
-					GLenum( GL_TRIANGLES ),
-					GLsizei( cluster_draw_data.num_indices ),
-					GLenum( GL_UNSIGNED_SHORT ),
-					ust::nullptr</byte8/>() + typeinfo</u16/>.size_of * cluster_draw_data.first_index,
-					GLint( cluster_draw_data.first_vertex_index ) ) );
-
-				drawing_stats.num_visible_map_triangles+= u32( cluster_draw_data.num_indices ) / 3u;
-			}
-
-			++drawing_stats.num_room_visible_clusters;
-			drawing_stats.num_total_visible_clusters+= u32( num_clusters_in_group );
-		}
-
-		i+= num_clusters_in_group;
-	}
-
-	// Draw dynamic clusters with individual matrices.
-	foreach( &dynamic_cluster_object : drawing_info.dynamic_cluster_objects )
-	{
-		var size_type cluster_index( dynamic_cluster_object.cluster_index );
-
-		var ZvoxCluster& cluster= zvox_data.clusters[ cluster_index ];
-
-		var BBox3f mut bbox= CreateClusterBBox( cluster );
-		bbox.min+= dynamic_cluster_object.translation;
-		bbox.max+= dynamic_cluster_object.translation;
-
-		// First perform fast check if this dynamic cluster is within the bbox containing all visible clusters.
-		if( !visible_clusters_bbox.InstersectsOrTouches( bbox ) )
-		{
-			continue;
-		}
-
-		// Then check if this dynamic cluster is within at least one visible room cluster.
-		if( !IsBBoxWithinVisibleClusters(
-				zvox_data.clusters, room_clusters_hierarchy, visible_room_cluster_flags, bbox ) )
-		{
-			continue;
-		}
-
-		map_shader_.SetUniform(
-			"vu_matrix",
-			Mat4f::MakeTranslation( dynamic_cluster_object.translation ) * view_matrix );
-
-		auto& cluster_draw_data= map_data.clusters_draw_data[ cluster_index ];
-
-		unsafe( glDrawElementsBaseVertex(
-			GLenum( GL_TRIANGLES ),
-			GLsizei( cluster_draw_data.num_indices ),
-			GLenum( GL_UNSIGNED_SHORT ),
-			ust::nullptr</byte8/>() + typeinfo</u16/>.size_of * cluster_draw_data.first_index,
-			GLint( cluster_draw_data.first_vertex_index ) ) );
-
-		drawing_stats.num_visible_map_triangles+= u32( cluster_draw_data.num_indices ) / 3u;
-	}
+	DrawMapPolygons(
+		map_data,
+		visible_room_cluster_flags,
+		visible_clusters_bbox,
+		drawing_info.dynamic_cluster_objects,
+		map_shader_,
+		view_matrix,
+		drawing_stats );
 
 	var bool fullbright= settings_.lock_imut().deref().r_fullbright;
 
 	SetGLState( g_models_drawing_gl_state );
+
+	var u32 texture_slot= 0u;
 
 	model_shader_.Bind();
 	model_shader_.SetUniform( "fu_texture", texture_slot );
@@ -989,6 +900,119 @@ fn WorldDrawer::SetMap( mut this, u32 map_index )
 			.stars_buffer= CreateStarsBuffer( map_description ),
 			.sky_clouds_params= CreateSkyCloudsParams( map_description ),
 		} );
+}
+
+fn WorldDrawer::DrawMapPolygons(
+	MapDrawData& map_data,
+	ust::array_view_imut</bool/> visible_room_cluster_flags,
+	BBox3f& visible_clusters_bbox,
+	ust::array_view_imut</WorldDrawingInfo::DynamicClusterObject/> dynamic_cluster_objects,
+	ShaderProgram &mut shader,
+	Mat4f& view_matrix,
+	DrawingStats &mut drawing_stats )
+{
+	var ust::array_view_imut</ZvoxCluster/> clusters= map_data.zvox_data.deref().clusters.range();
+
+	SetGLState( g_map_drawing_gl_state );
+
+	var u32 texture_slot= 0u;
+
+	unsafe( glActiveTexture( GLenum( GL_TEXTURE0 ) + GLenum(texture_slot) ) );
+	map_data.map_textures_array.Bind();
+
+	shader.Bind();
+	shader.SetUniform( "vu_matrix", view_matrix );
+	shader.SetUniform( "fu_texture", texture_slot );
+
+	map_data.vertex_array_object.Bind();
+	map_data.index_buffer.Bind();
+
+	for( auto mut i= 0s; i < clusters.size(); )
+	{
+		var ZvoxCluster& room_cluster= clusters[i];
+		if( room_cluster.c.num_children_clusters < 0 )
+		{
+			++i;
+			continue;
+		}
+
+		// This room cluster and all his children.
+		var size_type num_clusters_in_group= size_type( room_cluster.c.num_children_clusters ) + 1s;
+
+		if( visible_room_cluster_flags[i] )
+		{
+			for( auto mut j= 0s; j < num_clusters_in_group; ++j )
+			{
+				var size_type cluster_index= i + j;
+
+				var u8 cluster_type= clusters[ cluster_index ].cluster_type;
+				if( !(
+					cluster_type == ZvoxCluster::c_cluster_type_regular |
+					cluster_type == ZvoxCluster::c_cluster_type_notes ) )
+				{
+					// Draw dynamic clusters later.
+					continue;
+				}
+
+				auto& cluster_draw_data= map_data.clusters_draw_data[ cluster_index ];
+
+				unsafe( glDrawElementsBaseVertex(
+					GLenum( GL_TRIANGLES ),
+					GLsizei( cluster_draw_data.num_indices ),
+					GLenum( GL_UNSIGNED_SHORT ),
+					ust::nullptr</byte8/>() + typeinfo</u16/>.size_of * cluster_draw_data.first_index,
+					GLint( cluster_draw_data.first_vertex_index ) ) );
+
+				drawing_stats.num_visible_map_triangles+= u32( cluster_draw_data.num_indices ) / 3u;
+			}
+
+			++drawing_stats.num_room_visible_clusters;
+			drawing_stats.num_total_visible_clusters+= u32( num_clusters_in_group );
+		}
+
+		i+= num_clusters_in_group;
+	}
+
+	var RoomClustersHierarchy& room_clusters_hierarchy= map_data.room_clusters_hierarchy.deref();
+
+	// Draw dynamic clusters with individual matrices.
+	foreach( &dynamic_cluster_object : dynamic_cluster_objects )
+	{
+		var size_type cluster_index( dynamic_cluster_object.cluster_index );
+
+		var ZvoxCluster& cluster= clusters[ cluster_index ];
+
+		var BBox3f mut bbox= CreateClusterBBox( cluster );
+		bbox.min+= dynamic_cluster_object.translation;
+		bbox.max+= dynamic_cluster_object.translation;
+
+		// First perform fast check if this dynamic cluster is within the bbox containing all visible clusters.
+		if( !visible_clusters_bbox.InstersectsOrTouches( bbox ) )
+		{
+			continue;
+		}
+
+		// Then check if this dynamic cluster is within at least one visible room cluster.
+		if( !IsBBoxWithinVisibleClusters( clusters, room_clusters_hierarchy, visible_room_cluster_flags, bbox ) )
+		{
+			continue;
+		}
+
+		shader.SetUniform(
+			"vu_matrix",
+			Mat4f::MakeTranslation( dynamic_cluster_object.translation ) * view_matrix );
+
+		auto& cluster_draw_data= map_data.clusters_draw_data[ cluster_index ];
+
+		unsafe( glDrawElementsBaseVertex(
+			GLenum( GL_TRIANGLES ),
+			GLsizei( cluster_draw_data.num_indices ),
+			GLenum( GL_UNSIGNED_SHORT ),
+			ust::nullptr</byte8/>() + typeinfo</u16/>.size_of * cluster_draw_data.first_index,
+			GLint( cluster_draw_data.first_vertex_index ) ) );
+
+		drawing_stats.num_visible_map_triangles+= u32( cluster_draw_data.num_indices ) / 3u;
+	}
 }
 
 fn LoadMapTextures(
