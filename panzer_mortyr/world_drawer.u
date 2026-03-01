@@ -203,6 +203,109 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 		view_matrix,
 		drawing_stats );
 
+	{
+		var ust::vector</MapVertex/> mut vertices;
+		var ust::vector</u16/> mut indices;
+
+		foreach( &billboard : drawing_info.billboards )
+		{
+			var size_type base_vertex= vertices.size();
+
+			var Vec3f u_vec( 10.0f, 0.0f, 0.0f );
+			var Vec3f v_vec( 0.0f, 10.0f, 0.0f );
+
+			var [ Vec3f, 4 ] positions
+			[
+				billboard.position - u_vec - v_vec,
+				billboard.position + u_vec - v_vec,
+				billboard.position - u_vec + v_vec,
+				billboard.position + u_vec + v_vec,
+			];
+
+			var f32 texture_layer= 1.0f;
+
+
+			vertices.push_back(
+				MapVertex
+				{
+					.position[ positions[0].x, positions[0].y, positions[0].z ],
+					.padding12= zero_init,
+					.tex_coordinates[ 0.0f, 0.0f, texture_layer ],
+					.light[ 255u8, 255u8, 255u8 ],
+					.padding31= zero_init,
+				} );
+
+			vertices.push_back(
+				MapVertex
+				{
+					.position[ positions[1].x, positions[1].y, positions[1].z ],
+					.padding12= zero_init,
+					.tex_coordinates[ 1.0f, 0.0f, texture_layer ],
+					.light[ 255u8, 255u8, 255u8 ],
+					.padding31= zero_init,
+				} );
+
+			vertices.push_back(
+				MapVertex
+				{
+					.position[ positions[2].x, positions[2].y, positions[2].z ],
+					.padding12= zero_init,
+					.tex_coordinates[ 0.0f, 1.0f, texture_layer ],
+					.light[ 255u8, 255u8, 255u8 ],
+					.padding31= zero_init,
+				} );
+
+			vertices.push_back(
+				MapVertex
+				{
+					.position[ positions[3].x, positions[3].y, positions[3].z ],
+					.padding12= zero_init,
+					.tex_coordinates[ 1.0f, 1.0f, texture_layer ],
+					.light[ 255u8, 255u8, 255u8 ],
+					.padding31= zero_init,
+				} );
+
+			indices.push_back( u16( base_vertex + 0s ) );
+			indices.push_back( u16( base_vertex + 1s ) );
+			indices.push_back( u16( base_vertex + 2s ) );
+			indices.push_back( u16( base_vertex + 1s ) );
+			indices.push_back( u16( base_vertex + 2s ) );
+			indices.push_back( u16( base_vertex + 3s ) );
+		}
+
+		var size_type num_vertices= ust::min( vertices.size(), c_max_dynamic_polygon_vertices );
+		var size_type num_indices= ust::min( indices.size(), c_max_dynamic_polygon_indices );
+
+		auto vertices_range= vertices.range().subrange_end( num_vertices ).to_byte8_range();
+		auto indices_range= indices.range().subrange_end( num_indices ).to_byte8_range();
+
+		dynamic_polygons_buffer_.vertex_buffer.Bind();
+		unsafe( glBufferSubData( GLenum( GL_ARRAY_BUFFER ), GLintptr(0), GLsizeiptr( vertices_range.size() ), vertices_range.data() ) );
+
+		dynamic_polygons_buffer_.index_buffer.Bind();
+		unsafe( glBufferSubData( GLenum( GL_ELEMENT_ARRAY_BUFFER ), GLintptr(0), GLsizeiptr( indices_range.size() ), indices_range.data() ) );
+
+		dynamic_polygons_buffer_.vertex_array_object.Bind();
+
+		SetGLState( g_map_drawing_gl_state );
+
+		var u32 texture_slot= 0u;
+		var ShaderProgram &mut shader= map_shader_;
+
+		unsafe( glActiveTexture( GLenum( GL_TEXTURE0 ) + GLenum(texture_slot) ) );
+		map_data.map_textures_array.Bind();
+
+		shader.Bind();
+		shader.SetUniform( "vu_matrix", view_matrix );
+		shader.SetUniform( "fu_texture", texture_slot );
+
+		unsafe( glDrawElements(
+			GLenum( GL_TRIANGLES ),
+			GLsizei( num_indices ),
+			GLenum( GL_UNSIGNED_SHORT ),
+			ust::nullptr</byte8/>() ) );
+	}
+
 	// Prepare list of models to draw.
 
 	var bool fullbright= settings_.lock_imut().deref().r_fullbright;
