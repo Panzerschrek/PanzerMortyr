@@ -374,133 +374,16 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 	dynamic_polygons_buffer_.vertices.clear();
 	dynamic_polygons_buffer_.indices.clear();
 
+	// Build polygons of billboards.
+	BuildBillboardPolygons(
+		drawing_info.billboards,
+		billboards_description_,
+		drawing_info.camera_params.position,
+		dynamic_polygons_buffer_.vertices,
+		dynamic_polygons_buffer_.indices );
+
+	// Draw billboards.
 	{
-		foreach( &billboard : drawing_info.billboards )
-		{
-			var size_type billboard_index( billboard.billboard_index );
-			if( billboard_index >= billboards_description_.size() )
-			{
-				continue;
-			}
-
-			var BillboardDescription& billboard_description= billboards_description_[ billboard_index ];
-
-			var u32 mut base_texture_index= 0u;
-			if( billboard_description.tek == 820u | billboard_description.tek == 997u )
-			{
-				base_texture_index= 30u;
-			}
-			if( billboard_description.tek == 621u | billboard_description.tek == 721u | billboard_description.tek == 998u )
-			{
-				base_texture_index= 31u;
-			}
-			if( billboard_description.tek == 819u )
-			{
-				base_texture_index= 33u;
-			}
-			if( billboard_description.tek == 818u )
-			{
-				base_texture_index= 34u;
-			}
-
-			var f32 texture_layer(
-				base_texture_index *
-					( MaterialsDescription::c_texture_file_num_tiles_x * MaterialsDescription::c_texture_file_num_tiles_y ) +
-				billboard_description.xp / MaterialsDescription::c_texture_size +
-				billboard_description.yp / MaterialsDescription::c_texture_size * MaterialsDescription::c_texture_file_num_tiles_x );
-
-			var size_type base_vertex= dynamic_polygons_buffer_.vertices.size();
-
-			// Rotate billboards towards camera.
-			var Vec3f mut v_vec( 0.0f, 0.0f, 1.0f );
-			var Vec3f mut u_vec= ( billboard.position - drawing_info.camera_params.position ).Cross( v_vec );
-
-			var f32 u_vec_length= u_vec.Length();
-			if( u_vec_length == 0.0f )
-			{
-				u_vec= Vec3f( 0.0f, 1.0f, 0.0f );
-			}
-			else
-			{
-				u_vec /= u_vec_length;
-			}
-
-			u_vec*= f32( billboard_description.dx );
-			v_vec*= f32( billboard_description.dy );
-
-			var [ Vec3f, 4 ] positions
-			[
-				billboard.position - u_vec - v_vec,
-				billboard.position + u_vec - v_vec,
-				billboard.position - u_vec + v_vec,
-				billboard.position + u_vec + v_vec,
-			];
-
-			var [ u32, 2 ] tc_base
-			[
-				billboard_description.xp % MaterialsDescription::c_texture_size,
-				billboard_description.yp % MaterialsDescription::c_texture_size ];
-
-			var [ [ f32, 2 ], 2 ] tex_coords
-			[
-				[
-					f32( tc_base[0] ) / f32( MaterialsDescription::c_texture_size ),
-					f32( tc_base[1] ) / f32( MaterialsDescription::c_texture_size ),
-				],
-				[
-					f32( tc_base[0] + billboard_description.xk - billboard_description.xp ) / f32( MaterialsDescription::c_texture_size ),
-					f32( tc_base[1] + billboard_description.yk - billboard_description.yp ) / f32( MaterialsDescription::c_texture_size ),
-				],
-			];
-
-			dynamic_polygons_buffer_.vertices.push_back(
-				MapVertex
-				{
-					.position[ positions[0].x, positions[0].y, positions[0].z ],
-					.padding12= zero_init,
-					.tex_coordinates[ tex_coords[0][0], tex_coords[0][1], texture_layer ],
-					.light[ 255u8, 255u8, 255u8 ],
-					.padding31= zero_init,
-				} );
-
-			dynamic_polygons_buffer_.vertices.push_back(
-				MapVertex
-				{
-					.position[ positions[1].x, positions[1].y, positions[1].z ],
-					.padding12= zero_init,
-					.tex_coordinates[ tex_coords[1][0], tex_coords[0][1], texture_layer ],
-					.light[ 255u8, 255u8, 255u8 ],
-					.padding31= zero_init,
-				} );
-
-			dynamic_polygons_buffer_.vertices.push_back(
-				MapVertex
-				{
-					.position[ positions[2].x, positions[2].y, positions[2].z ],
-					.padding12= zero_init,
-					.tex_coordinates[ tex_coords[0][0], tex_coords[1][1], texture_layer ],
-					.light[ 255u8, 255u8, 255u8 ],
-					.padding31= zero_init,
-				} );
-
-			dynamic_polygons_buffer_.vertices.push_back(
-				MapVertex
-				{
-					.position[ positions[3].x, positions[3].y, positions[3].z ],
-					.padding12= zero_init,
-					.tex_coordinates[ tex_coords[1][0], tex_coords[1][1], texture_layer ],
-					.light[ 255u8, 255u8, 255u8 ],
-					.padding31= zero_init,
-				} );
-
-			dynamic_polygons_buffer_.indices.push_back( u16( base_vertex + 2s ) );
-			dynamic_polygons_buffer_.indices.push_back( u16( base_vertex + 1s ) );
-			dynamic_polygons_buffer_.indices.push_back( u16( base_vertex + 0s ) );
-			dynamic_polygons_buffer_.indices.push_back( u16( base_vertex + 1s ) );
-			dynamic_polygons_buffer_.indices.push_back( u16( base_vertex + 2s ) );
-			dynamic_polygons_buffer_.indices.push_back( u16( base_vertex + 3s ) );
-		}
-
 		var size_type num_vertices= ust::min( dynamic_polygons_buffer_.vertices.size(), c_max_dynamic_polygon_vertices );
 		var size_type num_indices= ust::min( dynamic_polygons_buffer_.indices.size(), c_max_dynamic_polygon_indices );
 
@@ -1268,6 +1151,140 @@ fn PrepareVertexArrayObjectWithMapVertexFormat(
 		GLboolean(1),
 		GLsizei( typeinfo</MapVertex/>.size_of ),
 		ust::nullptr</byte8/>() + GetStructFieldOffset</MapVertex, "light"/>() ) );
+}
+
+fn BuildBillboardPolygons(
+	ust::array_view_imut</WorldDrawingInfo::Billboard/> billboards,
+	ust::array_view_imut</BillboardDescription/> billboards_description,
+	Vec3f& camera_position,
+	ust::vector</MapVertex/> &mut vertices,
+	ust::vector</u16/> &mut indices )
+{
+	foreach( &billboard : billboards )
+	{
+		var size_type billboard_index( billboard.billboard_index );
+		if( billboard_index >= billboards_description.size() )
+		{
+			continue;
+		}
+
+		var BillboardDescription& billboard_description= billboards_description[ billboard_index ];
+
+		var u32 mut base_texture_index= 0u;
+		if( billboard_description.tek == 820u | billboard_description.tek == 997u )
+		{
+			base_texture_index= 30u;
+		}
+		if( billboard_description.tek == 621u | billboard_description.tek == 721u | billboard_description.tek == 998u )
+		{
+			base_texture_index= 31u;
+		}
+		if( billboard_description.tek == 819u )
+		{
+			base_texture_index= 33u;
+		}
+		if( billboard_description.tek == 818u )
+		{
+			base_texture_index= 34u;
+		}
+
+		var f32 texture_layer(
+			base_texture_index *
+				( MaterialsDescription::c_texture_file_num_tiles_x * MaterialsDescription::c_texture_file_num_tiles_y ) +
+			billboard_description.xp / MaterialsDescription::c_texture_size +
+			billboard_description.yp / MaterialsDescription::c_texture_size * MaterialsDescription::c_texture_file_num_tiles_x );
+
+		var size_type base_vertex= vertices.size();
+
+		// Rotate billboards towards camera.
+		var Vec3f mut v_vec( 0.0f, 0.0f, 1.0f );
+		var Vec3f mut u_vec= ( billboard.position - camera_position ).Cross( v_vec );
+
+		var f32 u_vec_length= u_vec.Length();
+		if( u_vec_length == 0.0f )
+		{
+			u_vec= Vec3f( 0.0f, 1.0f, 0.0f );
+		}
+		else
+		{
+			u_vec /= u_vec_length;
+		}
+
+		u_vec*= f32( billboard_description.dx );
+		v_vec*= f32( billboard_description.dy );
+
+		var [ Vec3f, 4 ] positions
+		[
+			billboard.position - u_vec - v_vec,
+			billboard.position + u_vec - v_vec,
+			billboard.position - u_vec + v_vec,
+			billboard.position + u_vec + v_vec,
+		];
+
+		var [ u32, 2 ] tc_base
+		[
+			billboard_description.xp % MaterialsDescription::c_texture_size,
+			billboard_description.yp % MaterialsDescription::c_texture_size ];
+
+		var [ [ f32, 2 ], 2 ] tex_coords
+		[
+			[
+				f32( tc_base[0] ) / f32( MaterialsDescription::c_texture_size ),
+				f32( tc_base[1] ) / f32( MaterialsDescription::c_texture_size ),
+			],
+			[
+				f32( tc_base[0] + billboard_description.xk - billboard_description.xp ) / f32( MaterialsDescription::c_texture_size ),
+				f32( tc_base[1] + billboard_description.yk - billboard_description.yp ) / f32( MaterialsDescription::c_texture_size ),
+			],
+		];
+
+		vertices.push_back(
+			MapVertex
+			{
+				.position[ positions[0].x, positions[0].y, positions[0].z ],
+				.padding12= zero_init,
+				.tex_coordinates[ tex_coords[0][0], tex_coords[0][1], texture_layer ],
+				.light[ 255u8, 255u8, 255u8 ],
+				.padding31= zero_init,
+			} );
+
+		vertices.push_back(
+			MapVertex
+			{
+				.position[ positions[1].x, positions[1].y, positions[1].z ],
+				.padding12= zero_init,
+				.tex_coordinates[ tex_coords[1][0], tex_coords[0][1], texture_layer ],
+				.light[ 255u8, 255u8, 255u8 ],
+				.padding31= zero_init,
+			} );
+
+		vertices.push_back(
+			MapVertex
+			{
+				.position[ positions[2].x, positions[2].y, positions[2].z ],
+				.padding12= zero_init,
+				.tex_coordinates[ tex_coords[0][0], tex_coords[1][1], texture_layer ],
+				.light[ 255u8, 255u8, 255u8 ],
+				.padding31= zero_init,
+			} );
+
+		vertices.push_back(
+			MapVertex
+			{
+				.position[ positions[3].x, positions[3].y, positions[3].z ],
+				.padding12= zero_init,
+				.tex_coordinates[ tex_coords[1][0], tex_coords[1][1], texture_layer ],
+				.light[ 255u8, 255u8, 255u8 ],
+				.padding31= zero_init,
+			} );
+
+		indices.push_back( u16( base_vertex + 2s ) );
+		indices.push_back( u16( base_vertex + 1s ) );
+		indices.push_back( u16( base_vertex + 0s ) );
+		indices.push_back( u16( base_vertex + 1s ) );
+		indices.push_back( u16( base_vertex + 2s ) );
+		indices.push_back( u16( base_vertex + 3s ) );
+	}
 }
 
 fn DrawSkyBackground(
