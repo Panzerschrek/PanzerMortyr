@@ -378,7 +378,7 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 	BuildBillboardPolygons(
 		drawing_info.billboards,
 		billboards_description_,
-		drawing_info.camera_params.position,
+		drawing_info.camera_params,
 		camera_clip_planes,
 		visible_clusters_bbox,
 		dynamic_polygons_buffer_.vertices,
@@ -1168,13 +1168,16 @@ fn PrepareVertexArrayObjectWithMapVertexFormat(
 fn BuildBillboardPolygons(
 	ust::array_view_imut</WorldDrawingInfo::Billboard/> billboards,
 	ust::array_view_imut</BillboardDescription/> billboards_description,
-	Vec3f& camera_position,
+	WorldDrawingInfo::CameraParams& camera_params,
 	CameraClipPlanes& camera_clip_planes,
 	BBox3f& visible_clusters_bbox,
 	ust::vector</MapVertex/> &mut vertices,
 	ust::vector</u16/> &mut indices,
 	WorldDrawer::DrawingStats &mut drawing_stats )
 {
+	// TODO - tune this scale.
+	var f32 scale_for_constant_screen_size_billboards= ust::tan( camera_params.fov_x * 0.5f ) / 512.0f;
+
 	foreach( &billboard : billboards ) label billboards_loop
 	{
 		var size_type billboard_index( billboard.billboard_index );
@@ -1269,7 +1272,8 @@ fn BuildBillboardPolygons(
 
 		var size_type base_vertex= vertices.size();
 
-		auto [ mut u_vec, mut v_vec ]= GetBillboardAxes( billboard, camera_position );
+		auto [ mut u_vec, mut v_vec ]=
+			GetBillboardAxes( billboard, camera_params.position, scale_for_constant_screen_size_billboards );
 
 		u_vec*= f32( billboard_description.dx );
 		v_vec*= f32( billboard_description.dy );
@@ -1351,8 +1355,10 @@ fn BuildBillboardPolygons(
 	}
 }
 
-// Returns pair of normalized vectors.
-fn GetBillboardAxes( WorldDrawingInfo::Billboard& billboard, Vec3f& camera_position ) : [ Vec3f, 2 ]
+fn GetBillboardAxes(
+	WorldDrawingInfo::Billboard& billboard,
+	Vec3f& camera_position,
+	f32 scale_for_constant_screen_size_billboards ) : [ Vec3f, 2 ]
 {
 	var Vec3f vec_to_camera= billboard.position - camera_position;
 
@@ -1377,7 +1383,7 @@ fn GetBillboardAxes( WorldDrawingInfo::Billboard& billboard, Vec3f& camera_posit
 
 			return ust::make_array( u_vec, v_vec );
 		},
-		Alignment::ToCamera ->
+		Alignment::ToCameraWithConstantScreenSize ->
 		{
 			// TODO - fix this, this appraoch isn't fully correct and leads to ugly rotations.
 			var Vec3f mut u_vec= vec_to_camera.Cross( Vec3f( 0.0f, 0.0f, 1.0f ) );
@@ -1404,7 +1410,9 @@ fn GetBillboardAxes( WorldDrawingInfo::Billboard& billboard, Vec3f& camera_posit
 				v_vec /= v_vec_length;
 			}
 
-			return ust::make_array( u_vec, v_vec );
+			var f32 scale= vec_to_camera.Length() * scale_for_constant_screen_size_billboards;
+
+			return ust::make_array( u_vec * scale, v_vec * scale );
 		},
 		Alignment::ToCustomAxis ->
 		{
