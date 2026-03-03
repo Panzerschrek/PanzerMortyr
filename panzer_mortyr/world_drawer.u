@@ -376,10 +376,8 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 		test_primitive_shader_,
 		view_matrix );
 
-	semitransparent_polygons_buffer_.vertices.clear();
-	semitransparent_polygons_buffer_.indices.clear();
+	ResetDynamicPolygonsBuffer( semitransparent_polygons_buffer_ );
 
-	// Build polygons of billboards.
 	BuildBillboardPolygons(
 		drawing_info.billboards,
 		billboards_description_,
@@ -390,10 +388,12 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 		semitransparent_polygons_buffer_.indices,
 		drawing_stats );
 
-	// Upload semitransparent geometry buffer.
+	// TODO - sort semitransparent polygons by depth or camera distance here.
+
 	UploadDynamicPolygonsBuffer( semitransparent_polygons_buffer_ );
 
-	// Draw semitransparent geometry.
+	// Draw semitransparent geometry after all opaque geometry.
+
 	DrawSemitransparentGeometry(
 		semitransparent_polygons_buffer_,
 		semitransparent_geometry_shader_,
@@ -1036,7 +1036,9 @@ fn LoadBillboardsDescription(
 		},
 		Err( e ) ->
 		{
-			ConsoleOutAddTextLine( console_out_ptr, ust::concat( "Failed to read billboards description file file! Error: ", ust::enum_to_string(e), "!" ) );
+			ConsoleOutAddTextLine(
+				console_out_ptr,
+				ust::concat( "Failed to read billboards description file! Error: ", ust::enum_to_string(e), "!" ) );
 			return BillboardsDescription();
 		},
 	}
@@ -1143,7 +1145,7 @@ fn LoadMapTextures(
 			}
 		}
 
-		// Upload alpha-texted version o texture 31.
+		// Upload alpha-texted version of texture 31.
 		UploadMapTextureLayers( texture_31_image_data, u32( materials_block.textures.size() ), texture_data );
 
 		foreach( &mut pixel : texture_31_image_data.pixels )
@@ -1155,7 +1157,7 @@ fn LoadMapTextures(
 			pixel[3]= brightness;
 		}
 
-		// Upload black version o texture 31.
+		// Upload black version of texture 31.
 		UploadMapTextureLayers( texture_31_image_data, u32( materials_block.textures.size() + 1s ), texture_data );
 	}
 
@@ -1175,6 +1177,8 @@ fn LoadMapTextures(
 				{
 					for( auto mut x= 0u; x < subtile_size; ++x )
 					{
+						// TODO - speed-up this, copy whole lines.
+
 						var u32 src_x= subtile_x * subtile_size + x;
 						var u32 src_y=
 							MaterialsDescription::c_texture_size * MaterialsDescription::c_texture_file_num_tiles_x
@@ -1194,7 +1198,8 @@ fn LoadMapTextures(
 				}
 
 				var u32 dst_layer=
-					u32( materials_block.textures.size() + 2s ) * ( MaterialsDescription::c_texture_file_num_tiles_x * MaterialsDescription::c_texture_file_num_tiles_y ) +
+					u32( materials_block.textures.size() + 2s ) *
+						( MaterialsDescription::c_texture_file_num_tiles_x * MaterialsDescription::c_texture_file_num_tiles_y ) +
 					row * 4u +
 					subtile_x;
 
@@ -1333,7 +1338,7 @@ fn BuildBillboardPolygons(
 	ust::vector</u16/> &mut indices,
 	WorldDrawer::DrawingStats &mut drawing_stats )
 {
-	// TODO - tune this scale.
+	// This scale was tuned so that fixed-size billboards look properly.
 	var f32 scale_for_constant_screen_size_billboards= ust::tan( camera_params.fov_x * 0.5f ) / 512.0f;
 
 	foreach( &billboard : billboards ) label billboards_loop
@@ -2099,6 +2104,7 @@ var f32 c_clouds_scale= c_sky_scale;
 
 var size_type c_max_test_primitive_vertices= 4096s;
 
+// Enough vertices/indices for 2048 quads.
 var size_type c_max_semitransparent_polygon_vertices= 8192s;
 var size_type c_max_semitransparent_polygon_indices= c_max_semitransparent_polygon_vertices * 3s / 2s;
 
@@ -2181,8 +2187,8 @@ var GLState g_semitransparent_geometry_drawing_gl_state
 	.depth_write_enabled= false,
 	.cull_face_enabled= false,
 	.cull_face( GL_INVALID_ENUM ),
-	.blending_enabled= true,
 	// Use premultiplied alpha blending.
+	.blending_enabled= true,
 	.blend_source_factor( GL_ONE ),
 	.blend_destination_factor( GL_ONE_MINUS_SRC_ALPHA ),
 };
