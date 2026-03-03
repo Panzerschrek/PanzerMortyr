@@ -21,7 +21,8 @@ fn WorldDrawer::constructor(
 	SettingsPtr mut settings,
 	GameFilesystemPtr mut game_filesystem_ptr,
 	CachingGameResourcesLoaderPtr mut caching_game_resources_loader,
-	ConsoleOutPtr mut console_out )
+	ConsoleOutPtr mut console_out,
+	GLCapabilities& gl_capabilities )
 	(
 		settings_= move( settings ),
 		billboards_description_= LoadBillboardsDescription( game_filesystem_ptr, console_out ),
@@ -34,6 +35,7 @@ fn WorldDrawer::constructor(
 			}(),
 		caching_game_resources_loader_ptr_= move( caching_game_resources_loader ),
 		console_out_= move(console_out),
+		gl_capabilities_= gl_capabilities,
 		map_shader_(
 			embed</char8/>( "shaders/map.vert.glsl" ),
 			embed</char8/>( "shaders/map.frag.glsl" ) ),
@@ -115,7 +117,8 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 
 	// Load models in use.
 	// TODO - precache models to avoid doing loading outside map loading phase, since it may lead to frame lags.
-	LoadModelsIfNecessary( drawing_info.model_objects, game_filesystem_ptr_, console_out_, settings_, models_ );
+	LoadModelsIfNecessary(
+		drawing_info.model_objects, game_filesystem_ptr_, console_out_, settings_, gl_capabilities_, models_ );
 
 	SetGLState( g_buffer_clear_gl_state );
 
@@ -758,7 +761,12 @@ fn WorldDrawer::SetMap( mut this, u32 map_index )
 			.index_buffer= move(index_buffer),
 			// Do not bother using caching for map textures, since almost all maps (with a couple of exceptions) use their own texture files.
 			.map_textures_array=
-				LoadMapTextures( materials_block, game_filesystem_ptr_, console_out_, settings_.lock_imut().deref() ),
+				LoadMapTextures(
+					materials_block,
+					game_filesystem_ptr_,
+					console_out_,
+					settings_.lock_imut().deref(),
+					gl_capabilities_ ),
 			.clouds_texture_layer= materials_block.special_material_indices[ size_type( MaterialsDescription::SpecialMaterial::Sky ) ],
 			.clusters_draw_data= move(clusters_draw_data),
 			.sky_background_buffer= CreateSkyBackgroundBuffer( map_description ),
@@ -1049,17 +1057,19 @@ fn LoadMapTextures(
 	MaterialsDescription::Block& materials_block,
 	GameFilesystemPtr& game_filesystem_ptr,
 	ConsoleOutPtr& console_out,
-	Settings& settings ) : Texture
+	Settings& settings,
+	GLCapabilities& gl_capabilities ) : Texture
 {
 	auto mut lock= game_filesystem_ptr.lock_mut();
-	return LoadMapTextures( materials_block, lock.deref(), console_out, settings );
+	return LoadMapTextures( materials_block, lock.deref(), console_out, settings, gl_capabilities );
 }
 
 fn LoadMapTextures(
 	MaterialsDescription::Block& materials_block,
 	GameFilesystem &mut game_filesystem,
 	ConsoleOutPtr& console_out,
-	Settings& settings ) : Texture
+	Settings& settings,
+	GLCapabilities& gl_capabilities ) : Texture
 {
 	var Texture texture= Texture::Create( GLenum( GL_TEXTURE_2D_ARRAY ) );
 	texture.Bind();
@@ -1249,8 +1259,7 @@ fn LoadMapTextures(
 		}
 	}
 
-	if( settings.r_texture_anisotropy > 1u &&
-		unsafe( SDL_GL_ExtensionSupported( $<( cast_mut( "GL_EXT_texture_filter_anisotropic\0"[0] ) ) ) ) != SDL_FALSE )
+	if( settings.r_texture_anisotropy > 1u && gl_capabilities.texture_anisotropy_supported )
 	{
 		unsafe( glTexParameterf(
 			GLenum( GL_TEXTURE_2D_ARRAY ),
@@ -1857,6 +1866,7 @@ fn LoadModelsIfNecessary(
 	GameFilesystemPtr& game_filesystem_ptr,
 	ConsoleOutPtr& console_out_ptr,
 	SettingsPtr& settings_ptr,
+	GLCapabilities& gl_capabilities,
 	ust::hash_map</ ResourceString, ust::optional</GPUModel/> /> &mut models )
 {
 	foreach( &model_object : model_objects )
@@ -1875,7 +1885,7 @@ fn LoadModelsIfNecessary(
 						file_name,
 						( fn( ust::file_readable &mut f ) : ust::io_result</ModelData/> )( LoadModel ) ) )
 				{
-					Ok(m) -> { return CreateGPUModel( m, settings_ptr.lock_imut().deref() ); },
+					Ok(m) -> { return CreateGPUModel( m, settings_ptr.lock_imut().deref(), gl_capabilities ); },
 					Err(e) ->
 					{
 						ConsoleOutAddTextLine(
