@@ -1667,6 +1667,10 @@ fn CreateClusterGlassPolygons(
 	ust::vector</MapVertex/> &mut vertices,
 	ust::vector</u16/> &mut indices )
 {
+	var bool is_regular_cluster=
+		cluster.cluster_type == ZvoxCluster::c_cluster_type_regular |
+		cluster.cluster_type == ZvoxCluster::c_cluster_type_notes;
+
 	for( auto mut q= size_type( cluster.c.first_quad_index );
 		q < size_type( cluster.c.first_quad_index ) + size_type( cluster.num_quads );
 		++q )
@@ -1688,10 +1692,103 @@ fn CreateClusterGlassPolygons(
 			default -> { continue; }
 		}
 
-		if( q < zmap_lam_data.tessellated_quads.size() && zmap_lam_data.tessellated_quads[q].vertex_count > 0u )
-		{
-			var size_type base_vertex_index= vertices.size();
+		var size_type base_vertex_index= vertices.size();
 
+		if( q >= zmap_lam_data.tessellated_quads.size() || zmap_lam_data.tessellated_quads[q].vertex_count == 0u )
+		{
+			// Fallback for cases where tessellated data isn't available - like for dynamic polygons (doors, elevators, buttons).
+
+			var Vec3f mut u_vec( 0.0f, 1.0f, 0.0f );
+			var Vec3f mut v_vec( 1.0f, 0.0f, 0.0f );
+
+			// Avoid applying texture roll for quads of dynamic clusters.
+			// This fixes incorrect texture coordinates for the floor hatch on map 11.
+			// No other dynamic cluster in the whole game has non-zero texture roll.
+			if( is_regular_cluster )
+			{
+				var f32 angle= f32( i32( quad.packed_texture_roll_scale ) & ~15 ) * ( -c_tau / 256.0f );
+				var f32 c= ust::cos(angle);
+				var f32 s= ust::sin(angle);
+
+				u_vec= Vec3f( u_vec.x * c - u_vec.y * s, u_vec.x * s + u_vec.y * c, u_vec.z );
+				v_vec= Vec3f( v_vec.x * c - v_vec.y * s, v_vec.x * s + v_vec.y * c, v_vec.z );
+			}
+			{
+				var f32 angle= ( f32( quad.normal_elevation ) + 256.0f ) * ( c_tau / 1024.0f );
+				var f32 c= ust::cos(angle);
+				var f32 s= ust::sin(angle);
+
+				u_vec= Vec3f( u_vec.x * c - u_vec.z * s, u_vec.y, u_vec.x * s + u_vec.z * c );
+				v_vec= Vec3f( v_vec.x * c - v_vec.z * s, v_vec.y, v_vec.x * s + v_vec.z * c );
+			}
+			{
+				var f32 angle= ( 768.0f - f32(quad.normal_azimuth) ) * ( c_tau / 1024.0f );
+				var f32 c= ust::cos(angle);
+				var f32 s= ust::sin(angle);
+
+				u_vec= Vec3f( u_vec.x * c - u_vec.y * s, u_vec.x * s + u_vec.y * c, u_vec.z );
+				v_vec= Vec3f( v_vec.x * c - v_vec.y * s, v_vec.x * s + v_vec.y * c, v_vec.z );
+			}
+			{
+				var i32 scale_bits= i32( quad.packed_texture_roll_scale ) & 15;
+				if( scale_bits != 0 )
+				{
+					var f32 vecs_scale=
+						( scale_bits >= 8
+							? f32( scale_bits - 3 ) * 0.25f
+							: 1.0f - f32( scale_bits ) * 0.125f );
+					u_vec*= vecs_scale;
+					v_vec*= vecs_scale;
+				}
+			}
+
+			var Vec2f tc_offset( f32( quad.tc_offset[0] ), f32( quad.tc_offset[1] ) );
+
+			// OpenGL uses normalized texture coordinates.
+			var f32 constexpr tc_scale= 1.0f / f32( MaterialsDescription::c_texture_size );
+
+			foreach( &vertex_shift : quad.vertices )
+			{
+				// Texture coordinates are calculated relative to vertex #0.
+				var Vec3f vertex_relative_shift
+				(
+					f32( i32( vertex_shift[0] ) - i32( quad.vertices[0][0] ) ),
+					f32( i32( vertex_shift[1] ) - i32( quad.vertices[0][1] ) ),
+					f32( i32( vertex_shift[2] ) - i32( quad.vertices[0][2] ) )
+				);
+
+				var [ f32, 3 ] vertex_position
+				[
+					f32( cluster.c.center[0] + i32( vertex_shift[0] ) ),
+					f32( cluster.c.center[1] + i32( vertex_shift[1] ) ),
+					f32( cluster.c.center[2] + i32( vertex_shift[2] ) ),
+				];
+
+				vertices.push_back(
+					MapVertex
+					{
+						.position= vertex_position,
+						.padding12= zero_init,
+						.tex_coordinates
+						[
+							tc_scale * ( vertex_relative_shift.Dot( u_vec ) + tc_offset.x ),
+							tc_scale * ( vertex_relative_shift.Dot( v_vec ) + tc_offset.y ),
+							texture_id,
+						],
+						.light [ 48u8, 48u8, 48u8 ], // Some stub. TODO - set it.
+						.padding31= zero_init,
+					} );
+			}
+
+			indices.push_back( u16( base_vertex_index + 0s ) );
+			indices.push_back( u16( base_vertex_index + 1s ) );
+			indices.push_back( u16( base_vertex_index + 2s ) );
+			indices.push_back( u16( base_vertex_index + 0s ) );
+			indices.push_back( u16( base_vertex_index + 2s ) );
+			indices.push_back( u16( base_vertex_index + 3s ) );
+		}
+		else
+		{
 			var ZmapLamTesselaltedQuad& tessellated_quad= zmap_lam_data.tessellated_quads[q];
 
 			var size_type tessellated_vertex_count( tessellated_quad.vertex_count );
