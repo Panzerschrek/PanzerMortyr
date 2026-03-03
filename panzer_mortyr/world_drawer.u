@@ -12,7 +12,6 @@ import "gl_state.uh"
 import "image_loading.uh"
 import "math_constants.uh"
 import "plane.uh"
-import "vertex_formats.uh"
 import "world_drawer.uh"
 
 namespace PM
@@ -25,6 +24,7 @@ fn WorldDrawer::constructor(
 	ConsoleOutPtr mut console_out )
 	(
 		settings_= move( settings ),
+		billboards_description_= LoadBillboardsDescription( game_filesystem_ptr, console_out ),
 		game_filesystem_ptr_= move( game_filesystem_ptr ),
 		game_params_=
 			lambda[&]() : GameResourcePtr</GameParams/>
@@ -49,9 +49,25 @@ fn WorldDrawer::constructor(
 		clouds_shader_(
 			embed</char8/>( "shaders/clouds.vert.glsl" ),
 			embed</char8/>( "shaders/clouds.frag.glsl" ) ),
+		semitransparent_geometry_shader_(
+			embed</char8/>( "shaders/semitransparent_geometry.vert.glsl" ),
+			embed</char8/>( "shaders/semitransparent_geometry.frag.glsl" ) ),
 		test_primitive_shader_(
 			embed</char8/>( "shaders/test_primitive.vert.glsl" ),
 			embed</char8/>( "shaders/test_primitive.frag.glsl" ) ),
+		semitransparent_polygons_buffer_
+		{
+			.vertex_buffer=
+				BufferObject::CreateUninitializedDynamicDrawBuffer(
+					GLenum( GL_ARRAY_BUFFER ),
+					c_max_semitransparent_polygon_vertices * typeinfo</MapVertex/>.size_of ),
+			.max_vertices= c_max_semitransparent_polygon_vertices,
+			.index_buffer=
+				BufferObject::CreateUninitializedDynamicDrawBuffer(
+					GLenum( GL_ELEMENT_ARRAY_BUFFER ),
+					c_max_semitransparent_polygon_indices * typeinfo</u16/>.size_of ),
+			.max_indices= c_max_semitransparent_polygon_indices,
+		},
 		test_primitive_vertex_buffer_object_=
 			BufferObject::CreateUninitializedDynamicDrawBuffer(
 				GLenum( GL_ARRAY_BUFFER ),
@@ -59,6 +75,9 @@ fn WorldDrawer::constructor(
 		map_index_= 0u,
 	)
 {
+	PrepareVertexArrayObjectWithMapVertexFormat(
+		semitransparent_polygons_buffer_.vertex_array_object, semitransparent_polygons_buffer_.vertex_buffer );
+
 	test_primitive_vertex_array_object_.Bind();
 	test_primitive_vertex_buffer_object_.Bind();
 
@@ -356,6 +375,32 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 		test_primitive_vertex_buffer_object_,
 		test_primitive_shader_,
 		view_matrix );
+
+	ResetDynamicPolygonsBuffer( semitransparent_polygons_buffer_ );
+
+	BuildBillboardPolygons(
+		drawing_info.billboards,
+		billboards_description_,
+		drawing_info.camera_params,
+		camera_clip_planes,
+		visible_clusters_bbox,
+		semitransparent_polygons_buffer_.vertices,
+		semitransparent_polygons_buffer_.indices,
+		drawing_stats );
+
+	// TODO - sort semitransparent polygons by depth or camera distance here.
+
+	UploadDynamicPolygonsBuffer( semitransparent_polygons_buffer_ );
+
+	// Draw semitransparent geometry after all opaque geometry.
+
+	DrawSemitransparentGeometry(
+		semitransparent_polygons_buffer_,
+		semitransparent_geometry_shader_,
+		map_data.map_textures_array,
+		view_matrix );
+
+	ResetDynamicPolygonsBuffer( semitransparent_polygons_buffer_ );
 
 	return drawing_stats;
 }
@@ -697,46 +742,7 @@ fn WorldDrawer::SetMap( mut this, u32 map_index )
 
 	var VertexArrayObject mut vertex_array_object;
 
-	vertex_array_object.Bind();
-
-	// These attribute numbers should match values in vertex shader!
-	var GLuint c_position_attrib= 0u;
-	var GLuint c_texture_coordinates_attrib= 1u;
-	var GLuint c_light_attrib= 2u;
-
-	vertex_buffer.Bind();
-
-	unsafe( glEnableVertexAttribArray( c_position_attrib ) );
-
-	unsafe( glVertexAttribPointer(
-		c_position_attrib,
-		3,
-		GLenum( GL_FLOAT ),
-		GLboolean(0),
-		GLsizei( typeinfo</MapVertex/>.size_of ),
-		ust::nullptr</byte8/>() + GetStructFieldOffset</MapVertex, "position"/>() ) );
-
-	unsafe( glEnableVertexAttribArray( c_texture_coordinates_attrib ) );
-
-	unsafe( glVertexAttribPointer(
-		c_texture_coordinates_attrib,
-		3,
-		GLenum( GL_FLOAT ),
-		GLboolean(0),
-		GLsizei( typeinfo</MapVertex/>.size_of ),
-		ust::nullptr</byte8/>() + GetStructFieldOffset</MapVertex, "tex_coordinates"/>() ) );
-
-	unsafe( glEnableVertexAttribArray( c_light_attrib ) );
-
-	unsafe( glVertexAttribPointer(
-		c_light_attrib,
-		3,
-		GLenum( GL_UNSIGNED_BYTE ),
-		GLboolean(1),
-		GLsizei( typeinfo</MapVertex/>.size_of ),
-		ust::nullptr</byte8/>() + GetStructFieldOffset</MapVertex, "light"/>() ) );
-
-	index_buffer.Bind();
+	PrepareVertexArrayObjectWithMapVertexFormat( vertex_array_object, vertex_buffer );
 
 	map_data_.reset(
 		MapDrawData
@@ -755,7 +761,7 @@ fn WorldDrawer::SetMap( mut this, u32 map_index )
 			.clouds_texture_layer= materials_block.special_material_indices[ size_type( MaterialsDescription::SpecialMaterial::Sky ) ],
 			.clusters_draw_data= move(clusters_draw_data),
 			.sky_background_buffer= CreateSkyBackgroundBuffer( map_description ),
-			.stars_buffer= CreateStarsBuffer( map_description ),
+			.stars_buffer= CreateStarsBuffer( map_description, billboards_description_ ),
 			.sky_clouds_params= CreateSkyCloudsParams( map_description ),
 		} );
 }
@@ -968,6 +974,76 @@ fn WorldDrawer::DrawModels(
 	}
 }
 
+fn WorldDrawer::DrawSemitransparentGeometry(
+	DynamicPolygonsBuffer& dynamic_polygons_buffer,
+	ShaderProgram &mut shader,
+	Texture& map_textures_array,
+	Mat4f& view_matrix )
+{
+	var size_type num_indices=
+		ust::min( dynamic_polygons_buffer.indices.size(), dynamic_polygons_buffer.max_indices );
+
+	dynamic_polygons_buffer.vertex_array_object.Bind();
+	dynamic_polygons_buffer.index_buffer.Bind();
+
+	SetGLState( g_semitransparent_geometry_drawing_gl_state );
+
+	var u32 texture_slot= 0u;
+
+	unsafe( glActiveTexture( GLenum( GL_TEXTURE0 ) + GLenum(texture_slot) ) );
+	map_textures_array.Bind();
+
+	shader.Bind();
+	shader.SetUniform( "vu_matrix", view_matrix );
+	shader.SetUniform( "fu_texture", texture_slot );
+
+	unsafe( glDrawElements(
+		GLenum( GL_TRIANGLES ), GLsizei( num_indices ), GLenum( GL_UNSIGNED_SHORT ), ust::nullptr</byte8/>() ) );
+}
+
+fn WorldDrawer::UploadDynamicPolygonsBuffer( DynamicPolygonsBuffer &mut dynamic_polygons_buffer )
+{
+	var size_type num_vertices=
+		ust::min( dynamic_polygons_buffer.vertices.size(), dynamic_polygons_buffer.max_vertices );
+	var size_type num_indices=
+		ust::min( dynamic_polygons_buffer.indices.size(), dynamic_polygons_buffer.max_indices );
+
+	auto vertices_range= dynamic_polygons_buffer.vertices.range().subrange_end( num_vertices ).to_byte8_range();
+	auto indices_range= dynamic_polygons_buffer.indices.range().subrange_end( num_indices ).to_byte8_range();
+
+	dynamic_polygons_buffer.vertex_buffer.Bind();
+	unsafe( glBufferSubData( GLenum( GL_ARRAY_BUFFER ), GLintptr(0), GLsizeiptr( vertices_range.size() ), vertices_range.data() ) );
+
+	dynamic_polygons_buffer.index_buffer.Bind();
+	unsafe( glBufferSubData( GLenum( GL_ELEMENT_ARRAY_BUFFER ), GLintptr(0), GLsizeiptr( indices_range.size() ), indices_range.data() ) );
+}
+
+fn WorldDrawer::ResetDynamicPolygonsBuffer( DynamicPolygonsBuffer &mut dynamic_polygons_buffer )
+{
+	dynamic_polygons_buffer.vertices.clear();
+	dynamic_polygons_buffer.indices.clear();
+}
+
+fn LoadBillboardsDescription(
+	GameFilesystemPtr& game_filesystem_ptr, ConsoleOutPtr& console_out_ptr ) : BillboardsDescription
+{
+	auto mut lock= game_filesystem_ptr.lock_mut();
+	result_match( lock.deref().LoadFileToString( c_billboards_description_file_name ) )
+	{
+		Ok( file_contents ) ->
+		{
+			return ParseBillboardsDescriptionFile( file_contents );
+		},
+		Err( e ) ->
+		{
+			ConsoleOutAddTextLine(
+				console_out_ptr,
+				ust::concat( "Failed to read billboards description file! Error: ", ust::enum_to_string(e), "!" ) );
+			return BillboardsDescription();
+		},
+	}
+}
+
 fn LoadMapTextures(
 	MaterialsDescription::Block& materials_block,
 	GameFilesystemPtr& game_filesystem_ptr,
@@ -985,8 +1061,12 @@ fn LoadMapTextures(
 	var Texture texture= Texture::Create( GLenum( GL_TEXTURE_2D_ARRAY ) );
 	texture.Bind();
 
+	var size_type num_extra_textures= 2s;
+	var size_type num_subtile_layers= 8s;
+
 	var size_type num_layers=
-		materials_block.textures.size() *
+		num_subtile_layers +
+		( materials_block.textures.size() + num_extra_textures ) *
 		size_type( MaterialsDescription::c_texture_file_num_tiles_x * MaterialsDescription::c_texture_file_num_tiles_y );
 
 	unsafe( glTexImage3D(
@@ -1003,11 +1083,14 @@ fn LoadMapTextures(
 
 	var [ RGBAColor, MaterialsDescription::c_texture_size * MaterialsDescription::c_texture_size ] mut texture_data= zero_init;
 
+	var ust::optional</ImageData/> mut texture_31_image_data_opt;
+	var ust::optional</ImageData/> mut texture_32_image_data_opt;
+
 	for( var size_type mut t= 0s; t < materials_block.textures.size(); ++t )
 	{
 		result_match( game_filesystem.LoadFile( materials_block.textures[t].mips[1], LoadImageBMP ) )
 		{
-			Ok( image_data ) ->
+			Ok( mut image_data ) ->
 			{
 				if( !(  image_data.size[0] == MaterialsDescription::c_texture_size * MaterialsDescription::c_texture_file_num_tiles_x &&
 						image_data.size[1] == MaterialsDescription::c_texture_size * MaterialsDescription::c_texture_file_num_tiles_y ) )
@@ -1016,47 +1099,30 @@ fn LoadMapTextures(
 					continue;
 				}
 
-				for( auto mut tile_y= 0u; tile_y < MaterialsDescription::c_texture_file_num_tiles_y; ++tile_y )
+				if( t >= 30s )
 				{
-					var u32 src_offset_y= ( MaterialsDescription::c_texture_file_num_tiles_y - 1u - tile_y ) * MaterialsDescription::c_texture_size;
-
-					for( auto mut tile_x= 0u; tile_x < MaterialsDescription::c_texture_file_num_tiles_x; ++tile_x )
+					// Set alpha to zero for special textures.
+					foreach( &mut pixel : image_data.pixels )
 					{
-						var u32 src_offset_x= tile_x * MaterialsDescription::c_texture_size;
-
-						for( auto mut y= 0u; y < MaterialsDescription::c_texture_size; ++y )
-						{
-							// Perform here vertical flipping while copying data into destination tile.
-
-							auto src_line= image_data.pixels.range().subrange_start(
-								size_type( src_offset_x + ( src_offset_y + MaterialsDescription::c_texture_size - 1u - y ) * image_data.size[0] ) );
-
-							auto dst_line= ust::array_view_mut</RGBAColor/>( texture_data ).subrange(
-								size_type( MaterialsDescription::c_texture_size * y ),
-								size_type( MaterialsDescription::c_texture_size * ( y + 1u ) ) );
-
-							dst_line.copy_from( src_line );
-						}
-
-						var u32 dst_layer=
-							u32(t) * MaterialsDescription::c_texture_file_num_tiles_x * MaterialsDescription::c_texture_file_num_tiles_y  +
-							tile_y * MaterialsDescription::c_texture_file_num_tiles_x +
-							tile_x;
-
-						unsafe( glTexSubImage3D(
-							GLenum( GL_TEXTURE_2D_ARRAY ),
-							0,
-							0,
-							0,
-							GLint( dst_layer ),
-							GLsizei( MaterialsDescription::c_texture_size ),
-							GLsizei( MaterialsDescription::c_texture_size ),
-							1,
-							GLenum( GL_RGBA ),
-							GLenum( GL_UNSIGNED_BYTE ),
-							ust::ptr_cast_to_byte8( $<( texture_data ) ) ) );
+						pixel[3]= 0u8;
 					}
 				}
+
+				UploadMapTextureLayers( image_data, u32(t), texture_data );
+
+				if( t == 31s )
+				{
+					texture_31_image_data_opt= move( image_data );
+				}
+				else if( t == 32s )
+				{
+					texture_32_image_data_opt= move( image_data );
+				}
+				else
+				{
+					move( image_data );
+				}
+
 			},
 			Err(e) ->
 			{
@@ -1065,12 +1131,511 @@ fn LoadMapTextures(
 		}
 	}
 
+	if_var( &mut texture_31_image_data : texture_31_image_data_opt )
+	{
+		foreach( &mut pixel : texture_31_image_data.pixels )
+		{
+			if( pixel[0] <= 2u8 && pixel[1] <= 2u8 && pixel[2] <= 2u8 )
+			{
+				pixel[3]= 0u8;
+			}
+			else
+			{
+				pixel[3]= 255u8;
+			}
+		}
+
+		// Upload alpha-texted version of texture 31.
+		UploadMapTextureLayers( texture_31_image_data, u32( materials_block.textures.size() ), texture_data );
+
+		foreach( &mut pixel : texture_31_image_data.pixels )
+		{
+			var u8 brightness= ust::max( cast_imut(pixel)[0], ust::max( cast_imut(pixel)[1], cast_imut(pixel)[2] ) );
+			pixel[0]= 0u8;
+			pixel[1]= 0u8;
+			pixel[2]= 0u8;
+			pixel[3]= brightness;
+		}
+
+		// Upload black version of texture 31.
+		UploadMapTextureLayers( texture_31_image_data, u32( materials_block.textures.size() + 1s ), texture_data );
+	}
+
+	// Handle specially tiles in texture 32.
+	// Upload each tile in lower and upper rows of the 4x4 grid into a separate texture layer.
+	// It's necessary to avoid leaking due to liner texture filtering.
+	if_var( &mut texture_32_image_data : texture_32_image_data_opt )
+	{
+		var u32 subtile_size= MaterialsDescription::c_texture_size / 2u;
+
+		for( auto mut row= 0u; row < 2u; ++row )
+		{
+			var u32 subtile_y= row * 3u;
+			for( auto mut subtile_x= 0u; subtile_x < 4u; ++subtile_x )
+			{
+				for( auto mut y= 0u; y < subtile_size; ++y )
+				{
+					for( auto mut x= 0u; x < subtile_size; ++x )
+					{
+						// TODO - speed-up this, copy whole lines.
+
+						var u32 src_x= subtile_x * subtile_size + x;
+						var u32 src_y=
+							MaterialsDescription::c_texture_size * MaterialsDescription::c_texture_file_num_tiles_x
+							- 1u
+							- ( subtile_y * subtile_size + y );
+
+						var [ u8, 4 ] pixel=
+							texture_32_image_data.pixels[ size_type(
+								src_x +
+								src_y * ( MaterialsDescription::c_texture_size * MaterialsDescription::c_texture_file_num_tiles_x ) ) ];
+
+						texture_data[ x + y * MaterialsDescription::c_texture_size ]= pixel;
+						texture_data[ ( x + subtile_size ) + y * MaterialsDescription::c_texture_size ]= pixel;
+						texture_data[ x + ( y + subtile_size ) * MaterialsDescription::c_texture_size ]= pixel;
+						texture_data[ ( x + subtile_size ) + ( y + subtile_size ) * MaterialsDescription::c_texture_size ]= pixel;
+					}
+				}
+
+				var u32 dst_layer=
+					u32( materials_block.textures.size() + 2s ) *
+						( MaterialsDescription::c_texture_file_num_tiles_x * MaterialsDescription::c_texture_file_num_tiles_y ) +
+					row * 4u +
+					subtile_x;
+
+				unsafe( glTexSubImage3D(
+					GLenum( GL_TEXTURE_2D_ARRAY ),
+					0,
+					0,
+					0,
+					GLint( dst_layer ),
+					GLsizei( MaterialsDescription::c_texture_size ),
+					GLsizei( MaterialsDescription::c_texture_size ),
+					1,
+					GLenum( GL_RGBA ),
+					GLenum( GL_UNSIGNED_BYTE ),
+					ust::ptr_cast_to_byte8( $<( texture_data ) ) ) );
+			}
+		}
+	}
+
 	unsafe( glGenerateMipmap( GLenum( GL_TEXTURE_2D_ARRAY ) ) );
 
+	// Use trilinear filtration.
+	// TODO - allow turning nearest filtration on.
 	unsafe( glTexParameteri( GLenum( GL_TEXTURE_2D_ARRAY ), GLenum( GL_TEXTURE_MIN_FILTER ), GLint( GL_LINEAR_MIPMAP_LINEAR ) ) );
 	unsafe( glTexParameteri( GLenum( GL_TEXTURE_2D_ARRAY ), GLenum( GL_TEXTURE_MAG_FILTER ), GLint( GL_LINEAR ) ) );
 
+	// Enable anisotropic filtering.
+	// TODO - allow tuning it.
+	if( unsafe( SDL_GL_ExtensionSupported( $<( cast_mut( "GL_EXT_texture_filter_anisotropic\0"[0] ) ) ) ) != SDL_FALSE )
+	{
+		unsafe( glTexParameterf( GLenum( GL_TEXTURE_2D_ARRAY ), GLenum( GL_TEXTURE_MAX_ANISOTROPY_EXT ), 4.0f ) );
+	}
+
 	return texture;
+}
+
+// Destination texture should be bound first!
+fn UploadMapTextureLayers(
+	ImageData& image_data,
+	u32 texture_index,
+	[ RGBAColor, MaterialsDescription::c_texture_size * MaterialsDescription::c_texture_size ] &mut temp_texture_data )
+{
+	for( auto mut tile_y= 0u; tile_y < MaterialsDescription::c_texture_file_num_tiles_y; ++tile_y )
+	{
+		var u32 src_offset_y= ( MaterialsDescription::c_texture_file_num_tiles_y - 1u - tile_y ) * MaterialsDescription::c_texture_size;
+
+		for( auto mut tile_x= 0u; tile_x < MaterialsDescription::c_texture_file_num_tiles_x; ++tile_x )
+		{
+			var u32 src_offset_x= tile_x * MaterialsDescription::c_texture_size;
+
+			for( auto mut y= 0u; y < MaterialsDescription::c_texture_size; ++y )
+			{
+				// Perform here vertical flipping while copying data into destination tile.
+
+				auto src_line= image_data.pixels.range().subrange_start(
+					size_type( src_offset_x + ( src_offset_y + MaterialsDescription::c_texture_size - 1u - y ) * image_data.size[0] ) );
+
+				auto dst_line= ust::array_view_mut</RGBAColor/>( temp_texture_data ).subrange(
+					size_type( MaterialsDescription::c_texture_size * y ),
+					size_type( MaterialsDescription::c_texture_size * ( y + 1u ) ) );
+
+				dst_line.copy_from( src_line );
+			}
+
+			var u32 dst_layer=
+				texture_index * MaterialsDescription::c_texture_file_num_tiles_x * MaterialsDescription::c_texture_file_num_tiles_y  +
+				tile_y * MaterialsDescription::c_texture_file_num_tiles_x +
+				tile_x;
+
+			unsafe( glTexSubImage3D(
+				GLenum( GL_TEXTURE_2D_ARRAY ),
+				0,
+				0,
+				0,
+				GLint( dst_layer ),
+				GLsizei( MaterialsDescription::c_texture_size ),
+				GLsizei( MaterialsDescription::c_texture_size ),
+				1,
+				GLenum( GL_RGBA ),
+				GLenum( GL_UNSIGNED_BYTE ),
+				ust::ptr_cast_to_byte8( $<( temp_texture_data ) ) ) );
+		}
+	}
+}
+
+fn PrepareVertexArrayObjectWithMapVertexFormat(
+	VertexArrayObject &mut vertex_array_object, BufferObject &mut vertex_buffer )
+{
+	vertex_array_object.Bind();
+
+	// These attribute numbers should match values in vertex shader!
+	var GLuint c_position_attrib= 0u;
+	var GLuint c_texture_coordinates_attrib= 1u;
+	var GLuint c_light_attrib= 2u;
+
+	vertex_buffer.Bind();
+
+	unsafe( glEnableVertexAttribArray( c_position_attrib ) );
+
+	unsafe( glVertexAttribPointer(
+		c_position_attrib,
+		3,
+		GLenum( GL_FLOAT ),
+		GLboolean(0),
+		GLsizei( typeinfo</MapVertex/>.size_of ),
+		ust::nullptr</byte8/>() + GetStructFieldOffset</MapVertex, "position"/>() ) );
+
+	unsafe( glEnableVertexAttribArray( c_texture_coordinates_attrib ) );
+
+	unsafe( glVertexAttribPointer(
+		c_texture_coordinates_attrib,
+		3,
+		GLenum( GL_FLOAT ),
+		GLboolean(0),
+		GLsizei( typeinfo</MapVertex/>.size_of ),
+		ust::nullptr</byte8/>() + GetStructFieldOffset</MapVertex, "tex_coordinates"/>() ) );
+
+	unsafe( glEnableVertexAttribArray( c_light_attrib ) );
+
+	unsafe( glVertexAttribPointer(
+		c_light_attrib,
+		3,
+		GLenum( GL_UNSIGNED_BYTE ),
+		GLboolean(1),
+		GLsizei( typeinfo</MapVertex/>.size_of ),
+		ust::nullptr</byte8/>() + GetStructFieldOffset</MapVertex, "light"/>() ) );
+}
+
+fn BuildBillboardPolygons(
+	ust::array_view_imut</WorldDrawingInfo::Billboard/> billboards,
+	ust::array_view_imut</BillboardDescription/> billboards_description,
+	WorldDrawingInfo::CameraParams& camera_params,
+	CameraClipPlanes& camera_clip_planes,
+	BBox3f& visible_clusters_bbox,
+	ust::vector</MapVertex/> &mut vertices,
+	ust::vector</u16/> &mut indices,
+	WorldDrawer::DrawingStats &mut drawing_stats )
+{
+	// This scale was tuned so that fixed-size billboards look properly.
+	var f32 scale_for_constant_screen_size_billboards= ust::tan( camera_params.fov_x * 0.5f ) / 512.0f;
+
+	foreach( &billboard : billboards ) label billboards_loop
+	{
+		var size_type billboard_index( billboard.billboard_index );
+		if( billboard_index >= billboards_description.size() )
+		{
+			continue;
+		}
+
+		var BillboardDescription& billboard_description= billboards_description[ billboard_index ];
+
+		var f32 mut radius=
+			billboard.scale *
+				ust::sqrt(
+					f32(
+						billboard_description.dx * billboard_description.dx +
+						billboard_description.dy * billboard_description.dy ) );
+
+		if( billboard.alignment == WorldDrawingInfo::Billboard::Alignment::ToCameraWithConstantScreenSize )
+		{
+			radius*=
+				( billboard.position - camera_params.position ).Length() * scale_for_constant_screen_size_billboards;
+		}
+
+		// Perform clipping by camera planes (reject billboards outside view).
+		foreach( &clip_plane : camera_clip_planes )
+		{
+			var f32 distance= clip_plane.GetDistanceForPoint( billboard.position );
+			if( distance > radius )
+			{
+				continue label billboards_loop;
+			}
+		}
+
+		var BBox3f billboard_bbox
+		{
+			.min= billboard.position - Vec3f( radius, radius, radius ),
+			.max= billboard.position + Vec3f( radius, radius, radius ),
+		};
+
+		// Perform check with visible clusters bbox in order to reject billboards located in another rooms.
+		// Such rough check is mostly fine.
+		// Performing more compicated check against all visible room clusters is too expensice for billboards.
+		if( !visible_clusters_bbox.Instersects( billboard_bbox ) )
+		{
+			continue;
+		}
+
+		var u32 constexpr num_tiles_in_texture=
+			MaterialsDescription::c_texture_file_num_tiles_x * MaterialsDescription::c_texture_file_num_tiles_y;
+
+		var f32 mut texture_layer= 0.0f;
+		var u32 mut extra_tc_scale_log2= 0u;
+
+		if( billboard_description.tek >= BillboardConstants::c_texture2_first_tile &&
+			billboard_description.tek <= BillboardConstants::c_texture2_last_tile )
+		{
+			var u32 base_texture_index= 37u * num_tiles_in_texture;
+			if( billboard_description.tek < BillboardConstants::c_texture2_first_tile + 4u )
+			{
+				// Upper 4 subtiles.
+				texture_layer= f32( base_texture_index + billboard_description.tek - BillboardConstants::c_texture2_first_tile );
+			}
+			else if( billboard_description.tek >= BillboardConstants::c_texture2_first_tile + 12u )
+			{
+				// Lower 4 subtiles.
+				texture_layer= f32( base_texture_index + 4u + billboard_description.tek - BillboardConstants::c_texture2_first_tile - 12u );
+			}
+
+			extra_tc_scale_log2= 2u;
+		}
+		else
+		{
+			var u32 mut base_texture_index= 0u;
+			switch( billboard_description.tek )
+			{
+				BillboardConstants::c_texture0 -> { base_texture_index= 30u; },
+				BillboardConstants::c_texture1 -> { base_texture_index= 31u; },
+				// Alpha-tested version of ZBRA001*.BMP - textures.
+				BillboardConstants::c_texture1_alpha_test -> { base_texture_index= 35u; },
+				// Black version of ZBRA001*.BMP - textures.
+				BillboardConstants::c_texture1_black -> { base_texture_index= 36u; },
+				BillboardConstants::c_texture4 -> { base_texture_index= 34u; },
+				default -> {},
+			}
+
+			texture_layer=
+				f32(
+					base_texture_index * num_tiles_in_texture +
+					billboard_description.xp / MaterialsDescription::c_texture_size +
+					billboard_description.yp / MaterialsDescription::c_texture_size * MaterialsDescription::c_texture_file_num_tiles_x );
+		}
+
+		var size_type base_vertex= vertices.size();
+
+		auto [ mut u_vec, mut v_vec ]=
+			GetBillboardAxes( billboard, camera_params.position, scale_for_constant_screen_size_billboards );
+
+		u_vec*= f32( billboard_description.dx );
+		v_vec*= f32( billboard_description.dy );
+
+		var [ Vec3f, 4 ] positions
+		[
+			billboard.position - u_vec - v_vec,
+			billboard.position + u_vec - v_vec,
+			billboard.position - u_vec + v_vec,
+			billboard.position + u_vec + v_vec,
+		];
+
+		var [ u32, 2 ] tc_base
+		[
+			billboard_description.xp % MaterialsDescription::c_texture_size,
+			billboard_description.yp % MaterialsDescription::c_texture_size
+		];
+
+		var [ [ f32, 2 ], 2 ] tex_coords
+		[
+			[
+				f32( tc_base[0] ) / f32( MaterialsDescription::c_texture_size ),
+				f32( tc_base[1] ) / f32( MaterialsDescription::c_texture_size ),
+			],
+			[
+				f32( tc_base[0] + ( ( billboard_description.xk - billboard_description.xp ) >> extra_tc_scale_log2 ) ) / f32( MaterialsDescription::c_texture_size ),
+				f32( tc_base[1] + ( ( billboard_description.yk - billboard_description.yp ) >> extra_tc_scale_log2 ) ) / f32( MaterialsDescription::c_texture_size ),
+			],
+		];
+
+		// Billboards are always fullbright
+		var [ u8, 3 ] light[ 255u8, 255u8, 255u8 ];
+
+		vertices.push_back(
+			MapVertex
+			{
+				.position[ positions[0].x, positions[0].y, positions[0].z ],
+				.padding12= zero_init,
+				.tex_coordinates[ tex_coords[0][0], tex_coords[0][1], texture_layer ],
+				.light= light,
+				.padding31= zero_init,
+			} );
+
+		vertices.push_back(
+			MapVertex
+			{
+				.position[ positions[1].x, positions[1].y, positions[1].z ],
+				.padding12= zero_init,
+				.tex_coordinates[ tex_coords[1][0], tex_coords[0][1], texture_layer ],
+				.light= light,
+				.padding31= zero_init,
+			} );
+
+		vertices.push_back(
+			MapVertex
+			{
+				.position[ positions[2].x, positions[2].y, positions[2].z ],
+				.padding12= zero_init,
+				.tex_coordinates[ tex_coords[0][0], tex_coords[1][1], texture_layer ],
+				.light= light,
+				.padding31= zero_init,
+			} );
+
+		vertices.push_back(
+			MapVertex
+			{
+				.position[ positions[3].x, positions[3].y, positions[3].z ],
+				.padding12= zero_init,
+				.tex_coordinates[ tex_coords[1][0], tex_coords[1][1], texture_layer ],
+				.light= light,
+				.padding31= zero_init,
+			} );
+
+		indices.push_back( u16( base_vertex + 2s ) );
+		indices.push_back( u16( base_vertex + 1s ) );
+		indices.push_back( u16( base_vertex + 0s ) );
+		indices.push_back( u16( base_vertex + 1s ) );
+		indices.push_back( u16( base_vertex + 2s ) );
+		indices.push_back( u16( base_vertex + 3s ) );
+
+		++drawing_stats.num_visible_billboards;
+	}
+}
+
+fn GetBillboardAxes(
+	WorldDrawingInfo::Billboard& billboard,
+	Vec3f& camera_position,
+	f32 scale_for_constant_screen_size_billboards ) : [ Vec3f, 2 ]
+{
+	var Vec3f vec_to_camera= billboard.position - camera_position;
+
+	type Alignment= WorldDrawingInfo::Billboard::Alignment;
+
+	switch( billboard.alignment )
+	{
+		Alignment::ZAxis ->
+		{
+			var Vec3f mut v_vec( 0.0f, 0.0f, 1.0f );
+			var Vec3f mut u_vec= vec_to_camera.Cross( v_vec );
+
+			var f32 u_vec_length= u_vec.Length();
+			if( u_vec_length == 0.0f )
+			{
+				u_vec= Vec3f( 0.0f, 1.0f, 0.0f );
+			}
+			else
+			{
+				u_vec /= u_vec_length;
+			}
+
+			return ust::make_array( billboard.scale * u_vec, billboard.scale * v_vec );
+		},
+		Alignment::ToCamera ->
+		{
+			var Vec3f mut u_vec= vec_to_camera.Cross( Vec3f( 0.0f, 0.0f, 1.0f ) );
+			var f32 u_vec_length= u_vec.Length();
+
+			if( u_vec_length == 0.0f )
+			{
+				u_vec= Vec3f( 0.0f, 1.0f, 0.0f );
+			}
+			else
+			{
+				u_vec /= u_vec_length;
+			}
+
+			var Vec3f mut v_vec= u_vec.Cross( vec_to_camera );
+			var f32 v_vec_length= v_vec.Length();
+
+			if( v_vec_length == 0.0f )
+			{
+				v_vec= Vec3f( 1.0f, 0.0f, 0.0f );
+			}
+			else
+			{
+				v_vec /= v_vec_length;
+			}
+
+			return ust::make_array( billboard.scale * u_vec, billboard.scale * v_vec );
+		},
+		Alignment::ToCameraWithConstantScreenSize ->
+		{
+			var Vec3f mut u_vec= vec_to_camera.Cross( Vec3f( 0.0f, 0.0f, 1.0f ) );
+			var f32 u_vec_length= u_vec.Length();
+
+			if( u_vec_length == 0.0f )
+			{
+				u_vec= Vec3f( 0.0f, 1.0f, 0.0f );
+			}
+			else
+			{
+				u_vec /= u_vec_length;
+			}
+
+			var Vec3f mut v_vec= u_vec.Cross( vec_to_camera );
+			var f32 v_vec_length= v_vec.Length();
+
+			if( v_vec_length == 0.0f )
+			{
+				v_vec= Vec3f( 1.0f, 0.0f, 0.0f );
+			}
+			else
+			{
+				v_vec /= v_vec_length;
+			}
+
+			var f32 scale= billboard.scale * vec_to_camera.Length() * scale_for_constant_screen_size_billboards;
+
+			return ust::make_array( u_vec * scale, v_vec * scale );
+		},
+		Alignment::ToCustomAxis ->
+		{
+			var Vec3f mut v_vec= billboard.custom_axis;
+			var f32 v_vec_length= v_vec.Length();
+
+			if( v_vec_length == 0.0f )
+			{
+				v_vec= Vec3f( 1.0f, 0.0f, 0.0f );
+			}
+			else
+			{
+				v_vec /= v_vec_length;
+			}
+
+			var Vec3f mut u_vec= vec_to_camera.Cross( v_vec );
+			var f32 u_vec_length= u_vec.Length();
+
+			if( u_vec_length == 0.0f )
+			{
+				u_vec= Vec3f( 0.0f, 1.0f, 0.0f );
+			}
+			else
+			{
+				u_vec /= u_vec_length;
+			}
+
+			return ust::make_array( billboard.scale * u_vec, billboard.scale * v_vec );
+		},
+	}
 }
 
 fn DrawSkyBackground(
@@ -1539,6 +2104,10 @@ var f32 c_clouds_scale= c_sky_scale;
 
 var size_type c_max_test_primitive_vertices= 4096s;
 
+// Enough vertices/indices for 2048 quads.
+var size_type c_max_semitransparent_polygon_vertices= 8192s;
+var size_type c_max_semitransparent_polygon_indices= c_max_semitransparent_polygon_vertices * 3s / 2s;
+
 var GLState g_buffer_clear_gl_state
 {
 	.depth_test_enabled= false,
@@ -1609,6 +2178,19 @@ var GLState g_map_drawing_gl_state
 	.blending_enabled= false,
 	.blend_source_factor( GL_INVALID_ENUM ),
 	.blend_destination_factor( GL_INVALID_ENUM ),
+};
+
+var GLState g_semitransparent_geometry_drawing_gl_state
+{
+	.depth_test_enabled= true,
+	.depth_test_func( GL_LESS ),
+	.depth_write_enabled= false,
+	.cull_face_enabled= false,
+	.cull_face( GL_INVALID_ENUM ),
+	// Use premultiplied alpha blending.
+	.blending_enabled= true,
+	.blend_source_factor( GL_ONE ),
+	.blend_destination_factor( GL_ONE_MINUS_SRC_ALPHA ),
 };
 
 var GLState g_models_drawing_gl_state

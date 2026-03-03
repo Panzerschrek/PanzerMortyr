@@ -115,7 +115,7 @@ PanzerMortyr game logic:
 * Implement invisibility tool.
 * Spawn bullet holes on walls.
 * Leave blood makrs on walls.
-* Spawn blood particles on player or entity damaging.
+* Spawn blood billboards on player or entity damaging.
 * Leave footsteps where they should be.
 * Implement bullet hit effects (smoke, sparkles).
 * Spawn smoke trail sprites.
@@ -128,7 +128,6 @@ PanzerMortyr game logic:
 * Attach dynamic light sources to projectiles (where they should be).
 * Spawn bubble sprites while swimming in water.
 * Spawn bubble sprites for projectiles moving in water.
-* Display projectiles of various types properly (using billboards and sprites).
 * Do something with unconditional entity state transition "w_zasiegu_strzalu_b" - try making it somewhat random.
 * Try dealing with cases where two enemies move in exactly opposite directions and block each other.
 * Consider calculating and using a better navigation graph (maybe even single graph for an entire map), which isn't so buggy as original per-entity navigation graphs.
@@ -139,6 +138,7 @@ PanzerMortyr game logic:
 * Fix shooting through walls, which is possible by staying too close to a wall and by using some weapons (like rifle).
 * Consider creating patches for ZINF-files for fixing some errors in them.
 * Implement misfire - sometimes enemies don't shoot, even if shooting animation is played.
+* Ensure projectiles speed is correct (isn't too small or too big).
 
 
 PanzerMortyr rendering:
@@ -163,13 +163,12 @@ PanzerMortyr rendering:
 * Add support for MSAA.
 * Add support for nearest textures filtration.
 * Add support for anisorhropic textures filtration.
-* Implement all smoke effects.
-* Implement all flame effects.
 * Draw light shafts - with colored gradient, some underlying texture and additive blending.
 * Somehow distort/colorize the whole image while swimming in water.
 * Consider optimizing calculating light from point light sources for models - avoid enumerating all lights.
 * Consider drawing blob shadows under models (as some sort of decal?).
 * Allow changing brightness, maybe by tuning lights power.
+* Sort semitransparent triangles using far to near order.
 
 PanzerMortyr menus and HUD:
 

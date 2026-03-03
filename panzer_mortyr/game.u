@@ -1,4 +1,5 @@
 import "/string_conversions.u"
+import "/common_lib/billboards_description_file.uh"
 import "collisions.uh"
 import "bounding_boxes_hierarchy_debug_visualization.uh"
 import "game.uh"
@@ -363,10 +364,20 @@ fn Game::GetWorldDrawingInfo( this ) : WorldDrawingInfo
 							} );
 					}
 				}
-				else
+				else if(
+					tool.projectile_model >= 0 &&
+					tool.projectile_model < i32( typeinfo</ typeof( BillboardConstants::c_shot_ids ) />.element_count ) )
 				{
-					// TODO - draw projectiles properly.
-					drawing_info.test_sprites.push_back( projectile.position );
+					drawing_info.billboards.push_back(
+						WorldDrawingInfo::Billboard
+						{
+							.alignment= WorldDrawingInfo::Billboard::Alignment::ToCustomAxis,
+							.position= projectile.position,
+							// Make projectiles slighly bigger than unit scale, since otherwise they are barely visible.
+							.scale= 2.0f,
+							.custom_axis= projectile.velocity,
+							.billboard_index( BillboardConstants::c_shot_ids[ size_type( tool.projectile_model ) ] ),
+						} );
 				}
 			}
 		}
@@ -410,7 +421,8 @@ fn Game::GetWorldDrawingInfo( this ) : WorldDrawingInfo
 			}
 		}
 
-		auto clusters= map_data.zvox_data.deref().clusters.range();
+		var ZvoxData& zvox_data= map_data.zvox_data.deref();
+		auto clusters= zvox_data.clusters.range();
 
 		foreach( pair : game_state.dynamic_clusters.iter().zip( game_state.dynamic_cluster_colliders.iter() ) )
 		{
@@ -426,6 +438,67 @@ fn Game::GetWorldDrawingInfo( this ) : WorldDrawingInfo
 					.cluster_index= pair.second.cluster_index,
 					.translation= translation,
 				} );
+		}
+
+		// Create billboards for map light sources.
+		foreach( &cluster : clusters )
+		{
+			if( cluster.light_sources_begin >= cluster.light_sources_end )
+			{
+				continue;
+			}
+
+			foreach( &light_source : zvox_data.light_sources.range().subrange(
+				size_type( cluster.light_sources_begin ), size_type( cluster.light_sources_end ) ) )
+			{
+				var u32 billboard_kind = u32( light_source.packed_corona_color_index ) & 7u;
+
+				if( billboard_kind == 0u )
+				{
+					drawing_info.billboards.push_back(
+						WorldDrawingInfo::Billboard
+						{
+							.position(
+								f32( cluster.c.center[0] + light_source.offset[0] ),
+								f32( cluster.c.center[1] + light_source.offset[1] ),
+								f32( cluster.c.center[2] + light_source.offset[2] ) ),
+							.billboard_index( BillboardConstants::c_id_light_corona ),
+							.alignment= WorldDrawingInfo::Billboard::Alignment::ToCameraWithConstantScreenSize,
+							.custom_axis= Vec3f::MakeZero(),
+							.scale= 1.0f,
+						} );
+				}
+				else if( billboard_kind == 3u )
+				{
+					var Vec3f position(
+						f32( cluster.c.center[0] + light_source.offset[0] ),
+						f32( cluster.c.center[1] + light_source.offset[1] ),
+						f32( cluster.c.center[2] + light_source.offset[2] ) - 24.0f );
+
+					// Calculate pseudo-random phase so that each light source has its own phase (they aren't in sync).
+					var ust::default_hasher mut hasher;
+					ust::apply_value_to_hasher( hasher, position );
+
+					var u32 pseudo_random_phase=
+						u32( hasher.get() ) % BillboardConstants::c_num_static_light_source_flames;
+
+					var u32 billboard_index=
+						BillboardConstants::c_id_first_static_light_source_flame +
+						( u32( prev_time_steps_ * ( 16.0f / c_steps_per_second ) ) + pseudo_random_phase ) %
+						BillboardConstants::c_num_static_light_source_flames;
+
+					drawing_info.billboards.push_back(
+						WorldDrawingInfo::Billboard
+						{
+							.position= position,
+							.billboard_index( billboard_index ),
+							.alignment= WorldDrawingInfo::Billboard::Alignment::ZAxis,
+							.custom_axis= Vec3f::MakeZero(),
+							// Draw flames slightly smaller than unit size.
+							.scale= 0.75f,
+						} );
+				}
+			}
 		}
 
 		if( settings_.lock_imut().deref().g_debug_show_entity_bounding_boxes )
