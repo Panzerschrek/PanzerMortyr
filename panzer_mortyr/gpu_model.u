@@ -8,7 +8,7 @@ import "vertex_formats.uh"
 namespace PM
 {
 
-fn CreateGPUModel( ModelData& model_data ) : GPUModel
+fn CreateGPUModel( ModelData& model_data, Settings& settings, GLCapabilities& gl_capabilities ) : GPUModel
 {
 	var VertexArrayObject mut vertex_array_object;
 
@@ -96,15 +96,16 @@ fn CreateGPUModel( ModelData& model_data ) : GPUModel
 		.textures=
 			ust::make_vector_from_mapped_range(
 				model_data.texture_collections,
-				lambda[]( ModelData::TextureCollection& c ) : Texture
+				lambda[&]( ModelData::TextureCollection& c ) : Texture
 				{
-					return CreateModelTexture( c.hd_textures[0] );
+					return CreateModelTexture( c.hd_textures[0], settings, gl_capabilities );
 				} ),
 		.frame_bboxes= CalculateModelFrameBBoxes( model_data ),
 	};
 }
 
-fn CreateModelTexture( ModelData::TextureData& texture_data ) : Texture
+fn CreateModelTexture(
+	ModelData::TextureData& texture_data, Settings& settings, GLCapabilities& gl_capabilities ) : Texture
 {
 	var Texture texture= Texture::Create( GLenum( GL_TEXTURE_2D ) );
 	texture.Bind();
@@ -131,8 +132,38 @@ fn CreateModelTexture( ModelData::TextureData& texture_data ) : Texture
 
 	unsafe( glGenerateMipmap( GLenum( GL_TEXTURE_2D ) ) );
 
-	unsafe( glTexParameteri( GLenum( GL_TEXTURE_2D ), GLenum( GL_TEXTURE_MIN_FILTER ), GLint( GL_LINEAR_MIPMAP_LINEAR ) ) );
-	unsafe( glTexParameteri( GLenum( GL_TEXTURE_2D ), GLenum( GL_TEXTURE_MAG_FILTER ), GLint( GL_LINEAR ) ) );
+	if( settings.r_texture_nearest_filter )
+	{
+		unsafe( glTexParameteri( GLenum( GL_TEXTURE_2D ), GLenum( GL_TEXTURE_MAG_FILTER ), GLint( GL_NEAREST ) ) );
+		if( settings.r_texture_trilinear_filter )
+		{
+			unsafe( glTexParameteri( GLenum( GL_TEXTURE_2D ), GLenum( GL_TEXTURE_MIN_FILTER ), GLint( GL_NEAREST_MIPMAP_LINEAR ) ) );
+		}
+		else
+		{
+			unsafe( glTexParameteri( GLenum( GL_TEXTURE_2D ), GLenum( GL_TEXTURE_MIN_FILTER ), GLint( GL_NEAREST_MIPMAP_NEAREST ) ) );
+		}
+	}
+	else
+	{
+		unsafe( glTexParameteri( GLenum( GL_TEXTURE_2D ), GLenum( GL_TEXTURE_MAG_FILTER ), GLint( GL_LINEAR ) ) );
+		if( settings.r_texture_trilinear_filter )
+		{
+			unsafe( glTexParameteri( GLenum( GL_TEXTURE_2D ), GLenum( GL_TEXTURE_MIN_FILTER ), GLint( GL_LINEAR_MIPMAP_LINEAR ) ) );
+		}
+		else
+		{
+			unsafe( glTexParameteri( GLenum( GL_TEXTURE_2D ), GLenum( GL_TEXTURE_MIN_FILTER ), GLint( GL_LINEAR_MIPMAP_NEAREST ) ) );
+		}
+	}
+
+	if( settings.r_texture_anisotropy > 1u && gl_capabilities.texture_anisotropy_supported )
+	{
+		unsafe( glTexParameterf(
+			GLenum( GL_TEXTURE_2D ),
+			GLenum( GL_TEXTURE_MAX_ANISOTROPY_EXT ),
+			f32( ust::min( settings.r_texture_anisotropy, 32u ) ) ) );
+	}
 
 	return texture;
 }
