@@ -403,6 +403,45 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 		semitransparent_polygons_buffer_.indices,
 		drawing_stats );
 
+	{
+		var ust::array_view_imut</ZmapQuad/> quads= map_data.zmap_data.deref().quads;
+		var ZmapLamData& zmap_lam_data= map_data.zmap_lam_data.deref();
+
+		var MapsDescription::MapDescription& map_description= maps_description_.deref().maps[ size_type( map_index_ ) ];
+
+		var MaterialsDescription::Block& materials_block=
+			materials_description_.deref().blocks[ map_description.materials_block ]; // Halts if not found.
+
+		for( auto mut i= 0s; i < clusters.size(); )
+		{
+			var ZvoxCluster& room_cluster= clusters[i];
+			if( room_cluster.c.num_children_clusters < 0 )
+			{
+				++i;
+				continue;
+			}
+
+			// This room cluster and all his children.
+			var size_type num_clusters_in_group= size_type( room_cluster.c.num_children_clusters ) + 1s;
+
+			if( visible_room_cluster_flags[i] )
+			{
+				for( auto mut j= 0s; j < num_clusters_in_group; ++j )
+				{
+					FillGlassPolygons(
+						clusters[i + j],
+						quads,
+						zmap_lam_data,
+						materials_block,
+						semitransparent_polygons_buffer_.vertices,
+						semitransparent_polygons_buffer_.indices );
+				}
+			}
+
+			i+= num_clusters_in_group;
+		}
+	}
+
 	// TODO - sort semitransparent polygons by depth or camera distance here.
 
 	UploadDynamicPolygonsBuffer( semitransparent_polygons_buffer_ );
@@ -1570,6 +1609,96 @@ fn BuildBillboardPolygons(
 		indices.push_back( u16( base_vertex + 3s ) );
 
 		++drawing_stats.num_visible_billboards;
+	}
+}
+
+fn FillGlassPolygons(
+	ZvoxCluster& cluster,
+	ust::array_view_imut</ZmapQuad/> quads,
+	ZmapLamData& zmap_lam_data,
+	MaterialsDescription::Block& materials_block,
+	ust::vector</MapVertex/> &mut vertices,
+	ust::vector</u16/> &mut indices )
+{
+	for( auto mut q= size_type( cluster.c.first_quad_index );
+		q < size_type( cluster.c.first_quad_index ) + size_type( cluster.num_quads );
+		++q )
+	{
+		var ZmapQuad& quad= quads[q];
+
+		if( u32( quad.texture_id ) !=
+			MaterialsDescription::c_special_material_texture_indices[ size_type( MaterialsDescription::SpecialMaterial::Glass ) ] )
+		{
+			continue;
+		}
+
+		var f32 texture_id( materials_block.special_material_indices[ size_type( MaterialsDescription::SpecialMaterial::Glass ) ] );
+
+		if( q < zmap_lam_data.tessellated_quads.size() |zmap_lam_data.tessellated_quads[q].vertex_count == 0u )
+		{
+			var size_type base_vertex_index= vertices.size();
+
+			var ZmapLamTesselaltedQuad& tessellated_quad= zmap_lam_data.tessellated_quads[q];
+
+			var size_type tessellated_vertex_count( tessellated_quad.vertex_count );
+
+			var size_type tessellatted_quad_data_offset( tessellated_quad.data_offset );
+
+			var ust::array_view_imut</byte32/> vertex_data=
+				zmap_lam_data.tessellated_quads_data.range().subrange(
+					tessellatted_quad_data_offset,
+					tessellatted_quad_data_offset + tessellated_vertex_count * 6s );
+
+			for( var size_type mut i= 0s, i_end= tessellated_vertex_count * 6s; i < i_end; i+= 6s )
+			{
+				var u32 c( vertex_data[ i + 5s ] );
+
+				vertices.push_back(
+					MapVertex
+					{
+						.position
+						[
+							f32( cluster.c.center[0] ) + f32( vertex_data[ i + 0s ] ),
+							f32( cluster.c.center[1] ) + f32( vertex_data[ i + 1s ] ),
+							f32( cluster.c.center[2] ) + f32( vertex_data[ i + 2s ] ),
+						],
+						.padding12= zero_init,
+						.tex_coordinates
+						[
+							( vertex_data[ i + 3s ] ),
+							( vertex_data[ i + 4s ] ),
+							texture_id
+						],
+						.light[ ( c >> 16 ), ( c >> 8 ), ( c) ],
+						.padding31= zero_init,
+					} );
+			}
+
+			var size_type polygons_data_offset= tessellatted_quad_data_offset + tessellated_vertex_count * 6s;
+
+			var size_type polygon_count( u32( cast_imut(zmap_lam_data).tessellated_quads_data[ polygons_data_offset ] ) );
+
+			var ust::array_view_imut</byte32/> polygons_data=
+				cast_imut(zmap_lam_data).tessellated_quads_data .range().subrange(
+					polygons_data_offset + 2s,
+					polygons_data_offset + 2s + polygon_count * 8s );
+
+			for( auto mut i= 0s; i < polygon_count; ++i )
+			{
+				var ust::array_view_imut</byte32/> polygon_data= polygons_data.subrange( i * 8s, i * 8s + 8s );
+
+				var size_type polygon_vertex_count( u32( polygon_data[0s] ) );
+
+				var size_type polygon_triangle_count= polygon_vertex_count - 2s;
+
+				for( auto mut j= 0s; j < polygon_triangle_count; ++j )
+				{
+					indices.push_back( u16( base_vertex_index + size_type( u32( polygon_data[ 2s + 0s ] ) ) ) );
+					indices.push_back( u16( base_vertex_index + size_type( u32( polygon_data[ 2s + j + 1s ] ) ) ) );
+					indices.push_back( u16( base_vertex_index + size_type( u32( polygon_data[ 2s + j + 2s ] ) ) ) );
+				}
+			}
+		}
 	}
 }
 
