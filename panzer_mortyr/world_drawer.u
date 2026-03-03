@@ -757,7 +757,8 @@ fn WorldDrawer::SetMap( mut this, u32 map_index )
 			.vertex_buffer= move(vertex_buffer),
 			.index_buffer= move(index_buffer),
 			// Do not bother using caching for map textures, since almost all maps (with a couple of exceptions) use their own texture files.
-			.map_textures_array= LoadMapTextures( materials_block, game_filesystem_ptr_, console_out_ ),
+			.map_textures_array=
+				LoadMapTextures( materials_block, game_filesystem_ptr_, console_out_, settings_.lock_imut().deref() ),
 			.clouds_texture_layer= materials_block.special_material_indices[ size_type( MaterialsDescription::SpecialMaterial::Sky ) ],
 			.clusters_draw_data= move(clusters_draw_data),
 			.sky_background_buffer= CreateSkyBackgroundBuffer( map_description ),
@@ -1047,16 +1048,18 @@ fn LoadBillboardsDescription(
 fn LoadMapTextures(
 	MaterialsDescription::Block& materials_block,
 	GameFilesystemPtr& game_filesystem_ptr,
-	ConsoleOutPtr& console_out ) : Texture
+	ConsoleOutPtr& console_out,
+	Settings& settings ) : Texture
 {
 	auto mut lock= game_filesystem_ptr.lock_mut();
-	return LoadMapTextures( materials_block, lock.deref(), console_out );
+	return LoadMapTextures( materials_block, lock.deref(), console_out, settings );
 }
 
 fn LoadMapTextures(
 	MaterialsDescription::Block& materials_block,
 	GameFilesystem &mut game_filesystem,
-	ConsoleOutPtr& console_out ) : Texture
+	ConsoleOutPtr& console_out,
+	Settings& settings ) : Texture
 {
 	var Texture texture= Texture::Create( GLenum( GL_TEXTURE_2D_ARRAY ) );
 	texture.Bind();
@@ -1226,11 +1229,13 @@ fn LoadMapTextures(
 	unsafe( glTexParameteri( GLenum( GL_TEXTURE_2D_ARRAY ), GLenum( GL_TEXTURE_MIN_FILTER ), GLint( GL_LINEAR_MIPMAP_LINEAR ) ) );
 	unsafe( glTexParameteri( GLenum( GL_TEXTURE_2D_ARRAY ), GLenum( GL_TEXTURE_MAG_FILTER ), GLint( GL_LINEAR ) ) );
 
-	// Enable anisotropic filtering.
-	// TODO - allow tuning it.
-	if( unsafe( SDL_GL_ExtensionSupported( $<( cast_mut( "GL_EXT_texture_filter_anisotropic\0"[0] ) ) ) ) != SDL_FALSE )
+	if( settings.r_texture_anisotropy > 1u &&
+		unsafe( SDL_GL_ExtensionSupported( $<( cast_mut( "GL_EXT_texture_filter_anisotropic\0"[0] ) ) ) ) != SDL_FALSE )
 	{
-		unsafe( glTexParameterf( GLenum( GL_TEXTURE_2D_ARRAY ), GLenum( GL_TEXTURE_MAX_ANISOTROPY_EXT ), 4.0f ) );
+		unsafe( glTexParameterf(
+			GLenum( GL_TEXTURE_2D_ARRAY ),
+			GLenum( GL_TEXTURE_MAX_ANISOTROPY_EXT ),
+			f32( ust::min( settings.r_texture_anisotropy, 32u ) ) ) );
 	}
 
 	return texture;
