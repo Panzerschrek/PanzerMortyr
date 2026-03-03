@@ -161,8 +161,6 @@ PanzerMortyr rendering:
 * Draw breaking window animation (with falling splinters).
 * Experiment with an algorithm for dynamic visible clusters search similar to one used in SquareWheel.
 * Add support for MSAA.
-* Add support for nearest textures filtration.
-* Add support for anisorhropic textures filtration.
 * Draw light shafts - with colored gradient, some underlying texture and additive blending.
 * Somehow distort/colorize the whole image while swimming in water.
 * Consider optimizing calculating light from point light sources for models - avoid enumerating all lights.
