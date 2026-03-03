@@ -579,49 +579,7 @@ fn WorldDrawer::SetMap( mut this, u32 map_index )
 			{
 				// Fallback for cases where tessellated data isn't available - like for dynamic polygons (doors, elevators, buttons).
 
-				var Vec3f mut u_vec( 0.0f, 1.0f, 0.0f );
-				var Vec3f mut v_vec( 1.0f, 0.0f, 0.0f );
-
-				// Avoid applying texture roll for quads of dynamic clusters.
-				// This fixes incorrect texture coordinates for the floor hatch on map 11.
-				// No other dynamic cluster in the whole game has non-zero texture roll.
-				if( is_regular_cluster )
-				{
-					var f32 angle= f32( i32( quad.packed_texture_roll_scale ) & ~15 ) * ( -c_tau / 256.0f );
-					var f32 c= ust::cos(angle);
-					var f32 s= ust::sin(angle);
-
-					u_vec= Vec3f( u_vec.x * c - u_vec.y * s, u_vec.x * s + u_vec.y * c, u_vec.z );
-					v_vec= Vec3f( v_vec.x * c - v_vec.y * s, v_vec.x * s + v_vec.y * c, v_vec.z );
-				}
-				{
-					var f32 angle= ( f32( quad.normal_elevation ) + 256.0f ) * ( c_tau / 1024.0f );
-					var f32 c= ust::cos(angle);
-					var f32 s= ust::sin(angle);
-
-					u_vec= Vec3f( u_vec.x * c - u_vec.z * s, u_vec.y, u_vec.x * s + u_vec.z * c );
-					v_vec= Vec3f( v_vec.x * c - v_vec.z * s, v_vec.y, v_vec.x * s + v_vec.z * c );
-				}
-				{
-					var f32 angle= ( 768.0f - f32(quad.normal_azimuth) ) * ( c_tau / 1024.0f );
-					var f32 c= ust::cos(angle);
-					var f32 s= ust::sin(angle);
-
-					u_vec= Vec3f( u_vec.x * c - u_vec.y * s, u_vec.x * s + u_vec.y * c, u_vec.z );
-					v_vec= Vec3f( v_vec.x * c - v_vec.y * s, v_vec.x * s + v_vec.y * c, v_vec.z );
-				}
-				{
-					var i32 scale_bits= i32( quad.packed_texture_roll_scale ) & 15;
-					if( scale_bits != 0 )
-					{
-						var f32 vecs_scale=
-							( scale_bits >= 8
-								? f32( scale_bits - 3 ) * 0.25f
-								: 1.0f - f32( scale_bits ) * 0.125f );
-						u_vec*= vecs_scale;
-						v_vec*= vecs_scale;
-					}
-				}
+				auto [ u_vec, v_vec ]= CalculateMapQuadTextureBasis( quad, is_regular_cluster );
 
 				var Vec2f tc_offset( f32( quad.tc_offset[0] ), f32( quad.tc_offset[1] ) );
 
@@ -1815,49 +1773,7 @@ fn CreateClusterGlassPolygons(
 		{
 			// Fallback for cases where tessellated data isn't available - like for dynamic polygons (doors, elevators, buttons).
 
-			var Vec3f mut u_vec( 0.0f, 1.0f, 0.0f );
-			var Vec3f mut v_vec( 1.0f, 0.0f, 0.0f );
-
-			// Avoid applying texture roll for quads of dynamic clusters.
-			// This fixes incorrect texture coordinates for the floor hatch on map 11.
-			// No other dynamic cluster in the whole game has non-zero texture roll.
-			if( is_regular_cluster )
-			{
-				var f32 angle= f32( i32( quad.packed_texture_roll_scale ) & ~15 ) * ( -c_tau / 256.0f );
-				var f32 c= ust::cos(angle);
-				var f32 s= ust::sin(angle);
-
-				u_vec= Vec3f( u_vec.x * c - u_vec.y * s, u_vec.x * s + u_vec.y * c, u_vec.z );
-				v_vec= Vec3f( v_vec.x * c - v_vec.y * s, v_vec.x * s + v_vec.y * c, v_vec.z );
-			}
-			{
-				var f32 angle= ( f32( quad.normal_elevation ) + 256.0f ) * ( c_tau / 1024.0f );
-				var f32 c= ust::cos(angle);
-				var f32 s= ust::sin(angle);
-
-				u_vec= Vec3f( u_vec.x * c - u_vec.z * s, u_vec.y, u_vec.x * s + u_vec.z * c );
-				v_vec= Vec3f( v_vec.x * c - v_vec.z * s, v_vec.y, v_vec.x * s + v_vec.z * c );
-			}
-			{
-				var f32 angle= ( 768.0f - f32(quad.normal_azimuth) ) * ( c_tau / 1024.0f );
-				var f32 c= ust::cos(angle);
-				var f32 s= ust::sin(angle);
-
-				u_vec= Vec3f( u_vec.x * c - u_vec.y * s, u_vec.x * s + u_vec.y * c, u_vec.z );
-				v_vec= Vec3f( v_vec.x * c - v_vec.y * s, v_vec.x * s + v_vec.y * c, v_vec.z );
-			}
-			{
-				var i32 scale_bits= i32( quad.packed_texture_roll_scale ) & 15;
-				if( scale_bits != 0 )
-				{
-					var f32 vecs_scale=
-						( scale_bits >= 8
-							? f32( scale_bits - 3 ) * 0.25f
-							: 1.0f - f32( scale_bits ) * 0.125f );
-					u_vec*= vecs_scale;
-					v_vec*= vecs_scale;
-				}
-			}
+			auto [ u_vec, v_vec ]= CalculateMapQuadTextureBasis( quad, is_regular_cluster );
 
 			var Vec2f tc_offset( f32( quad.tc_offset[0] ), f32( quad.tc_offset[1] ) );
 
@@ -1968,6 +1884,55 @@ fn CreateClusterGlassPolygons(
 			}
 		}
 	}
+}
+
+fn CalculateMapQuadTextureBasis( ZmapQuad& quad, bool is_regular_cluster ) : [ Vec3f, 2 ]
+{
+	var Vec3f mut u_vec( 0.0f, 1.0f, 0.0f );
+	var Vec3f mut v_vec( 1.0f, 0.0f, 0.0f );
+
+	// Avoid applying texture roll for quads of dynamic clusters.
+	// This fixes incorrect texture coordinates for the floor hatch on map 11.
+	// No other dynamic cluster in the whole game has non-zero texture roll.
+	if( is_regular_cluster )
+	{
+		var f32 angle= f32( i32( quad.packed_texture_roll_scale ) & ~15 ) * ( -c_tau / 256.0f );
+		var f32 c= ust::cos(angle);
+		var f32 s= ust::sin(angle);
+
+		u_vec= Vec3f( u_vec.x * c - u_vec.y * s, u_vec.x * s + u_vec.y * c, u_vec.z );
+		v_vec= Vec3f( v_vec.x * c - v_vec.y * s, v_vec.x * s + v_vec.y * c, v_vec.z );
+	}
+	{
+		var f32 angle= ( f32( quad.normal_elevation ) + 256.0f ) * ( c_tau / 1024.0f );
+		var f32 c= ust::cos(angle);
+		var f32 s= ust::sin(angle);
+
+		u_vec= Vec3f( u_vec.x * c - u_vec.z * s, u_vec.y, u_vec.x * s + u_vec.z * c );
+		v_vec= Vec3f( v_vec.x * c - v_vec.z * s, v_vec.y, v_vec.x * s + v_vec.z * c );
+	}
+	{
+		var f32 angle= ( 768.0f - f32(quad.normal_azimuth) ) * ( c_tau / 1024.0f );
+		var f32 c= ust::cos(angle);
+		var f32 s= ust::sin(angle);
+
+		u_vec= Vec3f( u_vec.x * c - u_vec.y * s, u_vec.x * s + u_vec.y * c, u_vec.z );
+		v_vec= Vec3f( v_vec.x * c - v_vec.y * s, v_vec.x * s + v_vec.y * c, v_vec.z );
+	}
+	{
+		var i32 scale_bits= i32( quad.packed_texture_roll_scale ) & 15;
+		if( scale_bits != 0 )
+		{
+			var f32 vecs_scale=
+				( scale_bits >= 8
+					? f32( scale_bits - 3 ) * 0.25f
+					: 1.0f - f32( scale_bits ) * 0.125f );
+			u_vec*= vecs_scale;
+			v_vec*= vecs_scale;
+		}
+	}
+
+	return ust::make_array( u_vec, v_vec );
 }
 
 fn DrawSkyBackground(
