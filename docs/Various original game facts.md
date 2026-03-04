@@ -23,7 +23,6 @@ This documents describes various interesting facts about the original game.
 * The officer enemy drops the false documents item only if killed in some states, in other states he drops a pistol.
 * The player shots slightly right from the crosshair. There is an alternative behavior activated wia a console command "aim on" - which moves crosshair if necessary.
 * Some decorations can be pushed (bottles, crates), but it's buggy if more than one decoration is pushed in the same time - it's possible to push a decoration into a wall.
-* Сabinet decorations have incorrect collider box - it's too low and wide.
 * Bullets spread for weapons is differrent for the player and for enemies - with different settings set for each weapon.
 
 ### Technical aspects
@@ -53,6 +52,19 @@ This documents describes various interesting facts about the original game.
 * There is a model BAZBRON.OBB with unfinished MG-42.
 * There is a model HUSAR.OBB with winged husar armor, which seems to be unused.
 * There is a model KOMIN.OBB, which seems to be unused.
-* Game files contain unfinished maps with indices 0, 22, 8000.
+* Game files contain unfinished maps with indices 0, 22, 8000. Trying loading maps 0 or 22 via a console command leads to game crash.
 * Map 0 is a raw version of maps 10 and 33 combined.
 * Map 22 contains elements of maps 1 and 11.
+
+### Bugs
+
+* Movable shuttle model on map 29 has missing glas quads. They are there, but they are not displayed properly.
+* On map 23 at the final room there is a glas box miss-placed right at top of the spinning eagle logo.
+* Pre-recorded player inputs in a played demo (at game start) are applied shortly after starting a new game.
+* Bullet decals are cut by borders of a quad with bullet center, even if it's not necessary (with an adjacent quad lying in the same plane).
+* Some maps contain holes in their geometry, where a hall-of-mirrors effect can be seen.
+* Clusters visibility information is sometimes incorrectly calculated and thus a hall-of-mirrors effect can be sometimes seen due to missing clusters which should be actually drawn.
+* In a couple of places (map exit door button on map 34, elevator buttons on map 3) buttons move in wrong direction.
+* Many dynamic clusters (doors, buttons, elevators) are pitch-dark - no proper light is calculated for them.
+* Due to buggy precalculated snow paths sometimes snow can be seen where it shouldn't be (with no sky above).
+* Сabinet decorations have incorrect collider box - it's too low and wide.
