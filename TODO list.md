@@ -19,7 +19,6 @@ Textures/materials investigation:
 * Identify remaining special material kinds.
 * Investigate how sky works on quads with sky materials and on broken glasses.
 * Investigate how lava texture affects lighting of surrounding geometry.
-* Investigate how water surface is drawn.
 * Investigate how underwater caustics work.
 
 Models format investigation:
@@ -144,7 +143,6 @@ PanzerMortyr game logic:
 PanzerMortyr rendering:
 
 * Apply additional tessellation for tessellated polygons in order to perform smoother light values interpolation (naively triangulating them doesn't produce good result always).
-* Draw water quads properly.
 * Draw underwater caustics properly.
 * Draw light source sprites (flames, coronas).
 * Draw fog where it should be.

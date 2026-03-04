@@ -409,11 +409,12 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 		{
 			var MapsDescription::MapDescription& map_description= maps_description.maps[ size_type( map_index_ ) ];
 
-			CreateGlassPolygons(
+			CreateSemitransparentMapPolygons(
 				map_data,
 				materials_description_.deref().blocks[ map_description.materials_block ], // Halts if not found.
 				visible_room_cluster_flags,
 				drawing_info.dynamic_cluster_objects,
+				drawing_info.game_time_s,
 				semitransparent_polygons_buffer_.vertices,
 				semitransparent_polygons_buffer_.indices );
 		}
@@ -519,6 +520,7 @@ fn WorldDrawer::SetMap( mut this, u32 map_index )
 			.first_index= 0s, // Set later.
 			.num_indices= 0s, // Set later.
 			.has_glass_quads= false, // Set later.
+			.has_liquid_quads= false, // Set later.
 		} );
 
 	foreach( &pair : zvox_data.clusters.iter().zip( clusters_draw_data.iter() ) )
@@ -553,9 +555,20 @@ fn WorldDrawer::SetMap( mut this, u32 map_index )
 					MaterialsDescription::c_special_material_texture_indices[ size_type( MaterialsDescription::SpecialMaterial::Glass ) ] |
 				// Draw armored glass in a special way later.
 				u32( quad.texture_id ) ==
-					MaterialsDescription::c_special_material_texture_indices[ size_type( MaterialsDescription::SpecialMaterial::ArmoredGlass ) ]  )
+					MaterialsDescription::c_special_material_texture_indices[ size_type( MaterialsDescription::SpecialMaterial::ArmoredGlass ) ] |
+				// Draw water in a special way later.
+				u32( quad.texture_id ) ==
+					MaterialsDescription::c_special_material_texture_indices[ size_type( MaterialsDescription::SpecialMaterial::Water ) ] |
+				// Draw acid in a special way later.
+				u32( quad.texture_id ) ==
+					MaterialsDescription::c_special_material_texture_indices[ size_type( MaterialsDescription::SpecialMaterial::Acid ) ] |
+				// Draw alternative acid in a special way later.
+				u32( quad.texture_id ) ==
+					MaterialsDescription::c_special_material_texture_indices[ size_type( MaterialsDescription::SpecialMaterial::AcidAlternative ) ] |
+				// Draw lava in a special way later.
+				u32( quad.texture_id ) ==
+					MaterialsDescription::c_special_material_texture_indices[ size_type( MaterialsDescription::SpecialMaterial::Lava ) ] )
 			{
-
 				continue;
 			}
 
@@ -650,7 +663,7 @@ fn WorldDrawer::SetMap( mut this, u32 map_index )
 		}
 
 		// Search for special materials for quads of this cluseter.
-		var bool mut has_glass_quads= false;
+		var bool mut has_glass_quads= false, mut has_liquid_quads= false;
 
 		for( auto mut q= size_type( cluster.c.first_quad_index );
 			q < size_type( cluster.c.first_quad_index ) + size_type( cluster.num_quads );
@@ -663,6 +676,13 @@ fn WorldDrawer::SetMap( mut this, u32 map_index )
 			{
 				has_glass_quads= true;
 			}
+			if( texture_id == MaterialsDescription::c_special_material_texture_indices[ size_type( MaterialsDescription::SpecialMaterial::Water ) ] |
+				texture_id == MaterialsDescription::c_special_material_texture_indices[ size_type( MaterialsDescription::SpecialMaterial::Acid ) ] |
+				texture_id == MaterialsDescription::c_special_material_texture_indices[ size_type( MaterialsDescription::SpecialMaterial::AcidAlternative ) ] |
+				texture_id == MaterialsDescription::c_special_material_texture_indices[ size_type( MaterialsDescription::SpecialMaterial::Lava ) ]  )
+			{
+				has_liquid_quads= true;
+			}
 		}
 
 		var ClusterDrawData &mut cluster_draw_data= pair.second;
@@ -672,6 +692,7 @@ fn WorldDrawer::SetMap( mut this, u32 map_index )
 		cluster_draw_data.num_indices= indices.size() - cluster_first_index;
 
 		cluster_draw_data.has_glass_quads= has_glass_quads;
+		cluster_draw_data.has_liquid_quads= has_liquid_quads;
 	}
 
 	if( settings_.lock_imut().deref().r_fullbright )
@@ -727,11 +748,12 @@ fn WorldDrawer::SetMap( mut this, u32 map_index )
 		} );
 }
 
-fn WorldDrawer::CreateGlassPolygons(
+fn WorldDrawer::CreateSemitransparentMapPolygons(
 	MapDrawData& map_data,
 	MaterialsDescription::Block& materials_block,
 	ust::array_view_imut</bool/> visible_room_cluster_flags,
 	ust::array_view_imut</WorldDrawingInfo::DynamicClusterObject/> dynamic_cluster_objects,
+	f32 time_s,
 	ust::vector</MapVertex/> &mut vertices,
 	ust::vector</u16/> &mut indices )
 {
@@ -767,9 +789,15 @@ fn WorldDrawer::CreateGlassPolygons(
 					continue;
 				}
 
-				if( map_data.clusters_draw_data[ cluster_index ].has_glass_quads )
+				var ClusterDrawData& cluster_draw_data= map_data.clusters_draw_data[ cluster_index ];
+
+				if( cluster_draw_data.has_glass_quads )
 				{
 					CreateClusterGlassPolygons( cluster, quads, zmap_lam_data, materials_block, vertices, indices );
+				}
+				if( cluster_draw_data.has_liquid_quads )
+				{
+					CreateClusterLiquidPolygons( cluster, quads, zmap_lam_data, materials_block, time_s, vertices, indices );
 				}
 			}
 		}
@@ -1147,6 +1175,11 @@ fn LoadMapTextures(
 				}
 				else
 				{
+					// Override alpha for some special textures.
+
+					var u8 c_glass_alpha= 0u8;
+					var u8 c_liquid_alpha= 0u8;
+
 					for( auto mut tile_y= 0u; tile_y < MaterialsDescription::c_texture_file_num_tiles_y; ++tile_y )
 					{
 						for( auto mut tile_x= 0u; tile_x < MaterialsDescription::c_texture_file_num_tiles_x; ++tile_x )
@@ -1156,12 +1189,23 @@ fn LoadMapTextures(
 								tile_x +
 								tile_y * MaterialsDescription::c_texture_file_num_tiles_x;
 
+							var u8 mut alpha= 255u8;
+
 							if( layer_index == materials_block.special_material_indices[ size_type( MaterialsDescription::SpecialMaterial::Glass ) ] |
 								layer_index == materials_block.special_material_indices[ size_type( MaterialsDescription::SpecialMaterial::ArmoredGlass ) ] )
 							{
-								// Tweak alhpa for glass texture.
-								var u8 c_glass_alpha= 0u8; // TODO - tune this constant.
+								alpha= c_glass_alpha;
+							}
+							if( layer_index == materials_block.special_material_indices[ size_type( MaterialsDescription::SpecialMaterial::Water ) ] |
+								layer_index == materials_block.special_material_indices[ size_type( MaterialsDescription::SpecialMaterial::Acid ) ] |
+								layer_index == materials_block.special_material_indices[ size_type( MaterialsDescription::SpecialMaterial::AcidAlternative ) ] |
+								layer_index == materials_block.special_material_indices[ size_type( MaterialsDescription::SpecialMaterial::Lava ) ] )
+							{
+								alpha= c_liquid_alpha;
+							}
 
+							if( alpha != 255u8 )
+							{
 								var u32 offset_y= ( MaterialsDescription::c_texture_file_num_tiles_y - 1u - tile_y ) * MaterialsDescription::c_texture_size;
 								var u32 offset_x= tile_x * MaterialsDescription::c_texture_size;
 
@@ -1172,7 +1216,7 @@ fn LoadMapTextures(
 
 									foreach( &mut pixel : line )
 									{
-										pixel[3]= c_glass_alpha;
+										pixel[3]= alpha;
 									}
 								}
 							}
@@ -1816,6 +1860,96 @@ fn CreateClusterGlassPolygons(
 		{
 			CreateTessellatedQuadGeometry(
 				zmap_lam_data, cluster, q, texture_id, base_vertex_index, vertices, indices );
+		}
+	}
+}
+
+fn CreateClusterLiquidPolygons(
+	ZvoxCluster& cluster,
+	ust::array_view_imut</ZmapQuad/> quads,
+	ZmapLamData& zmap_lam_data,
+	MaterialsDescription::Block& materials_block,
+	f32 time_s,
+	ust::vector</MapVertex/> &mut vertices,
+	ust::vector</u16/> &mut indices )
+{
+	 // Use such irrational wave length to avoid synchronous per-vertex animation for evenly-tesselated liquid quads.
+	var f32 constexpr wave_length= c_golden_ratio;
+	var f32 constexpr amplitude= 1.0f / 8.0f;
+	var f32 constexpr frequency= 1.0f / 4.0f;
+
+	var f32 phase= time_s * ( frequency * c_tau );
+
+	var f32 constexpr texture_scale= 1.0f / f32( MaterialsDescription::c_texture_size );
+
+	for( auto mut q= size_type( cluster.c.first_quad_index );
+		q < size_type( cluster.c.first_quad_index ) + size_type( cluster.num_quads );
+		++q )
+	{
+		var ZmapQuad& quad= quads[q];
+
+		var f32 mut texture_id= 0.0f;
+
+		switch( u32( quad.texture_id ) )
+		{
+			MaterialsDescription::c_special_material_texture_indices[ size_type( MaterialsDescription::SpecialMaterial::Water ) ] ->
+			{
+				texture_id= f32( materials_block.special_material_indices[ size_type( MaterialsDescription::SpecialMaterial::Water ) ] );
+			},
+			MaterialsDescription::c_special_material_texture_indices[ size_type( MaterialsDescription::SpecialMaterial::Acid ) ] ->
+			{
+				texture_id= f32( materials_block.special_material_indices[ size_type( MaterialsDescription::SpecialMaterial::Acid ) ] );
+			},
+			MaterialsDescription::c_special_material_texture_indices[ size_type( MaterialsDescription::SpecialMaterial::AcidAlternative ) ] ->
+			{
+				texture_id= f32( materials_block.special_material_indices[ size_type( MaterialsDescription::SpecialMaterial::AcidAlternative ) ] );
+			},
+			MaterialsDescription::c_special_material_texture_indices[ size_type( MaterialsDescription::SpecialMaterial::Lava ) ] ->
+			{
+				texture_id= f32( materials_block.special_material_indices[ size_type( MaterialsDescription::SpecialMaterial::Lava ) ] );
+			},
+			default -> { continue; }
+		}
+
+		var size_type base_vertex_index= vertices.size();
+
+		if( q < zmap_lam_data.tessellated_quads.size() && zmap_lam_data.tessellated_quads[q].vertex_count != 0u )
+		{
+			var size_type num_vertices_before= vertices.size();
+
+			CreateTessellatedQuadGeometry(
+				zmap_lam_data, cluster, q, texture_id, base_vertex_index, vertices, indices );
+
+			auto [ mut u_vec, mut v_vec ]= CalculateMapQuadTextureBasis( quad, false );
+
+			u_vec*= texture_scale;
+			v_vec*= texture_scale;
+
+			foreach( &mut v : vertices.range().subrange_start( num_vertices_before ) )
+			{
+				// The original polygon data for liquids contains some sort or green-blue values instead of lighting.
+				// So, use constant fullbright lighting.
+				// It's fine, such all liquid textures in the original game are pretty dark.
+				v.light[0]= 255u8;
+				v.light[1]= 255u8;
+				v.light[2]= 255u8;
+
+				// Recalculate texture coordinates using a pair of axis.
+				// Do this to fix some problems in misaligned liquid textures and allow seemless sinwave-animation.
+				var Vec3f position( v.position[0], v.position[1], v.position[2] );
+				v.tex_coordinates[0]= u_vec.Dot( position );
+				v.tex_coordinates[1]= v_vec.Dot( position );
+
+				// Perform some sinwave-based animation.
+				var [ f32, 2 ] tc_offset
+				[
+					amplitude * ust::sin( phase + ( v.tex_coordinates[1] ) * ( c_tau / wave_length ) ),
+					amplitude * ust::sin( phase + ( v.tex_coordinates[0] ) * ( c_tau / wave_length ) ),
+				];
+
+				v.tex_coordinates[0]+= tc_offset[0];
+				v.tex_coordinates[1]+= tc_offset[1];
+			}
 		}
 	}
 }
