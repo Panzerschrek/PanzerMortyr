@@ -146,7 +146,6 @@ PanzerMortyr rendering:
 * Apply additional tessellation for tessellated polygons in order to perform smoother light values interpolation (naively triangulating them doesn't produce good result always).
 * Draw water quads properly.
 * Draw underwater caustics properly.
-* Draw glass materials properly (with transparency).
 * Draw light source sprites (flames, coronas).
 * Draw fog where it should be.
 * Draw map polygons and other objects (billboards, sprites) requiring blending in back to front order.
@@ -167,6 +166,7 @@ PanzerMortyr rendering:
 * Consider drawing blob shadows under models (as some sort of decal?).
 * Allow changing brightness, maybe by tuning lights power.
 * Sort semitransparent triangles using far to near order.
+* Consider using non-zero alpha for glass, so that it's not so bright.
 
 PanzerMortyr menus and HUD:
 
