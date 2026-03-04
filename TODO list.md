@@ -62,10 +62,12 @@ PanzerMortyr general:
 * Allow setting fullscreen mode with possible resolution changing and/or in "desktop fullscreen" mode.
 * Play cinematics at start.
 * Cache or even preload weapon models to avoid reloading them after level transition.
+* Consider allowing playing cooperative/multiplayer maps as usual singleplayer ones. Maybe add a main menu item for this.
+* Consider writing some kind of alternative installer - a tool, which depacks game data from the original game ISO or mdf/mds files.
 
 PanzerMortyr game logic:
 
-* Decrease armor and health properly while being damaged.
+* Decrease player's armor properly while being damaged.
 * Implement player's death.
 * Implement transition to next level.
 * Implement game state save/loading.
@@ -182,7 +184,8 @@ PanzerMortyr menus and HUD:
 * Display more than one active tool in HUD.
 * Display note images.
 * Display images related to game events (secret found, gold/silver/blue key required).
-* Consider displaying amounts of tools in inventory, at least important ones - health, ammo, keys.
+* Consider displaying available keys in HUD.
+* Consider displaying in HUD amounts of tools in inventory, at least important ones - health, ammo.
 * Allow configuring crosshair kind, investigate what kinds of crosshairs are available in the original game.
 * Display short game-related mesages (as the original does).
 
