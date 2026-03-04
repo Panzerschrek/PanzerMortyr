@@ -414,6 +414,7 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 				materials_description_.deref().blocks[ map_description.materials_block ], // Halts if not found.
 				visible_room_cluster_flags,
 				drawing_info.dynamic_cluster_objects,
+				drawing_info.game_time_s,
 				semitransparent_polygons_buffer_.vertices,
 				semitransparent_polygons_buffer_.indices );
 		}
@@ -752,6 +753,7 @@ fn WorldDrawer::CreateSemitransparentMapPolygons(
 	MaterialsDescription::Block& materials_block,
 	ust::array_view_imut</bool/> visible_room_cluster_flags,
 	ust::array_view_imut</WorldDrawingInfo::DynamicClusterObject/> dynamic_cluster_objects,
+	f32 time_s,
 	ust::vector</MapVertex/> &mut vertices,
 	ust::vector</u16/> &mut indices )
 {
@@ -795,7 +797,7 @@ fn WorldDrawer::CreateSemitransparentMapPolygons(
 				}
 				if( cluster_draw_data.has_liquid_quads )
 				{
-					CreateClusterLiquidPolygons( cluster, quads, zmap_lam_data, materials_block, vertices, indices );
+					CreateClusterLiquidPolygons( cluster, quads, zmap_lam_data, materials_block, time_s, vertices, indices );
 				}
 			}
 		}
@@ -1867,6 +1869,7 @@ fn CreateClusterLiquidPolygons(
 	ust::array_view_imut</ZmapQuad/> quads,
 	ZmapLamData& zmap_lam_data,
 	MaterialsDescription::Block& materials_block,
+	f32 time_s,
 	ust::vector</MapVertex/> &mut vertices,
 	ust::vector</u16/> &mut indices )
 {
@@ -1910,12 +1913,32 @@ fn CreateClusterLiquidPolygons(
 		}
 	}
 
-	foreach( &mut v : vertices.range().subrange_start( num_vertices_before ) )
+	if( num_vertices_before < vertices.size() )
 	{
-		// Set liquids fullbright. Original lighting for them is broken.
-		v.light[0]= 255u8;
-		v.light[1]= 255u8;
-		v.light[2]= 255u8;
+		// TODO - tune these params.
+		var f32 constexpr wave_length= 4.0f;
+		var f32 constexpr amplitude= 1.0f / 8.0f;
+		var f32 constexpr frequency= 1.0f / 4.0f;
+
+		var f32 phase= time_s * ( frequency * c_tau );
+
+		foreach( &mut v : vertices.range().subrange_start( num_vertices_before ) )
+		{
+			// Set liquids fullbright. Original lighting for them is broken.
+			v.light[0]= 255u8;
+			v.light[1]= 255u8;
+			v.light[2]= 255u8;
+
+			// Perform some sinwave-based animation.
+			var [ f32, 2 ] tc_offset
+			[
+				amplitude * ust::sin( phase + v.tex_coordinates[1] * ( c_tau / wave_length ) ),
+				amplitude * ust::sin( phase + v.tex_coordinates[0] * ( c_tau / wave_length ) ),
+			];
+
+			v.tex_coordinates[0]+= tc_offset[0];
+			v.tex_coordinates[1]+= tc_offset[1];
+		}
 	}
 }
 
