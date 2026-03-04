@@ -413,6 +413,7 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 				map_data,
 				materials_description_.deref().blocks[ map_description.materials_block ], // Halts if not found.
 				visible_room_cluster_flags,
+				drawing_info.dynamic_cluster_objects,
 				semitransparent_polygons_buffer_.vertices,
 				semitransparent_polygons_buffer_.indices );
 		}
@@ -730,6 +731,7 @@ fn WorldDrawer::CreateGlassPolygons(
 	MapDrawData& map_data,
 	MaterialsDescription::Block& materials_block,
 	ust::array_view_imut</bool/> visible_room_cluster_flags,
+	ust::array_view_imut</WorldDrawingInfo::DynamicClusterObject/> dynamic_cluster_objects,
 	ust::vector</MapVertex/> &mut vertices,
 	ust::vector</u16/> &mut indices )
 {
@@ -753,8 +755,17 @@ fn WorldDrawer::CreateGlassPolygons(
 		{
 			for( auto mut j= 0s; j < num_clusters_in_group; ++j )
 			{
-				// TODO - ignore here dynamic clusters.
 				var size_type cluster_index= i + j;
+
+				var u8 cluster_type= clusters[ cluster_index ].cluster_type;
+				if( !(
+					cluster_type == ZvoxCluster::c_cluster_type_regular |
+					cluster_type == ZvoxCluster::c_cluster_type_notes ) )
+				{
+					// Draw dynamic clusters later.
+					continue;
+				}
+
 				if( map_data.clusters_draw_data[ cluster_index ].has_glass_quads )
 				{
 					CreateClusterGlassPolygons(
@@ -766,7 +777,27 @@ fn WorldDrawer::CreateGlassPolygons(
 		i+= num_clusters_in_group;
 	}
 
-	// TODO - process here dynamic clusters.
+	// Add glass polygons of dynamic cluster objects with translation.
+	// This seems to be needed only for the end elevator on map 29.
+	foreach( &dynamic_cluster_object : dynamic_cluster_objects )
+	{
+		var size_type num_vertices_before= vertices.size();
+
+		CreateClusterGlassPolygons(
+			clusters[ size_type( dynamic_cluster_object.cluster_index ) ],
+			quads,
+			zmap_lam_data,
+			materials_block,
+			vertices,
+			indices );
+
+		foreach( &mut v : vertices.range().subrange_start( num_vertices_before ) )
+		{
+			v.position[0]+= dynamic_cluster_object.translation.x;
+			v.position[1]+= dynamic_cluster_object.translation.y;
+			v.position[2]+= dynamic_cluster_object.translation.z;
+		}
+	}
 }
 
 fn WorldDrawer::DrawMapPolygons(
