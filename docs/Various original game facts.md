@@ -4,36 +4,34 @@ This documents describes various interesting facts about the original game.
 
 * It's unclear how the main character is called. In the manual his name is Sebastian, but in some game files and in the false documents item he is called Sven.
 * Rudy-102 tank on map 1 is a reference to  _Czterej pancerni i pies_.
-* On map 9 Hitler's speech can be heard. It seems to be a speech from 14th Semptmber 1936 in Nürnberg.
-* There is a note on map 1 (the second capmagn map) with the following quote:
+* On map 9 Hitler's speech can be heard. It seems to be a speech from 14th September 1936 in Nürnberg.
+* There is a note on map 1 (the second campaign map) with the following quote:
   ... cadent a latere tuo mille et decem milia a dextris tuis, ad te autem non appropinquabit...
-  The same quote can be seen on the first exit door on map 23 (the last compagn map).
+  The same quote can be seen on the first exit door on map 23 (the last campaign map).
 
 ### Non-obvious gameplay facts
 
 * Enemies have limited ammo, like panzerfaust guy having only single shot, but some enemies have really a lot of ammo (like machinegunners with 900 bullets).
 * Enemies can search for health kits and armor, but this behavior is rare due to low chance of search behavior specified in the entities config.
 * Enemies can search for ammo boxes if they run out of ammo, but this behavior is rarely observed or isn't observed at all.
-* At least some enemies rotate towards the player while playing death animaton.
+* At least some enemies rotate towards the player while playing death animation.
 * Enemies with health level below some threshold don't chase the player, but try to flee from him.
 * It looks like enemies have slightly different model scale from each other, which seems to be random.
 * Rudy-102 can be destroyed, but it has a lot of health - 4500 units.
 * There is a single dog enemy on some of future maps with unique dead animation - flying flies around the corpse.
 * The original game has secret areas with a message "you have found a secret place" showed upon entering, but there are only a couple of such places.
 * The officer enemy drops the false documents item only if killed in some states, in other states he drops a pistol.
-* The player shots slightly right from the crosshair. There is an alternative behavior activated wia a console command "aim on" - which moves crosshair if necessary.
+* The player shots slightly right from the crosshair. There is an alternative behavior activated via a console command "aim on" - which moves crosshair if necessary.
 * Some decorations can be pushed (bottles, crates), but it's buggy if more than one decoration is pushed in the same time - it's possible to push a decoration into a wall.
-* Bullets spread for weapons is differrent for the player and for enemies - with different settings set for each weapon.
+* Bullets spread for weapons is different for the player and for enemies - with different settings set for each weapon.
 
 ### Technical aspects
 
 * It's possible to save during demo playing and load this save - it's fully functional.
 * Demos are simulated in realtime by using pre-recorded player input. Altering the entities config or using cheats lead to demo desyncronization.
 * Savegame and demo formats are almost identical and they store a copy of many map data blocks.
-* Maps are numbered unsequentially, first maps are 41, 1, 30, 10.
+* Maps are numbered unsequentially, first campaign maps are 41, 1, 30, 10.
 * Enemies can't travel far from their start positions, since they use individual navigation graphs and each graph has very limited number of points.
-* End-bosses can't move more than a couple of steps from their spawns, since their navigation graphs contain only two points, presumably because they are initially behind closed doors.
-* In some rare places it's possible to see some map parts through a broken window - where normally only sky should be shown.
 * The game maps contain a lot of out-of-the-bounds entities, which are disabled. They look like leftovers from other maps.
 * Enemies use collision bounding boxes for bullet hits, so that it's not necessary to hit the model itself to deal damage. Some boxes in some animations don't even match drawn enemy position.
 * Sky is a little bit strange - clouds texture is projected on sky polygons, but scale isn't tweaked. This projection is also broken on vertical sky polygons.
@@ -45,10 +43,10 @@ This documents describes various interesting facts about the original game.
 * MG-42 nest isn't used in the game, but it's listed in the manual. These enemies are placed on maps 8 and 24, but are disabled.
 * Gestapo officer is listed in the manual, but he isn't used in the singlplayer game. He is present only on cooperative map 36.
 * Nurse is listed in the manual, but she isn't used in the singlplayer game. Nurses are placed on maps 19, 24, 30, 37, but are disabled. Only on cooperative map 36 there are a couple of them.
-* Adolf Hitler isn't listed in the manual, he is missing in many versions of the game except one or two regional editions. But he is still present in game resources. On map 13 he is placed, but disabled.
+* Adolf Hitler isn't listed in the manual, he is missing in many versions of the game. He is present in the polish version. In english version he is still present in game resources. On map 13 he is placed, but disabled.
 * There is a model METRO.OBB with a variation of the WCZAPCE.OBB model with slightly different texture.
 * There are models KL0-47.OBB, KL48-63.OBB and KL64-87.OBB with some unused enemy type.
-* There is a model TROOPE2.OBB with some unfinshed enemy.
+* There is a model TROOPE2.OBB with some unfinished enemy.
 * There is a model BAZBRON.OBB with unfinished MG-42.
 * There is a model HUSAR.OBB with winged husar armor, which seems to be unused.
 * There is a model KOMIN.OBB, which seems to be unused.
@@ -58,13 +56,17 @@ This documents describes various interesting facts about the original game.
 
 ### Bugs
 
-* Movable shuttle model on map 29 has missing glas quads. They are there, but they are not displayed properly.
-* On map 23 at the final room there is a glas box miss-placed right at top of the spinning eagle logo.
+* The movable shuttle model on map 29 has missing glass quads. They are there, but they are not displayed properly.
+* On map 23 at the final room there is a glass box miss-placed right at top of the spinning eagle logo.
 * Pre-recorded player inputs in a played demo (at game start) are applied shortly after starting a new game.
 * Bullet decals are cut by borders of a quad with bullet center, even if it's not necessary (with an adjacent quad lying in the same plane).
 * Some maps contain holes in their geometry, where a hall-of-mirrors effect can be seen.
-* Clusters visibility information is sometimes incorrectly calculated and thus a hall-of-mirrors effect can be sometimes seen due to missing clusters which should be actually drawn.
+* Clusters visibility information is sometimes incorrectly calculated and thus a hall-of-mirrors effect can be seen due to missing clusters which should be actually drawn.
 * In a couple of places (map exit door button on map 34, elevator buttons on map 3) buttons move in wrong direction.
 * Many dynamic clusters (doors, buttons, elevators) are pitch-dark - no proper light is calculated for them.
 * Due to buggy precalculated snow paths sometimes snow can be seen where it shouldn't be (with no sky above).
-* Сabinet decorations have incorrect collider box - it's too low and wide.
+* Cabinet decorations have incorrect collider box - it's too low and wide.
+* In some rare places it's possible to see some map parts through a broken window - where normally only sky should be shown.
+* Perspective for first-person weapon models is broken while zooming.
+* Sun and moon sprites are rotated together with camera rotation, which is incorrect.
+* Dynamic map clusters (doors, elevators) move without considering blocking, so that it's possible to stay under an elevator and it will pas through.
