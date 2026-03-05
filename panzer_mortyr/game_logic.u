@@ -27,7 +27,7 @@ fn CreateNewMapGameState( GameMapData& map_data, u32 skill ) : GameState
 			.noclip= false,
 			.invisibility= false,
 			.ground_friction= 0.0f,
-			.crouching_step= 0u,
+			.crouching_phase= 0.0f,
 			.energy= 0u,
 			.collider_index= ~0u,
 			.inventory= zero_init,
@@ -126,7 +126,7 @@ fn CreateNewMapGameState( GameMapData& map_data, u32 skill ) : GameState
 					.noclip= false,
 					.invisibility= false,
 					.ground_friction= 0.0f,
-					.crouching_step= 0u,
+					.crouching_phase= 0.0f,
 					.energy= GetPlayerStartEnergy( entities_description ),
 					.collider_index= ~0u,
 					.inventory= zero_init,
@@ -486,7 +486,7 @@ fn PerformPlayerMovement(
 
 	var EntitiesDescription& entities_description= map_data.entities_description.deref();
 
-	var BBox3f player_bbox= GetPlayerColliderBBox( entities_description, game_state.player.crouching_step );
+	var BBox3f player_bbox= GetPlayerColliderBBox( entities_description, game_state.player.crouching_phase );
 
 	var CollisionStepMoveResult move_result=
 		CollisionStepMove(
@@ -568,14 +568,12 @@ fn PerformPlayerMovement(
 
 	if( player_input.crouching_requested )
 	{
-		if( game_state.player.crouching_step < c_crouching_transition_num_steps )
-		{
-			++game_state.player.crouching_step;
-		}
+		game_state.player.crouching_phase+= 1.0f / f32(c_crouching_transition_num_steps);
+		ust::min_assign( game_state.player.crouching_phase, 1.0f );
 	}
 	else
 	{
-		if( game_state.player.crouching_step > 0u )
+		if( game_state.player.crouching_phase > 0.0f )
 		{
 			// Check if has enough room above the head to stay.
 			var Vec3f head_up_movement_vector(
@@ -594,7 +592,8 @@ fn PerformPlayerMovement(
 
 			if( head_up_trace_result.clipped_move_distance >= 1.0f )
 			{
-				--game_state.player.crouching_step;
+				game_state.player.crouching_phase-= 1.0f / f32(c_crouching_transition_num_steps);
+				ust::max_assign( game_state.player.crouching_phase, 0.0f );
 			}
 		}
 	}
@@ -1943,7 +1942,7 @@ fn AddPlayerCollider( EntitiesDescription& entities_description, GameState &mut 
 		return;
 	}
 
-	var BBox3f bbox= GetPlayerColliderBBox( entities_description, game_state.player.crouching_step );
+	var BBox3f bbox= GetPlayerColliderBBox( entities_description, game_state.player.crouching_phase );
 
 	var BBox3f mut bbox_translated
 	{
@@ -2610,7 +2609,7 @@ fn EntityShoot(
 
 	var Vec3f target_position=
 		entity.last_seen_player_position.try_deref() +
-		GetPlayerColliderBBox( entities_description, 0u /* assume player is standing */ ).GetCenter();
+		GetPlayerColliderBBox( entities_description, 0.0f /* assume player is standing */ ).GetCenter();
 
 	var Mat4f rotation_matrix= Mat4f::MakeRotationZ( entity.azimuth );
 
@@ -3002,7 +3001,7 @@ fn Convert1024Angle( f32 a ) : f32
 	return a * ( c_tau / -1024.0f );
 }
 
-fn GetPlayerColliderBBox( EntitiesDescription& entities_description, u32 crouching_step ) : BBox3f
+fn GetPlayerColliderBBox( EntitiesDescription& entities_description, f32 crouching_phase ) : BBox3f
 {
 	// Some reasonable default.
 	var BBox3f mut bbox
@@ -3038,8 +3037,7 @@ fn GetPlayerColliderBBox( EntitiesDescription& entities_description, u32 crouchi
 	}
 
 	// Lower the top face of the player's bbox if he is crouching.
-	bbox.min.z +=
-		f32( crouching_step ) * ( c_crouching_height_delta / f32( c_crouching_transition_num_steps ) );
+	bbox.min.z += crouching_phase * c_crouching_height_delta;
 
 	return bbox;
 }
