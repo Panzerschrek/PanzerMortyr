@@ -27,6 +27,7 @@ fn CreateNewMapGameState( GameMapData& map_data, u32 skill ) : GameState
 			.noclip= false,
 			.invisibility= false,
 			.ground_friction= 0.0f,
+			.crouching_phase= 0.0f,
 			.energy= 0u,
 			.collider_index= ~0u,
 			.inventory= zero_init,
@@ -125,6 +126,7 @@ fn CreateNewMapGameState( GameMapData& map_data, u32 skill ) : GameState
 					.noclip= false,
 					.invisibility= false,
 					.ground_friction= 0.0f,
+					.crouching_phase= 0.0f,
 					.energy= GetPlayerStartEnergy( entities_description ),
 					.collider_index= ~0u,
 					.inventory= zero_init,
@@ -310,6 +312,7 @@ fn PerformPlayerWeaponLogic( GameMapData& map_data, PlayerInput& player_input, G
 							GetPlayerShotStartAndDirection(
 								shot,
 								game_state.player.position,
+								game_state.player.crouching_phase,
 								player_input.azimuth,
 								player_input.elevation );
 
@@ -484,7 +487,7 @@ fn PerformPlayerMovement(
 
 	var EntitiesDescription& entities_description= map_data.entities_description.deref();
 
-	var BBox3f player_bbox= GetPlayerColliderBBox( entities_description );
+	var BBox3f player_bbox= GetPlayerColliderBBox( entities_description, game_state.player.crouching_phase );
 
 	var CollisionStepMoveResult move_result=
 		CollisionStepMove(
@@ -564,6 +567,41 @@ fn PerformPlayerMovement(
 
 	game_state.player.ground_friction= ground_friction;
 
+	if( player_input.crouching_requested )
+	{
+		game_state.player.crouching_phase+= c_crouching_transition_speed;
+		ust::min_assign( game_state.player.crouching_phase, 1.0f );
+	}
+	else
+	{
+		if( game_state.player.crouching_phase > 0.0f )
+		{
+			// Check if has enough room above the head to stay.
+			var Vec3f head_up_movement_vector(
+				0.0f,
+				0.0f,
+				-c_crouching_height_delta * c_crouching_transition_speed - 0.125f );
+
+			var TraceCollisionResult head_up_trace_result=
+				CollisionTrace(
+					map_data,
+					game_state.dynamic_cluster_colliders,
+					game_state.colliders,
+					player_bbox,
+					game_state.player.position,
+					head_up_movement_vector );
+
+			// For simplicity don't care if can move the head up a little bit.
+			// If can't move the whole crouching transition step at all, remain in current crouching phase.
+
+			if( head_up_trace_result.clipped_move_distance >= 1.0f )
+			{
+				game_state.player.crouching_phase-= c_crouching_transition_speed;
+				ust::max_assign( game_state.player.crouching_phase, 0.0f );
+			}
+		}
+	}
+
 	// After the player was moved, add his collider back.
 	AddPlayerCollider( map_data.entities_description.deref(), game_state );
 
@@ -614,8 +652,11 @@ fn ApplyPlayerUnclippedMovement(
 	Vec3f& move_wish_direction,
 	bool jump_requested )
 {
+	var f32 crouching_related_movement_scale= 1.0f - 0.5f * player_state.crouching_phase;
+
 	// Max player speed is defined via the game config.
-	var f32 max_horizontal_speed_per_step( game_params.max_player_speed );
+	// Make it smaller if crouching.
+	var f32 max_horizontal_speed_per_step= f32( game_params.max_player_speed ) * crouching_related_movement_scale;
 
 	// Acceleration depends on friction. Scale is for now just guessed.
 	// Acceleration is twice as big as deceleration, it's needed because deceleration is always applied.
@@ -689,7 +730,8 @@ fn ApplyPlayerUnclippedMovement(
 			// Allow jumping while standing on bottom, but with less power.
 			if( jump_requested )
 			{
-				player_state.velocity.z+= c_jump_vertical_velocity_add * liquid_jump_velocity_scale;
+				player_state.velocity.z+=
+					c_jump_vertical_velocity_add * liquid_jump_velocity_scale * crouching_related_movement_scale;
 			}
 
 			// Apply ground deceleration.
@@ -728,7 +770,7 @@ fn ApplyPlayerUnclippedMovement(
 
 		if( jump_requested && player_state.on_ground )
 		{
-			player_state.velocity.z+= c_jump_vertical_velocity_add;
+			player_state.velocity.z+= c_jump_vertical_velocity_add * crouching_related_movement_scale;
 		}
 
 		{
@@ -1006,6 +1048,7 @@ fn ProcessEntitiesLogicStep( GameGlobalData& game_global_data, GameMapData& map_
 									item,
 									entity,
 									u32( entity_index ),
+									game_state.player.crouching_phase,
 									game_state.random,
 									game_state.projectiles );
 							}
@@ -1908,7 +1951,7 @@ fn AddPlayerCollider( EntitiesDescription& entities_description, GameState &mut 
 		return;
 	}
 
-	var BBox3f bbox= GetPlayerColliderBBox( entities_description );
+	var BBox3f bbox= GetPlayerColliderBBox( entities_description, game_state.player.crouching_phase );
 
 	var BBox3f mut bbox_translated
 	{
@@ -2113,7 +2156,7 @@ fn UpdateEntityPlayerInSightFlag(
 	}
 
 	var Vec3f trace_end= GetEntityPointForPlayerVisibilityTrace( entity.position, animation );
-	var Vec3f trace_start= GetPlayerPointForEntityVisibilityTrace( player_state.position );
+	var Vec3f trace_start= GetPlayerPointForEntityVisibilityTrace( player_state.position, player_state.crouching_phase );
 
 	if( trace_start == trace_end )
 	{
@@ -2216,6 +2259,8 @@ fn UpdateEntityMovementTarget(
 	{
 		if_var( &player_position : entity.last_seen_player_position )
 		{
+			var f32 player_crouching_phase= 0.0f; // For line of sight check assume that the player is staying.
+
 			if( entity.player_is_in_sight )
 			{
 				var EntitiesDescription::OperationAnimationDescription& animation=
@@ -2246,7 +2291,9 @@ fn UpdateEntityMovementTarget(
 
 					if( good_enough )
 					{
-						var Vec3f trace_start= GetPlayerPointForEntityVisibilityTrace( player_position );
+						var Vec3f trace_start=
+							GetPlayerPointForEntityVisibilityTrace( player_position, player_crouching_phase );
+
 						var Vec3f trace_end= GetEntityPointForPlayerVisibilityTrace( node_position, animation );
 
 						if( trace_end != trace_start )
@@ -2335,7 +2382,8 @@ fn UpdateEntityMovementTarget(
 
 					if( num_candidate_nodes > 0u )
 					{
-						var Vec3f trace_start= GetPlayerPointForEntityVisibilityTrace( player_position );
+						var Vec3f trace_start=
+							GetPlayerPointForEntityVisibilityTrace( player_position, player_crouching_phase );
 
 						for( auto mut i= 0u; i < num_candidate_nodes; ++i )
 						{
@@ -2488,10 +2536,10 @@ fn UpdateEntityMovementTarget(
 	}
 }
 
-fn GetPlayerPointForEntityVisibilityTrace( Vec3f& player_position ) : Vec3f
+fn GetPlayerPointForEntityVisibilityTrace( Vec3f& player_position, f32 crouching_phase ) : Vec3f
 {
 	// Trace from player's head. Assume enemies can't see player's feet.
-	return player_position + Vec3f( 0.0f, 0.0f, c_camera_z_offset );
+	return player_position + Vec3f( 0.0f, 0.0f, c_camera_z_offset + crouching_phase * c_crouching_height_delta );
 }
 
 fn GetEntityPointForPlayerVisibilityTrace(
@@ -2549,6 +2597,7 @@ fn EntityShoot(
 	[ i32, 5 ]& item,
 	EntityState& mut entity,
 	u32 entity_index,
+	f32 player_crouching_phase, // Assume an entity knows player's crouching phase if it can see him right now.
 	PseudoRandomGenerator &mut rand,
 	ust::vector</Projectile/> &mut projectiles )
 {
@@ -2573,7 +2622,8 @@ fn EntityShoot(
 	}
 
 	var Vec3f target_position=
-		entity.last_seen_player_position.try_deref() + GetPlayerColliderBBox( entities_description ).GetCenter();
+		entity.last_seen_player_position.try_deref() +
+		GetPlayerColliderBBox( entities_description, player_crouching_phase ).GetCenter();
 
 	var Mat4f rotation_matrix= Mat4f::MakeRotationZ( entity.azimuth );
 
@@ -2965,7 +3015,7 @@ fn Convert1024Angle( f32 a ) : f32
 	return a * ( c_tau / -1024.0f );
 }
 
-fn GetPlayerColliderBBox( EntitiesDescription& entities_description ) : BBox3f
+fn GetPlayerColliderBBox( EntitiesDescription& entities_description, f32 crouching_phase ) : BBox3f
 {
 	// Some reasonable default.
 	var BBox3f mut bbox
@@ -2979,7 +3029,7 @@ fn GetPlayerColliderBBox( EntitiesDescription& entities_description ) : BBox3f
 		var EntitiesDescription::EntityDescription& entity_description=
 			entities_description.entities[ size_type( c_player_entity_kind ) ];
 
-		foreach( &operation : entity_description.operations )
+		foreach( &operation : entity_description.operations ) label operations_loop
 		{
 			foreach( &animation : operation.animations )
 			{
@@ -2994,11 +3044,14 @@ fn GetPlayerColliderBBox( EntitiesDescription& entities_description ) : BBox3f
 
 					// The original game seems to use a hard-coded Z dimensions, so, ignore Z dimensions from the config.
 
-					return bbox;
+					break label operations_loop;
 				}
 			}
 		}
 	}
+
+	// Lower the top face of the player's bbox if he is crouching.
+	bbox.min.z += crouching_phase * c_crouching_height_delta;
 
 	return bbox;
 }
@@ -3045,7 +3098,13 @@ fn GetCrosshairPositionAndKind(
 		foreach( &shot : tool.shot_data )
 		{
 			auto [ position, direction ]=
-				GetPlayerShotStartAndDirection( shot, game_state.player.position, camera_azimuth, camera_elevation );
+				GetPlayerShotStartAndDirection(
+					shot,
+					game_state.player.position,
+					game_state.player.crouching_phase,
+					camera_azimuth,
+					camera_elevation );
+
 			position_sum+= position;
 			direction_sum+= direction;
 			++num_positions;
@@ -3101,22 +3160,28 @@ fn GetCrosshairPositionAndKind(
 }
 
 fn GetPlayerShotStartAndDirection(
-	[ i32, 7 ]& shot, Vec3f& player_position, f32 camera_azimuth, f32 camera_elevation ) : [ Vec3f, 2 ]
+	[ i32, 7 ]& shot,
+	Vec3f& player_position,
+	f32 crouching_phase,
+	f32 camera_azimuth,
+	f32 camera_elevation ) : [ Vec3f, 2 ]
 {
 	var Vec2f offset_xy( f32( shot[2] ), f32( shot[3] ) );
 	var f32 offset_z( shot[4] );
 
+	// TODO - apply also constant per-shot rotation.
 	var Mat4f rotation_matrix=
 		Mat4f::MakeRotationX( camera_elevation ) *
 		Mat4f::MakeRotationZ( camera_azimuth );
 
 	var Vec3f offset_xy_transformed= Vec3f( offset_xy, 0.0f ) * rotation_matrix;
 
-	var Vec3f offset( offset_xy_transformed.xy(), offset_xy_transformed.z + offset_z );
+	var Vec3f offset(
+		offset_xy_transformed.xy(),
+		offset_xy_transformed.z + offset_z + crouching_phase * c_crouching_height_delta );
 
 	return ust::make_array(
 		player_position + offset,
-		// TODO - apply also random spread and constant per-shot rotation.
 		Vec3f( 0.0f, 1.0f, 0.0f ) * rotation_matrix );
 }
 
