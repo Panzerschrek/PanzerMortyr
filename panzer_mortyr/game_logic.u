@@ -486,11 +486,7 @@ fn PerformPlayerMovement(
 
 	var EntitiesDescription& entities_description= map_data.entities_description.deref();
 
-	var BBox3f mut player_bbox= GetPlayerColliderBBox( entities_description );
-
-	// Lower the top face of the player's bbox if he is crouching.
-	player_bbox.min.z +=
-		f32( game_state.player.crouching_step ) * ( c_crouching_height_delta / f32( c_crouching_transition_num_steps ) );
+	var BBox3f player_bbox= GetPlayerColliderBBox( entities_description, game_state.player.crouching_step );
 
 	var CollisionStepMoveResult move_result=
 		CollisionStepMove(
@@ -1930,17 +1926,13 @@ fn AddPlayerCollider( EntitiesDescription& entities_description, GameState &mut 
 		return;
 	}
 
-	var BBox3f bbox= GetPlayerColliderBBox( entities_description );
+	var BBox3f bbox= GetPlayerColliderBBox( entities_description, game_state.player.crouching_step );
 
 	var BBox3f mut bbox_translated
 	{
 		.min= bbox.min + game_state.player.position,
 		.max= bbox.max + game_state.player.position,
 	};
-
-	// Lower the top face of the player's bbox if he is crouching.
-	bbox_translated.min.z +=
-		f32( game_state.player.crouching_step ) * ( c_crouching_height_delta / f32( c_crouching_transition_num_steps ) );
 
 	game_state.player.collider_index= u32( game_state.colliders.size() );
 	game_state.colliders.push_back( Collider{ .bbox= move(bbox_translated), .entity_index= c_player_entity_index } );
@@ -2517,6 +2509,7 @@ fn UpdateEntityMovementTarget(
 fn GetPlayerPointForEntityVisibilityTrace( Vec3f& player_position ) : Vec3f
 {
 	// Trace from player's head. Assume enemies can't see player's feet.
+	// TODO - deal with crouching.
 	return player_position + Vec3f( 0.0f, 0.0f, c_camera_z_offset );
 }
 
@@ -2599,7 +2592,8 @@ fn EntityShoot(
 	}
 
 	var Vec3f target_position=
-		entity.last_seen_player_position.try_deref() + GetPlayerColliderBBox( entities_description ).GetCenter();
+		entity.last_seen_player_position.try_deref() +
+		GetPlayerColliderBBox( entities_description, 0u /* assume player is standing */ ).GetCenter();
 
 	var Mat4f rotation_matrix= Mat4f::MakeRotationZ( entity.azimuth );
 
@@ -2991,7 +2985,7 @@ fn Convert1024Angle( f32 a ) : f32
 	return a * ( c_tau / -1024.0f );
 }
 
-fn GetPlayerColliderBBox( EntitiesDescription& entities_description ) : BBox3f
+fn GetPlayerColliderBBox( EntitiesDescription& entities_description, u32 crouching_step ) : BBox3f
 {
 	// Some reasonable default.
 	var BBox3f mut bbox
@@ -3005,7 +2999,7 @@ fn GetPlayerColliderBBox( EntitiesDescription& entities_description ) : BBox3f
 		var EntitiesDescription::EntityDescription& entity_description=
 			entities_description.entities[ size_type( c_player_entity_kind ) ];
 
-		foreach( &operation : entity_description.operations )
+		foreach( &operation : entity_description.operations ) label operations_loop
 		{
 			foreach( &animation : operation.animations )
 			{
@@ -3020,11 +3014,15 @@ fn GetPlayerColliderBBox( EntitiesDescription& entities_description ) : BBox3f
 
 					// The original game seems to use a hard-coded Z dimensions, so, ignore Z dimensions from the config.
 
-					return bbox;
+					break label operations_loop;
 				}
 			}
 		}
 	}
+
+	// Lower the top face of the player's bbox if he is crouching.
+	bbox.min.z +=
+		f32( crouching_step ) * ( c_crouching_height_delta / f32( c_crouching_transition_num_steps ) );
 
 	return bbox;
 }
