@@ -357,7 +357,6 @@ fn PerformPlayerWeaponLogic( GameMapData& map_data, PlayerInput& player_input, G
 								.age_steps= 0u,
 								.position= position,
 								.velocity= f32( tool.speed ) * direction_with_random_spread,
-								.hit_by_entity= false,
 								.hit_by_dynamic_cluster= false,
 							} );
 					}
@@ -1541,7 +1540,7 @@ fn PushMoveDynamicCluster(
 	ust::array_view_mut</ ust::optional</EntityState/> /> entities,
 	ust::array_view_imut</DynamicClusterCollider/> dynamic_cluster_colliders,
 	PlayerState &mut player_state,
-	ust::array_view_mut</Projectile/> projectiles ) : bool
+	ust::vector</Projectile/> &mut projectiles ) : bool
 {
 	var f32 movement_vector_length= in_movement_vector.Length();
 	if( movement_vector_length == 0.0f )
@@ -1696,95 +1695,87 @@ fn ProcessProjectilesLogicStep( GameMapData& map_data, GameState &mut game_state
 				size_type( entities_description.tool_type_to_index_map[ size_type( projectile.weapon ) ] );
 
 			var EntitiesDescription::Tool& weapon_tool= entities_description.tools[ weapon_tool_index ];
-			if( projectile.hit_by_entity )
+
+			// Find itersections using movement slightly longer than necessary.
+			// It's needed in order to fix possible numerical imprecisions.
+
+			var f32 c_elongation_eps= 1.0f;
+			var f32 velocity_length= ust::max( 0.01f, projectile.velocity.Length() );
+			var Vec3f velocity_slightly_elongated=
+				projectile.velocity * ( ( velocity_length + c_elongation_eps ) / velocity_length );
+
+			var f32 mut smallest_travelled_distance= 1.0f;
+
+			var u32 mut hit_entity_index= ~0u;
+
+			if( projectile.hit_by_dynamic_cluster )
 			{
-				// An entity has collided with this projectile while performing its movement.
-				// It should be damaged before, now we just need to remove this projectile.
-				need_to_remove= true;
+				// A dynamic cluster has collided with this projectile while performing its movement.
+				smallest_travelled_distance= 0.0f;
 			}
 			else
 			{
-				// Find itersections using movement slightly longer than necessary.
-				// It's needed in order to fix possible numerical imprecisions.
+				// Perform movement with collision check.
 
-				var f32 c_elongation_eps= 1.0f;
-				var f32 velocity_length= ust::max( 0.01f, projectile.velocity.Length() );
-				var Vec3f velocity_slightly_elongated=
-					projectile.velocity * ( ( velocity_length + c_elongation_eps ) / velocity_length );
-
-				var f32 mut smallest_travelled_distance= 1.0f;
-
-				var u32 mut hit_entity_index= ~0u;
-
-				if( projectile.hit_by_dynamic_cluster )
+				if_var( &line_trace_result : LineTrace(
+					map_data, game_state.dynamic_cluster_colliders, projectile.position, velocity_slightly_elongated ) )
 				{
-					// A dynamic cluster has collided with this projectile while performing its movement.
-					smallest_travelled_distance= 0.0f;
-				}
-				else
-				{
-					// Perform movement with collision check.
-
-					if_var( &line_trace_result : LineTrace(
-						map_data, game_state.dynamic_cluster_colliders, projectile.position, velocity_slightly_elongated ) )
+					if( line_trace_result.distance < 1.0f )
 					{
-						if( line_trace_result.distance < 1.0f )
-						{
-							smallest_travelled_distance= line_trace_result.distance;
-						}
+						smallest_travelled_distance= line_trace_result.distance;
+					}
+				}
+
+				foreach( &collider : game_state.colliders )
+				{
+					if( collider.entity_index == projectile.owner_entity_index )
+					{
+						// Don't collide with owner.
+						// This is needed for some entities or for the player,
+						// since sometimes their/his own projectiles are spawned within their/his bounding boxes.
+						// Also it's necessary for ricocheting projectiles and other projectiles with non-linear movement.
+						continue;
 					}
 
-					foreach( &collider : game_state.colliders )
+					if_var( &intersection_result :
+						FindRayBBoxIntersection( projectile.position, velocity_slightly_elongated, collider.bbox ) )
 					{
-						if( collider.entity_index == projectile.owner_entity_index )
+						if( !( intersection_result.near_point_distance > 1.0f | intersection_result.far_point_distance < 0.0f ) )
 						{
-							// Don't collide with owner.
-							// This is needed for some entities or for the player,
-							// since sometimes their/his own projectiles are spawned within their/his bounding boxes.
-							// Also it's necessary for ricocheting projectiles and other projectiles with non-linear movement.
-							continue;
-						}
-
-						if_var( &intersection_result :
-							FindRayBBoxIntersection( projectile.position, velocity_slightly_elongated, collider.bbox ) )
-						{
-							if( !( intersection_result.near_point_distance > 1.0f | intersection_result.far_point_distance < 0.0f ) )
+							var f32 intersection_distance= ust::max( 0.0f, intersection_result.near_point_distance );
+							if( intersection_distance < smallest_travelled_distance )
 							{
-								var f32 intersection_distance= ust::max( 0.0f, intersection_result.near_point_distance );
-								if( intersection_distance < smallest_travelled_distance )
-								{
-									smallest_travelled_distance= intersection_distance;
-									hit_entity_index= collider.entity_index;
-								}
+								smallest_travelled_distance= intersection_distance;
+								hit_entity_index= collider.entity_index;
 							}
 						}
 					}
 				}
+			}
 
-				if( smallest_travelled_distance < 1.0f )
+			if( smallest_travelled_distance < 1.0f )
+			{
+				// Collided with something.
+
+				if( hit_entity_index != ~0u )
 				{
-					// Collided with something.
-
-					if( hit_entity_index != ~0u )
-					{
-						DamageEntityOrPlayer(
-							game_state.entities, game_state.player, hit_entity_index, weapon_tool.damage );
-					}
-					else
-					{
-						// If collided with the world - add a bullet hole.
-						// TODO - check if it's appropriate for hit material.
-						var Vec3f hit_position=
-							projectile.position + velocity_slightly_elongated * smallest_travelled_distance;
-							game_state.bullet_holes.push_back( hit_position );
-					}
-
-					// TODO - apply splash damage if necessary.
-					// TODO - spawn sparks and smoke effects (if enabled).
-					// TODO - spawn a dynamic light if necessary.
-
-					need_to_remove= true;
+					DamageEntityOrPlayer(
+						game_state.entities, game_state.player, hit_entity_index, weapon_tool.damage );
 				}
+				else
+				{
+					// If collided with the world - add a bullet hole.
+					// TODO - check if it's appropriate for hit material.
+					var Vec3f hit_position=
+						projectile.position + velocity_slightly_elongated * smallest_travelled_distance;
+						game_state.bullet_holes.push_back( hit_position );
+				}
+
+				// TODO - apply splash damage if necessary.
+				// TODO - spawn sparks and smoke effects (if enabled).
+				// TODO - spawn a dynamic light if necessary.
+
+				need_to_remove= true;
 			}
 
 			// TODO - spawn smoke trail particles (if enabled).
@@ -2036,7 +2027,7 @@ fn nodiscard CollideMovedEntityWithProjectiles(
 	Vec3f& new_position,
 	BBox3f& bbox,
 	u32 entity_index,
-	ust::array_view_mut</Projectile/> projectiles ) : u32
+	ust::vector</Projectile/> &mut projectiles ) : u32
 {
 	var u32 mut damage= 0u;
 
@@ -2061,30 +2052,43 @@ fn nodiscard CollideMovedEntityWithProjectiles(
 		.max= bbox.max + old_position,
 	};
 
-	foreach( &mut projectile : projectiles )
+	for( auto mut i= 0s; i < projectiles.size(); )
 	{
-		if( projectile.owner_entity_index == entity_index )
+		var bool mut need_to_remove= false;
+
 		{
-			// Don't collide with owner.
-			continue;
+			var Projectile& projectile= projectiles[i];
+
+			if( projectile.owner_entity_index != entity_index ) // Don't collide with owner.
+			{
+				if_var( &intersection_result :
+					FindRayBBoxIntersection( projectile.position, inverse_movement_vec, bbox_translated ) )
+				{
+					if( !( intersection_result.near_point_distance >= 1.0f | intersection_result.far_point_distance <= 0.0f ) )
+					{
+						need_to_remove= true;
+
+						// Index validity should be checked before - prior to projectile creation.
+						var size_type weapon_tool_index=
+							size_type( entities_description.tool_type_to_index_map[ size_type( projectile.weapon ) ] );
+
+						var EntitiesDescription::Tool& weapon_tool= entities_description.tools[ weapon_tool_index ];
+
+						damage+= weapon_tool.damage;
+					}
+				}
+			}
 		}
 
-		if_var( &intersection_result :
-			FindRayBBoxIntersection( projectile.position, inverse_movement_vec, bbox_translated ) )
+		if( need_to_remove )
 		{
-			if( !( intersection_result.near_point_distance >= 1.0f | intersection_result.far_point_distance <= 0.0f ) )
-			{
-				// TODO - remove this projectile?
-				projectile.hit_by_entity= true;
-
-				// Index validity should be checked before - prior to projectile creation.
-				var size_type weapon_tool_index=
-					size_type( entities_description.tool_type_to_index_map[ size_type( projectile.weapon ) ] );
-
-				var EntitiesDescription::Tool& weapon_tool= entities_description.tools[ weapon_tool_index ];
-
-				damage+= weapon_tool.damage;
-			}
+			var size_type last_index= projectiles.size() - 1s;
+			projectiles.swap( i, last_index );
+			projectiles.drop_back();
+		}
+		else
+		{
+			++i;
 		}
 	}
 
@@ -2801,7 +2805,6 @@ fn EntityShoot(
 			.age_steps= 0u,
 			.position= shot_position,
 			.velocity= direction_with_random_spread * f32( weapon_tool.speed ),
-			.hit_by_entity= false,
 			.hit_by_dynamic_cluster= false,
 		} );
 
@@ -2812,7 +2815,7 @@ fn MoveEntity(
 	GameMapData& map_data,
 	ust::array_view_imut</DynamicClusterCollider/> dynamic_cluster_colliders,
 	ust::array_view_imut</Collider/> extra_colliders,
-	ust::array_view_mut</Projectile/> projectiles,
+	ust::vector</Projectile/> &mut projectiles,
 	EntityState &mut entity,
 	u32 entity_index,
 	EntitiesDescription::EntityDescription& entity_description,
