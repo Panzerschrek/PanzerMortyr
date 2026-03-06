@@ -1683,6 +1683,12 @@ fn ProcessProjectilesLogicStep( GameMapData& map_data, GameState &mut game_state
 		{
 			var Projectile &mut projectile= game_state.projectiles[i];
 
+			// Index validity should be checked before - prior to projectile creation.
+			var size_type weapon_tool_index=
+				size_type( entities_description.tool_type_to_index_map[ size_type( projectile.weapon ) ] );
+
+			var EntitiesDescription::Tool& weapon_tool= entities_description.tools[ weapon_tool_index ];
+
 			// Find itersections using movement slightly longer than necessary.
 			// It's needed in order to fix possible numerical imprecisions.
 
@@ -1752,36 +1758,28 @@ fn ProcessProjectilesLogicStep( GameMapData& map_data, GameState &mut game_state
 				if( projectile.hit_entity_index != ~0u )
 				{
 					// If has collision with an entity - damage it.
-
-					var u32 tool_index= entities_description.tool_type_to_index_map[ size_type( projectile.weapon ) ];
-					if( size_type( tool_index ) < entities_description.tools.size() )
+					if( weapon_tool.damage > 0u )
 					{
-						var EntitiesDescription::Tool& weapon_tool=
-							entities_description.tools[ size_type( tool_index ) ];
-
-						if( weapon_tool.damage > 0u )
+						if( projectile.hit_entity_index == c_player_entity_index )
 						{
-							if( projectile.hit_entity_index == c_player_entity_index )
+							// TODO - use armor?
+							game_state.player.energy-= ust::min( weapon_tool.damage, game_state.player.energy );
+						}
+						else if_var( &mut entity : game_state.entities[ size_type( projectile.hit_entity_index ) ] )
+						{
+							if( entity.energy > 0u )
 							{
-								// TODO - use armor?
-								game_state.player.energy-= ust::min( weapon_tool.damage, game_state.player.energy );
-							}
-							else if_var( &mut entity : game_state.entities[ size_type( projectile.hit_entity_index ) ] )
-							{
-								if( entity.energy > 0u )
-								{
-									// TODO - investigate whether enemies have armor.
-									entity.energy-= ust::min( weapon_tool.damage, entity.energy );
-									entity.lost_energy_in_current_operation= true;
+								// TODO - investigate whether enemies have armor.
+								entity.energy-= ust::min( weapon_tool.damage, entity.energy );
+								entity.lost_energy_in_current_operation= true;
 
-									// Alarm enemies being hit.
-									entity.alarmed= true;
-								}
+								// Alarm enemies being hit.
+								entity.alarmed= true;
 							}
 						}
-
-						// TODO - spawn blood particles.
 					}
+
+					// TODO - spawn blood particles.
 				}
 				else
 				{
@@ -1801,22 +1799,13 @@ fn ProcessProjectilesLogicStep( GameMapData& map_data, GameState &mut game_state
 
 			projectile.position+= projectile.velocity;
 
+			if( weapon_tool.projectile_kind == 3u )
 			{
-				var u32 tool_index= entities_description.tool_type_to_index_map[ size_type( projectile.weapon ) ];
-				if( size_type( tool_index ) < entities_description.tools.size() )
-				{
-					var EntitiesDescription::Tool& weapon_tool=
-						entities_description.tools[ size_type( tool_index ) ];
-
-					if( weapon_tool.projectile_kind == 3u )
-					{
-						projectile.velocity.z+= c_heavy_projectiles_gravity;
-					}
-					else if( weapon_tool.projectile_kind == 8u )
-					{
-						projectile.velocity.z+= c_light_projectiles_gravity;
-					}
-				}
+				projectile.velocity.z+= c_heavy_projectiles_gravity;
+			}
+			else if( weapon_tool.projectile_kind == 8u )
+			{
+				projectile.velocity.z+= c_light_projectiles_gravity;
 			}
 
 			++projectile.age_steps;
