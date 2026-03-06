@@ -11,7 +11,8 @@ import "math_constants.uh"
 namespace PM
 {
 
-fn CreateNewMapGameState( GameMapData& map_data, u32 skill ) : GameState
+fn CreateNewMapGameState(
+	GameMapData& map_data, u32 skill, ust::optional_ref_imut</PlayerState/> prev_player_state ) : GameState
 {
 	var GameState mut game_state
 	{
@@ -140,39 +141,64 @@ fn CreateNewMapGameState( GameMapData& map_data, u32 skill ) : GameState
 					},
 				};
 
-			// Give the player tools which he should have at start.
-			for( auto mut t= 0s; t < typeinfo</ EntitiesDescription::ToolType />.element_count; ++t )
+			if_var( &prev_state : prev_player_state )
 			{
-				var size_type tool_index( entities_description.tool_type_to_index_map[t] );
-				if( tool_index < entities_description.tools.size() )
+				// Preserve health and items from previous state.
+				game_state.player.energy= prev_state.energy;
+				game_state.player.inventory= prev_state.inventory;
+
+				// But don't preserve keys.
+				game_state.player.inventory[ size_type( EntitiesDescription::ToolType::KeyA ) ]= 0u;
+				game_state.player.inventory[ size_type( EntitiesDescription::ToolType::KeyB ) ]= 0u;
+				game_state.player.inventory[ size_type( EntitiesDescription::ToolType::KeyC ) ]= 0u;
+
+				// Preserve current weapon (if can).
+				if( game_state.player.inventory[ size_type( prev_state.weapon_state.current_weapon ) ] != 0u )
 				{
-					game_state.player.inventory[t]= entities_description.tools[ tool_index ].player_start_count;
+					game_state.player.weapon_state.current_weapon= prev_state.weapon_state.current_weapon;
+				}
+				else
+				{
+					game_state.player.weapon_state.current_weapon= EntitiesDescription::ToolType::Kick;
+				}
+			}
+			else
+			{
+				// Give the player tools which he should have at start.
+				for( auto mut t= 0s; t < typeinfo</ EntitiesDescription::ToolType />.element_count; ++t )
+				{
+					var size_type tool_index( entities_description.tool_type_to_index_map[t] );
+					if( tool_index < entities_description.tools.size() )
+					{
+						game_state.player.inventory[t]= entities_description.tools[ tool_index ].player_start_count;
+					}
+				}
+
+				// Make the best weapon we have active.
+				var [ EntitiesDescription::ToolType, 11 ] weapon_tools
+				[
+					EntitiesDescription::ToolType::Kick,
+					EntitiesDescription::ToolType::WeaponA,
+					EntitiesDescription::ToolType::WeaponB,
+					EntitiesDescription::ToolType::WeaponC,
+					EntitiesDescription::ToolType::WeaponD,
+					EntitiesDescription::ToolType::WeaponE,
+					EntitiesDescription::ToolType::WeaponF,
+					EntitiesDescription::ToolType::WeaponG,
+					EntitiesDescription::ToolType::WeaponH,
+					EntitiesDescription::ToolType::WeaponI,
+					EntitiesDescription::ToolType::WeaponJ,
+				];
+
+				foreach( weapon_tool : weapon_tools )
+				{
+					if( game_state.player.inventory[ size_type(weapon_tool) ] > 0u )
+					{
+						game_state.player.weapon_state.current_weapon= weapon_tool;
+					}
 				}
 			}
 
-			// Make the best weapon we have active.
-			var [ EntitiesDescription::ToolType, 11 ] weapon_tools
-			[
-				EntitiesDescription::ToolType::Kick,
-				EntitiesDescription::ToolType::WeaponA,
-				EntitiesDescription::ToolType::WeaponB,
-				EntitiesDescription::ToolType::WeaponC,
-				EntitiesDescription::ToolType::WeaponD,
-				EntitiesDescription::ToolType::WeaponE,
-				EntitiesDescription::ToolType::WeaponF,
-				EntitiesDescription::ToolType::WeaponG,
-				EntitiesDescription::ToolType::WeaponH,
-				EntitiesDescription::ToolType::WeaponI,
-				EntitiesDescription::ToolType::WeaponJ,
-			];
-
-			foreach( weapon_tool : weapon_tools )
-			{
-				if( game_state.player.inventory[ size_type(weapon_tool) ] > 0u )
-				{
-					game_state.player.weapon_state.current_weapon= weapon_tool;
-				}
-			}
 			game_state.player.weapon_state.requested_weapon= game_state.player.weapon_state.current_weapon;
 
 			AddPlayerCollider( entities_description, game_state );
@@ -212,8 +238,8 @@ fn CreateNewMapGameState( GameMapData& map_data, u32 skill ) : GameState
 	return game_state;
 }
 
-fn ProcessGameLogicStep(
-	GameGlobalData& global_data, GameMapData& map_data, PlayerInput& player_input, GameState &mut game_state )
+fn nodiscard ProcessGameLogicStep(
+	GameGlobalData& global_data, GameMapData& map_data, PlayerInput& player_input, GameState &mut game_state ) : u32
 {
 	PerformPlayerWeaponLogic( map_data, player_input, game_state );
 
@@ -227,7 +253,11 @@ fn ProcessGameLogicStep(
 
 	PickUpItems( map_data, game_state );
 
+	var u32 next_map_index= InteractWithTriggerVolumes( map_data, game_state );
+
 	++game_state.step_index;
+
+	return next_map_index;
 }
 
 fn PerformPlayerWeaponLogic( GameMapData& map_data, PlayerInput& player_input, GameState &mut game_state )
@@ -1893,6 +1923,64 @@ fn PickUpItems( GameMapData& map_data, GameState &mut game_state )
 			game_state.entities[ entity_index ].reset();
 		}
 	}
+}
+
+// Returns next map index if requires map transition or 0 if requires no one.
+fn InteractWithTriggerVolumes( GameMapData& map_data, GameState &mut game_state ) : u32
+{
+	var u32 mut next_map_index= 0u;
+
+	if( size_type( game_state.player.collider_index ) >= game_state.colliders.size() )
+	{
+		return next_map_index;
+	}
+
+	var BBox3f& player_bbox= game_state.colliders[ size_type( game_state.player.collider_index ) ].bbox;
+
+	foreach( &trigger_volume : map_data.zvox_data.deref().trigger_volumes )
+	{
+		var BBox3f trigger_bbox
+		{
+			.min(
+				f32( trigger_volume.center[0] - trigger_volume.bounding_box_half_size[0] ),
+				f32( trigger_volume.center[1] - trigger_volume.bounding_box_half_size[1] ),
+				f32( trigger_volume.center[2] - trigger_volume.bounding_box_half_size[2] ) ),
+			.max(
+				f32( trigger_volume.center[0] + trigger_volume.bounding_box_half_size[0] ),
+				f32( trigger_volume.center[1] + trigger_volume.bounding_box_half_size[1] ),
+				f32( trigger_volume.center[2] + trigger_volume.bounding_box_half_size[2] ) ),
+		};
+
+		if( !player_bbox.InstersectsOrTouches( trigger_bbox ) )
+		{
+			continue;
+		}
+
+		switch( trigger_volume.trigger_type )
+		{
+			ZvoxTriggerVolume::c_trigger_type_map_end ->
+			{
+				next_map_index= u32( trigger_volume.trigger_param );
+			},
+			ZvoxTriggerVolume::c_trigger_type_secret_area ->
+			{
+				// TODO - show the message "you have found a secret area"
+			},
+			ZvoxTriggerVolume::c_trigger_type_character_speech ->
+			{
+				// TODO - trigger speech sound
+			},
+			ZvoxTriggerVolume::c_trigger_type_game_end ->
+			{
+				// TODO - show game end cinematics.
+				// For now just trigger transition to a non-existing level.
+				next_map_index= 99999u;
+			},
+			default -> {},
+		}
+	}
+
+	return next_map_index;
 }
 
 fn CollideMovedEntityWithProjectiles(
