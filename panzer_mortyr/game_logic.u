@@ -1731,6 +1731,7 @@ fn ProcessProjectilesLogicStep( GameMapData& map_data, GameState &mut game_state
 
 				var f32 mut smallest_travelled_distance= 1.0f;
 
+				var u32 mut hit_quad_index= ~0u;
 				var u32 mut hit_entity_index= ~0u;
 
 				if_var( &line_trace_result : LineTrace(
@@ -1739,6 +1740,7 @@ fn ProcessProjectilesLogicStep( GameMapData& map_data, GameState &mut game_state
 					if( line_trace_result.distance < 1.0f )
 					{
 						smallest_travelled_distance= line_trace_result.distance;
+						hit_quad_index= line_trace_result.quad_index;
 					}
 				}
 
@@ -1788,20 +1790,45 @@ fn ProcessProjectilesLogicStep( GameMapData& map_data, GameState &mut game_state
 						if( weapon_tool.projectile_kind == 2u )
 						{
 							// Bounce.
-							// TODO - use proper normal.
-							var Vec3f normal_normalized( 0.0f, 0.0f, -1.0f );
 
-							projectile.position+= current_bounce_movement_vector * smallest_travelled_distance;
-							remaining_movement_fraction *= 1.0f - smallest_travelled_distance;
+							auto& quads= map_data.zmap_data.deref().quads;
 
-							projectile.velocity-= 2.0f * ( projectile.velocity.Dot( normal_normalized ) ) * normal_normalized;
+							if( size_type( hit_quad_index ) < quads.size() )
+							{
+								auto& in_vertices= quads[ size_type( hit_quad_index ) ].vertices;
 
-							// Move position slightly away from the collided plane.
-							projectile.position+= normal_normalized * ( 1.0f / 32.0f );
+								var [ Vec3f, 4 ] quad_vertices
+								[
+									( f32( in_vertices[0][0] ), f32( in_vertices[0][1] ), f32( in_vertices[0][2] ) ),
+									( f32( in_vertices[1][0] ), f32( in_vertices[1][1] ), f32( in_vertices[1][2] ) ),
+									( f32( in_vertices[2][0] ), f32( in_vertices[2][1] ), f32( in_vertices[2][2] ) ),
+									( f32( in_vertices[3][0] ), f32( in_vertices[3][1] ), f32( in_vertices[3][2] ) ),
+								];
 
-							// TODO - slow-down the projectile.
+								var Vec3f normal=
+									( quad_vertices[0] - quad_vertices[1] ).Cross( quad_vertices[1] - quad_vertices[2] ) +
+									( quad_vertices[1] - quad_vertices[2] ).Cross( quad_vertices[2] - quad_vertices[3] ) +
+									( quad_vertices[2] - quad_vertices[3] ).Cross( quad_vertices[3] - quad_vertices[0] ) +
+									( quad_vertices[3] - quad_vertices[0] ).Cross( quad_vertices[0] - quad_vertices[1] );
 
-							continue label bounces_loop;
+								var f32 normal_square_length= normal.SquareLength();
+								if( normal_square_length > 0.0f )
+								{
+									projectile.position= hit_position;
+									remaining_movement_fraction *= 1.0f - smallest_travelled_distance;
+
+									// Reflect velocity.
+									projectile.velocity-=
+										( 2.0f * projectile.velocity.Dot( normal ) / normal_square_length ) * normal;
+
+									// Move position slightly away from the collided plane.
+									projectile.position+= ( ( 1.0f / 32.0f ) / ust::sqrt( normal_square_length ) ) * normal;
+
+									// TODO - slow-down the projectile.
+
+									continue label bounces_loop;
+								}
+							}
 						}
 					}
 
