@@ -357,7 +357,6 @@ fn PerformPlayerWeaponLogic( GameMapData& map_data, PlayerInput& player_input, G
 								.age_steps= 0u,
 								.position= position,
 								.velocity= f32( tool.speed ) * direction_with_random_spread,
-								.hit_by_dynamic_cluster= false,
 							} );
 					}
 				}
@@ -1660,19 +1659,36 @@ fn PushMoveDynamicCluster(
 		}
 	}
 
-	// Hit projectiles by moving this dynamc cluster.
-	foreach( &mut projectile : projectiles )
+	for( auto mut i= 0s; i < projectiles.size(); )
 	{
-		if_var( &intersection_result :
-			LineTraceSingleDynamicCluster(
-				map_data, dynamic_cluster_collider, projectile.position, oppositve_movement_vector ) )
-		{
-			if( intersection_result.distance <= 1.0f )
-			{
-				projectile.hit_by_dynamic_cluster= true;
+		var bool mut need_to_remove= false;
 
-				// TODO - handle properly ricocheting projectiles.
+		{
+			var Projectile& projectile= projectiles[i];
+
+			if_var( &intersection_result :
+				LineTraceSingleDynamicCluster(
+					map_data, dynamic_cluster_collider, projectile.position, oppositve_movement_vector ) )
+			{
+				if( intersection_result.distance <= 1.0f )
+				{
+					need_to_remove= true;
+
+					// TODO - trigger splash damage.
+					// TODO - handle properly ricocheting projectiles.
+				}
 			}
+		}
+
+		if( need_to_remove )
+		{
+			var size_type last_index= projectiles.size() - 1s;
+			projectiles.swap( i, last_index );
+			projectiles.drop_back();
+		}
+		else
+		{
+			++i;
 		}
 	}
 
@@ -1696,6 +1712,8 @@ fn ProcessProjectilesLogicStep( GameMapData& map_data, GameState &mut game_state
 
 			var EntitiesDescription::Tool& weapon_tool= entities_description.tools[ weapon_tool_index ];
 
+			// Perform movement with collision check.
+
 			// Find itersections using movement slightly longer than necessary.
 			// It's needed in order to fix possible numerical imprecisions.
 
@@ -1708,46 +1726,36 @@ fn ProcessProjectilesLogicStep( GameMapData& map_data, GameState &mut game_state
 
 			var u32 mut hit_entity_index= ~0u;
 
-			if( projectile.hit_by_dynamic_cluster )
+			if_var( &line_trace_result : LineTrace(
+				map_data, game_state.dynamic_cluster_colliders, projectile.position, velocity_slightly_elongated ) )
 			{
-				// A dynamic cluster has collided with this projectile while performing its movement.
-				smallest_travelled_distance= 0.0f;
-			}
-			else
-			{
-				// Perform movement with collision check.
-
-				if_var( &line_trace_result : LineTrace(
-					map_data, game_state.dynamic_cluster_colliders, projectile.position, velocity_slightly_elongated ) )
+				if( line_trace_result.distance < 1.0f )
 				{
-					if( line_trace_result.distance < 1.0f )
-					{
-						smallest_travelled_distance= line_trace_result.distance;
-					}
+					smallest_travelled_distance= line_trace_result.distance;
+				}
+			}
+
+			foreach( &collider : game_state.colliders )
+			{
+				if( collider.entity_index == projectile.owner_entity_index )
+				{
+					// Don't collide with owner.
+					// This is needed for some entities or for the player,
+					// since sometimes their/his own projectiles are spawned within their/his bounding boxes.
+					// Also it's necessary for ricocheting projectiles and other projectiles with non-linear movement.
+					continue;
 				}
 
-				foreach( &collider : game_state.colliders )
+				if_var( &intersection_result :
+					FindRayBBoxIntersection( projectile.position, velocity_slightly_elongated, collider.bbox ) )
 				{
-					if( collider.entity_index == projectile.owner_entity_index )
+					if( !( intersection_result.near_point_distance > 1.0f | intersection_result.far_point_distance < 0.0f ) )
 					{
-						// Don't collide with owner.
-						// This is needed for some entities or for the player,
-						// since sometimes their/his own projectiles are spawned within their/his bounding boxes.
-						// Also it's necessary for ricocheting projectiles and other projectiles with non-linear movement.
-						continue;
-					}
-
-					if_var( &intersection_result :
-						FindRayBBoxIntersection( projectile.position, velocity_slightly_elongated, collider.bbox ) )
-					{
-						if( !( intersection_result.near_point_distance > 1.0f | intersection_result.far_point_distance < 0.0f ) )
+						var f32 intersection_distance= ust::max( 0.0f, intersection_result.near_point_distance );
+						if( intersection_distance < smallest_travelled_distance )
 						{
-							var f32 intersection_distance= ust::max( 0.0f, intersection_result.near_point_distance );
-							if( intersection_distance < smallest_travelled_distance )
-							{
-								smallest_travelled_distance= intersection_distance;
-								hit_entity_index= collider.entity_index;
-							}
+							smallest_travelled_distance= intersection_distance;
+							hit_entity_index= collider.entity_index;
 						}
 					}
 				}
@@ -2067,6 +2075,8 @@ fn nodiscard CollideMovedEntityWithProjectiles(
 					if( !( intersection_result.near_point_distance >= 1.0f | intersection_result.far_point_distance <= 0.0f ) )
 					{
 						need_to_remove= true;
+
+						// TODO - trigger spash damage.
 
 						// Index validity should be checked before - prior to projectile creation.
 						var size_type weapon_tool_index=
@@ -2805,7 +2815,6 @@ fn EntityShoot(
 			.age_steps= 0u,
 			.position= shot_position,
 			.velocity= direction_with_random_spread * f32( weapon_tool.speed ),
-			.hit_by_dynamic_cluster= false,
 		} );
 
 	--entity.ammo;
