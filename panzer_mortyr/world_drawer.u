@@ -760,6 +760,7 @@ fn WorldDrawer::CreateSemitransparentMapPolygons(
 	var ust::array_view_imut</ZmapQuad/> quads= map_data.zmap_data.deref().quads;
 	var ust::array_view_imut</ZvoxCluster/> clusters= map_data.zvox_data.deref().clusters;
 	var ZmapLamData& zmap_lam_data= map_data.zmap_lam_data.deref();
+	var RoomClustersHierarchy& room_clusters_hierarchy= map_data.room_clusters_hierarchy.deref();
 
 	for( auto mut i= 0s; i < clusters.size(); )
 	{
@@ -825,6 +826,33 @@ fn WorldDrawer::CreateSemitransparentMapPolygons(
 			v.position[1]+= dynamic_cluster_object.translation.y;
 			v.position[2]+= dynamic_cluster_object.translation.z;
 		}
+	}
+
+	foreach( &light_shafts_box : map_data.zmap_data.deref().light_shaft_boxes )
+	{
+		if( light_shafts_box.enabled_flag <= 0 )
+		{
+			continue;
+		}
+
+		var BBox3f bbox
+		{
+			.min(
+				f32( light_shafts_box.center[0] - light_shafts_box.bounding_box_half_size[0] ),
+				f32( light_shafts_box.center[1] - light_shafts_box.bounding_box_half_size[1] ),
+				f32( light_shafts_box.center[2] - light_shafts_box.bounding_box_half_size[2] ) ),
+			.max(
+				f32( light_shafts_box.center[0] + light_shafts_box.bounding_box_half_size[0] ),
+				f32( light_shafts_box.center[1] + light_shafts_box.bounding_box_half_size[1] ),
+				f32( light_shafts_box.center[2] + light_shafts_box.bounding_box_half_size[2] ) ),
+		};
+
+		if( !IsBBoxWithinVisibleClusters( clusters, room_clusters_hierarchy, visible_room_cluster_flags, bbox ) )
+		{
+			continue;
+		}
+
+		CreateLightShaftsBoxPolygons( light_shafts_box, vertices, indices );
 	}
 }
 
@@ -1952,6 +1980,104 @@ fn CreateClusterLiquidPolygons(
 			}
 		}
 	}
+}
+
+fn CreateLightShaftsBoxPolygons(
+	ZmapLightShaftsBox& light_shafts_box, ust::vector</MapVertex/> &mut vertices, ust::vector</u16/> &mut indices )
+{
+	// Use slightly less than the whole tile containing light shafts texture, since this texture is not tileable.
+	var f32 constexpr tc_eps= 1.0f / f32( MaterialsDescription::c_texture_size );
+
+	var [ [ f32, 2 ], 8 ] constexpr vertex_tex_coords
+	[
+		[ 0.0f + tc_eps, 0.0f + tc_eps ],
+		[ 0.0f + tc_eps, 0.5f - tc_eps ],
+		[ 0.0f + tc_eps, 0.0f + tc_eps ],
+		[ 0.0f + tc_eps, 0.5f - tc_eps ],
+		[ 0.5f - tc_eps, 0.0f + tc_eps ],
+		[ 0.5f - tc_eps, 0.5f - tc_eps ],
+		[ 0.5f - tc_eps, 0.0f + tc_eps ],
+		[ 0.5f - tc_eps, 0.5f - tc_eps ],
+	];
+
+	var f32 constexpr texture_layer= 152.0f;
+
+	var [ u8, 3 ] color_top
+	[
+		( light_shafts_box.color_top >> 16u ),
+		( light_shafts_box.color_top >>  8u ),
+		( light_shafts_box.color_top >>  0u ),
+	];
+
+	var [ u8, 3 ] color_bottom
+	[
+		( light_shafts_box.color_bottom >> 16u ),
+		( light_shafts_box.color_bottom >>  8u ),
+		( light_shafts_box.color_bottom >>  0u ),
+	];
+
+	var [ [ u8, 3 ], 8 ] vertex_lights
+	[
+		color_top,
+		color_top,
+		color_top,
+		color_top,
+		color_bottom,
+		color_bottom,
+		color_bottom,
+		color_bottom,
+	];
+
+	var size_type base_vertex_index= vertices.size();
+
+	for( auto mut i= 0u; i < 8u; ++i )
+	{
+		auto& in_vertex= light_shafts_box.vertices[i];
+		auto& tc= vertex_tex_coords[i];
+
+		vertices.push_back(
+			MapVertex
+			{
+				.position
+				[
+					f32( light_shafts_box.center[0] + i32( in_vertex[0] ) ),
+					f32( light_shafts_box.center[1] + i32( in_vertex[1] ) ),
+					f32( light_shafts_box.center[2] + i32( in_vertex[2] ) ),
+				],
+				.padding12= zero_init,
+				.tex_coordinates[ tc[0], tc[1], texture_layer ],
+				.light= vertex_lights[i],
+				.padding31= zero_init,
+			} );
+	}
+
+	indices.push_back( u16( base_vertex_index + 1s ) );
+	indices.push_back( u16( base_vertex_index + 0s ) );
+	indices.push_back( u16( base_vertex_index + 4s ) );
+	indices.push_back( u16( base_vertex_index + 5s ) );
+	indices.push_back( u16( base_vertex_index + 1s ) );
+	indices.push_back( u16( base_vertex_index + 4s ) );
+
+	indices.push_back( u16( base_vertex_index + 3s ) );
+	indices.push_back( u16( base_vertex_index + 2s ) );
+	indices.push_back( u16( base_vertex_index + 6s ) );
+	indices.push_back( u16( base_vertex_index + 7s ) );
+	indices.push_back( u16( base_vertex_index + 3s ) );
+	indices.push_back( u16( base_vertex_index + 6s ) );
+
+	indices.push_back( u16( base_vertex_index + 2s ) );
+	indices.push_back( u16( base_vertex_index + 1s ) );
+	indices.push_back( u16( base_vertex_index + 5s ) );
+	indices.push_back( u16( base_vertex_index + 2s ) );
+	indices.push_back( u16( base_vertex_index + 5s ) );
+	indices.push_back( u16( base_vertex_index + 6s ) );
+
+	indices.push_back( u16( base_vertex_index + 0s ) );
+	indices.push_back( u16( base_vertex_index + 3s ) );
+	indices.push_back( u16( base_vertex_index + 7s ) );
+	indices.push_back( u16( base_vertex_index + 0s ) );
+	indices.push_back( u16( base_vertex_index + 7s ) );
+	indices.push_back( u16( base_vertex_index + 4s ) );
 }
 
 fn CalculateMapQuadTextureBasis( ZmapQuad& quad, bool is_regular_cluster ) : [ Vec3f, 2 ]

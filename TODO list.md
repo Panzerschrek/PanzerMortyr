@@ -145,9 +145,7 @@ PanzerMortyr rendering:
 
 * Apply additional tessellation for tessellated polygons in order to perform smoother light values interpolation (naively triangulating them doesn't produce good result always).
 * Draw underwater caustics properly.
-* Draw light source sprites (flames, coronas).
 * Draw fog where it should be.
-* Draw map polygons and other objects (billboards, sprites) requiring blending in back to front order.
 * Draw reflections in reflective surfaces (usually floors).
 * Draw polygons with animated textures (frame-based animation) properly.
 * Draw first-person weapon with some sort of depth hack and depth-based effects (like fog) working properly.
@@ -159,12 +157,11 @@ PanzerMortyr rendering:
 * Draw breaking window animation (with falling splinters).
 * Experiment with an algorithm for dynamic visible clusters search similar to one used in SquareWheel.
 * Add support for MSAA.
-* Draw light shafts - with colored gradient, some underlying texture and additive blending.
 * Somehow distort/colorize the whole image while swimming in water.
 * Consider optimizing calculating light from point light sources for models - avoid enumerating all lights.
 * Consider drawing blob shadows under models (as some sort of decal?).
 * Allow changing brightness, maybe by tuning lights power.
-* Sort semitransparent triangles using far to near order.
+* Sort semitransparent triangles (map polygons, billboards) using far to near order.
 * Consider using non-zero alpha for glass, so that it's not so bright.
 
 PanzerMortyr menus and HUD:
