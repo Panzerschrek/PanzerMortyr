@@ -63,12 +63,12 @@ PanzerMortyr general:
 * Cache or even preload weapon models to avoid reloading them after level transition.
 * Consider allowing playing cooperative/multiplayer maps as usual singleplayer ones. Maybe add a main menu item for this.
 * Consider writing some kind of alternative installer - a tool, which depacks game data from the original game ISO or mdf/mds files.
+* Draw loading screen before performing transition to the next level in game code and corresponding game and rendering resource loading.
 
 PanzerMortyr game logic:
 
 * Decrease player's armor properly while being damaged.
 * Implement player's death.
-* Implement transition to next level.
 * Implement game state save/loading.
 * Implement multiplayer game logic with client/server.
 * Implement multiplayer-specific game modes.
@@ -139,6 +139,9 @@ PanzerMortyr game logic:
 * Implement misfire - sometimes enemies don't shoot, even if shooting animation is played.
 * Ensure projectiles speed is correct (isn't too small or too big).
 * Consider storing a bounding box of the current attack target of an entity in the entity struture.
+* Don't perform level transition if hasn't satifsy transition requirements necessary for some levels - like killing a boss or collecting all necessary items.
+* Avoid performing transition to the next level if player is dead.
+* Handle properly game end - show end cinematic and credits after it.
 
 
 PanzerMortyr rendering:
