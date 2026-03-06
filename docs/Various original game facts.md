@@ -2,7 +2,7 @@ This documents describes various interesting facts about the original game.
 
 ### Game plot
 
-* It's unclear how the main character is called. In the manual his name is Sebastian, but in some game files and in the false documents item he is called Sven.
+* It's unclear how exactly the main character is called. In the manual his name is Sebastian, but in some game files and in the false documents item and keycard items he is called Sven.
 * Rudy-102 tank on map 1 is a reference to  _Czterej pancerni i pies_.
 * On map 9 Hitler's speech can be heard. It seems to be a speech from 14th September 1936 in Nürnberg.
 * There is a note on map 1 (the second campaign map) with the following quote:
@@ -70,3 +70,4 @@ This documents describes various interesting facts about the original game.
 * Perspective for first-person weapon models is broken while zooming.
 * Sun and moon sprites are rotated together with camera rotation, which is incorrect.
 * Dynamic map clusters (doors, elevators) move without considering blocking, so that it's possible to stay under an elevator and it will pas through.
+* In future maps icons for key items are incorrect. There are golden/silver/blue keycard icons present in PANEL.BMP, but instead golden/silver swastic keys and golden keycard (instead of blue one) are used.

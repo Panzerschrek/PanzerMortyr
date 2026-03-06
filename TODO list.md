@@ -77,6 +77,7 @@ PanzerMortyr game logic:
 * Implement sky decorations movement/turning logic (with mode=11).
 * Implement collisions hack for the one-way passable wall on map 33.
 * Implement fall damage for player and for entities.
+* Implement acid and lava damage for player and for entities.
 * Implement rare animation types - used for some entities.
 * Implement tank-related logic elements.
 * Implement logic elements specific for dog enemies.
@@ -183,7 +184,6 @@ PanzerMortyr menus and HUD:
 * Display more than one active tool in HUD.
 * Display note images.
 * Display images related to game events (secret found, gold/silver/blue key required).
-* Consider displaying available keys in HUD.
 * Consider displaying in HUD amounts of tools in inventory, at least important ones - health, ammo.
 * Allow configuring crosshair kind, investigate what kinds of crosshairs are available in the original game.
 * Display short game-related mesages (as the original does).
