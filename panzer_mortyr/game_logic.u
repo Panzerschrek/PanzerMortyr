@@ -357,7 +357,7 @@ fn PerformPlayerWeaponLogic( GameMapData& map_data, PlayerInput& player_input, G
 								.age_steps= 0u,
 								.position= position,
 								.velocity= f32( tool.speed ) * direction_with_random_spread,
-								.hit_entity_index= ~0u,
+								.hit_by_entity= false,
 								.hit_by_dynamic_cluster= false,
 							} );
 					}
@@ -668,12 +668,16 @@ fn PerformPlayerMovement(
 	// It isn't fully correct to use straight movement form old position to new one,
 	// since actual movement including clipping may be a little bit more complex.
 	// But it's mostly fine.
-	CollideMovedEntityWithProjectiles(
-		movement_start_position,
-		game_state.player.position,
-		player_bbox,
-		c_player_entity_index,
-		game_state.projectiles );
+	var u32 projectile_damage=
+		CollideMovedEntityWithProjectiles(
+			entities_description,
+			movement_start_position,
+			game_state.player.position,
+			player_bbox,
+			c_player_entity_index,
+			game_state.projectiles );
+
+	DamagePlayer( game_state.player, projectile_damage );
 }
 
 fn ApplyPlayerUnclippedMovement(
@@ -1627,12 +1631,16 @@ fn PushMoveDynamicCluster(
 				movement_vector_elongated * ( 1.0f - relative_distance_to_collider );
 
 			// Collide with projectiles if is pushed.
-			CollideMovedEntityWithProjectiles(
-				Vec3f::MakeZero(),
-				push_vector,
-				collider.bbox,
-				collider.entity_index,
-				projectiles );
+			var u32 projectile_damage=
+				CollideMovedEntityWithProjectiles(
+					map_data.entities_description.deref(),
+					Vec3f::MakeZero(),
+					push_vector,
+					collider.bbox,
+					collider.entity_index,
+					projectiles );
+
+			ust::ignore_unused( projectile_damage ); // Dynamic clusters don't care about damage.
 
 			// Modify player/entity position directly.
 			if( collider.entity_index == c_player_entity_index )
@@ -1688,12 +1696,10 @@ fn ProcessProjectilesLogicStep( GameMapData& map_data, GameState &mut game_state
 				size_type( entities_description.tool_type_to_index_map[ size_type( projectile.weapon ) ] );
 
 			var EntitiesDescription::Tool& weapon_tool= entities_description.tools[ weapon_tool_index ];
-			if( projectile.hit_entity_index != ~0u )
+			if( projectile.hit_by_entity )
 			{
 				// An entity has collided with this projectile while performing its movement.
-				DamageEntityOrPlayer(
-					game_state.entities, game_state.player, projectile.hit_entity_index, weapon_tool.damage );
-
+				// It should be damaged before, now we just need to remove this projectile.
 				need_to_remove= true;
 			}
 			else
@@ -1759,10 +1765,10 @@ fn ProcessProjectilesLogicStep( GameMapData& map_data, GameState &mut game_state
 				{
 					// Collided with something.
 
-					if( hit_entity_index != 0u )
+					if( hit_entity_index != ~0u )
 					{
 						DamageEntityOrPlayer(
-							game_state.entities, game_state.player, projectile.hit_entity_index, weapon_tool.damage );
+							game_state.entities, game_state.player, hit_entity_index, weapon_tool.damage );
 					}
 					else
 					{
@@ -1821,27 +1827,42 @@ fn DamageEntityOrPlayer(
 	u32 entity_index,
 	u32 damage )
 {
+	if( entity_index == c_player_entity_index )
+	{
+		DamagePlayer( player_state, damage );
+	}
+	else if_var( &mut entity : entities[ size_type( entity_index ) ] )
+	{
+		DamageEntity( entity, damage );
+	}
+}
+
+fn DamagePlayer( PlayerState &mut player_state, u32 damage )
+{
 	if( damage == 0u )
 	{
 		return;
 	}
 
-	if( entity_index == c_player_entity_index )
-	{
-		// TODO - use armor?
-		player_state.energy-= ust::min( damage, player_state.energy );
-	}
-	else if_var( &mut entity : entities[ size_type( entity_index ) ] )
-	{
-		if( entity.energy > 0u )
-		{
-			// TODO - investigate whether enemies have armor.
-			entity.energy-= ust::min( damage, entity.energy );
-			entity.lost_energy_in_current_operation= true;
+	// TODO - use armor?
+	player_state.energy-= ust::min( damage, player_state.energy );
+}
 
-			// Alarm enemies being hit.
-			entity.alarmed= true;
-		}
+fn DamageEntity( EntityState &mut entity, u32 damage )
+{
+	if( damage == 0u )
+	{
+		return;
+	}
+
+	if( entity.energy > 0u )
+	{
+		// TODO - investigate whether enemies have armor.
+		entity.energy-= ust::min( damage, entity.energy );
+		entity.lost_energy_in_current_operation= true;
+
+		// Alarm enemies being hit.
+		entity.alarmed= true;
 	}
 
 	// TODO - spawn blood particles.
@@ -2008,21 +2029,25 @@ fn InteractWithTriggerVolumes( GameMapData& map_data, GameState &mut game_state 
 	return next_map_index;
 }
 
-fn CollideMovedEntityWithProjectiles(
+// Returns damage.
+fn nodiscard CollideMovedEntityWithProjectiles(
+	EntitiesDescription& entities_description,
 	Vec3f& old_position,
 	Vec3f& new_position,
 	BBox3f& bbox,
 	u32 entity_index,
-	ust::array_view_mut</Projectile/> projectiles )
+	ust::array_view_mut</Projectile/> projectiles ) : u32
 {
+	var u32 mut damage= 0u;
+
 	if( projectiles.empty() )
 	{
-		return;
+		return damage;
 	}
 
 	if( old_position == new_position )
 	{
-		return;
+		return damage;
 	}
 
 	// Find intersections of moved entity bbox with projectile points.
@@ -2049,10 +2074,21 @@ fn CollideMovedEntityWithProjectiles(
 		{
 			if( !( intersection_result.near_point_distance >= 1.0f | intersection_result.far_point_distance <= 0.0f ) )
 			{
-				projectile.hit_entity_index= entity_index;
+				// TODO - remove this projectile?
+				projectile.hit_by_entity= true;
+
+				// Index validity should be checked before - prior to projectile creation.
+				var size_type weapon_tool_index=
+					size_type( entities_description.tool_type_to_index_map[ size_type( projectile.weapon ) ] );
+
+				var EntitiesDescription::Tool& weapon_tool= entities_description.tools[ weapon_tool_index ];
+
+				damage+= weapon_tool.damage;
 			}
 		}
 	}
+
+	return damage;
 }
 
 fn AddPlayerCollider( EntitiesDescription& entities_description, GameState &mut game_state )
@@ -2765,7 +2801,7 @@ fn EntityShoot(
 			.age_steps= 0u,
 			.position= shot_position,
 			.velocity= direction_with_random_spread * f32( weapon_tool.speed ),
-			.hit_entity_index= ~0u,
+			.hit_by_entity= false,
 			.hit_by_dynamic_cluster= false,
 		} );
 
@@ -2901,7 +2937,16 @@ fn MoveEntity(
 	{
 		// Using straight movement from start to end isn't fully correct, since actual movement with clipping may be more complex.
 		// But it's mostly fine.
-		CollideMovedEntityWithProjectiles( old_position, entity.position, collider_bbox, entity_index, projectiles );
+		var u32 projectile_damage=
+			CollideMovedEntityWithProjectiles(
+				map_data.entities_description.deref(),
+				old_position,
+				entity.position,
+				collider_bbox,
+				entity_index,
+				projectiles );
+
+		DamageEntity( entity, projectile_damage );
 	}
 }
 
