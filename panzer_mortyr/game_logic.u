@@ -1712,83 +1712,112 @@ fn ProcessProjectilesLogicStep( GameMapData& map_data, GameState &mut game_state
 
 			var EntitiesDescription::Tool& weapon_tool= entities_description.tools[ weapon_tool_index ];
 
-			// Perform movement with collision check.
+			var f32 mut remaining_movement_fraction= 1.0f;
 
-			// Find itersections using movement slightly longer than necessary.
-			// It's needed in order to fix possible numerical imprecisions.
-
-			var f32 c_elongation_eps= 1.0f;
-			var f32 velocity_length= ust::max( 0.01f, projectile.velocity.Length() );
-			var Vec3f velocity_slightly_elongated=
-				projectile.velocity * ( ( velocity_length + c_elongation_eps ) / velocity_length );
-
-			var f32 mut smallest_travelled_distance= 1.0f;
-
-			var u32 mut hit_entity_index= ~0u;
-
-			if_var( &line_trace_result : LineTrace(
-				map_data, game_state.dynamic_cluster_colliders, projectile.position, velocity_slightly_elongated ) )
+			for( auto mut bounce= 0s; bounce < 3s; ++bounce ) label bounces_loop
 			{
-				if( line_trace_result.distance < 1.0f )
-				{
-					smallest_travelled_distance= line_trace_result.distance;
-				}
-			}
+				var Vec3f current_bounce_movement_vector=
+					remaining_movement_fraction * projectile.velocity;
 
-			foreach( &collider : game_state.colliders )
-			{
-				if( collider.entity_index == projectile.owner_entity_index )
-				{
-					// Don't collide with owner.
-					// This is needed for some entities or for the player,
-					// since sometimes their/his own projectiles are spawned within their/his bounding boxes.
-					// Also it's necessary for ricocheting projectiles and other projectiles with non-linear movement.
-					continue;
-				}
+				// Perform movement with collision check.
 
-				if_var( &intersection_result :
-					FindRayBBoxIntersection( projectile.position, velocity_slightly_elongated, collider.bbox ) )
+				// Find itersections using movement slightly longer than necessary.
+				// It's needed in order to fix possible numerical imprecisions.
+
+				var f32 c_elongation_eps= 1.0f;
+				var f32 velocity_length= ust::max( 0.01f, current_bounce_movement_vector.Length() );
+				var Vec3f velocity_slightly_elongated=
+					current_bounce_movement_vector * ( ( velocity_length + c_elongation_eps ) / velocity_length );
+
+				var f32 mut smallest_travelled_distance= 1.0f;
+
+				var u32 mut hit_entity_index= ~0u;
+
+				if_var( &line_trace_result : LineTrace(
+					map_data, game_state.dynamic_cluster_colliders, projectile.position, velocity_slightly_elongated ) )
 				{
-					if( !( intersection_result.near_point_distance > 1.0f | intersection_result.far_point_distance < 0.0f ) )
+					if( line_trace_result.distance < 1.0f )
 					{
-						var f32 intersection_distance= ust::max( 0.0f, intersection_result.near_point_distance );
-						if( intersection_distance < smallest_travelled_distance )
+						smallest_travelled_distance= line_trace_result.distance;
+					}
+				}
+
+				foreach( &collider : game_state.colliders )
+				{
+					if( collider.entity_index == projectile.owner_entity_index )
+					{
+						// Don't collide with owner.
+						// This is needed for some entities or for the player,
+						// since sometimes their/his own projectiles are spawned within their/his bounding boxes.
+						// Also it's necessary for ricocheting projectiles and other projectiles with non-linear movement.
+						continue;
+					}
+
+					if_var( &intersection_result :
+						FindRayBBoxIntersection( projectile.position, velocity_slightly_elongated, collider.bbox ) )
+					{
+						if( !( intersection_result.near_point_distance > 1.0f | intersection_result.far_point_distance < 0.0f ) )
 						{
-							smallest_travelled_distance= intersection_distance;
-							hit_entity_index= collider.entity_index;
+							var f32 intersection_distance= ust::max( 0.0f, intersection_result.near_point_distance );
+							if( intersection_distance < smallest_travelled_distance )
+							{
+								smallest_travelled_distance= intersection_distance;
+								hit_entity_index= collider.entity_index;
+							}
 						}
 					}
 				}
-			}
 
-			if( smallest_travelled_distance < 1.0f )
-			{
-				// Collided with something.
-
-				if( hit_entity_index != ~0u )
+				if( smallest_travelled_distance < 1.0f )
 				{
-					DamageEntityOrPlayer(
-						game_state.entities, game_state.player, hit_entity_index, weapon_tool.damage );
-				}
-				else
-				{
-					// If collided with the world - add a bullet hole.
-					// TODO - check if it's appropriate for hit material.
-					var Vec3f hit_position=
-						projectile.position + velocity_slightly_elongated * smallest_travelled_distance;
-						game_state.bullet_holes.push_back( hit_position );
+					// Collided with something.
+
+					if( hit_entity_index != ~0u )
+					{
+						DamageEntityOrPlayer(
+							game_state.entities, game_state.player, hit_entity_index, weapon_tool.damage );
+					}
+					else
+					{
+						// If collided with the world - add a bullet hole.
+						// TODO - check if it's appropriate for hit material.
+						var Vec3f hit_position=
+							projectile.position + velocity_slightly_elongated * smallest_travelled_distance;
+							game_state.bullet_holes.push_back( hit_position );
+
+						if( weapon_tool.projectile_kind == 2u )
+						{
+							// Bounce.
+							// TODO - use proper normal.
+							var Vec3f normal_normalized( 0.0f, 0.0f, -1.0f );
+
+							projectile.position+= current_bounce_movement_vector * smallest_travelled_distance;
+							remaining_movement_fraction *= 1.0f - smallest_travelled_distance;
+
+							projectile.velocity-= 2.0f * ( projectile.velocity.Dot( normal_normalized ) ) * normal_normalized;
+
+							// Move position slightly away from the collided plane.
+							projectile.position+= normal_normalized * ( 1.0f / 32.0f );
+
+							// TODO - slow-down the projectile.
+
+							continue label bounces_loop;
+						}
+					}
+
+					// TODO - apply splash damage if necessary.
+					// TODO - spawn sparks and smoke effects (if enabled).
+					// TODO - spawn a dynamic light if necessary.
+
+					need_to_remove= true;
 				}
 
-				// TODO - apply splash damage if necessary.
-				// TODO - spawn sparks and smoke effects (if enabled).
-				// TODO - spawn a dynamic light if necessary.
-
-				need_to_remove= true;
+				// If has no collision or has a collision with an entity or player or if it's not a bouncing projectile - don't perform more bounces.
+				projectile.position+= current_bounce_movement_vector;
+				break label bounces_loop;
 			}
 
 			// TODO - spawn smoke trail particles (if enabled).
-
-			projectile.position+= projectile.velocity;
 
 			if( weapon_tool.projectile_kind == 3u )
 			{
