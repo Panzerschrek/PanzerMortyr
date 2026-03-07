@@ -1705,8 +1705,48 @@ fn PushMoveDynamicCluster(
 					if( weapon_tool.projectile_kind == EntitiesDescription::Tool::c_projectile_kind_ricocheting_bullet |
 						weapon_tool.projectile_kind == EntitiesDescription::Tool::c_projectile_kind_grenade )
 					{
-						// TODO - properly reflect.
-						projectile.velocity.z-= 10.0f;
+						auto& quads= map_data.zmap_data.deref().quads;
+
+						if( size_type( intersection_result.quad_index ) < quads.size() )
+						{
+							var Vec3f normal= CalculateQuadNormal( quads[ size_type( intersection_result.quad_index ) ] );
+
+							var f32 normal_square_length= normal.SquareLength();
+							if( normal_square_length > 0.0f )
+							{
+								projectile.position+=
+									movement_vector_elongated * ( 1.0f - intersection_result.distance );
+
+								// Move position slightly away from the collided plane.
+								projectile.position+= ( ( 1.0f / 32.0f ) / ust::sqrt( normal_square_length ) ) * normal;
+
+								var Vec3f mut velocity_in_dynamic_cluster_reference_system=
+									projectile.velocity - movement_vector_elongated;
+
+								// Reflect velocity.
+								// TODO - maybe tweak the direction slightly in a random way?
+								velocity_in_dynamic_cluster_reference_system-=
+									( 2.0f * velocity_in_dynamic_cluster_reference_system.Dot( normal ) / normal_square_length ) * normal;
+
+								// Slow-down the projectile due to energy loss caused by bouncing.
+								// The original game does similar stuff.
+
+								if( weapon_tool.projectile_kind == EntitiesDescription::Tool::c_projectile_kind_ricocheting_bullet )
+								{
+									// Bullet-like bouncing projectile.
+									// Multiplying velocity by half square root of two halves the kinetic energy.
+									velocity_in_dynamic_cluster_reference_system *= c_half_sqrt_2;
+								}
+								else if( weapon_tool.projectile_kind == EntitiesDescription::Tool::c_projectile_kind_grenade )
+								{
+									// Grenades bounce poorly. Reduce kinetic energy by 75%.
+									velocity_in_dynamic_cluster_reference_system *= 0.5f;
+								}
+
+								projectile.velocity=
+									velocity_in_dynamic_cluster_reference_system + movement_vector_elongated;
+							}
+						}
 					}
 					else
 					{
