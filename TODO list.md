@@ -93,13 +93,11 @@ PanzerMortyr game logic:
 * Implement rats.
 * Avoid spawning some enemies based on current skill level (investigate how the original game does this).
 * Spawn enemies having trigger box only when player touches this box (usually behind his back).
+* Implement remaining entity state transitions (used only by some enemy types).
 * Fix ugly injury-based entity state transitions, when an injury operation is changed while some other injury operation is already in process.
 * Implement pushing pushable entities.
 * Perform camera Z coordinate smoothing while climbing steps, so that camera movement doesn't look jaggy.
 * Perform separate collisions calculation with glass quads - to skip broken glass quads.
-* Implement grenade projectiles (affected by gravity and slightly bouncing).
-* Implement panzerfaust projectiles (slightly affected by gravity).
-* Implement ricocheting projectiles.
 * Implement melee attacks (kick, knife).
 * Implement player's health management.
 * Implement player's armor management.
@@ -113,11 +111,11 @@ PanzerMortyr game logic:
 * Implement weapon amplifier tool.
 * Implement silencer tool.
 * Implement invisibility tool.
-* Spawn bullet holes on walls.
+* Spawn bullet holes on walls, including holes attached to dynamic (movable) clusters.
 * Leave blood makrs on walls.
 * Spawn blood billboards on player or entity damaging.
 * Leave footsteps where they should be.
-* Implement bullet hit effects (smoke, sparkles).
+* Implement bullet hit effects (smoke, sparkles, explosion billboards).
 * Spawn smoke trail sprites.
 * Spawn muzzle flash and napalm sprites.
 * Implement flamethrower flames sticking to map geometry and entities and damaging them.
@@ -143,6 +141,11 @@ PanzerMortyr game logic:
 * Don't perform level transition if hasn't satifsy transition requirements necessary for some levels - like killing a boss or collecting all necessary items.
 * Avoid performing transition to the next level if player is dead.
 * Handle properly game end - show end cinematic and credits after it.
+* Adjust rotation angles for grenade projectiles, so that they look nicely.
+* Tune granades exposion delay.
+* Tune projectiles maximum age.
+* For flamethrower spawn sticky flame objects slowly damaging enemies and the player.
+* For weapons firing more than one shot at once turn the direction vector of each odd shot slightly - up as the original game does.
 
 
 PanzerMortyr rendering:
