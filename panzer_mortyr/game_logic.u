@@ -30,6 +30,7 @@ fn CreateNewMapGameState(
 			.ground_friction= 0.0f,
 			.crouching_phase= 0.0f,
 			.energy= 0u,
+			.armor= 0u,
 			.collider_index= ~0u,
 			.inventory= zero_init,
 			.weapon_state
@@ -129,6 +130,7 @@ fn CreateNewMapGameState(
 					.ground_friction= 0.0f,
 					.crouching_phase= 0.0f,
 					.energy= GetPlayerStartEnergy( entities_description ),
+					.armor= 0u, // TODO - maybe read it from some config?
 					.collider_index= ~0u,
 					.inventory= zero_init,
 					.weapon_state
@@ -2010,8 +2012,19 @@ fn DamagePlayer( PlayerState &mut player_state, u32 damage )
 		return;
 	}
 
-	// TODO - use armor?
-	player_state.energy-= ust::min( damage, player_state.energy );
+	// An investigation of the original game has shown,
+	// that armor absorbs 50% damage (rounded down),
+	// 25% (rounded down) aren't absorbed and damage player's energy,
+	// the rest is reflected.
+
+	var u32 damage_with_armor_absorption= ust::min( damage, player_state.armor * 2u );
+	var u32 damage_without_armor_absorption= damage - damage_with_armor_absorption;
+
+	var u32 armor_reduce= damage_with_armor_absorption / 2u;
+	var u32 energy_reduce= damage_with_armor_absorption / 4u + damage_without_armor_absorption;
+
+	player_state.armor-= ust::min( armor_reduce, player_state.armor );
+	player_state.energy-= ust::min( energy_reduce, player_state.energy );
 }
 
 fn DamageEntity( EntityState &mut entity, u32 damage )
@@ -2091,6 +2104,36 @@ fn PickUpItems( GameMapData& map_data, GameState &mut game_state )
 							total_energy-= inventory_energy;
 
 							if( total_energy < box_energy )
+							{
+								need_to_remove_entity= true;
+							}
+						}
+						else if( tool.tool_type == EntitiesDescription::ToolType::Armor )
+						{
+							// Use the same approach for armor as for energy.
+							// Apply all armor to the current armor level, store the rest in inventory.
+							// Also apply armor from inventory if current armor level isn't full.
+							// TODO - investigate whether it's correct.
+
+							var u32 box_armor= box_contents.amount;
+
+							var u32 &mut player_armor= game_state.player.armor;
+
+							var u32 &mut inventory_armor=
+								game_state.player.inventory[ size_type(EntitiesDescription::ToolType::Armor) ];
+
+							var u32 mut total_armor= box_armor + player_armor + inventory_armor;
+
+							// For now assume that the maximum armor is equal to maximum health.
+							var u32 max_player_armor= GetPlayerStartEnergy( entities_description );
+
+							player_armor= ust::min( total_armor, max_player_armor );
+							total_armor-= player_armor;
+
+							inventory_armor= ust::min( total_armor, tool.player_max_count );
+							total_armor-= inventory_armor;
+
+							if( total_armor < box_armor )
 							{
 								need_to_remove_entity= true;
 							}

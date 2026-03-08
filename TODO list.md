@@ -51,6 +51,8 @@ Gameplay investigation:
 * Investigate how different entity parameters affect their behavior.
 * Investigate what "BUTLA_TLENU" is.
 * Investigate misfire behavior.
+* Investigate whether enemies have armor.
+* Investigate where maximum amount of current armor (not inventory armor) is specified.
 
 PanzerMortyr general:
 
@@ -67,7 +69,6 @@ PanzerMortyr general:
 
 PanzerMortyr game logic:
 
-* Decrease player's armor properly while being damaged.
 * Implement player's death.
 * Implement game state save/loading.
 * Implement multiplayer game logic with client/server.
@@ -99,8 +100,10 @@ PanzerMortyr game logic:
 * Perform camera Z coordinate smoothing while climbing steps, so that camera movement doesn't look jaggy.
 * Perform separate collisions calculation with glass quads - to skip broken glass quads.
 * Implement melee attacks (kick, knife).
-* Implement player's health management.
-* Implement player's armor management.
+* Implement inventory controls - selecting next/previous item, activating items.
+* Implement selecting weapons via inventory controls.
+* Implement using health (energy) from inventory via inventory controls.
+* Implement using armor from inventory via inventory controls.
 * Implement inventory navigation and weapon/tool selection.
 * Implement jetpack tool.
 * Implement night vision tool.
