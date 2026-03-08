@@ -8,6 +8,7 @@ This documents describes various interesting facts about the original game.
 * There is a note on map 1 (the second campaign map) with the following quote:
   ... cadent a latere tuo mille et decem milia a dextris tuis, ad te autem non appropinquabit...
   The same quote can be seen on the first exit door on map 23 (the last campaign map).
+* Keycard items (future-stlye keys) have texts "Sven Mortyr" and "Corvin Software Studios" on them and a Mortyr logo.
 
 ### Non-obvious gameplay facts
 
@@ -24,6 +25,7 @@ This documents describes various interesting facts about the original game.
 * The player shots slightly right from the crosshair. There is an alternative behavior activated via a console command "aim on" - which moves crosshair if necessary.
 * Some decorations can be pushed (bottles, crates), but it's buggy if more than one decoration is pushed in the same time - it's possible to push a decoration into a wall.
 * Bullets spread for weapons is different for the player and for enemies - with different settings set for each weapon.
+* The voklkssturm enemy (with grenades) surrenders if has no ammo left, but it's a false surrender (a notable war crime), he continues fighting and searches for more ammunition as long as the player can't see him.
 
 ### Technical aspects
 

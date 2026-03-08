@@ -43,7 +43,7 @@ This includes usual in-game input, changes done menu, commands typed into the co
 Thus such inputs should be sanitized to not cause a crash.
 
 
-### Client-server architecture
+### Multiplayer architecture
 
 Since the original game has multiplayer support, *PanzerMortyr* should have multiplayer support too.
 This may be achieved by using client-server architecture, where one game instance works like a server (performs all game logic calculations) and all clients connected to it display results of these calculations.
@@ -68,6 +68,17 @@ The original game was written for x86 processors and its data files store values
 But *PanzerMortyr* may be theoretically run on a CPU with different bytes order, for such case it should perform necessary byte order swaps while loading original game data.
 
 
+### No resource loading outside loading phase
+
+All resources required for a particular game map (for game logic, rendering, sounds) should be loaded once at map start - without lazy loading later.
+This includes resources requiring loading files from disk or resources requiring expensive computations.
+
+The same should be for non-map related resources, like GUI and HUD images - they should be loaded once at game start.
+The only exception are on-disk resources, which may be changed, like save file infos and images.
+
+This requirement is necessary to avoid possible lags and FPS drops.
+
+
 ### Distributed files should be minimized
 
 For installation simplicity *PanzerMortyr* should contain as little files in its distribution package as possible.
@@ -75,3 +86,17 @@ Dynamic libraries usage should be avoided (maybe with a couple of exceptions).
 Additional resources (shaders, fonts, etc.) should be embedded into its main executable.
 
 Executable files should be obviously optimized and should contain no debug information - in order to achieve good performance and small size.
+
+No default config file should be shipped.
+Such file with default values should be created at first launch.
+
+
+### Advanced game data search
+
+*PanzerMortyr* should require as little steps as possible to be able to work.
+It should detect original game files in the current directory and in the directory where its executable is located.
+Additionally it should detect original installation via registry (on Windows).
+
+Since installing the original game first is tricky (especially on non-Windows systems) *PanzerMortyr* should be able to work with non-installed game data (disk image).
+It may be achieved by adding disk image reading code into the *PanzerMortyr* executable or by writing a separate installer tool.
+Only if it's very difficult to implement, end users should do depacking themselves by using a detailed instruction provided.
