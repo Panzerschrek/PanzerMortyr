@@ -255,6 +255,8 @@ fn nodiscard ProcessGameLogicStep(
 
 	PickUpItems( map_data, game_state );
 
+	DealPlayerEnvironmentalDamage( map_data, game_state );
+
 	var u32 next_map_index= InteractWithTriggerVolumes( map_data, game_state );
 
 	++game_state.step_index;
@@ -2177,6 +2179,46 @@ fn PickUpItems( GameMapData& map_data, GameState &mut game_state )
 			RemoveEntityCollider( entity_index, game_state );
 			game_state.entities[ entity_index ].reset();
 		}
+	}
+}
+
+fn DealPlayerEnvironmentalDamage( GameMapData& map_data, GameState &mut game_state )
+{
+	if( game_state.step_index % c_environmental_damage_period_steps != 0u )
+	{
+		return;
+	}
+
+	if( size_type( game_state.player.collider_index ) >= game_state.colliders.size() )
+	{
+		return;
+	}
+
+	var BBox3f& player_bbox= game_state.colliders[ size_type( game_state.player.collider_index ) ].bbox;
+
+	var bool mut is_in_acid= false, mut is_in_lava= false;
+
+	var ust::array_view_imut</ZvoxCluster/> clusters= map_data.zvox_data.deref().clusters;
+
+	VisitBoundingBoxesHierarchyForBBox(
+		map_data.room_clusters_hierarchy.deref(),
+		player_bbox,
+		lambda[&]( ClusterIndexInHierarchy c )
+		{
+			var ZvoxCluster& cluster= clusters[ size_type(c) ];
+			if( CreateClusterBBox( cluster ).Instersects( player_bbox ) )
+			{
+				is_in_acid |= cluster.contents == ZvoxCluster::c_contents_acid;
+				is_in_lava |= cluster.contents == ZvoxCluster::c_contents_lava;
+			}
+		} );
+
+	if( is_in_acid | is_in_lava )
+	{
+		// TODO - don't deal acid damage if has an acid protection suit active.
+
+		// Armor can't absorb environmental damage, so that only energy is damaged.
+		game_state.player.energy-= ust::min( c_environmental_damage, game_state.player.energy );
 	}
 }
 

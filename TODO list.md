@@ -78,7 +78,6 @@ PanzerMortyr game logic:
 * Implement sky decorations movement/turning logic (with mode=11).
 * Implement collisions hack for the one-way passable wall on map 33.
 * Implement fall damage for player and for entities.
-* Implement acid and lava damage for player and for entities.
 * Implement rare animation types - used for some entities.
 * Implement tank-related logic elements.
 * Implement logic elements specific for dog enemies.
