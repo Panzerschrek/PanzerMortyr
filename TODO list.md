@@ -98,7 +98,6 @@ PanzerMortyr game logic:
 * Implement pushing pushable entities.
 * Perform camera Z coordinate smoothing while climbing steps, so that camera movement doesn't look jaggy.
 * Perform separate collisions calculation with glass quads - to skip broken glass quads.
-* Implement melee attacks (kick, knife).
 * Implement inventory controls - selecting next/previous item, activating items.
 * Implement selecting weapons via inventory controls.
 * Implement using health (energy) from inventory via inventory controls.
