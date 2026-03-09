@@ -92,7 +92,6 @@ PanzerMortyr game logic:
 * Implement birds.
 * Implement rats.
 * Avoid spawning some enemies based on current skill level (investigate how the original game does this).
-* Spawn enemies having trigger box only when player touches this box (usually behind his back).
 * Implement remaining entity state transitions (used only by some enemy types).
 * Fix ugly injury-based entity state transitions, when an injury operation is changed while some other injury operation is already in process.
 * Implement pushing pushable entities.
