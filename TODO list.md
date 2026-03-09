@@ -118,8 +118,7 @@ PanzerMortyr game logic:
 * Spawn blood billboards on player or entity damaging.
 * Leave footsteps where they should be.
 * Implement bullet hit effects (smoke, sparkles, explosion billboards).
-* Spawn smoke trail sprites.
-* Spawn muzzle flash and napalm sprites.
+* Draw muzzle flash sprites.
 * Implement flamethrower flames sticking to map geometry and entities and damaging them.
 * Implement shot recoil (where it should be) for both player and enemies.
 * Implement weapon lowering on reloading for weapons where it's necessary (grenades).
