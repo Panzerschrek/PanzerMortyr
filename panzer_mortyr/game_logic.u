@@ -253,6 +253,8 @@ fn nodiscard ProcessGameLogicStep(
 
 	ProcessProjectilesLogicStep( map_data, game_state );
 
+	ApplySplashDamageEvents( game_state );
+
 	ProcessSmokeTrailParticlesLogicStep( game_state.smoke_trail_particles );
 
 	PickUpItems( map_data, game_state );
@@ -1884,19 +1886,24 @@ fn ProcessProjectilesLogicStep( GameMapData& map_data, GameState &mut game_state
 				{
 					// Collided with something.
 
+					var Vec3f hit_position=
+						projectile.position + velocity_slightly_elongated * smallest_travelled_distance;
+
 					if( hit_entity_index != ~0u )
 					{
-						DamageEntityOrPlayer(
-							game_state.entities, game_state.player, hit_entity_index, weapon_tool.damage );
+						if( weapon_tool.splash_damage_area_size == 0u )
+						{
+							// No splash damage - damage hit entity directly.
+							DamageEntityOrPlayer(
+								game_state.entities, game_state.player, hit_entity_index, weapon_tool.damage );
+						}
 					}
 					else
 					{
 						// If collided with the world - add a bullet hole.
 						// TODO - check if it's appropriate for hit material.
 						// TODO - detect collisions with dynamic clusters and attach a bullet hole to this cluster.
-						var Vec3f hit_position=
-							projectile.position + velocity_slightly_elongated * smallest_travelled_distance;
-							game_state.bullet_holes.push_back( hit_position );
+						game_state.bullet_holes.push_back( hit_position );
 
 						if( weapon_tool.projectile_kind == EntitiesDescription::Tool::c_projectile_kind_ricocheting_bullet |
 							weapon_tool.projectile_kind == EntitiesDescription::Tool::c_projectile_kind_grenade )
@@ -1931,7 +1938,17 @@ fn ProcessProjectilesLogicStep( GameMapData& map_data, GameState &mut game_state
 						}
 					}
 
-					// TODO - apply splash damage if necessary.
+					if( weapon_tool.splash_damage_area_size > 0u )
+					{
+						game_state.splash_damage_events.push_back(
+							SplashDamageEvent
+							{
+								.position= hit_position,
+								.radius( weapon_tool.splash_damage_area_size ),
+								.damage= weapon_tool.damage,
+							} );
+					}
+
 					// TODO - spawn sparks and smoke effects (if enabled).
 					// TODO - spawn a dynamic light if necessary.
 
@@ -1965,11 +1982,25 @@ fn ProcessProjectilesLogicStep( GameMapData& map_data, GameState &mut game_state
 				// Their effective distance is equal to their speed per step.
 				need_to_remove= true;
 			}
-			if( weapon_tool.projectile_kind == EntitiesDescription::Tool::c_projectile_kind_grenade &
+
+			if( !need_to_remove &
+				weapon_tool.projectile_kind == EntitiesDescription::Tool::c_projectile_kind_grenade &
 				projectile.age_steps >= c_grenade_explosion_delay )
 			{
-				// TODO - apply splash damage.
+				// Explode grenades after some delat.
+
 				need_to_remove= true;
+
+				if( weapon_tool.splash_damage_area_size > 0u )
+				{
+					game_state.splash_damage_events.push_back(
+						SplashDamageEvent
+						{
+							.position= projectile.position,
+							.radius( weapon_tool.splash_damage_area_size ),
+							.damage= weapon_tool.damage,
+						} );
+				}
 			}
 		}
 
@@ -2060,6 +2091,17 @@ fn DamageEntity( EntityState &mut entity, u32 damage )
 	}
 
 	// TODO - spawn blood particles.
+}
+
+fn ApplySplashDamageEvents( GameState &mut game_state )
+{
+	foreach( &splash_damage_event : game_state.splash_damage_events )
+	{
+		// TODO
+		ust::ignore_unused( splash_damage_event );
+	}
+
+	game_state.splash_damage_events.clear();
 }
 
 fn ProcessSmokeTrailParticlesLogicStep( ust::vector</SmokeTrailParticle/> &mut smoke_trail_particles )
