@@ -253,6 +253,8 @@ fn nodiscard ProcessGameLogicStep(
 
 	ProcessProjectilesLogicStep( map_data, game_state );
 
+	ApplySplashDamageEvents( game_state );
+
 	ProcessSmokeTrailParticlesLogicStep( game_state.smoke_trail_particles );
 
 	PickUpItems( map_data, game_state );
@@ -679,7 +681,8 @@ fn PerformPlayerMovement(
 			game_state.player.position,
 			player_bbox,
 			c_player_entity_index,
-			game_state.projectiles );
+			game_state.projectiles,
+			game_state.splash_damage_events );
 
 	DamagePlayer( game_state.player, projectile_damage );
 }
@@ -1240,6 +1243,7 @@ fn ProcessEntitiesLogicStep( GameGlobalData& game_global_data, GameMapData& map_
 				game_state.dynamic_cluster_colliders,
 				game_state.colliders,
 				game_state.projectiles,
+				game_state.splash_damage_events,
 				entity,
 				u32(entity_index),
 				entity_description,
@@ -1364,7 +1368,8 @@ fn ProcessDynamicClustersLogicStep( GameMapData& map_data, GameState &mut game_s
 						game_state.entities,
 						game_state.dynamic_cluster_colliders,
 						game_state.player,
-						game_state.projectiles ) )
+						game_state.projectiles,
+						game_state.splash_damage_events ) )
 				{
 					cluster_state.distance_from_start+= movement_speed;
 
@@ -1417,7 +1422,8 @@ fn ProcessDynamicClustersLogicStep( GameMapData& map_data, GameState &mut game_s
 						game_state.entities,
 						game_state.dynamic_cluster_colliders,
 						game_state.player,
-						game_state.projectiles ) )
+						game_state.projectiles,
+						game_state.splash_damage_events ) )
 				{
 					cluster_state.distance_from_start-= movement_speed;
 
@@ -1592,7 +1598,8 @@ fn PushMoveDynamicCluster(
 	ust::array_view_mut</ ust::optional</EntityState/> /> entities,
 	ust::array_view_imut</DynamicClusterCollider/> dynamic_cluster_colliders,
 	PlayerState &mut player_state,
-	ust::vector</Projectile/> &mut projectiles ) : bool
+	ust::vector</Projectile/> &mut projectiles,
+	ust::vector</SplashDamageEvent/> &mut splash_damage_events ) : bool
 {
 	var f32 movement_vector_length= in_movement_vector.Length();
 	if( movement_vector_length == 0.0f )
@@ -1689,7 +1696,8 @@ fn PushMoveDynamicCluster(
 					push_vector,
 					collider.bbox,
 					collider.entity_index,
-					projectiles );
+					projectiles,
+					splash_damage_events );
 
 			DamageEntityOrPlayer( entities, player_state, collider.entity_index, projectile_damage );
 
@@ -1770,9 +1778,19 @@ fn PushMoveDynamicCluster(
 					{
 						// Non-bouncing projectile - just destroy it.
 
+						if( weapon_tool.splash_damage_area_size > 0u )
+						{
+							splash_damage_events.push_back(
+								SplashDamageEvent
+								{
+									.position= projectile.position,
+									.radius( weapon_tool.splash_damage_area_size ),
+									.damage= weapon_tool.damage,
+								} );
+						}
+
 						need_to_remove= true;
 
-						// TODO - trigger splash damage.
 						// TODO - leave a bullet hole.
 					}
 				}
@@ -1884,19 +1902,24 @@ fn ProcessProjectilesLogicStep( GameMapData& map_data, GameState &mut game_state
 				{
 					// Collided with something.
 
+					var Vec3f hit_position=
+						projectile.position + velocity_slightly_elongated * smallest_travelled_distance;
+
 					if( hit_entity_index != ~0u )
 					{
-						DamageEntityOrPlayer(
-							game_state.entities, game_state.player, hit_entity_index, weapon_tool.damage );
+						if( weapon_tool.splash_damage_area_size == 0u )
+						{
+							// No splash damage - damage hit entity directly.
+							DamageEntityOrPlayer(
+								game_state.entities, game_state.player, hit_entity_index, weapon_tool.damage );
+						}
 					}
 					else
 					{
 						// If collided with the world - add a bullet hole.
 						// TODO - check if it's appropriate for hit material.
 						// TODO - detect collisions with dynamic clusters and attach a bullet hole to this cluster.
-						var Vec3f hit_position=
-							projectile.position + velocity_slightly_elongated * smallest_travelled_distance;
-							game_state.bullet_holes.push_back( hit_position );
+						game_state.bullet_holes.push_back( hit_position );
 
 						if( weapon_tool.projectile_kind == EntitiesDescription::Tool::c_projectile_kind_ricocheting_bullet |
 							weapon_tool.projectile_kind == EntitiesDescription::Tool::c_projectile_kind_grenade )
@@ -1931,7 +1954,17 @@ fn ProcessProjectilesLogicStep( GameMapData& map_data, GameState &mut game_state
 						}
 					}
 
-					// TODO - apply splash damage if necessary.
+					if( weapon_tool.splash_damage_area_size > 0u )
+					{
+						game_state.splash_damage_events.push_back(
+							SplashDamageEvent
+							{
+								.position= hit_position,
+								.radius( weapon_tool.splash_damage_area_size ),
+								.damage= weapon_tool.damage,
+							} );
+					}
+
 					// TODO - spawn sparks and smoke effects (if enabled).
 					// TODO - spawn a dynamic light if necessary.
 
@@ -1965,11 +1998,25 @@ fn ProcessProjectilesLogicStep( GameMapData& map_data, GameState &mut game_state
 				// Their effective distance is equal to their speed per step.
 				need_to_remove= true;
 			}
-			if( weapon_tool.projectile_kind == EntitiesDescription::Tool::c_projectile_kind_grenade &
+
+			if( !need_to_remove &
+				weapon_tool.projectile_kind == EntitiesDescription::Tool::c_projectile_kind_grenade &
 				projectile.age_steps >= c_grenade_explosion_delay )
 			{
-				// TODO - apply splash damage.
+				// Explode grenades after some delay.
+
 				need_to_remove= true;
+
+				if( weapon_tool.splash_damage_area_size > 0u )
+				{
+					game_state.splash_damage_events.push_back(
+						SplashDamageEvent
+						{
+							.position= projectile.position,
+							.radius( weapon_tool.splash_damage_area_size ),
+							.damage= weapon_tool.damage,
+						} );
+				}
 			}
 		}
 
@@ -2060,6 +2107,35 @@ fn DamageEntity( EntityState &mut entity, u32 damage )
 	}
 
 	// TODO - spawn blood particles.
+}
+
+fn ApplySplashDamageEvents( GameState &mut game_state )
+{
+	foreach( &splash_damage_event : game_state.splash_damage_events )
+	{
+		foreach( &collider : game_state.colliders )
+		{
+			var Vec3f bbox_dimensions= collider.bbox.GetDimensions();
+			var f32 approximate_bbox_radius=
+				0.5f * ust::min( bbox_dimensions.x, ust::min( bbox_dimensions.y, bbox_dimensions.z ) );
+
+			// Calculate approximate distance to the edge of a sphere roughly representing this bbox.
+			var f32 distane=
+				ust::max(
+					0.0f,
+					( collider.bbox.GetCenter() - splash_damage_event.position ).Length() - approximate_bbox_radius );
+
+			if( distane < splash_damage_event.radius )
+			{
+				// Use simple linear distance to damage relation.
+				var f32 damage_fraction= 1.0f - distane / splash_damage_event.radius;
+				var u32 damage_at_distance( f32(splash_damage_event.damage) * damage_fraction );
+				DamageEntityOrPlayer( game_state.entities, game_state.player, collider.entity_index, damage_at_distance );
+			}
+		}
+	}
+
+	game_state.splash_damage_events.clear();
 }
 
 fn ProcessSmokeTrailParticlesLogicStep( ust::vector</SmokeTrailParticle/> &mut smoke_trail_particles )
@@ -2341,7 +2417,8 @@ fn nodiscard CollideMovedEntityWithProjectiles(
 	Vec3f& new_position,
 	BBox3f& bbox,
 	u32 entity_index,
-	ust::vector</Projectile/> &mut projectiles ) : u32
+	ust::vector</Projectile/> &mut projectiles,
+	ust::vector</SplashDamageEvent/> &mut splash_damage_events ) : u32
 {
 	var u32 mut damage= 0u;
 
@@ -2380,14 +2457,27 @@ fn nodiscard CollideMovedEntityWithProjectiles(
 				{
 					if( !( intersection_result.near_point_distance >= 1.0f | intersection_result.far_point_distance <= 0.0f ) )
 					{
-						need_to_remove= true;
-
-						// TODO - trigger splash damage.
-
 						var EntitiesDescription::Tool& weapon_tool=
 							entities_description.tools[ size_type( projectile.weapon_tool_index ) ];
 
-						damage+= weapon_tool.damage;
+						if( weapon_tool.splash_damage_area_size > 0u )
+						{
+							// For weapons with splash damage add a splash damage event to hit this entity and other entities nearby.
+							splash_damage_events.push_back(
+								SplashDamageEvent
+								{
+									.position= projectile.position,
+									.radius( weapon_tool.splash_damage_area_size ),
+									.damage= weapon_tool.damage,
+								} );
+						}
+						else
+						{
+							// For weapons with no splash damage just apply damage directly.
+							damage+= weapon_tool.damage;
+						}
+
+						need_to_remove= true;
 					}
 				}
 			}
@@ -3128,6 +3218,7 @@ fn MoveEntity(
 	ust::array_view_imut</DynamicClusterCollider/> dynamic_cluster_colliders,
 	ust::array_view_imut</Collider/> extra_colliders,
 	ust::vector</Projectile/> &mut projectiles,
+	ust::vector</SplashDamageEvent/> &mut splash_damage_events,
 	EntityState &mut entity,
 	u32 entity_index,
 	EntitiesDescription::EntityDescription& entity_description,
@@ -3259,7 +3350,8 @@ fn MoveEntity(
 				entity.position,
 				collider_bbox,
 				entity_index,
-				projectiles );
+				projectiles,
+				splash_damage_events );
 
 		DamageEntity( entity, projectile_damage );
 	}

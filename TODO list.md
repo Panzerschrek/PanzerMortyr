@@ -121,7 +121,6 @@ PanzerMortyr game logic:
 * Implement flamethrower flames sticking to map geometry and entities and damaging them.
 * Implement shot recoil (where it should be) for both player and enemies.
 * Implement weapon lowering on reloading for weapons where it's necessary (grenades).
-* Implement splash damage for projectiles.
 * Spawn light flashes while shooting.
 * Attach dynamic light sources to projectiles (where they should be).
 * Spawn bubble sprites while swimming in water.
@@ -130,7 +129,6 @@ PanzerMortyr game logic:
 * Try dealing with cases where two enemies move in exactly opposite directions and block each other.
 * Consider calculating and using a better navigation graph (maybe even single graph for an entire map), which isn't so buggy as original per-entity navigation graphs.
 * Alarm enemies by nearby projectile hits.
-* Alarm enemies by dealing splash damage.
 * Alarm enemies by shooting sounds.
 * Perform alarm-based enemy state transition with a delay (investigate how this delay is specified).
 * Fix shooting through walls, which is possible by staying too close to a wall and by using some weapons (like rifle).
