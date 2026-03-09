@@ -45,7 +45,10 @@ fn CreateNewMapGameState(
 	};
 
 	var EntitiesDescription& entities_description= map_data.entities_description.deref();
-	auto& zpoz_entities= map_data.zpoz_data.deref().entities;
+
+	var ZpozData& zpoz_data= map_data.zpoz_data.deref();
+
+	var ust::array_view_imut</ZpozEntity/> zpoz_entities= zpoz_data.entities;
 
 	// Map source entities 1 to 1 to runtime entities. It's needed for index stability.
 	game_state.entities.resize( zpoz_entities.size() );
@@ -62,6 +65,14 @@ fn CreateNewMapGameState(
 		if( u32( in_entity.kind ) == c_player_entity_kind )
 		{
 			// Do not place player spawn entities.
+			continue;
+		}
+
+		var size_type navigation_info_index( in_entity.data[16] );
+		if( navigation_info_index < zpoz_data.entity_navigation_infos.size() &&
+			 zpoz_data.entity_navigation_infos[ navigation_info_index ].spawn_trigger_is_present != 0u )
+		{
+			// Don't spawn enemies spawned via a trigger touch.
 			continue;
 		}
 
@@ -88,7 +99,7 @@ fn CreateNewMapGameState(
 				.ammo= entity_description.ammunition,
 				.current_operation= c_start_operation,
 				.num_steps_since_operation_start= 0u,
-				.navigation_info_index( in_entity.data[16] ),
+				.navigation_info_index( navigation_info_index ),
 				.target_navigation_graph_node= ~0u,
 				.current_navigation_graph_node= ~0u,
 				.alarmed= false,
@@ -246,6 +257,9 @@ fn nodiscard ProcessGameLogicStep(
 	PerformPlayerWeaponLogic( map_data, player_input, game_state );
 
 	PerformPlayerMovement( global_data, map_data, player_input, game_state );
+
+	// Spawn new entities before entity update step, so that they are properly animated.
+	TriggerEntitiesSpawn( map_data, game_state );
 
 	ProcessEntitiesLogicStep( global_data, map_data, game_state );
 
@@ -925,6 +939,107 @@ fn CalculateQuadNormal( ZmapQuad& quad ) : Vec3f
 		( quad_vertices[1] - quad_vertices[2] ).Cross( quad_vertices[2] - quad_vertices[3] ) +
 		( quad_vertices[2] - quad_vertices[3] ).Cross( quad_vertices[3] - quad_vertices[0] ) +
 		( quad_vertices[3] - quad_vertices[0] ).Cross( quad_vertices[0] - quad_vertices[1] );
+}
+
+fn TriggerEntitiesSpawn( GameMapData& map_data, GameState &mut game_state )
+{
+	// Spawn enemies behind the player's back.
+
+	if( size_type( game_state.player.collider_index ) >= game_state.colliders.size() )
+	{
+		return;
+	}
+
+	var BBox3f player_bbox= game_state.colliders[ size_type( game_state.player.collider_index ) ].bbox;
+
+	var EntitiesDescription& entities_description= map_data.entities_description.deref();
+
+	var ZpozData& zpoz_data= map_data.zpoz_data.deref();
+
+	var ust::array_view_imut</ZpozEntity/> zpoz_entities= zpoz_data.entities;
+
+	for( var size_type mut i= 0s, i_end= ust::min( zpoz_entities.size(), game_state.entities.size() ); i < i_end; ++i )
+	{
+		if( !game_state.entities[i].empty() )
+		{
+			// Already spawned this entity.
+			continue;
+		}
+
+		var ZpozEntity& in_entity= zpoz_entities[i];
+
+		if( in_entity.alive_flag == 0u16 )
+		{
+			continue;
+		}
+
+		var size_type navigation_info_index( in_entity.data[16] );
+		if( navigation_info_index >= zpoz_data.entity_navigation_infos.size() )
+		{
+			// No navigation info and thus spawn trigger is present.
+			continue;
+		}
+
+		var ZpozEntityNavigationInfo& navigation_info= zpoz_data.entity_navigation_infos[ navigation_info_index ];
+
+		if( navigation_info.spawn_trigger_is_present == 0u )
+		{
+			continue;
+		}
+
+		var BBox3f spawn_trigger_bbox
+		{
+			.min(
+				f32( navigation_info.spawn_trigger_box_center[0] - navigation_info.spawn_trigger_box_half_size[0] ),
+				f32( navigation_info.spawn_trigger_box_center[1] - navigation_info.spawn_trigger_box_half_size[1] ),
+				f32( navigation_info.spawn_trigger_box_center[2] - navigation_info.spawn_trigger_box_half_size[2] ) ),
+			.max(
+				f32( navigation_info.spawn_trigger_box_center[0] + navigation_info.spawn_trigger_box_half_size[0] ),
+				f32( navigation_info.spawn_trigger_box_center[1] + navigation_info.spawn_trigger_box_half_size[1] ),
+				f32( navigation_info.spawn_trigger_box_center[2] + navigation_info.spawn_trigger_box_half_size[2] ) ),
+		};
+
+		if( !player_bbox.InstersectsOrTouches( spawn_trigger_bbox ) )
+		{
+			continue;
+		}
+
+		if( size_type( in_entity.kind ) >= entities_description.entities.size() )
+		{
+			continue;
+		}
+
+		var EntitiesDescription::EntityDescription& entity_description=
+			entities_description.entities[ size_type( in_entity.kind ) ];
+
+		if( size_type( c_start_operation ) >= entity_description.operations.size() )
+		{
+			continue;
+		}
+
+		game_state.entities[i]=
+			EntityState
+			{
+				.kind( in_entity.kind ),
+				.position( f32( in_entity.position[0] ), f32( in_entity.position[1] ), f32( in_entity.position[2] ) ),
+				.azimuth( Convert1024Angle( f32( in_entity.data[4] ) ) ),
+				.energy= entity_description.energy,
+				.ammo= entity_description.ammunition,
+				.current_operation= c_start_operation,
+				.num_steps_since_operation_start= 0u,
+				.navigation_info_index( navigation_info_index ),
+				.target_navigation_graph_node= ~0u,
+				.current_navigation_graph_node= ~0u,
+				.alarmed= true, // Spawn triggered entities in alarmed state.
+				.player_is_in_sight= false,
+				.lost_energy_in_current_operation= false,
+				.animation_frames= zero_init, // Set later.
+				.velocity_z= 0.0f,
+				.collider_index= ~0u,
+			};
+
+		AddEntityCollider( entities_description, i, game_state );
+	}
 }
 
 fn ProcessEntitiesLogicStep( GameGlobalData& game_global_data, GameMapData& map_data, GameState &mut game_state )
