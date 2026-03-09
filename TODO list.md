@@ -143,7 +143,6 @@ PanzerMortyr game logic:
 * Tune granades exposion delay.
 * Tune projectiles maximum age.
 * For flamethrower spawn sticky flame objects slowly damaging enemies and the player.
-* For weapons firing more than one shot at once turn the direction vector of each odd shot slightly - up as the original game does.
 * Perform proper player to entity visibility check while doing entity state transition based on "w_zasiegu_widocznosci" property.
 
 
