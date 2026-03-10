@@ -1263,6 +1263,33 @@ fn ProcessEntitiesLogicStep( GameGlobalData& game_global_data, GameMapData& map_
 					}
 				}
 
+				if_var( &collision_with_enemy : operation.collision_with_enemy )
+				{
+					// State transition used by only by the destructible wall on map 24.
+					// Just check if some other entity touches this entity.
+
+					var bool mut collided= false;
+
+					if_var( &mut collider_bbox : CalculateEntityColliderBBox( entity, operation ) )
+					{
+						collider_bbox.min-= Vec3f( 1.0f, 1.0f, 1.0f );
+						collider_bbox.max+= Vec3f( 1.0f, 1.0f, 1.0f );
+
+						foreach( &collider : game_state.colliders )
+						{
+							if( collider.bbox.Instersects( collider_bbox ) && collider.entity_index != c_player_entity_index )
+							{
+								collided= true;
+							}
+						}
+					}
+
+					if( collided )
+					{
+						next_operation= collision_with_enemy.new_operation;
+					}
+				}
+
 				if_var( &if_alive : operation.if_alive )
 				{
 					if( if_alive.time != 0u && entity.num_steps_since_operation_start == if_alive.time )
@@ -2699,41 +2726,7 @@ fn AddEntityCollider(
 		var EntitiesDescription::Operation& operation=
 			entity_description.operations[ size_type( entity.current_operation ) ];
 
-		var ust::optional</BBox3f/> mut collider_bbox;
-
-		foreach( &anim : operation.animations )
-		{
-			if( anim.num_steps == 0u )
-			{
-				continue;
-			}
-
-			if( anim.bounding_box_half_size_x == 0 ||
-				anim.bounding_box_half_size_y == 0 ||
-				anim.bounding_box_half_size_z == 0 )
-			{
-				// Entities with at least one zero collider dimentsion don't collide with each other.
-				continue;
-			}
-
-			var Vec3f mut bbox_half_size(
-				f32( anim.bounding_box_half_size_x ),
-				f32( anim.bounding_box_half_size_y ),
-				f32( anim.bounding_box_half_size_z ) );
-
-			RotateEntityBBox( bbox_half_size, entity.azimuth );
-
-			var Vec3f bbox_center=
-				entity.position +
-				Vec3f(
-					f32( anim.bounding_box_center_x ),
-					f32( anim.bounding_box_center_y ),
-					f32( anim.bounding_box_center_z ) );
-
-			// Usually we have only one collision box.
-			// The only exception is the tank enemy on map 24. In this case use the last one collider - it's good enough.
-			collider_bbox= BBox3f{ .min= bbox_center - bbox_half_size, .max= bbox_center + bbox_half_size };
-		}
+		var ust::optional</BBox3f/> mut collider_bbox= CalculateEntityColliderBBox( entity, operation );
 
 		if( !collider_bbox.empty() )
 		{
@@ -2741,6 +2734,47 @@ fn AddEntityCollider(
 			game_state.colliders.push_back( Collider{ .bbox= collider_bbox.try_take(), .entity_index( entity_index ) } );
 		}
 	}
+}
+
+fn CalculateEntityColliderBBox( EntityState& entity, EntitiesDescription::Operation& operation ) : ust::optional</BBox3f/>
+{
+	var ust::optional</BBox3f/> mut collider_bbox;
+
+	foreach( &anim : operation.animations )
+	{
+		if( anim.num_steps == 0u )
+		{
+			continue;
+		}
+
+		if( anim.bounding_box_half_size_x == 0 ||
+			anim.bounding_box_half_size_y == 0 ||
+			anim.bounding_box_half_size_z == 0 )
+		{
+			// Entities with at least one zero collider dimentsion don't collide with each other.
+			continue;
+		}
+
+		var Vec3f mut bbox_half_size(
+			f32( anim.bounding_box_half_size_x ),
+			f32( anim.bounding_box_half_size_y ),
+			f32( anim.bounding_box_half_size_z ) );
+
+		RotateEntityBBox( bbox_half_size, entity.azimuth );
+
+		var Vec3f bbox_center=
+			entity.position +
+			Vec3f(
+				f32( anim.bounding_box_center_x ),
+				f32( anim.bounding_box_center_y ),
+				f32( anim.bounding_box_center_z ) );
+
+		// Usually we have only one collision box.
+		// The only exception is the tank enemy on map 24. In this case use the last one collider - it's good enough.
+		collider_bbox= BBox3f{ .min= bbox_center - bbox_half_size, .max= bbox_center + bbox_half_size };
+	}
+
+	return collider_bbox;
 }
 
 fn RemoveEntityCollider(
@@ -3415,7 +3449,6 @@ fn MoveEntity(
 				f32( anim.bounding_box_center_x ),
 				f32( anim.bounding_box_center_y ),
 				f32( anim.bounding_box_center_z ) );
-
 
 		// Usually we have only one collision box.
 		// The only exception is the tank enemy on map 24. In this case use the last one collider - it's good enough.
