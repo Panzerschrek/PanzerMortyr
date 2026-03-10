@@ -1319,6 +1319,20 @@ fn ProcessEntitiesLogicStep( GameGlobalData& game_global_data, GameMapData& map_
 					}
 				}
 
+				if_var( &directional_shot : operation.directional_shot )
+				{
+					if( entity.num_steps_since_operation_start == directional_shot.delay )
+					{
+						EntityDirectionalShot(
+							entities_description,
+							directional_shot,
+							entity,
+							u32( entity_index ),
+							game_state.random,
+							game_state.projectiles );
+					}
+				}
+
 				if_var( &if_alive : operation.if_alive )
 				{
 					if( if_alive.time != 0u && entity.num_steps_since_operation_start == if_alive.time )
@@ -3395,6 +3409,53 @@ fn EntityShoot(
 		} );
 
 	--entity.ammo;
+}
+
+fn EntityDirectionalShot(
+	EntitiesDescription& entities_description,
+	EntitiesDescription::DirectionalShot& directional_shot,
+	EntityState& entity,
+	u32 entity_index,
+	PseudoRandomGenerator &mut rand,
+	ust::vector</Projectile/> &mut projectiles )
+{
+	// No ammo is consumed for directional shots.
+
+	var u32 weapon_tool_index= directional_shot.item;
+
+	if( size_type( weapon_tool_index ) >= entities_description.tools.size()  )
+	{
+		return;
+	}
+
+	var EntitiesDescription::Tool& weapon_tool= entities_description.tools[ size_type( weapon_tool_index ) ];
+
+	var Vec3f shot_offset(
+		f32( directional_shot.offset_x ), f32( directional_shot.offset_y ), f32( directional_shot.offset_x ) );
+
+	var Vec3f shot_position=
+		entity.position +
+		shot_offset * Mat4f::MakeRotationZ( entity.azimuth );
+
+	var Vec3f direction( GetEntityDirectionNormalizedVector( entity ), 0.0f );
+
+	// Accuracy is specified on per-weapon basis.
+	// For directional shots don't use skill-based accuracy.
+	var u32 accuracy= weapon_tool.enemy_weapon_accuracy;
+
+	var Vec3f direction_with_random_spread=
+		RandomOffsetShotVector( direction, accuracy, rand );
+
+	projectiles.push_back(
+		Projectile
+		{
+			.weapon_tool_index( weapon_tool_index ),
+			.owner_entity_index= entity_index,
+			.age_steps= 0u,
+			.position= shot_position,
+			.velocity= direction_with_random_spread * f32( weapon_tool.speed ),
+		} );
+
 }
 
 fn MoveEntity(
