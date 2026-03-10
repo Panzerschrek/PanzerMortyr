@@ -220,43 +220,88 @@ fn Game::GetWorldDrawingInfo( this ) : WorldDrawingInfo
 
 			var EntitiesDescription::Operation& operation= entity_description.operations[ size_type( entity.current_operation ) ];
 
-			foreach( pair :
-				ust::array_view_imut</EntitiesDescription::OperationAnimationDescription/>( operation.animations ).iter().zip(
-					ust::array_view_imut</u32/>( entity.animation_frames ).iter() ) )
-			{
-				var EntitiesDescription::OperationAnimationDescription& operation_animation_description= pair.first;
-
-				if( operation_animation_description.num_steps == 0u )
+			auto add_animation_model=
+				lambda[&](
+					EntitiesDescription::OperationAnimationDescription& operation_animation_description,
+					f32 azimuth,
+					u32 frame,
+					bool disable_culling,
+					bool constant_lighting )
 				{
-					continue;
-				}
-
-				var size_type a( operation_animation_description.animation_number );
-				if( a >= entities_description.animations.size() )
-				{
-					continue;
-				}
-				var EntitiesDescription::AnimationDescription& animation= entities_description.animations[a];
-
-				var bool is_sky_decoration=
-					operation.animations[ size_type( EntitiesDescription::Operation::AnimationKind::Landscape ) ].num_steps != 0u;
-
-				drawing_info.model_objects.push_back(
-					WorldDrawingInfo::ModelObject
+					if( operation_animation_description.num_steps == 0u )
 					{
-						.model_file_name= animation.model_file_name,
-						.position= entity.position,
-						.azimuth= entity.azimuth,
-						.elevation= 0.0f,
-						.frame= pair.second,
-						// If it's a sky decoration - disable culling.
-						// It should be always visible, even if such decoration is located somewhere outside map bounds.
-						.disable_culling= is_sky_decoration,
-						.first_person_weapon= false,
-						// Use constant lighting for sky decorations.
-						.constant_lighting= is_sky_decoration,
-					} );
-				}
+						return;
+					}
+
+					var size_type a( operation_animation_description.animation_number );
+					if( a >= entities_description.animations.size() )
+					{
+						return;
+					}
+					var EntitiesDescription::AnimationDescription& animation= entities_description.animations[a];
+
+					drawing_info.model_objects.push_back(
+						WorldDrawingInfo::ModelObject
+						{
+							.model_file_name= animation.model_file_name,
+							.position= entity.position,
+							.azimuth= azimuth,
+							.elevation= 0.0f,
+							.frame= frame,
+							.disable_culling= disable_culling,
+							.first_person_weapon= false,
+							.constant_lighting= constant_lighting,
+						} );
+				};
+
+			add_animation_model(
+				operation.animations[ size_type( EntitiesDescription::Operation::AnimationKind::Forward ) ],
+				entity.azimuth,
+				entity.animation_frames[ size_type( EntitiesDescription::Operation::AnimationKind::Forward ) ],
+				false,
+				false );
+
+			{
+				var EntitiesDescription::OperationAnimationDescription& operation_animation_description=
+					operation.animations[ size_type( EntitiesDescription::Operation::AnimationKind::Rotation ) ];
+
+				add_animation_model(
+					operation_animation_description,
+					Convert1024Angle( f32( operation_animation_description.direction ) ),
+					entity.animation_frames[ size_type( EntitiesDescription::Operation::AnimationKind::Rotation ) ],
+					false,
+					false );
+			}
+
+			// TODO - set barrel angles properly.
+			add_animation_model(
+				operation.animations[ size_type( EntitiesDescription::Operation::AnimationKind::Barrel ) ],
+				entity.azimuth,
+				entity.animation_frames[ size_type( EntitiesDescription::Operation::AnimationKind::Barrel ) ],
+				false,
+				false );
+
+			add_animation_model(
+				operation.animations[ size_type( EntitiesDescription::Operation::AnimationKind::Landscape ) ],
+				entity.azimuth,
+				entity.animation_frames[ size_type( EntitiesDescription::Operation::AnimationKind::Landscape ) ],
+				// If it's a sky decoration - disable culling.
+				// It should be always visible, even if such decoration is located somewhere outside map bounds.
+				true,
+				// Use constant lighting for sky decorations.
+				true );
+
+			// TODO - draw flies.
+			add_animation_model(
+				operation.animations[ size_type( EntitiesDescription::Operation::AnimationKind::Insect ) ],
+				entity.azimuth,
+				entity.animation_frames[ size_type( EntitiesDescription::Operation::AnimationKind::Insect ) ],
+				false,
+				false );
+
+			// For now ignore slide animation - it seems to be unused.
+			// For now ignore icon animation - it seems to be unused.
+			// For now ignore characher animation - it seems to be unused.
 		}
 
 		foreach( &projectile : game_state.projectiles )
