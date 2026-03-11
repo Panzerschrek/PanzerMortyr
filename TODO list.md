@@ -78,13 +78,10 @@ PanzerMortyr game logic:
 * Implement sky decorations movement/turning logic (with mode=11).
 * Implement collisions hack for the one-way passable wall on map 33.
 * Implement fall damage for player and for entities.
-* Implement rare animation types - used for some entities.
-* Implement tank-related logic elements.
+* Implement rare animation types used for some entities (barrel roll, flies).
 * Implement logic elements specific for dog enemies.
 * Implement logic elements specific for gestapo enemies.
 * Implement logic elements specific for nurses.
-* Implement logic elements specific for panzerfaust-guys.
-* Implement logic elements specific for volkssturm enemies (with grenades).
 * Implement logic specific for multiplayer entities.
 * Consider storing entities rotation using quaternions.
 * Consider extrapolating game logic one or two steps further, using extrapolated data to make movements and animations smooth (mix position, angle, animation) and correcting possible extrapolation errors.
@@ -110,14 +107,15 @@ PanzerMortyr game logic:
 * Implement acid protection suit tool.
 * Implement weapon amplifier tool.
 * Implement silencer tool.
-* Implement invisibility tool.
+* Implement invisibility tool (false documents) and enemy properties allowing to uncover the player having invisibility.
+* Implement all entity smoke emitter kinds.
+* Implement logic elements used by explosive decorations - with splash damage, flames, smoke, etc.
 * Spawn bullet holes on walls, including holes attached to dynamic (movable) clusters.
 * Leave blood makrs on walls.
 * Spawn blood billboards on player or entity damaging.
 * Leave footsteps where they should be.
-* Implement bullet hit effects (smoke, sparkles, explosion billboards).
+* Implement bullet hit effects (smoke, sparkles, explosion billboards, sticky flames).
 * Draw muzzle flash sprites.
-* Implement flamethrower flames sticking to map geometry and entities and damaging them.
 * Implement shot recoil (where it should be) for both player and enemies.
 * Implement weapon lowering on reloading for weapons where it's necessary (grenades).
 * Spawn light flashes while shooting.
@@ -132,7 +130,7 @@ PanzerMortyr game logic:
 * Perform alarm-based enemy state transition with a delay (investigate how this delay is specified).
 * Fix shooting through walls, which is possible by staying too close to a wall and by using some weapons (like rifle).
 * Consider creating patches for ZINF-files for fixing some errors in them.
-* Implement misfire - sometimes enemies don't shoot, even if shooting animation is played.
+* Implement misfire - sometimes enemies don't shoot, even if shooting animation is playing.
 * Ensure projectiles speed is correct (isn't too small or too big).
 * Consider storing a bounding box of the current attack target of an entity in the entity struture.
 * Don't perform level transition if hasn't satifsy transition requirements necessary for some levels - like killing a boss or collecting all necessary items.
