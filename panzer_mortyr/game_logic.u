@@ -1265,15 +1265,16 @@ fn ProcessEntitiesLogicStep( GameGlobalData& game_global_data, GameMapData& map_
 
 				if_var( &collision_with_enemy : operation.collision_with_enemy )
 				{
-					// State transition used by only by the destructible wall on map 24.
-					// Just check if some other entity touches this entity.
+					// State transition used only by the destructible wall on map 24.
+					// Just check if some other entity (nearly) touches this entity.
 
 					var bool mut collided= false;
 
 					if_var( &mut collider_bbox : CalculateEntityColliderBBox( entity, operation ) )
 					{
-						collider_bbox.min-= Vec3f( 1.0f, 1.0f, 1.0f );
-						collider_bbox.max+= Vec3f( 1.0f, 1.0f, 1.0f );
+						var f32 distance_eps= 1.0f;
+						collider_bbox.min-= Vec3f( distance_eps, distance_eps, distance_eps );
+						collider_bbox.max+= Vec3f( distance_eps, distance_eps, distance_eps );
 
 						foreach( &collider : game_state.colliders )
 						{
@@ -1321,7 +1322,7 @@ fn ProcessEntitiesLogicStep( GameGlobalData& game_global_data, GameMapData& map_
 
 				if_var( &directional_shot : operation.directional_shot )
 				{
-					if( entity.num_steps_since_operation_start == directional_shot.delay )
+					if( entity.num_steps_since_operation_start == directional_shot.time )
 					{
 						EntityDirectionalShot(
 							entities_description,
@@ -3426,30 +3427,29 @@ fn EntityDirectionalShot(
 {
 	// No ammo is consumed for directional shots.
 
-	var u32 weapon_tool_index= directional_shot.item;
+	var size_type weapon_tool_index( directional_shot.item );
 
-	if( size_type( weapon_tool_index ) >= entities_description.tools.size()  )
+	if( weapon_tool_index >= entities_description.tools.size()  )
 	{
 		return;
 	}
 
-	var EntitiesDescription::Tool& weapon_tool= entities_description.tools[ size_type( weapon_tool_index ) ];
+	var EntitiesDescription::Tool& weapon_tool= entities_description.tools[ weapon_tool_index ];
 
 	var Vec3f shot_offset(
 		f32( directional_shot.offset_x ), f32( directional_shot.offset_y ), f32( directional_shot.offset_z ) );
 
-	var Vec3f shot_position=
-		entity.position +
-		shot_offset * Mat4f::MakeRotationZ( entity.azimuth );
+	var Mat4f rotation_matrix= Mat4f::MakeRotationZ( entity.azimuth );
 
-	var Vec3f direction( GetEntityDirectionNormalizedVector( entity ), 0.0f );
+	var Vec3f shot_position= entity.position + shot_offset * rotation_matrix;
+
+	var Vec3f direction= Vec3f( 0.0f, 1.0f, 0.0f ) * rotation_matrix;
 
 	// Accuracy is specified on per-weapon basis.
 	// For directional shots don't use skill-based accuracy.
 	var u32 accuracy= weapon_tool.enemy_weapon_accuracy;
 
-	var Vec3f direction_with_random_spread=
-		RandomOffsetShotVector( direction, accuracy, rand );
+	var Vec3f direction_with_random_spread= RandomOffsetShotVector( direction, accuracy, rand );
 
 	projectiles.push_back(
 		Projectile
@@ -3460,7 +3460,6 @@ fn EntityDirectionalShot(
 			.position= shot_position,
 			.velocity= direction_with_random_spread * f32( weapon_tool.speed ),
 		} );
-
 }
 
 fn MoveEntity(
@@ -3618,7 +3617,7 @@ fn PerformEntityOwnMovement(
 {
 	if_var( &operation_control : current_operation.operation_control )
 	{
-		PerformEntityOperationControlBasedOwnMovement( mapa_way_data, entity, operation_control );
+		PerformEntityOperationControlBasedMovement( mapa_way_data, entity, operation_control );
 	}
 	else
 	{
@@ -3638,7 +3637,7 @@ fn PerformEntityOwnMovement(
 	}
 }
 
-fn PerformEntityOperationControlBasedOwnMovement(
+fn PerformEntityOperationControlBasedMovement(
 	MapaWayData& mapa_way_data,
 	EntityState &mut entity,
 	EntitiesDescription::OperationControl& operation_control )
