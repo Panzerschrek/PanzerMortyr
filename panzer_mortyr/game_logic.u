@@ -1263,10 +1263,80 @@ fn ProcessEntitiesLogicStep( GameGlobalData& game_global_data, GameMapData& map_
 					}
 				}
 
+				if_var( &collision_with_enemy : operation.collision_with_enemy )
+				{
+					// State transition used only by the destructible wall on map 24.
+					// Just check if some other entity (nearly) touches this entity.
+
+					var bool mut collided= false;
+
+					if_var( &mut collider_bbox : CalculateEntityColliderBBox( entity, operation ) )
+					{
+						var f32 distance_eps= 1.0f;
+						collider_bbox.min-= Vec3f( distance_eps, distance_eps, distance_eps );
+						collider_bbox.max+= Vec3f( distance_eps, distance_eps, distance_eps );
+
+						foreach( &collider : game_state.colliders )
+						{
+							if( collider.bbox.Instersects( collider_bbox ) && collider.entity_index != c_player_entity_index )
+							{
+								collided= true;
+							}
+						}
+					}
+
+					if( collided )
+					{
+						next_operation= collision_with_enemy.new_operation;
+					}
+				}
+
+				if_var( &rotation_for_shot : operation.rotation_for_shot )
+				{
+					if_var( &target_position : entity.last_seen_player_position )
+					{
+						var Vec2f vec_to_movement_target= target_position.xy() - entity.position.xy();
+
+						var f32 target_azimuth= ust::atan2( -vec_to_movement_target.x, vec_to_movement_target.y );
+
+						var f32 angle_delta= CalculateRotationAngleDelta( entity.azimuth, target_azimuth );
+
+						if( ust::abs( angle_delta ) <= ust::abs( Convert1024Angle( f32( rotation_for_shot.deviation_angle ) ) ) )
+						{
+							if( rotation_for_shot.new_operation_if_target_in_view >= 0 &&
+								size_type( rotation_for_shot.new_operation_if_target_in_view ) < entity_description.operations.size() )
+							{
+								next_operation= u32( rotation_for_shot.new_operation_if_target_in_view );
+							}
+						}
+						else
+						{
+							if( rotation_for_shot.new_operation_if_target_not_in_view >= 0 &&
+								size_type( rotation_for_shot.new_operation_if_target_not_in_view ) < entity_description.operations.size() )
+							{
+								next_operation= u32( rotation_for_shot.new_operation_if_target_not_in_view );
+							}
+						}
+					}
+				}
+
+				if_var( &directional_shot : operation.directional_shot )
+				{
+					if( entity.num_steps_since_operation_start == directional_shot.time )
+					{
+						EntityDirectionalShot(
+							entities_description,
+							directional_shot,
+							entity,
+							u32( entity_index ),
+							game_state.random,
+							game_state.projectiles );
+					}
+				}
+
 				if_var( &if_alive : operation.if_alive )
 				{
-					if( if_alive.time != 0u &&
-						entity.num_steps_since_operation_start % if_alive.time == 0u )
+					if( if_alive.time != 0u && entity.num_steps_since_operation_start == if_alive.time )
 					{
 						next_operation= ( entity.energy > 0u ? if_alive.new_operation[0] : if_alive.new_operation[1] );
 					}
@@ -2700,41 +2770,7 @@ fn AddEntityCollider(
 		var EntitiesDescription::Operation& operation=
 			entity_description.operations[ size_type( entity.current_operation ) ];
 
-		var ust::optional</BBox3f/> mut collider_bbox;
-
-		foreach( &anim : operation.animations )
-		{
-			if( anim.num_steps == 0u )
-			{
-				continue;
-			}
-
-			if( anim.bounding_box_half_size_x == 0 ||
-				anim.bounding_box_half_size_y == 0 ||
-				anim.bounding_box_half_size_z == 0 )
-			{
-				// Entities with at least one zero collider dimentsion don't collide with each other.
-				continue;
-			}
-
-			var Vec3f mut bbox_half_size(
-				f32( anim.bounding_box_half_size_x ),
-				f32( anim.bounding_box_half_size_y ),
-				f32( anim.bounding_box_half_size_z ) );
-
-			RotateEntityBBox( bbox_half_size, entity.azimuth );
-
-			var Vec3f bbox_center=
-				entity.position +
-				Vec3f(
-					f32( anim.bounding_box_center_x ),
-					f32( anim.bounding_box_center_y ),
-					f32( anim.bounding_box_center_z ) );
-
-			// Usually we have only one collision box.
-			// The only exception is the tank enemy on map 24. In this case use the last one collider - it's good enough.
-			collider_bbox= BBox3f{ .min= bbox_center - bbox_half_size, .max= bbox_center + bbox_half_size };
-		}
+		var ust::optional</BBox3f/> mut collider_bbox= CalculateEntityColliderBBox( entity, operation );
 
 		if( !collider_bbox.empty() )
 		{
@@ -2742,6 +2778,52 @@ fn AddEntityCollider(
 			game_state.colliders.push_back( Collider{ .bbox= collider_bbox.try_take(), .entity_index( entity_index ) } );
 		}
 	}
+}
+
+fn CalculateEntityColliderBBox( EntityState& entity, EntitiesDescription::Operation& operation ) : ust::optional</BBox3f/>
+{
+	var ust::optional</BBox3f/> mut collider_bbox;
+
+	foreach( &anim : operation.animations )
+	{
+		if( anim.num_steps == 0u )
+		{
+			continue;
+		}
+
+		if( anim.bounding_box_half_size_x == 0 ||
+			anim.bounding_box_half_size_y == 0 ||
+			anim.bounding_box_half_size_z == 0 )
+		{
+			// Entities with at least one zero collider dimentsion don't collide with each other.
+			continue;
+		}
+
+		var Vec3f mut bbox_half_size(
+			f32( anim.bounding_box_half_size_x ),
+			f32( anim.bounding_box_half_size_y ),
+			f32( anim.bounding_box_half_size_z ) );
+
+		var f32 bbox_angle=
+			( ust::ref_cmp_eq( anim, operation.animations[ size_type( EntitiesDescription::Operation::AnimationKind::Rotation ) ] )
+			? Convert1024Angle( f32( anim.direction ) )
+			: entity.azimuth );
+
+		RotateEntityBBox( bbox_half_size, bbox_angle );
+
+		var Vec3f bbox_center=
+			entity.position +
+			Vec3f(
+				f32( anim.bounding_box_center_x ),
+				f32( anim.bounding_box_center_y ),
+				f32( anim.bounding_box_center_z ) );
+
+		// Usually we have only one collision box.
+		// The only exception is the tank enemy on map 24. In this case use the last one collider - it's good enough.
+		collider_bbox= BBox3f{ .min= bbox_center - bbox_half_size, .max= bbox_center + bbox_half_size };
+	}
+
+	return collider_bbox;
 }
 
 fn RemoveEntityCollider(
@@ -3335,6 +3417,51 @@ fn EntityShoot(
 	--entity.ammo;
 }
 
+fn EntityDirectionalShot(
+	EntitiesDescription& entities_description,
+	EntitiesDescription::DirectionalShot& directional_shot,
+	EntityState& entity,
+	u32 entity_index,
+	PseudoRandomGenerator &mut rand,
+	ust::vector</Projectile/> &mut projectiles )
+{
+	// No ammo is consumed for directional shots.
+
+	var size_type weapon_tool_index( directional_shot.item );
+
+	if( weapon_tool_index >= entities_description.tools.size()  )
+	{
+		return;
+	}
+
+	var EntitiesDescription::Tool& weapon_tool= entities_description.tools[ weapon_tool_index ];
+
+	var Vec3f shot_offset(
+		f32( directional_shot.offset_x ), f32( directional_shot.offset_y ), f32( directional_shot.offset_z ) );
+
+	var Mat4f rotation_matrix= Mat4f::MakeRotationZ( entity.azimuth );
+
+	var Vec3f shot_position= entity.position + shot_offset * rotation_matrix;
+
+	var Vec3f direction= Vec3f( 0.0f, 1.0f, 0.0f ) * rotation_matrix;
+
+	// Accuracy is specified on per-weapon basis.
+	// For directional shots don't use skill-based accuracy.
+	var u32 accuracy= weapon_tool.enemy_weapon_accuracy;
+
+	var Vec3f direction_with_random_spread= RandomOffsetShotVector( direction, accuracy, rand );
+
+	projectiles.push_back(
+		Projectile
+		{
+			.weapon_tool_index( weapon_tool_index ),
+			.owner_entity_index= entity_index,
+			.age_steps= 0u,
+			.position= shot_position,
+			.velocity= direction_with_random_spread * f32( weapon_tool.speed ),
+		} );
+}
+
 fn MoveEntity(
 	GameMapData& map_data,
 	ust::array_view_imut</DynamicClusterCollider/> dynamic_cluster_colliders,
@@ -3409,14 +3536,18 @@ fn MoveEntity(
 			f32( anim.bounding_box_half_size_y ),
 			f32( anim.bounding_box_half_size_z ) );
 
-		RotateEntityBBox( bbox_half_size, entity.azimuth );
+		var f32 bbox_angle=
+			( ust::ref_cmp_eq( anim, current_operation.animations[ size_type( EntitiesDescription::Operation::AnimationKind::Rotation ) ] )
+			? Convert1024Angle( f32( anim.direction ) )
+			: entity.azimuth );
+
+		RotateEntityBBox( bbox_half_size, bbox_angle );
 
 		var Vec3f bbox_center=
 			Vec3f(
 				f32( anim.bounding_box_center_x ),
 				f32( anim.bounding_box_center_y ),
 				f32( anim.bounding_box_center_z ) );
-
 
 		// Usually we have only one collision box.
 		// The only exception is the tank enemy on map 24. In this case use the last one collider - it's good enough.
@@ -3484,13 +3615,33 @@ fn PerformEntityOwnMovement(
 	EntityState &mut entity,
 	EntitiesDescription::Operation& current_operation )
 {
-	if( current_operation.operation_control.empty() )
+	if_var( &operation_control : current_operation.operation_control )
 	{
-		return;
+		PerformEntityOperationControlBasedMovement( mapa_way_data, entity, operation_control );
 	}
+	else
+	{
+		if_var( &object_movement : current_operation.object_movement )
+		{
+			PerformEntityObjectMovement( entity, object_movement );
+		}
 
-	var EntitiesDescription::OperationControl& operation_control= current_operation.operation_control.try_deref();
+		if_var( &target_rotation : current_operation.target_rotation )
+		{
+			PerformEntityTargetRotation( entity, target_rotation );
+		}
+		else if_var( &rotation_for_shot : current_operation.rotation_for_shot )
+		{
+			PerformEntityRotationForShot( entity, rotation_for_shot );
+		}
+	}
+}
 
+fn PerformEntityOperationControlBasedMovement(
+	MapaWayData& mapa_way_data,
+	EntityState &mut entity,
+	EntitiesDescription::OperationControl& operation_control )
+{
 	if( size_type( entity.navigation_info_index ) >= mapa_way_data.navigation_graphs.size() )
 	{
 		return;
@@ -3556,22 +3707,16 @@ fn PerformEntityOwnMovement(
 	var f32 mut move_fraction= 1.0f;
 
 	// Use 2d calculation for vector to waypoint - ignore some Z difference.
-	var Vec2f vec_to_movement_target= entity.position.xy() - movement_target;
+	var Vec2f vec_to_movement_target= movement_target - entity.position.xy();
 	var f32 square_distance_to_movement_target= vec_to_movement_target.SquareLength();
 
 	if( square_distance_to_movement_target != 0.0f )
 	{
 		// Perform smooth turn towards the waypoint node.
 
-		var f32 target_azimuth= ust::atan2( vec_to_movement_target.x, -vec_to_movement_target.y );
+		var f32 target_azimuth= ust::atan2( -vec_to_movement_target.x, vec_to_movement_target.y );
 
-		var f32 mut angle_delta= ( ( entity.azimuth - target_azimuth ) % c_tau + c_tau ) % c_tau;
-
-		// Prefer shortest turn, but slightly biased, in order to avoid some nasty behavior with constantly changing turning direction.
-		if( angle_delta > c_tau * 0.55f )
-		{
-			angle_delta -= c_tau;
-		}
+		var f32 angle_delta= CalculateRotationAngleDelta( entity.azimuth, target_azimuth );
 
 		if( angle_delta < -c_entity_turn_speed )
 		{
@@ -3624,6 +3769,65 @@ fn PerformEntityOwnMovement(
 		// It's necessary, since in this mode movements aren't constrained by the navigation graph.
 		// But it's rarely needed, since almost all enemies don't move while turning towards the player.
 		AttachEntityToNavigationGraph( entity, navigation_graph );
+	}
+}
+
+fn PerformEntityObjectMovement( EntityState &mut entity, EntitiesDescription::ObjectMovement& object_movement )
+{
+	var f32 angle= entity.azimuth + Convert1024Angle( f32( object_movement.relative_angle ) );
+
+	var Vec3f movement_vector( -ust::sin(angle), ust::cos(angle), 0.0f );
+
+	entity.position+= movement_vector * f32( object_movement.speed );
+}
+
+fn PerformEntityTargetRotation( EntityState &mut entity, EntitiesDescription::TargetRotation& target_rotation )
+{
+	var f32 target_azimuth= Convert1024Angle( f32( target_rotation.target_angle ) );
+	var f32 speed= ust::abs( Convert1024Angle( f32( target_rotation.step ) ) );
+
+	var f32 angle_delta= CalculateRotationAngleDelta( entity.azimuth, target_azimuth );
+
+	if( angle_delta < -speed )
+	{
+		entity.azimuth+= speed;
+	}
+	else if( angle_delta > speed )
+	{
+		entity.azimuth-= speed;
+	}
+	else
+	{
+		entity.azimuth= target_azimuth;
+	}
+}
+
+fn PerformEntityRotationForShot( EntityState &mut entity, EntitiesDescription::RotationForShot& rotation_for_shot )
+{
+	if( entity.last_seen_player_position.empty() )
+	{
+		return;
+	}
+
+	var Vec2f vec_to_movement_target= entity.last_seen_player_position.try_deref().xy() - entity.position.xy();
+
+	var f32 target_azimuth= ust::atan2( -vec_to_movement_target.x, vec_to_movement_target.y );
+
+	var f32 speed= ust::abs( Convert1024Angle( f32( rotation_for_shot.rotation_speed ) ) );
+
+	var f32 angle_delta= CalculateRotationAngleDelta( entity.azimuth, target_azimuth );
+
+	if( angle_delta < -speed )
+	{
+		entity.azimuth+= speed;
+	}
+	else if( angle_delta > speed )
+	{
+		entity.azimuth-= speed;
+	}
+	else
+	{
+		entity.azimuth= target_azimuth;
 	}
 }
 
@@ -3696,7 +3900,21 @@ fn ClampPlayerVelocity( PlayerState &mut player_state, Vec3f& prohibited_movemen
 	}
 }
 
-// The original game uses angles in range 0 to 1024 mapped to 0 to tau and with negative sign.
+// Calculare angle delta used for rotation.
+// Returns result in roughly -tau / 2 to tau / 2 range.
+fn CalculateRotationAngleDelta( f32 angle_a, f32 angle_b ) : f32
+{
+	 var f32 mut angle_delta= ( ( angle_a - angle_b ) % c_tau + c_tau ) % c_tau;
+
+	// Prefer shortest turn, but slightly biased, in order to avoid some nasty behavior with constantly changing turning direction.
+	if( angle_delta > c_tau * 0.55f )
+	{
+		angle_delta -= c_tau;
+	}
+
+	return angle_delta;
+}
+
 fn Convert1024Angle( f32 a ) : f32
 {
 	return a * ( c_tau / -1024.0f );
