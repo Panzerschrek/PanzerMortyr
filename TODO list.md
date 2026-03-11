@@ -53,6 +53,9 @@ Gameplay investigation:
 * Investigate misfire behavior.
 * Investigate whether enemies have armor.
 * Investigate where maximum amount of current armor (not inventory armor) is specified.
+* Investigate whether weapon amplifier is ever used in the original game.
+* Investigate whether silencer is ever used in the original game.
+* Investigate whether super armor is ever used in the original game.
 
 PanzerMortyr general:
 
@@ -94,19 +97,11 @@ PanzerMortyr game logic:
 * Implement pushing pushable entities.
 * Perform camera Z coordinate smoothing while climbing steps, so that camera movement doesn't look jaggy.
 * Perform separate collisions calculation with glass quads - to skip broken glass quads.
-* Implement inventory controls - selecting next/previous item, activating items.
-* Implement selecting weapons via inventory controls.
-* Implement using health (energy) from inventory via inventory controls.
-* Implement using armor from inventory via inventory controls.
-* Implement inventory navigation and weapon/tool selection.
 * Implement jetpack tool.
 * Implement night vision tool.
 * Implement infrared vision tool.
 * Implement flashlight tool.
-* Implement oxygen ballon tool.
 * Implement acid protection suit tool.
-* Implement weapon amplifier tool.
-* Implement silencer tool.
 * Implement invisibility tool (false documents) and enemy properties allowing to uncover the player having invisibility.
 * Implement all entity smoke emitter kinds.
 * Implement logic elements used by explosive decorations - with splash damage, flames, smoke, etc.
