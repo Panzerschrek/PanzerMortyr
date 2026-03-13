@@ -55,6 +55,7 @@ Gameplay investigation:
 * Investigate whether weapon amplifier is ever used in the original game.
 * Investigate whether silencer is ever used in the original game.
 * Investigate whether super armor is ever used in the original game.
+* Investigate how the ability for entities to be covered with blood is stored.
 
 PanzerMortyr general:
 
@@ -68,6 +69,9 @@ PanzerMortyr general:
 * Consider allowing playing cooperative/multiplayer maps as usual singleplayer ones. Maybe add a main menu item for this.
 * Consider writing some kind of alternative installer - a tool, which depacks game data from the original game ISO or mdf/mds files.
 * Draw loading screen before performing transition to the next level in game code and corresponding game and rendering resource loading.
+* Add an executable icon (used on Windows).
+* Consider embedding git revision into the game executable and showing it somewhere in the game.
+* Display somewhere in the main menu a text explaining that it's PanzerMortyr and not the original game.
 
 PanzerMortyr game logic:
 
@@ -79,6 +83,7 @@ PanzerMortyr game logic:
 * Implement note items logic - show note text (it's actually an image) and pause the game while it's shown.
 * Implement sky decorations movement/turning logic (with mode=11).
 * Implement collisions hack for the one-way passable wall on map 33.
+* Consider enabled step movement on collisions with slightly-inclined walls, which should fix movement in some tricky places on some maps.
 * Implement fall damage for player and for entities.
 * Implement rare animation types used for some entities (barrel roll, flies).
 * Implement logic elements specific for dog enemies.
@@ -92,6 +97,8 @@ PanzerMortyr game logic:
 * Implement rats.
 * Avoid spawning some enemies based on current skill level (investigate how the original game does this).
 * Implement remaining entity state transitions (used only by some enemy types).
+* Implement panic mode for enemies - with fleeing from the player on low health or with no ammo left.
+* Implement ammo seeking behavior for enemies.
 * Fix ugly injury-based entity state transitions, when an injury operation is changed while some other injury operation is already in process.
 * Implement pushing pushable entities.
 * Perform camera Z coordinate smoothing while climbing steps, so that camera movement doesn't look jaggy.
@@ -132,6 +139,7 @@ PanzerMortyr game logic:
 * Tune granades exposion delay.
 * Tune projectiles maximum age.
 * For flamethrower spawn sticky flame objects slowly damaging enemies and the player.
+* Implement behavior specific for the mind control weapon - with enemies attacking their allies.
 * Perform proper player to entity visibility check while doing entity state transition based on "w_zasiegu_widocznosci" property.
 
 
@@ -159,6 +167,9 @@ PanzerMortyr rendering:
 * Consider using non-zero alpha for glass, so that it's not so bright.
 * Consider drawing map polygons with detail textures (generate such textures somehow).
 * Consider drawing some sort of fullscreen frame-like image of the acid protection suit mask if this powerup is active.
+* Consider colorizing the whole image while the acid protection suit is active.
+* Consider drawing some extra effects for the night vision mode, like fullscreen radial brightness gradient or something similar.
+* Draw entities having one or more attached flame object in flames. Consider implementing an effect similar to one used in RtCW for burning enemies.
 
 PanzerMortyr menus and HUD:
 
