@@ -34,7 +34,6 @@ Lighting investigation:
 
 Other investigation:
 
-* Investigate how exactly visuals are changed when nightvision or infravision are active.
 * Investigate save files format - it may be useful.
 * Investigate differences between regional versions.
 * Investigate how original game console works (supported commands, history).
@@ -98,7 +97,6 @@ PanzerMortyr game logic:
 * Perform camera Z coordinate smoothing while climbing steps, so that camera movement doesn't look jaggy.
 * Perform separate collisions calculation with glass quads - to skip broken glass quads.
 * Implement jetpack tool.
-* Implement night vision tool.
 * Implement infrared vision tool.
 * Implement flashlight tool.
 * Implement invisibility tool (false documents) and enemy properties allowing to uncover the player having invisibility.

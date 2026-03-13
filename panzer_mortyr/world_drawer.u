@@ -142,6 +142,15 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 		return drawing_stats;
 	}
 
+	var GlobalLightParams mut global_light_params{ .light_add[ 0.0f ... ], .light_scale[ 1.0f ... ] };
+
+	if( drawing_info.fullscreen_effect == WorldDrawingInfo::FullscreenEffect::NightVision )
+	{
+		// For night vision set red and blue components to zero, add some light to green component and scale it up.
+		global_light_params.light_add= ust::make_array( 0.0f, 0.3f, 0.0f );
+		global_light_params.light_scale= ust::make_array( 0.0f, 1.3f, 0.0f );
+	}
+
 	var MapDrawData& map_data= map_data_.try_deref();
 
 	// Clear only depth buffer, but not color buffer.
@@ -169,7 +178,12 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 	var CameraClipPlanes camera_clip_planes=
 		CreateCameraClipPlanes( drawing_info.camera_params, viewport_info.view_aspect );
 
-	DrawSkyBackground( map_data.sky_background_buffer, sky_background_shader_, rotation_and_projection_matrix );
+	DrawSkyBackground(
+		map_data.sky_background_buffer,
+		sky_background_shader_,
+		rotation_and_projection_matrix,
+		// Scale sky light but not add constant factor. Black sky should remain black.
+		global_light_params.light_scale );
 
 	if( !map_data.sky_clouds_params.empty() && map_data.clouds_texture_layer != ~0u )
 	{
@@ -184,7 +198,12 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 
 	// Draw stars/moon AFTER clouds. This isn't fully correct, but this allows to draw sun/moon with proper brightness.
 	DrawStarsAndSun(
-		map_data.stars_buffer, stars_shader_, map_data.map_textures_array, rotation_and_projection_matrix );
+		map_data.stars_buffer,
+		stars_shader_,
+		map_data.map_textures_array,
+		rotation_and_projection_matrix,
+		// Scale stars and sun light, but not add constant factor, since additive blending is used for them.
+		global_light_params.light_scale );
 
 	var ust::array_view_imut</ZvoxCluster/> clusters= map_data.zvox_data.deref().clusters;
 
@@ -221,6 +240,7 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 		drawing_info.dynamic_cluster_objects,
 		map_shader_,
 		view_matrix,
+		global_light_params,
 		drawing_stats );
 
 	// Prepare list of models to draw.
@@ -350,6 +370,20 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 			}
 		}
 
+		// Apply global lighting params for model ligth.
+		for( auto mut i= 0s; i < 3s; ++i )
+		{
+			var SphericalHarmonics& mut l= light[i];
+			var f32 light_scale= global_light_params.light_scale[i];
+			var f32 light_add= global_light_params.light_add[i];
+
+			l.constant_component*= light_scale;
+			l.constant_component+= light_add;
+
+			l.directional_components*= light_scale;
+			// Don't need adding constant factor to directional components.
+		}
+
 		models_to_draw_.push_back(
 			ModelToDraw
 			{
@@ -430,7 +464,8 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 		semitransparent_polygons_buffer_,
 		semitransparent_geometry_shader_,
 		map_data.map_textures_array,
-		view_matrix );
+		view_matrix,
+		global_light_params );
 
 	drawing_stats.num_visible_semitransparent_triangles+= u32( semitransparent_polygons_buffer_.indices.size() ) / 3u;
 
@@ -626,7 +661,7 @@ fn WorldDrawer::SetMap( mut this, u32 map_index )
 							zvox_data.clusters,
 							zmap_lem_data.clusters_sky_light_data,
 							room_clusters_hierarchy,
-							Vec3f( vertex_position[0], vertex_position[1], vertex_position[2] ),
+							Vec3f( vertex_position ),
 							1.0f, // A vertex has very small radius.
 							Mat4f::MakeIdentity() );
 
@@ -863,6 +898,7 @@ fn WorldDrawer::DrawMapPolygons(
 	ust::array_view_imut</WorldDrawingInfo::DynamicClusterObject/> dynamic_cluster_objects,
 	ShaderProgram &mut shader,
 	Mat4f& view_matrix,
+	GlobalLightParams& global_light_params,
 	DrawingStats &mut drawing_stats )
 {
 	var ust::array_view_imut</ZvoxCluster/> clusters= map_data.zvox_data.deref().clusters.range();
@@ -877,6 +913,9 @@ fn WorldDrawer::DrawMapPolygons(
 	shader.Bind();
 	shader.SetUniform( "vu_matrix", view_matrix );
 	shader.SetUniform( "fu_texture", texture_slot );
+
+	shader.SetUniform( "vu_light_add", Vec3f( global_light_params.light_add ) );
+	shader.SetUniform( "vu_light_scale", Vec3f( global_light_params.light_scale ) );
 
 	map_data.vertex_array_object.Bind();
 	map_data.index_buffer.Bind();
@@ -1068,7 +1107,8 @@ fn WorldDrawer::DrawSemitransparentGeometry(
 	DynamicPolygonsBuffer& dynamic_polygons_buffer,
 	ShaderProgram &mut shader,
 	Texture& map_textures_array,
-	Mat4f& view_matrix )
+	Mat4f& view_matrix,
+	GlobalLightParams& global_light_params )
 {
 	var size_type num_indices=
 		ust::min( dynamic_polygons_buffer.indices.size(), dynamic_polygons_buffer.max_indices );
@@ -1086,6 +1126,9 @@ fn WorldDrawer::DrawSemitransparentGeometry(
 	shader.Bind();
 	shader.SetUniform( "vu_matrix", view_matrix );
 	shader.SetUniform( "fu_texture", texture_slot );
+
+	shader.SetUniform( "vu_light_add", Vec3f( global_light_params.light_add ) );
+	shader.SetUniform( "vu_light_scale", Vec3f( global_light_params.light_scale ) );
 
 	unsafe( glDrawElements(
 		GLenum( GL_TRIANGLES ), GLsizei( num_indices ), GLenum( GL_UNSIGNED_SHORT ), ust::nullptr</byte8/>() ) );
@@ -2211,7 +2254,10 @@ fn PushQuadIndices( ust::vector</u16/> &mut indices, size_type base_vertex_index
 }
 
 fn DrawSkyBackground(
-	SkyBackgroundBuffer& sky_background_buffer, ShaderProgram &mut shader, Mat4f& rotation_and_projection_matrix )
+	SkyBackgroundBuffer& sky_background_buffer,
+	ShaderProgram &mut shader,
+	Mat4f& rotation_and_projection_matrix,
+	[ f32, 3 ]& light_scale )
 {
 	SetGLState( g_sky_background_gl_state );
 
@@ -2223,6 +2269,8 @@ fn DrawSkyBackground(
 
 	shader.Bind();
 	shader.SetUniform( "vu_matrix", sky_background_matrix );
+
+	shader.SetUniform( "vu_light_scale", Vec3f( light_scale ) );
 
 	sky_background_buffer.vertex_array_object.Bind();
 	sky_background_buffer.index_buffer.Bind();
@@ -2265,7 +2313,8 @@ fn DrawStarsAndSun(
 	StarsBuffer& stars_buffer,
 	ShaderProgram &mut shader,
 	Texture& map_textures_array,
-	Mat4f& rotation_and_projection_matrix )
+	Mat4f& rotation_and_projection_matrix,
+	[ f32, 3 ]& light_scale )
 {
 	SetGLState( g_stars_gl_state );
 
@@ -2276,6 +2325,11 @@ fn DrawStarsAndSun(
 	shader.Bind();
 	shader.SetUniform( "vu_matrix", Mat4f::MakeScale( c_stars_scale ) * rotation_and_projection_matrix );
 	shader.SetUniform( "fu_texture", texture_slot );
+
+	shader.SetUniform(
+		"fu_light_scale",
+		// Make stars/moon a little bit darker, in order to avoid overbright (we use additive blending for them).
+		0.7f * Vec3f( light_scale ) );
 
 	stars_buffer.vertex_array_object.Bind();
 	stars_buffer.index_buffer.Bind();
