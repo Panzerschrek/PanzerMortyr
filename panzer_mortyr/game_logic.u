@@ -45,6 +45,7 @@ fn CreateNewMapGameState(
 			{
 				.selected_tool= EntitiesDescription::ToolType::None, // Set later.
 				.last_tool_selection_step= 0u,
+				.acid_protection_suit_is_active= false,
 			},
 		},
 	};
@@ -161,6 +162,7 @@ fn CreateNewMapGameState(
 					{
 						.selected_tool= EntitiesDescription::ToolType::None, // Set later.
 						.last_tool_selection_step= 0u,
+						.acid_protection_suit_is_active= false,
 					},
 				};
 
@@ -271,6 +273,8 @@ fn nodiscard ProcessGameLogicStep(
 
 	PerformPlayerInventoryLogic(
 		map_data.entities_description.deref(), player_input.inventory_input, game_state.player, game_state.step_index );
+
+	UpdatePlayerActiveTools( game_state.player, game_state.step_index );
 
 	PerformPlayerMovement( global_data, map_data, player_input, game_state );
 
@@ -642,7 +646,57 @@ fn PerformPlayerInventoryLogic(
 				player.armor+= armor_transfer;
 				inventory_armor-= armor_transfer;
 			},
+			EntitiesDescription::ToolType::AcidProtectionSuit ->
+			{
+				ProcessAcidProtectionToolActivationRequest( player );
+			},
 			default -> {},
+		}
+	}
+
+	if( player_inventory_input.acid_protection_suit_activation_requested )
+	{
+		ProcessAcidProtectionToolActivationRequest( player );
+	}
+}
+
+fn ProcessAcidProtectionToolActivationRequest( PlayerState &mut player )
+{
+	if( player.tools_state.acid_protection_suit_is_active )
+	{
+		player.tools_state.acid_protection_suit_is_active= false;
+	}
+	else if( player.inventory[ size_type( EntitiesDescription::ToolType::AcidProtectionSuit ) ] > 0u )
+	{
+		player.tools_state.acid_protection_suit_is_active= true;
+	}
+}
+
+fn UpdatePlayerActiveTools( PlayerState &mut player, u32 step_index )
+{
+	// Tools which can be activated have amount specified in (presumably) seconds.
+	// Decrease their amount only once in a second.
+	// This approach allows sometimes activating a tool for a short time without consuming it, but it's fine.
+
+	if( step_index % u32( c_steps_per_second ) != 0u )
+	{
+		return;
+	}
+
+	if( player.tools_state.acid_protection_suit_is_active )
+	{
+		var u32 &mut amount= player.inventory[ size_type( EntitiesDescription::ToolType::AcidProtectionSuit ) ];
+		if( amount == 0u )
+		{
+			player.tools_state.acid_protection_suit_is_active= false;
+		}
+		else
+		{
+			--amount;
+			if( amount == 0u )
+			{
+				player.tools_state.acid_protection_suit_is_active= false;
+			}
 		}
 	}
 }
@@ -2775,10 +2829,8 @@ fn DealPlayerEnvironmentalDamage( GameMapData& map_data, GameState &mut game_sta
 			}
 		} );
 
-	if( is_in_acid | is_in_lava )
+	if( ( is_in_acid & !game_state.player.tools_state.acid_protection_suit_is_active ) | is_in_lava )
 	{
-		// TODO - don't deal acid damage if has an acid protection suit active.
-
 		// Armor can't absorb environmental damage, so that only energy is damaged.
 		game_state.player.energy-= ust::min( c_environmental_damage, game_state.player.energy );
 	}

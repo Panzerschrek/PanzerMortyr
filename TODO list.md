@@ -101,7 +101,6 @@ PanzerMortyr game logic:
 * Implement night vision tool.
 * Implement infrared vision tool.
 * Implement flashlight tool.
-* Implement acid protection suit tool.
 * Implement invisibility tool (false documents) and enemy properties allowing to uncover the player having invisibility.
 * Implement logic elements used by explosive decorations - with splash damage, flames, smoke, etc.
 * Spawn bullet holes on walls, including holes attached to dynamic (movable) clusters.
@@ -160,6 +159,8 @@ PanzerMortyr rendering:
 * Allow changing brightness, maybe by tuning lights power.
 * Sort semitransparent triangles (map polygons, billboards) using far to near order.
 * Consider using non-zero alpha for glass, so that it's not so bright.
+* Consider drawing map polygons with detail textures (generate such textures somehow).
+* Consider drawing some sort of fullscreen frame-like image of the acid protection suit mask if this powerup is active.
 
 PanzerMortyr menus and HUD:
 
