@@ -285,6 +285,8 @@ fn nodiscard ProcessGameLogicStep(
 
 	ApplySplashDamageEvents( game_state );
 
+	ProcessSmokeParticlesLogicStep( game_state.smoke_particles );
+
 	ProcessSmokeTrailParticlesLogicStep( game_state.smoke_trail_particles );
 
 	PickUpItems( map_data, game_state );
@@ -1535,6 +1537,68 @@ fn ProcessEntitiesLogicStep( GameGlobalData& game_global_data, GameMapData& map_
 					}
 				}
 
+				if_var( &smoke_emission : operation.smoke_emission )
+				{
+					if( smoke_emission.emission_period != 0u &&
+						entity.num_steps_since_operation_start % smoke_emission.emission_period == 0u )
+					{
+						var Vec3f start_position=
+							entity.position +
+							Vec3f(
+								f32( smoke_emission.pos_x ),
+								f32( smoke_emission.pos_y ),
+								f32( smoke_emission.pos_z ) );
+
+						game_state.smoke_particles.push_back(
+							SmokeParticle
+							{
+								.smoke_model= smoke_emission.smoke_model,
+								.center= start_position,
+								.position= start_position,
+								.velocity(
+									f32( smoke_emission.velocity_x ),
+									f32( smoke_emission.velocity_y ),
+									f32( smoke_emission.velocity_z ) ),
+								.sequential_index=
+									entity.num_steps_since_operation_start / smoke_emission.emission_period,
+								.age_steps= 0u,
+							} );
+					}
+				}
+
+				if_var( &smoke : operation.smoke )
+				{
+					if( entity.num_steps_since_operation_start >= smoke.time && smoke.delta > 0u )
+					{
+						// TODO - rework this, since it's incorrect.
+						// Use the same code as for bullet hole smoke effects.
+
+						var u32 relative_time= entity.num_steps_since_operation_start - smoke.time;
+
+						var u32 emission_index= relative_time / smoke.delta;
+
+						if( emission_index < smoke.amount && emission_index * smoke.delta == relative_time )
+						{
+							var Vec3f offset=
+								Vec3f( f32( smoke.position_x ), f32( smoke.position_y ), f32( smoke.position_z ) ) *
+								Mat4f::MakeRotationZ( entity.azimuth );
+
+							var Vec3f start_position= entity.position + offset;
+
+							game_state.smoke_particles.push_back(
+								SmokeParticle
+								{
+									.smoke_model= 0u,
+									.center= start_position,
+									.position= start_position,
+									.velocity( 0.0f, 0.0f, -0.5f ),
+									.sequential_index= emission_index,
+									.age_steps= 0u,
+								} );
+						}
+					}
+				}
+
 				if( next_operation != ~0u )
 				{
 					if( size_type( next_operation ) < entity_description.operations.size() )
@@ -2457,6 +2521,54 @@ fn ApplySplashDamageEvents( GameState &mut game_state )
 	}
 
 	game_state.splash_damage_events.clear();
+}
+
+fn ProcessSmokeParticlesLogicStep( ust::vector</SmokeParticle/> &mut smoke_particles )
+{
+	for( auto mut i= 0s; i < smoke_particles.size(); )
+	{
+		var bool mut need_to_remove= false;
+
+		{
+			var SmokeParticle &mut smoke_particle= smoke_particles[i];
+
+			smoke_particle.center+= smoke_particle.velocity;
+
+			// The original game animates smoke particles, so that their way is a conical spiral.
+
+			var f32 amplitude= f32( smoke_particle.age_steps ) * smoke_particle.velocity.Length() * 0.1f;
+
+			var f32 phase=
+				// Perform time-based phase shift.
+				f32( smoke_particle.age_steps ) * 0.2f +
+				// Use individual phase shifts for each particle, so that particles don't follow the same path.
+				f32( smoke_particle.sequential_index ) * ( c_tau / c_golden_ratio ) +
+				// Shift phase based on X and Y coordinates, so that nearby smoke emitters are not in sync.
+				( smoke_particle.center.x + smoke_particle.center.y );
+
+			smoke_particle.position=
+				smoke_particle.center +
+				Vec3f( amplitude * ust::cos( phase ), amplitude * ust::sin( phase ), 0.0f );
+
+			++smoke_particle.age_steps;
+
+			if( smoke_particle.age_steps >= c_smoke_particle_max_age )
+			{
+				need_to_remove= true;
+			}
+		}
+
+		if( need_to_remove )
+		{
+			var size_type last_index= smoke_particles.size() - 1s;
+			smoke_particles.swap( i, last_index );
+			smoke_particles.drop_back();
+		}
+		else
+		{
+			++i;
+		}
+	}
 }
 
 fn ProcessSmokeTrailParticlesLogicStep( ust::vector</SmokeTrailParticle/> &mut smoke_trail_particles )
