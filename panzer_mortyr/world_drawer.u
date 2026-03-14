@@ -463,6 +463,12 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 
 	ResetDynamicPolygonsBuffer( semitransparent_polygons_buffer_ );
 
+	DrawFirstPersonModels(
+		models_,
+		first_person_models_to_draw_,
+		model_shader_,
+		drawing_stats );
+
 	first_person_models_to_draw_.clear();
 
 	return drawing_stats;
@@ -1046,6 +1052,94 @@ fn WorldDrawer::DrawModels(
 
 			model.index_buffer.Bind();
 		}
+
+		if( model.num_frames > 1s )
+		{
+			// Change vertex attrib pointer for positions to draw requirest frame.
+			// TODO - move this code into a separate function?
+			model.positions_buffer.Bind();
+
+			unsafe( glVertexAttribPointer(
+				GPUModel::c_position_attrib,
+				3,
+				GLenum( GL_FLOAT ),
+				GLboolean(0),
+				GLsizei( typeinfo</ObbVertexPosition/>.size_of ),
+				ust::nullptr</byte8/>() + size_type( model_to_draw.frame ) * model.num_vertices * typeinfo</ObbVertexPosition/>.size_of ) );
+		}
+
+		shader.SetUniform( "vu_matrix", model_to_draw.matrix );
+
+		shader.SetUniform(
+			"fu_light_spherical_harmonics_r",
+			model_to_draw.light[0].directional_components.x,
+			model_to_draw.light[0].directional_components.y,
+			model_to_draw.light[0].directional_components.z,
+			model_to_draw.light[0].constant_component );
+
+		shader.SetUniform(
+			"fu_light_spherical_harmonics_g",
+			model_to_draw.light[1].directional_components.x,
+			model_to_draw.light[1].directional_components.y,
+			model_to_draw.light[1].directional_components.z,
+			model_to_draw.light[1].constant_component );
+
+		shader.SetUniform(
+			"fu_light_spherical_harmonics_b",
+			model_to_draw.light[2].directional_components.x,
+			model_to_draw.light[2].directional_components.y,
+			model_to_draw.light[2].directional_components.z,
+			model_to_draw.light[2].constant_component );
+
+		unsafe( glDrawElements(
+			GLenum( GL_TRIANGLES ),
+			GLsizei( model.num_triangles * 3s ),
+			GLenum( GL_UNSIGNED_SHORT ),
+			ust::nullptr</byte8/>() ) );
+
+		++drawing_stats.num_visible_models;
+		drawing_stats.num_visivle_model_triangles+= u32( model.num_triangles );
+	}
+}
+
+fn WorldDrawer::DrawFirstPersonModels(
+	ModelsMap& models_map,
+	ust::array_view_imut</ModelToDraw/> models_to_draw,
+	ShaderProgram &mut shader,
+	DrawingStats &mut drawing_stats )
+{
+	SetGLState( g_models_drawing_gl_state );
+
+	var u32 texture_slot= 0u;
+
+	shader.Bind();
+	shader.SetUniform( "fu_texture", texture_slot );
+
+	unsafe( glActiveTexture( GLenum( GL_TEXTURE0 ) + GLenum(texture_slot) ) );
+
+	foreach( &model_to_draw : models_to_draw )
+	{
+		var ust::optional_ref_imut</ ust::optional</GPUModel/> /> model_opt_opt=
+			models_map.find( model_to_draw.file_name );
+
+		if( model_opt_opt.empty() )
+		{
+			continue;
+		}
+
+		var ust::optional</GPUModel/>& model_opt= model_opt_opt.try_deref();
+		if( model_opt.empty() )
+		{
+			continue;
+		}
+
+		var GPUModel& model= model_opt.try_deref();
+
+		model.textures.back().Bind();
+
+		model.vertex_array_object.Bind();
+
+		model.index_buffer.Bind();
 
 		if( model.num_frames > 1s )
 		{
