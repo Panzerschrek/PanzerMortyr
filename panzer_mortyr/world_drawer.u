@@ -124,13 +124,15 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 {
 	var DrawingStats mut drawing_stats= zero_init;
 
+	if( map_index_ != drawing_info.map_index )
+	{
+		// Load models in use if switching to a new map.
+		LoadModels(
+			drawing_info.used_models, game_filesystem_ptr_, console_out_, settings_, gl_capabilities_, models_ );
+	}
+
 	// Ensure we have actual map data.
 	SetMap( drawing_info.map_index );
-
-	// Load models in use.
-	// TODO - precache models to avoid doing loading outside map loading phase, since it may lead to frame lags.
-	LoadModelsIfNecessary(
-		drawing_info.model_objects, game_filesystem_ptr_, console_out_, settings_, gl_capabilities_, models_ );
 
 	SetGLState( g_buffer_clear_gl_state );
 
@@ -470,7 +472,6 @@ fn WorldDrawer::SetMap( mut this, u32 map_index )
 	if( map_index == map_index_ )
 	{
 		return;
-
 	}
 	// Need to load map data.
 
@@ -2443,45 +2444,54 @@ fn DrawTestPrimitives(
 	}
 }
 
-fn LoadModelsIfNecessary(
-	ust::array_view_imut</WorldDrawingInfo::ModelObject/> model_objects,
+fn LoadModels(
+	ust::array_view_imut</ResourceString/> model_list,
 	GameFilesystemPtr& game_filesystem_ptr,
 	ConsoleOutPtr& console_out_ptr,
 	SettingsPtr& settings_ptr,
 	GLCapabilities& gl_capabilities,
 	ust::hash_map</ ResourceString, ust::optional</GPUModel/> /> &mut models )
 {
-	foreach( &model_object : model_objects )
+	// Populate new models table and take existing models from the old one (if can).
+	// Doing so we avoid loading models which were already loaded and also unload no longer used models.
+	var ust::hash_map</ ResourceString, ust::optional</GPUModel/> /> mut new_models;
+
+	auto mut fs_lock= game_filesystem_ptr.lock_mut();
+	var ( fn( ust::file_readable &mut f ) : ust::io_result</ModelData/> ) load_model_fn( LoadModel );
+
+	foreach( &file_name : model_list )
 	{
-		// Load it if it's not loaded yet.
+		if_var( &mut prev_model : models.find( file_name ) )
+		{
+			new_models.insert_new( file_name, take( prev_model ) );
+			continue;
+		}
 
-		var ResourceString& file_name= model_object.model_file_name;
-
-		models.find_or_construct_new(
-			file_name,
-			lambda[&] () : ust::optional</GPUModel/>
+		result_match( fs_lock.deref().LoadFile( file_name, load_model_fn ) )
+		{
+			Ok(m) ->
 			{
-				auto mut lock= game_filesystem_ptr.lock_mut();
-				result_match(
-					lock.deref().LoadFile(
-						file_name,
-						( fn( ust::file_readable &mut f ) : ust::io_result</ModelData/> )( LoadModel ) ) )
-				{
-					Ok(m) -> { return CreateGPUModel( m, settings_ptr.lock_imut().deref(), gl_capabilities ); },
-					Err(e) ->
-					{
-						ConsoleOutAddTextLine(
-							console_out_ptr,
-							ust::concat(
-								"Failed to load model file \"",
-								ConvertResourceStringToStringView( file_name ),
-								"\"! Error: ",
-								ust::enum_to_string( e ) ) );
-						return ust::null_optional;
-					},
-				}
-			} );
+				new_models.insert_new(
+					file_name,
+					CreateGPUModel( m, settings_ptr.lock_imut().deref(), gl_capabilities ) );
+			},
+			Err(e) ->
+			{
+				ConsoleOutAddTextLine(
+					console_out_ptr,
+					ust::concat(
+						"Failed to load model file \"",
+						ConvertResourceStringToStringView( file_name ),
+						"\"! Error: ",
+						ust::enum_to_string( e ) ) );
+
+				// Add a stub.
+				new_models.insert_new( file_name, ust::optional</GPUModel/>() );
+			},
+		}
 	}
+
+	models= move( new_models );
 }
 
 fn MarkVisibleRoomClusters(
