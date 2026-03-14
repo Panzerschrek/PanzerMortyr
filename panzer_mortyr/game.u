@@ -1,3 +1,5 @@
+import "/scoped_array.iu"
+import "/sort.iu"
 import "/string_conversions.iu"
 import "/common_lib/billboards_description_file.iu"
 import "collisions.iu"
@@ -201,6 +203,9 @@ fn Game::GetWorldDrawingInfo( this ) : WorldDrawingInfo
 		var GameMapData& map_data= map_data_.try_deref();
 		var GameState& game_state= game_state_.try_deref();
 
+		// It's not a big deal to copy this list, in the wors case it has maximum 40-50 elements.
+		drawing_info.used_models= map_data.used_models;
+
 		drawing_info.map_index= map_data.map_index;
 		drawing_info.camera_params.position= GetCameraPositionForPlayer( game_state.player );
 
@@ -313,10 +318,11 @@ fn Game::GetWorldDrawingInfo( this ) : WorldDrawingInfo
 			var EntitiesDescription::Tool& weapon_tool=
 				entities_description.tools[ size_type( projectile.weapon_tool_index ) ];
 
-			if( weapon_tool.projectile_model >= 2000 )
+			if( weapon_tool.projectile_model >= EntitiesDescription::Tool::c_projectile_model_first_mesh_model )
 			{
 				// Projectiles for this weapon are drawn via a model.
-				var size_type animation_index( weapon_tool.projectile_model - 2000 );
+				var size_type animation_index(
+					weapon_tool.projectile_model - EntitiesDescription::Tool::c_projectile_model_first_mesh_model );
 				if( animation_index < entities_description.animations.size() )
 				{
 					var EntitiesDescription::AnimationDescription& animation= entities_description.animations[ animation_index ];
@@ -981,6 +987,7 @@ fn Game::PerformMapTransition(
 
 		var GameResourcePtr</ZvoxData/> mut zvox_data= zvox_data_nullable.try_to_non_nullable();
 		var GameResourcePtr</ZmapData/> mut zmap_data= zmap_data_nullable.try_to_non_nullable();
+		var GameResourcePtr</ZpozData/> mut zpoz_data= zpoz_data_nullable.try_to_non_nullable();
 
 		map_data_=
 			GameMapData
@@ -989,9 +996,10 @@ fn Game::PerformMapTransition(
 				.entities_description= entities_description_ptr,
 				.collider_quads_hierarchy= BuildColliderQuadsHierarchy( zvox_data.deref().clusters, zmap_data.deref().quads ),
 				.room_clusters_hierarchy= room_clusters_hierarchy_nullable.try_to_non_nullable(),
+				.used_models= CreateMapUsedModelsList( zpoz_data.deref().entities, entities_description_ptr.deref() ),
 				.zmap_data= move(zmap_data),
 				.zvox_data= move(zvox_data),
-				.zpoz_data= zpoz_data_nullable.try_to_non_nullable(),
+				.zpoz_data= move(zpoz_data),
 				.mapa_way_data= mapa_way_data_nullable.try_to_non_nullable(),
 			};
 	}
@@ -1031,6 +1039,117 @@ fn LoadGlobalData( CachingGameResourcesLoaderPtr& caching_game_resources_loader_
 		.materials_description= caching_game_resources_loader.LoadMaterialsDescription(),
 		.materials_properties= caching_game_resources_loader.LoadMaterialsProperties(),
 	};
+}
+
+fn CreateMapUsedModelsList(
+	ust::array_view_imut</ZpozEntity/> zpoz_entities,
+	EntitiesDescription& entities_description ) : ust::vector</ResourceString/>
+{
+	scoped_array bool mut used_entity_kinds[ entities_description.entities.size() ]( false );
+
+	// Mark used entities.
+	foreach( &entity : zpoz_entities )
+	{
+		if( entity.alive_flag != 0u16 )
+		{
+			var size_type index( entity.kind );
+			if( index < used_entity_kinds.size() )
+			{
+				used_entity_kinds[index]= true;
+			}
+		}
+	}
+
+	// Mark entities spawned by other used entities.
+	for( auto mut i= 0s; i < entities_description.entities.size(); ++i )
+	{
+		if( !used_entity_kinds[i] )
+		{
+			continue;
+		}
+
+		foreach( &operation : entities_description.entities[i].operations )
+		{
+			if_var( &supply_drop : operation.supply_drop )
+			{
+				var size_type special_object_index( supply_drop.special_object );
+				if( special_object_index < used_entity_kinds.size() )
+				{
+					used_entity_kinds[special_object_index]= true;
+				}
+			}
+		}
+	}
+
+	scoped_array bool mut used_animations[ entities_description.animations.size() ]( false );
+
+	// Mark animations used by entities.
+	foreach( pair : entities_description.entities.iter().zip( used_entity_kinds.iter() ) )
+	{
+		if( !pair.second )
+		{
+			continue;
+		}
+
+		foreach( &operation : pair.first.operations )
+		{
+			foreach( &operation_animation : operation.animations )
+			{
+				if( operation_animation.num_steps != 0u )
+				{
+					var size_type index( operation_animation.animation_number );
+					if( index < used_animations.size() )
+					{
+						used_animations[index]= true;
+					}
+				}
+			}
+		}
+	}
+
+	// Mark animations used by weapon tools.
+	foreach( &tool : entities_description.tools )
+	{
+		if( tool.tool_type >= EntitiesDescription::ToolType::WeaponA &&
+			tool.tool_type <= EntitiesDescription::ToolType::WeaponJ )
+		{
+			var size_type animation_index( tool.animation );
+			if( animation_index < used_animations.size() )
+			{
+				used_animations[ animation_index ]= true;
+			}
+
+			if( tool.projectile_model >= EntitiesDescription::Tool::c_projectile_model_first_mesh_model )
+			{
+				// Projectiles for this weapon are drawn via a mesh model.
+				var size_type projectile_animation_index(
+					tool.projectile_model - EntitiesDescription::Tool::c_projectile_model_first_mesh_model );
+				if( projectile_animation_index < used_animations.size() )
+				{
+					used_animations[ projectile_animation_index ]= true;
+				}
+			}
+		}
+	}
+
+	var ust::vector</ResourceString/> mut used_models;
+
+	// Collect all used model file names.
+	foreach( pair : entities_description.animations.iter().zip( used_animations.iter() ) )
+	{
+		if( !pair.second )
+		{
+			continue;
+		}
+
+		used_models.push_back( pair.first.model_file_name );
+	}
+
+	// Make sure we have no duplicated models.
+	ust::sort( used_models.range(), ResourceStringCompare() );
+	used_models.remove_adjacent_duplicates();
+
+	return used_models;
 }
 
 } // namespace PM
