@@ -397,12 +397,16 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 	}
 
 	// Group models by file name to avoid switching textures and vertex buffers too often.
-	ust::sort(
-		models_to_draw_.range(),
-		lambda( ModelToDraw& l, ModelToDraw& r ) : bool
-		{
-			return ResourceStringCompare()( l.file_name, r.file_name );
-		} );
+	{
+		auto models_to_draw_file_name_compare=
+			lambda( ModelToDraw& l, ModelToDraw& r ) : bool
+			{
+				return ResourceStringCompare()( l.file_name, r.file_name );
+			};
+
+		ust::sort( models_to_draw_.range(), models_to_draw_file_name_compare );
+		ust::sort( first_person_models_to_draw_.range(), models_to_draw_file_name_compare );
+	}
 
 	// Perform actual models drawing.
 	DrawModels( models_, models_to_draw_, model_shader_, drawing_stats );
@@ -463,12 +467,8 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 
 	ResetDynamicPolygonsBuffer( semitransparent_polygons_buffer_ );
 
-	DrawFirstPersonModels(
-		models_,
-		first_person_models_to_draw_,
-		model_shader_,
-		drawing_stats );
-
+	// Draw first person models as last step.
+	DrawFirstPersonModels( models_, first_person_models_to_draw_, model_shader_, drawing_stats );
 	first_person_models_to_draw_.clear();
 
 	return drawing_stats;
@@ -1108,7 +1108,11 @@ fn WorldDrawer::DrawFirstPersonModels(
 	ShaderProgram &mut shader,
 	DrawingStats &mut drawing_stats )
 {
-	SetGLState( g_models_drawing_gl_state );
+	//
+	// First draw all models with depth disabled. This clears depth buffer with model depth values.
+	//
+
+	SetGLState( g_first_person_models_depth_clear_gl_state );
 
 	var u32 texture_slot= 0u;
 
@@ -1158,36 +1162,20 @@ fn WorldDrawer::DrawFirstPersonModels(
 
 		shader.SetUniform( "vu_matrix", model_to_draw.matrix );
 
-		shader.SetUniform(
-			"fu_light_spherical_harmonics_r",
-			model_to_draw.light[0].directional_components.x,
-			model_to_draw.light[0].directional_components.y,
-			model_to_draw.light[0].directional_components.z,
-			model_to_draw.light[0].constant_component );
-
-		shader.SetUniform(
-			"fu_light_spherical_harmonics_g",
-			model_to_draw.light[1].directional_components.x,
-			model_to_draw.light[1].directional_components.y,
-			model_to_draw.light[1].directional_components.z,
-			model_to_draw.light[1].constant_component );
-
-		shader.SetUniform(
-			"fu_light_spherical_harmonics_b",
-			model_to_draw.light[2].directional_components.x,
-			model_to_draw.light[2].directional_components.y,
-			model_to_draw.light[2].directional_components.z,
-			model_to_draw.light[2].constant_component );
+		// Don't care about light here.
 
 		unsafe( glDrawElements(
 			GLenum( GL_TRIANGLES ),
 			GLsizei( model.num_triangles * 3s ),
 			GLenum( GL_UNSIGNED_SHORT ),
 			ust::nullptr</byte8/>() ) );
-
-		++drawing_stats.num_visible_models;
-		drawing_stats.num_visivle_model_triangles+= u32( model.num_triangles );
 	}
+
+	//
+	// Then draw all models as usual.
+	//
+
+	DrawModels( models_map, models_to_draw, shader, drawing_stats );
 }
 
 fn WorldDrawer::DrawSemitransparentGeometry(
@@ -2915,6 +2903,18 @@ var GLState g_semitransparent_geometry_drawing_gl_state
 	.blending_enabled= true,
 	.blend_source_factor( GL_ONE ),
 	.blend_destination_factor( GL_ONE_MINUS_SRC_ALPHA ),
+};
+
+var GLState g_first_person_models_depth_clear_gl_state
+{
+	.depth_test_enabled= false,
+	.depth_test_func( GL_NONE ),
+	.depth_write_enabled= true,
+	.cull_face_enabled= true,
+	.cull_face( GL_FRONT ),
+	.blending_enabled= false,
+	.blend_source_factor( GL_INVALID_ENUM ),
+	.blend_destination_factor( GL_INVALID_ENUM ),
 };
 
 var GLState g_models_drawing_gl_state
