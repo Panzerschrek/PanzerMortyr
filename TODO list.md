@@ -149,7 +149,6 @@ PanzerMortyr rendering:
 * Draw fog where it should be.
 * Draw reflections in reflective surfaces (usually floors).
 * Draw polygons with animated textures (frame-based animation) properly.
-* Draw first-person weapon with some sort of depth hack and depth-based effects (like fog) working properly.
 * Use smooth animation for animated models (with two or more frames interpolation).
 * Draw decals (bullet holes, blood).
 * Draw injured enemies covered with blood.

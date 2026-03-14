@@ -386,7 +386,7 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 			// Don't need adding constant factor to directional components.
 		}
 
-		models_to_draw_.push_back(
+		( model_object.first_person_weapon ? first_person_weapon_models_to_draw_ : models_to_draw_ ).push_back(
 			ModelToDraw
 			{
 				.file_name= model_object.model_file_name,
@@ -397,12 +397,16 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 	}
 
 	// Group models by file name to avoid switching textures and vertex buffers too often.
-	ust::sort(
-		models_to_draw_.range(),
-		lambda( ModelToDraw& l, ModelToDraw& r ) : bool
-		{
-			return ResourceStringCompare()( l.file_name, r.file_name );
-		} );
+	{
+		auto models_to_draw_file_name_compare=
+			lambda( ModelToDraw& l, ModelToDraw& r ) : bool
+			{
+				return ResourceStringCompare()( l.file_name, r.file_name );
+			};
+
+		ust::sort( models_to_draw_.range(), models_to_draw_file_name_compare );
+		ust::sort( first_person_weapon_models_to_draw_.range(), models_to_draw_file_name_compare );
+	}
 
 	// Perform actual models drawing.
 	DrawModels( models_, models_to_draw_, model_shader_, drawing_stats );
@@ -462,6 +466,10 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 	drawing_stats.num_visible_semitransparent_triangles+= u32( semitransparent_polygons_buffer_.indices.size() ) / 3u;
 
 	ResetDynamicPolygonsBuffer( semitransparent_polygons_buffer_ );
+
+	// Draw first person weapon models as last step.
+	DrawFirstPersonWeaponModels( models_, first_person_weapon_models_to_draw_, model_shader_, drawing_stats );
+	first_person_weapon_models_to_draw_.clear();
 
 	return drawing_stats;
 }
@@ -1092,6 +1100,82 @@ fn WorldDrawer::DrawModels(
 		++drawing_stats.num_visible_models;
 		drawing_stats.num_visivle_model_triangles+= u32( model.num_triangles );
 	}
+}
+
+fn WorldDrawer::DrawFirstPersonWeaponModels(
+	ModelsMap& models_map,
+	ust::array_view_imut</ModelToDraw/> models_to_draw,
+	ShaderProgram &mut shader,
+	DrawingStats &mut drawing_stats )
+{
+	// First draw all models with depth test disabled.
+	// This clears depth buffer with model depth values.
+
+	SetGLState( g_first_person_weapon_models_depth_clear_gl_state );
+
+	var u32 texture_slot= 0u;
+
+	unsafe( glActiveTexture( GLenum( GL_TEXTURE0 ) + GLenum(texture_slot) ) );
+
+	shader.Bind();
+	shader.SetUniform( "fu_texture", texture_slot );
+
+	// Set some stub light.
+	shader.SetUniform( "fu_light_spherical_harmonics_r", 0.0f, 0.0f, 0.0f, 1.0f );
+	shader.SetUniform( "fu_light_spherical_harmonics_g", 0.0f, 0.0f, 0.0f, 0.0f );
+	shader.SetUniform( "fu_light_spherical_harmonics_b", 0.0f, 0.0f, 0.0f, 1.0f );
+
+	foreach( &model_to_draw : models_to_draw )
+	{
+		var ust::optional_ref_imut</ ust::optional</GPUModel/> /> model_opt_opt=
+			models_map.find( model_to_draw.file_name );
+
+		if( model_opt_opt.empty() )
+		{
+			continue;
+		}
+
+		var ust::optional</GPUModel/>& model_opt= model_opt_opt.try_deref();
+		if( model_opt.empty() )
+		{
+			continue;
+		}
+
+		var GPUModel& model= model_opt.try_deref();
+
+		model.textures.back().Bind();
+
+		model.vertex_array_object.Bind();
+
+		model.index_buffer.Bind();
+
+		if( model.num_frames > 1s )
+		{
+			// Change vertex attrib pointer for positions to draw requirest frame.
+			// TODO - move this code into a separate function?
+			model.positions_buffer.Bind();
+
+			unsafe( glVertexAttribPointer(
+				GPUModel::c_position_attrib,
+				3,
+				GLenum( GL_FLOAT ),
+				GLboolean(0),
+				GLsizei( typeinfo</ObbVertexPosition/>.size_of ),
+				ust::nullptr</byte8/>() + size_type( model_to_draw.frame ) * model.num_vertices * typeinfo</ObbVertexPosition/>.size_of ) );
+		}
+
+		shader.SetUniform( "vu_matrix", model_to_draw.matrix );
+
+		unsafe( glDrawElements(
+			GLenum( GL_TRIANGLES ),
+			GLsizei( model.num_triangles * 3s ),
+			GLenum( GL_UNSIGNED_SHORT ),
+			ust::nullptr</byte8/>() ) );
+	}
+
+	// Then draw all models as usual.
+
+	DrawModels( models_map, models_to_draw, shader, drawing_stats );
 }
 
 fn WorldDrawer::DrawSemitransparentGeometry(
@@ -2738,6 +2822,7 @@ var size_type c_max_semitransparent_polygon_indices= c_max_semitransparent_polyg
 
 var GLState g_buffer_clear_gl_state
 {
+	.color_write_enabled= true,
 	.depth_test_enabled= false,
 	.depth_test_func( GL_INVALID_ENUM ),
 	.depth_write_enabled= true,
@@ -2750,6 +2835,7 @@ var GLState g_buffer_clear_gl_state
 
 var GLState g_sky_background_gl_state
 {
+	.color_write_enabled= true,
 	.depth_test_enabled= false,
 	.depth_test_func( GL_INVALID_ENUM ),
 	.depth_write_enabled= false,
@@ -2762,6 +2848,7 @@ var GLState g_sky_background_gl_state
 
 var GLState g_stars_gl_state
 {
+	.color_write_enabled= true,
 	.depth_test_enabled= false,
 	.depth_test_func( GL_INVALID_ENUM ),
 	.depth_write_enabled= false,
@@ -2774,6 +2861,7 @@ var GLState g_stars_gl_state
 
 var GLState g_clouds_single_blending_gl_state
 {
+	.color_write_enabled= true,
 	.depth_test_enabled= false,
 	.depth_test_func( GL_INVALID_ENUM ),
 	.depth_write_enabled= false,
@@ -2786,6 +2874,7 @@ var GLState g_clouds_single_blending_gl_state
 
 var GLState g_clouds_double_blending_gl_state
 {
+	.color_write_enabled= true,
 	.depth_test_enabled= false,
 	.depth_test_func( GL_INVALID_ENUM ),
 	.depth_write_enabled= false,
@@ -2798,6 +2887,7 @@ var GLState g_clouds_double_blending_gl_state
 
 var GLState g_map_drawing_gl_state
 {
+	.color_write_enabled= true,
 	.depth_test_enabled= true,
 	.depth_test_func( GL_LESS ),
 	.depth_write_enabled= true,
@@ -2810,6 +2900,7 @@ var GLState g_map_drawing_gl_state
 
 var GLState g_semitransparent_geometry_drawing_gl_state
 {
+	.color_write_enabled= true,
 	.depth_test_enabled= true,
 	.depth_test_func( GL_LESS ),
 	.depth_write_enabled= false,
@@ -2821,10 +2912,34 @@ var GLState g_semitransparent_geometry_drawing_gl_state
 	.blend_destination_factor( GL_ONE_MINUS_SRC_ALPHA ),
 };
 
+var GLState g_first_person_weapon_models_depth_clear_gl_state
+{
+	// Don't bother writing color.
+	.color_write_enabled= false,
+	// Stupid OpenGL!
+	//
+	// https://wikis.khronos.org/opengl/GLAPI/glDepthMask
+	//   Even if the depth buffer exists and the depth mask is non-zero,
+	//   the depth buffer is not updated if the depth test is disabled.
+	//   In order to unconditionally write to the depth buffer,
+	//   the depth test should be enabled and set to GL_ALWAYS (see glDepthFunc).
+	//
+	// So, enable depth test but use ALWAYS constant.
+	.depth_test_enabled= true,
+	.depth_test_func( GL_ALWAYS ),
+	.depth_write_enabled= true,
+	.cull_face_enabled= true,
+	.cull_face( GL_FRONT ),
+	.blending_enabled= false,
+	.blend_source_factor( GL_INVALID_ENUM ),
+	.blend_destination_factor( GL_INVALID_ENUM ),
+};
+
 var GLState g_models_drawing_gl_state
 {
+	.color_write_enabled= true,
 	.depth_test_enabled= true,
-	.depth_test_func( GL_LESS ),
+	.depth_test_func( GL_LEQUAL ), // <= for allowing drawing atop of the same model drawn in some previous pass.
 	.depth_write_enabled= true,
 	.cull_face_enabled= true,
 	.cull_face( GL_FRONT ),
@@ -2835,6 +2950,7 @@ var GLState g_models_drawing_gl_state
 
 var GLState g_test_primitives_drawing_gl_state
 {
+	.color_write_enabled= true,
 	.depth_test_enabled= true,
 	.depth_test_func( GL_LESS ),
 	.depth_write_enabled= true,
