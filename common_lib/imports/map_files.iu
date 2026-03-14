@@ -1,0 +1,611 @@
+namespace PM
+{
+
+struct ZMapFileHeader ordered
+{
+	auto c_expected_signature= "MAPA";
+
+	[ char8, 4 ] signature;
+	u32 num_quads;
+	u32 unknown8;
+
+	u32 num_light_shaft_boxes;
+
+	u32 unknown16;
+	u32 unknown20;
+	u32 unknown24;
+
+	[ char8, 4 ] body_marker;
+}
+
+static_assert( typeinfo</ZMapFileHeader/>.size_of == 32s );
+
+struct ZmapQuad ordered
+{
+	// Value divided by 4 represent actual texture in the block, two minor bits represent a subquad from a 2x2 grid.
+	// Values above 1000 represent special materials (see materials_file.iu).
+	u16 texture_id;
+
+	// Positions of quad vertices relative to the center of the cluster to which this quad belongs.
+	[ [ i16, 3 ], 4 ] vertices;
+
+	// Value in range 0 to 1024 representing normal azimuth (mapped to range from 0 to 2 PI ).
+	u16 normal_azimuth;
+
+	// Texture coordinates offset (in pixels) for vertex #0.
+	[ i8, 2 ] tc_offset;
+
+	// Upper 4 bits represent rotation angle and are mapped to angles in range 0 to TAU.
+	// Lover 4 bits represent texture scale.
+	// Values 0 to 7 represent scale below one with formula scale= 1 - bits / 8.
+	// Values 8 to 15 represent scale above one with formula scale= ( bits - 3 ) / 4.
+	u8 packed_texture_roll_scale;
+
+	// Seems to be always zero.
+	u8 data0;
+
+	// Value in range 768 to 1024 mapped to angles -PI/2 to 0 for faces facing down.
+	// Value in range 0 to 256 mapped to angles 0 to PI/2 for faces facing up.
+	u16 normal_elevation;
+
+	// Global coordinates of the quad's bounding box center.
+	[ i16, 3 ] center;
+
+	// Contains half size of the bounding box, which includes the whole quad + some fixed padding (~20 units) in each dimension.
+	// Presumably this padding is needed for physics (player collisions?).
+	[ i16, 3 ] bounding_box_half_size;
+
+	// Contains non-zero for emissive or fullbright surfaces.
+	// In rare cases it's non-zero for some doors.
+	// Also on map 34 some rare wooden surfaces have this value non-zero and some windows have zero value.
+	// Typical non-zero values are 192, 224, 225, 229, 235 and many others.
+	i16 data1;
+}
+
+static_assert( typeinfo</ZmapQuad/>.size_of == 48s );
+
+// Light shafts (god rays).
+// It's actually a cuboid with top and bottom quads missing and with color gradient from top to bottom (modulated by some texture).
+// It looks like it uses additive blending.
+struct ZmapLightShaftsBox
+{
+	i32 enabled_flag; // Is 1 if enabled, -1 if disabled. Disabled light shafts are present only on map 34.
+
+	// Center of the volume containing the cuboid.
+	[ i32, 3 ] center;
+
+	// Half size of the volume.
+	[ i32, 3 ] bounding_box_half_size;
+
+	// Colors in BRG format.
+	u32 color_top;
+	u32 color_bottom;
+
+	i32 unknown9; // Always 0.
+	i32 unknown10; // Always 0.
+	i32 unknown11; // Always 0.
+	i32 unknown12; // Always 0.
+	i32 unknown13; // Always 0.
+	i32 unknown14; // Usually -1, but may be also 1, 2 or 3 (for some light shafts on maps 29 and 32).
+	i32 unknown15; // Is always -1.
+
+	// Vertices (relative to the center) of the light shafts cuboid.
+	[ [ i16, 3 ], 8 ] vertices;
+
+	i32 unknown28; // Always 0.
+	i32 unknown29; // Always 0.
+	i32 unknown30; // Always 0.
+	i32 unknown31; // Always 0.
+}
+
+static_assert( typeinfo</ZmapLightShaftsBox/>.size_of == 128s );
+
+struct ZVoxFileHeader ordered
+{
+	auto c_expected_signature= "VOXA";
+
+	[ char8, 4 ] signature;
+	u32 num_clusters;
+	u32 unknown8;
+	u32 num_light_sources;
+	u32 num_dynamic_cluster_extra_infos;
+	u32 num_trigger_volumes;
+	u32 num_fog_volumes;
+
+	[ char8, 4 ] body_marker;
+}
+
+static_assert( typeinfo</ZVoxFileHeader/>.size_of == 32s );
+
+// Trigger volume.
+// It's used for map exits, secrets, crow and rat spawns, triggers of player speech.
+struct ZvoxTriggerVolume ordered
+{
+	var i32
+		c_trigger_type_unused= -1,
+		c_trigger_type_map_end= 1,
+		c_trigger_type_secret_area= 2,
+		c_trigger_type_crows= 4,
+		c_trigger_type_rats= 6,
+		c_trigger_type_ctf_a= 12,
+		c_trigger_type_ctf_b= 14,
+		c_trigger_type_character_speech= 16,
+		c_trigger_type_game_end= 18;
+
+	[ i32, 3 ] center;
+
+	// Represents a box around this trigger.
+	[ i32, 3 ] bounding_box_half_size;
+
+	// Seems to be always -1.
+	i32 unknown6;
+	i32 unknown7;
+
+	// For map end triggers it represents next map number.
+	// For player speech triggers it represents sound number (as defined in GLOS.STD file).
+	i32 trigger_param;
+
+	// See trigger type constants.
+	i32 trigger_type;
+}
+
+static_assert( typeinfo</ZvoxTriggerVolume/>.size_of == 40s );
+
+// Extra info for buttons, doors and elevators.
+// It is always present for buttons.
+// Also it's used for elevators and doors, but only for ones operated by a button or another elevator or door.
+struct ZvoxDynamicClusterExtraInfo ordered
+{
+	i32 unknown0; // Always 0.
+	i32 unknown1; // Always 0.
+
+	// For buttons it's index of the door/platform cluster operated by this button.
+	// Also a door can have a link to another door.
+	// If no other dynamic cluster is linked it's -1.
+	i32 other_info_index;
+
+	// It's 0 for buttons and 1 for doors/platforms.
+	i32 is_door_or_platform;
+
+	i32 unknown4; // Always 0.
+	i32 unknown5; // Always 0.
+	i32 unknown6; // Always 0.
+	i32 unknown7; // Always 0.
+}
+
+static_assert( typeinfo</ZvoxDynamicClusterExtraInfo/>.size_of == 32s );
+
+// Some sort of fog volume.
+struct ZvoxFogVolume ordered
+{
+	[ i32, 3 ] center;
+
+	// Represents a box around this fog volume.
+	[ i32, 3 ] bounding_box_half_size;
+
+	i32 unknown6;
+	i32 unknown7;
+	i32 unknown8;
+	i32 unknown9;
+}
+
+static_assert( typeinfo</ZvoxFogVolume/>.size_of == 40s );
+
+// Cluster with extra data (additional to data stored in cluster struct in ZPOZ file).
+struct ZvoxCluster ordered
+{
+	var i32
+		constexpr c_contents_air= 0,
+		constexpr c_contents_water= 1,
+		constexpr c_contents_acid= 2,
+		constexpr c_contents_lava= 3,
+		constexpr c_contents_key_a= 8, // Also some boxes on map 16 have this contents value.
+		constexpr c_contents_key_b= 9,
+		constexpr c_contents_key_c= 10;
+
+	var u8
+		c_cluster_type_regular= 0u8,
+		// Button and door type constants are experimental and this list is probably incomplete.
+		c_cluster_type_z_minus_door_a  = 16u8,
+		c_cluster_type_z_plus_door_a   = 24u8,
+		c_cluster_type_z_minus_door_b  = 26u8,
+		c_cluster_type_z_plus_door_b   = 28u8,
+		c_cluster_type_z_minus_door_c  = 30u8,
+		c_cluster_type_y_minus_door_a  = 34u8,
+		c_cluster_type_y_plus_door_a   = 38u8,
+		c_cluster_type_x_minus_door_a  = 44u8,
+		c_cluster_type_y_minus_button_a= 52u8,
+		c_cluster_type_y_plus_button_a = 56u8,
+		c_cluster_type_x_plus_button_a = 58u8,
+		c_cluster_type_x_minus_button_a= 62u8,
+		c_cluster_type_y_minus_button_b= 68u8,
+		c_cluster_type_y_plus_button_b = 72u8,
+		c_cluster_type_x_plus_button_b = 74u8,
+		c_cluster_type_x_minus_button_b= 78u8,
+		c_cluster_type_notes= 82u8;
+
+	ZpozCluster c;
+
+	// Contains number of quads which belong to this cluster.
+	i32 num_quads;
+
+	// For regular clusters it's -1.
+	// For dynamic clusters which are buttons or button-operated doors/platforms it is index to the ZvoxDynamicClusterExtraInfo array.
+	// For door/platform clusters which require no button to operate it's -1.
+	i32 dynamic_cluster_extra_info_index;
+
+	// First ZvoxLightSource index.
+	// For dynamic clusters it's move distance.
+	// For notes it's note image index.
+	i32 light_sources_begin;
+
+	// See cluster type constants.
+	u8 cluster_type;
+
+	// Seems to be extra ambient light (white only).
+	// It looks like the result light value is halved.
+	// It isn't fully clear whether this value is added or it's a minimal value.
+	u8 extra_ambient_light;
+
+	// Always zero.
+	u16 unknown4;
+
+	// Last ZvoxLightSource index (not including).
+	// For dynamic clusters it's zero.
+	i32 light_sources_end;
+
+	// Mostly it's -1, but sometimes it's non-unique negative values like -242.
+	// It seems like values slightly greater than -256 represent ambient sound sources with sound index equal to this field value + 256.
+	i32 ambient_sound_index;
+
+	// See contents constants.
+	i32 contents;
+
+	// Always zero.
+	i32 unknown7;
+}
+
+static_assert( typeinfo</ZvoxCluster/>.size_of == 64s );
+
+struct ZvoxLightSource ordered
+{
+	// Position of this light source relative to the center of its parent cluster.
+	[ i32, 3 ] offset;
+
+	// Has minor 3 bits equal to 0 for light sources with coronas (street lamps).
+	// Bits 3 to 7 represent color index in 32-color palette specified in game params file.
+	u16 packed_corona_color_index;
+
+	// Light power stored in some strange way.
+	// It's inverted, so that smaller values (even negative) represent more power.
+	// It's also somewhat biased, so that a value around 160 is actual zero.
+	// It's also unclear whether this power is linear.
+	i16 power;
+}
+
+static_assert( typeinfo</ZvoxLightSource/>.size_of == 16s );
+
+struct ZPozFileHeader ordered
+{
+	auto c_expected_signature= "POZC";
+
+	[ char8, 4 ] signature;
+	u32 num_entities;
+	u32 num_entity_navigation_infos; // Is equal to number of navigation graphs in "MAPA*.WAY" file.
+	u32 num_multiplayer_spawn_points;
+
+	u32 unknown16;
+	u32 unknown20;
+	u32 unknown24;
+
+	[ char8, 4 ] body_marker;
+}
+
+static_assert( typeinfo</ZPozFileHeader/>.size_of == 32s );
+
+// Presumably an entity struct.
+struct ZpozEntity ordered
+{
+	// Identical to the "aktor" field in a "ZINF.STD" file.
+	// Maybe only lower 8 bits are used.
+	u16 kind;
+
+	[ i16, 3 ] position;
+
+	// data[0] - always (or almost always) 0.
+	// data[1] -always (or almost always) -1.
+	// data[4] - angle.
+	// data[16] - sequential numbers for enemies, -1 for other entities. It looks like an index into the graps array of "MAPA*.WAY" file with corresponding navigation graph.
+	// data[19] - 0 for enemies, 5 for pick-ups, 10 for some entities in an isolated box (skyroom?), 20 for grids.
+	// data[23] - sequential numbers for all entities.
+	[ i16, 27 ] data;
+
+	// Is 0 for disabled entities.
+	// Is 1 for the most entities.
+	// is 2 for enemies spawned via a spawn trigger.
+	u16 alive_flag;
+}
+
+static_assert( typeinfo</ZpozEntity/>.size_of == 64s );
+
+// Extra data for enemy entities navigation.
+struct ZpozEntityNavigationInfo ordered
+{
+	u32 num_patrolling_points;
+
+	 // Some unknown number. It's mostly zero, but for some entities on rare maps (like 10 or 34) it's a small positive value like 4 or 5.
+	 // It does'n look like number of points.
+	u32 num1;
+
+	// Coordinates are interleaved - first Xs are stored, then Ys, then Zs.
+	[ i32, 16 * 3 ] patrolling_point_coords;
+
+	[ i32, 3 ] spawn_trigger_box_center;
+	[ i32, 3 ] spawn_trigger_box_half_size;
+
+	// Non-zero if has spawn trigger.
+	u32 spawn_trigger_is_present;
+
+	[ u32, 25 ] unknown_data;
+}
+
+static_assert( typeinfo</ZpozEntityNavigationInfo/>.size_of == 328s );
+
+// Some sort of multiplayer spawn point.
+// It's present almost only on multiplayer maps.
+// On maps for cooperative mode it's placed in several locations at start position.
+struct ZpozMultiplayerSpawnPoint ordered
+{
+	// data[1], data[2], data[3] - position.
+	[ i32, 16 ] data;
+}
+
+static_assert( typeinfo</ZpozMultiplayerSpawnPoint/>.size_of == 64s );
+
+// There is an intermediate header after first two data blocks.
+struct ZPozIntermediateHeader ordered
+{
+	u32 num0;
+	u32 num_visibility_info_ints;
+	u32 num_clusters;
+	u32 num2;
+}
+
+static_assert( typeinfo</ZPozIntermediateHeader/>.size_of == 16s );
+
+// Cluster contains several polygons and may contain light sources.
+struct ZpozCluster ordered
+{
+	[ i32, 3 ] center;
+
+	// Represents a box around this cluster. At least for the majority of them.
+	[ i32, 3 ] bounding_box_half_size;
+
+	// Contains number of children clusters (located within its boundaries).
+	// For clusters with no parent and no children (room clusters) it seems to be zero.
+	// For clusters located within boundaries of an another clusters it's -1.
+	// Children clusters are stored in clusters array directly after their parent cluster.
+	i32 num_children_clusters;
+
+	// Index of the first related quad.
+	u32 first_quad_index;
+}
+
+static_assert( typeinfo</ZpozCluster/>.size_of == 32s );
+
+struct ZpozClusterVisibilityData ordered
+{
+	// Usually it's all minus ones.
+	// But sometimes there are not so large (16-bit) positive values, which generally increase (but not always).
+	// Maximum value is slightly less than ZPosIntermediateHeader.num1.
+	// data[1] - data[0] and data[3] - data[2] are always positive values (roughly between 10 and 100).
+	// If num_clusters * 4 is subtracted from these values, all them fit into number of cluster indices.
+	// It seems like data[0] to data[1] and data[2] to data[3] represent two spans it cluster index array.
+	// it looks like visibility information (which clusters are visible from this cluster).
+	// It's unclear why we have two ranges here. Maybe one is for camera and another is for lights?
+	// Both ranges have format like N 0 0 0 0 0 0 0 [ N nums ] M 0 0 0 0 0 0 0 [ M nums ].
+	// So, each range contains two subranges inside. There is only prefix of 8 numbers, first number is count, other 7 are always zero.
+	// All 4 subranges mostly contain the same cluster numbers, but sometimes there are a couple of less or more numbers.
+	[ i32, 4 ] data;
+}
+
+static_assert( typeinfo</ZpozClusterVisibilityData/>.size_of == 16s );
+
+// The rest of a ZPOZ file contains cluster indices (addressed by ZpozClusterExtra structures).
+type ZPozClusterIndex= i32;
+
+struct ZmapLamHeader ordered
+{
+	u32 num0;
+	u32 num_tessellated_quads;
+	u32 tessellated_quads_data_size;
+	u32 num3;
+	u32 num4;
+	u32 num_rain_droplets;
+	u32 clusters_rain_visibility_data_size;
+	u32 num7;
+}
+
+static_assert( typeinfo</ZmapLamHeader/>.size_of == 32s );
+
+// This struct represent a tessellated quad.
+struct ZmapLamTesselaltedQuad ordered
+{
+	u32 data_offset;
+	u32 vertex_count;
+
+	// Actual data is stored in separate array at data_offset.
+	// First structs consisting of 6 "f32" values follow,
+	// with first 3 values equal to vertex position in relative form (like vertex offsets in ZmapQuad strure),
+	// with 2 values representing normalized texture coordinates,
+	// with single 32-bit value representing BRGA color (precalculated light).
+	//
+	// The number of this structs is equal to vertex count.
+	//
+	// Then follows a variable-length array consisting of integer values.
+	// Value0 is number of polygons.
+	// Value1 is always zero.
+	// Then follow groups of 8 integers with count equal to number of polygons.
+	// In each group value0 is number of polygon vertices (up to 6), value1 is always zero, than vertex indices follow.
+}
+
+static_assert( typeinfo</ZmapLamTesselaltedQuad/>.size_of == 8s );
+
+// It's "f32" values for vertex positions and texture coordinates, BGRA color packed in "u32" and "u32" values for counts/indices of polygons.
+type ZmapLamTessellatedQuadsData= byte32;
+
+static_assert( typeinfo</ZmapLamTessellatedQuadsData/>.size_of == 4s );
+
+// Represents some sort of rain dropled structure - representing precalculated path of a rain droplet or snowflake.
+struct ZmapLamRainDroplet ordered
+{
+	// Absolute world coordinates.
+	// These points are placed in regular grid slightly above sky polygons (but with no points where sky is obstructed).
+	[ f32, 3 ] position;
+
+	// Represents some sort of travel distance towards ground (but using somewhat inclined path, not directly down).
+	f32 travel_distance;
+
+	// Represents integer pseudo-random movement phase (in range 0 to roughly travel distance). TODO - check it isn't angular phase.
+	u32 movement_phase;
+
+	u32 color_brga;
+
+	// is index of the nearest quad below (or almost below) this point (excluding sky quads).
+	u32 quad_index;
+
+	// Is index of the nearest cluster below (or almost below) this point.
+	u32 cluster_index;
+
+	// It seems like unknown8, unknown9, unknown10 and unknown12, unknown13, unknown14 are f32 vectors.
+	// They are mostly zero except first 30-40 rain droplets.
+
+	byte32 unknown8; // Is in range 0 to 1154711552, but mostly is zero.
+	byte32 unknown9; // Is in range -996966400 to 0, but mostly is zero.
+	byte32 unknown10; // Is in range -1006108672 to 0, but mostly is zero.
+	byte32 unknown11; // Is always zero.
+	byte32 unknown12; // Is in range 0 to 1154711552, but mostly is zero.
+	byte32 unknown13; // Is in range -996966400 to 0, but mostly is zero.
+	byte32 unknown14; // Is in range -1006108672 to 0, but mostly is zero.
+	byte32 unknown15; // Is always zero.
+}
+
+static_assert( typeinfo</ZmapLamRainDroplet/>.size_of == 64s );
+
+struct ZmapLamClusterRainInfo ordered
+{
+	// It looks like offsets into the rain droplets array.
+	// Presumably it's droplets belonging to this cluster.
+	u32 start_offset;
+	u32 end_offset;
+}
+
+static_assert( typeinfo</ZmapLamClusterRainInfo/>.size_of == 8s );
+
+struct ZmapLemHeader ordered
+{
+	u32 num0;
+	 // Is equal to number of map clusters.
+	u32 num_clusters;
+	u32 num2;
+	u32 num3;
+	u32 num4;
+	u32 num5;
+	u32 num6;
+	u32 num7;
+}
+
+static_assert( typeinfo</ZmapLemHeader/>.size_of == 32s );
+
+// Per-cluster sky light.
+struct ZmapLemClusterSkyLightData ordered
+{
+	// (Almost) only clusters under sky have non-zero values.
+	// It's a rough grid 4x4x4 within cluster boundaries with non-zero voxels representing areas with non-zero sky light.
+	// Each voxel contains a color in BGR format.
+	[ u32, 4 * 4 * 4 ] light;
+}
+
+static_assert( typeinfo</ZmapLemClusterSkyLightData/>.size_of == 256s );
+
+struct MapaWayFileHeader ordered
+{
+	// It seems like all files of this type have this signature.
+	var [ char8, 4 ] c_expected_signature[ (0x92), (0x2d), (0x00), (0x00) ];
+
+	[ char8, 4 ] signature;
+
+	u32 num_navigation_graphs;
+
+	// This value multiplied by 4 is 32 bytes less than total file size.
+	// It's likely contents size in 32-bit integers (excluding header size).
+	u32 num2;
+
+	u32 num3;
+	u32 num4;
+	u32 num5;
+	u32 num6;
+	u32 num7;
+}
+
+static_assert( typeinfo</MapaWayFileHeader/>.size_of == 32s );
+
+// Navigation graph, used presumably by bots.
+// A navigation graph is a collection of up to 128 nodes placed in some map area.
+struct MapaWayNavigationGraph ordered
+{
+	var size_type c_max_nodes= 128s;
+
+	u32 num_nodes;
+	i32 unknown1; // Is always 0.
+	i32 unknown2; // Is 0 for non-empty graphs and -1 for empty ones.
+	i32 unknown3; // Is always 650000000.
+	i32 unknown4; // Is always -1.
+	i32 unknown5; // Is -1 for empty graphs or entity kind number for non-empty ones.
+	i32 unknown6; // Is always 0.
+	i32 unknown7; // Is always -1.
+	i32 unknown8; // Is always 650000000.
+	i32 unknown9; // Is always -1.
+	i32 unknown10; // Is always -1.
+	i32 unknown11; // Is always 0.
+	i32 unknown12; // Is always 0.
+	i32 unknown13; // Is always 0.
+	i32 unknown14; // Is always 0.
+	i32 unknown15; // Is always 0.
+
+	[ MapaWayNavigationGraphNode, c_max_nodes ] nodes;
+
+	// routing_matrix[j][k] contains index of node "l" which should be taken to move from node "j" to node "k" using the shortest possible path.
+	// Unused rows/columns are always -1.
+	// Values on the main diagonal are always -1.
+	[ [ i16, c_max_nodes ], c_max_nodes ] routing_matrix;
+}
+
+static_assert( typeinfo</MapaWayNavigationGraph/>.size_of == 36928s );
+
+// Navigation graph node.
+// Nodes are placed at floor level (except for flying entities).
+struct MapaWayNavigationGraphNode ordered
+{
+	// Absolute world position of this node.
+	[ i32, 3 ] position;
+
+	// It's mostly 0, sometimes -1 (where a corresponding enemy is placed), sometimes is a positive value near some pick-ups.
+	//
+	// It looks like points with -1 represent points in the patrolling route.
+	// These points are stored in patrolling order and usually (but it's not fully clear) patrolling points are first N points and N is usually at least 2.
+	//
+	// If it's not 0 or -1, it contains index of an entity located near this node, but only for health box and armor entities.
+	i32 unknown3;
+
+	// If it's not 0, it contains index of an entity located near this node, but only for ammo entities of type which can be used by this entity (enemy) type.
+	i32 unknown4;
+
+	i32 unknown5; // Is always 0.
+	i32 unknown6; // Is always 0.
+	i32 unknown7; // Is always 0.
+}
+
+static_assert( typeinfo</MapaWayNavigationGraphNode/>.size_of == 32s );
+
+} // namespace PM
