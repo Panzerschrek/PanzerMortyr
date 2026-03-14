@@ -1,4 +1,5 @@
 import "/build_system.iu"
+import "/filesystem.iu"
 import "/path_utils.iu"
 
 fn GetPackageInfo( BK::BuildSystemInterface &mut build_system_interface ) : BK::PackageInfo
@@ -7,22 +8,28 @@ fn GetPackageInfo( BK::BuildSystemInterface &mut build_system_interface ) : BK::
 	var bool is_host_windows= ust::constexpr_string_equals( compiler::target::os, "windows" );
 	var bool is_target_windows= target_triple.operating_system == "windows";
 
+	var ust::vector</BK::BuildTarget/> mut build_targets;
+	var ust::vector</BK::CustomBuildStep/> mut custom_build_steps;
+
 	// Common lib.
 
-	var BK::BuildTarget mut common_lib_target
-	{
-		.target_type = BK::BuildTargetType::Library,
-		.name= "common_lib",
-		.source_files= ust::make_array</ust::string8/>(
-			"common_lib/src/billboards_description_file.u",
-			"common_lib/src/game_params_file.u",
-			"common_lib/src/map_loading.u",
-			"common_lib/src/maps_description_file.u",
-			"common_lib/src/materials_file.u",
-			"common_lib/src/model_loading.u",
-			"common_lib/src/string_iterators.u" ),
-		.public_include_directories= ust::make_array</ust::string8/>( "common_lib/imports" ),
-	};
+	auto& common_lib_target_name= "common_lib";
+
+	build_targets.push_back(
+		BK::BuildTarget
+		{
+			.target_type = BK::BuildTargetType::Library,
+			.name= common_lib_target_name,
+			.source_files= ust::make_array</ust::string8/>(
+				"common_lib/src/billboards_description_file.u",
+				"common_lib/src/game_params_file.u",
+				"common_lib/src/map_loading.u",
+				"common_lib/src/maps_description_file.u",
+				"common_lib/src/materials_file.u",
+				"common_lib/src/model_loading.u",
+				"common_lib/src/string_iterators.u" ),
+			.public_include_directories= ust::make_array</ust::string8/>( "common_lib/imports" ),
+		} );
 
 	//
 	// C++ header converter.
@@ -33,295 +40,335 @@ fn GetPackageInfo( BK::BuildSystemInterface &mut build_system_interface ) : BK::
 
 	var ust::string8 cpp_header_converter_executable_name=
 		ust::concat(
-			"u.._cpp_header_converter",
-			( is_host_windows ? ust::string_view8(".exe") : ust::string_view8("") ) );
+			"u.._cpp_header_converter", ( is_host_windows ? ust::string_view8(".exe") : ust::string_view8("") ) );
 
 	var ust::filesystem_path cpp_header_converter_path=
-		ust::path::join(
-			bin_path_opt.try_deref(), cpp_header_converter_executable_name );
+		ust::path::join( bin_path_opt.try_deref(), cpp_header_converter_executable_name );
+
+	auto& sdl_wrapper_target_name= "sdl";
 
 	//
 	// SDL
 	//
 
-	var ust::filesystem_path mut sdl_install_prefix;
+	{
+		var ust::filesystem_path mut sdl_install_prefix;
 
-	auto mut sdl_install_prefix_opt= build_system_interface.GetConfigurationOption( "sdl_install_prefix" );
-	if( !sdl_install_prefix_opt.empty() )
-	{
-		sdl_install_prefix= sdl_install_prefix_opt.try_take();
-		build_system_interface.LogInfo( ust::concat( "\"sdl_install_prefix\" is \"", sdl_install_prefix, "\"" ) );
-	}
-	else
-	{
-		build_system_interface.LogInfo( "\"sdl_install_prefix\" is not specified, using default value" );
-		sdl_install_prefix= ( is_host_windows ? ust::string_view8("") : ust::string_view8( "/usr" ) );
-	}
+		auto mut sdl_install_prefix_opt= build_system_interface.GetConfigurationOption( "sdl_install_prefix" );
+		if( !sdl_install_prefix_opt.empty() )
+		{
+			sdl_install_prefix= sdl_install_prefix_opt.try_take();
+			build_system_interface.LogInfo( ust::concat( "\"sdl_install_prefix\" is \"", sdl_install_prefix, "\"" ) );
+		}
+		else
+		{
+			build_system_interface.LogInfo( "\"sdl_install_prefix\" is not specified, using default value" );
+			sdl_install_prefix= ( is_host_windows ? ust::string_view8("") : ust::string_view8( "/usr" ) );
+		}
 
-	var BK::BuildTarget mut sdl_wrapper_target
-	{
-		.target_type = BK::BuildTargetType::Library,
-		.name= "sdl",
-	};
+		var BK::BuildTarget mut sdl_wrapper_target
+		{
+			.target_type = BK::BuildTargetType::Library,
+			.name= sdl_wrapper_target_name,
+		};
 
-	if( is_target_windows )
-	{
-		sdl_wrapper_target.external_libraries.push_back(
+		if( is_target_windows )
+		{
+			sdl_wrapper_target.external_libraries.push_back(
+				ust::path::join(
+					sdl_install_prefix, "lib",
+					( target_triple.architecture == "x86_64" ? "x64" : "x86" ),
+					"SDL2.lib" ) );
+		}
+		else
+		{
+			sdl_wrapper_target.external_libraries.push_back( "-lSDL2" );
+		}
+
+		var ust::filesystem_path sdl_include_dir=
+			( is_host_windows
+				? ust::path::join( sdl_install_prefix, "include" )
+				: ust::path::join( sdl_install_prefix, "include/SDL2" ) );
+
+		var ust::filesystem_path sdl_header= ust::path::join( sdl_include_dir, "SDL.h" );
+
+		var ust::filesystem_path sdl_header_converted_base_name= "SDL.iu";
+
+		var ust::filesystem_path sdl_header_converted=
 			ust::path::join(
-				sdl_install_prefix, "lib",
-				( target_triple.architecture == "x86_64" ? "x64" : "x86" ),
-				"SDL2.lib" ) );
+				build_system_interface.GetCurrentPackageBuildTargetGeneratedPublicHeadersDirectory( sdl_wrapper_target.name ),
+				sdl_header_converted_base_name );
+
+		sdl_wrapper_target.generated_public_header_files.push_back( sdl_header_converted_base_name );
+
+		custom_build_steps.push_back(
+			BK::CustomBuildStep
+			{
+				.command= BK::CustomBuildStep::ExeCommand
+				{
+					.exe_path= cpp_header_converter_path,
+					.command_line= ust::make_array</ust::string8/>(
+						sdl_header,
+						"-o",
+						sdl_header_converted,
+						"--",
+						"-std=c11",
+						// Set clang "--target" option matching our current target triple.
+						ust::concat(
+							"--target=",
+							target_triple.architecture,
+							"-",
+							target_triple.vendor,
+							"-",
+							target_triple.operating_system,
+							"-",
+							target_triple.environment ) ),
+				},
+				.comment= sdl_header_converted_base_name,
+				.input_files= ust::make_array( sdl_header ),
+				.output_files= ust::make_array( sdl_header_converted ),
+			} );
+
+		var ust::filesystem_path sdl_opengl_header=
+			ust::path::join(
+				build_system_interface.GetCurrentPackageSourceDirectory(),
+				"sdl_wrapper/sdl_with_opengl.h" );
+
+		var ust::filesystem_path sdl_opengl_header_converted_base_name= "sdl_with_opengl.iu";
+
+		var ust::filesystem_path sdl_opengl_header_converted=
+			ust::path::join(
+				build_system_interface.GetCurrentPackageBuildTargetGeneratedPublicHeadersDirectory( sdl_wrapper_target.name ),
+				sdl_opengl_header_converted_base_name );
+
+		sdl_wrapper_target.generated_public_header_files.push_back( sdl_opengl_header_converted_base_name );
+
+		build_targets.push_back( move( sdl_wrapper_target ) );
+
+		custom_build_steps.push_back(
+			BK::CustomBuildStep
+			{
+				.command= BK::CustomBuildStep::ExeCommand
+				{
+					.exe_path= cpp_header_converter_path,
+					.command_line= ust::make_array</ust::string8/>(
+						sdl_opengl_header,
+						"-o",
+						sdl_opengl_header_converted,
+						"--",
+						"-std=c11",
+						"-I",
+						sdl_include_dir,
+						// Set clang "--target" option matching our current target triple.
+						ust::concat(
+							"--target=",
+							target_triple.architecture,
+							"-",
+							target_triple.vendor,
+							"-",
+							target_triple.operating_system,
+							"-",
+							target_triple.environment ) ),
+				},
+				.comment= sdl_opengl_header_converted_base_name,
+				.input_files= ust::make_array( sdl_opengl_header ),
+				.output_files= ust::make_array( sdl_opengl_header_converted ),
+			} );
+	}
+
+	var bool mut use_raylib= false;
+
+	var ust::filesystem_path raylib_src_path=
+		ust::path::join( build_system_interface.GetCurrentPackageSourceDirectory(), "raylib" );
+
+	if( !build_system_interface.GetConfigurationOption( "disable_raylib" ).empty() )
+	{
+		build_system_interface.LogInfo( "\"raylib\" is disabled via configuration options, bulding without it" );
 	}
 	else
 	{
-		sdl_wrapper_target.external_libraries.push_back( "-lSDL2" );
+		result_match( ust::get_metadata_for_path( raylib_src_path ) )
+		{
+			Ok(m) ->
+			{
+				if( m.kind == ust::file_kind::directory )
+				{
+					use_raylib= true;
+					build_system_interface.LogInfo( "Found \"raylib\", bulding with it" );
+				}
+			},
+			Err(e) ->
+			{
+				build_system_interface.LogError( "Failed to find \"raylib\", building without it" );
+			}
+		}
 	}
 
-	var ust::filesystem_path sdl_include_dir=
-		( is_host_windows
-			? ust::path::join( sdl_install_prefix, "include" )
-			: ust::path::join( sdl_install_prefix, "include/SDL2" ) );
-
-	var ust::filesystem_path sdl_header= ust::path::join( sdl_include_dir, "SDL.h" );
-
-	var ust::filesystem_path sdl_header_converted_base_name= "SDL.iu";
-
-	var ust::filesystem_path sdl_header_converted=
-		ust::path::join(
-			build_system_interface.GetCurrentPackageBuildTargetGeneratedPublicHeadersDirectory( sdl_wrapper_target.name ),
-			sdl_header_converted_base_name );
-
-	sdl_wrapper_target.generated_public_header_files.push_back( sdl_header_converted_base_name );
-
-	var BK::CustomBuildStep mut sdl_header_generate_step
+	if( use_raylib )
 	{
-		.command= BK::CustomBuildStep::ExeCommand
+		//
+		// raylib build
+		//
+
+		auto& raylib_wrapper_target_name= "raylib_wrapper";
+
 		{
-			.exe_path= cpp_header_converter_path,
-			.command_line= ust::make_array</ust::string8/>(
-				sdl_header,
-				"-o",
-				sdl_header_converted,
-				"--",
-				"-std=c11",
-				// Set clang "--target" option matching our current target triple.
+			var BK::BuildTarget mut raylib_wrapper_target
+			{
+				.target_type = BK::BuildTargetType::Library,
+				.name= raylib_wrapper_target_name,
+			};
+
+			var ust::filesystem_path raylib_build_path=
+				ust::path::join( build_system_interface.GetCurrentPackageBuildDirectory(), "raylib_build" );
+
+			var ust::filesystem_path cmake_cache_file=
+				ust::path::join( raylib_build_path, "CMakeCache.txt" );
+
+			var ust::filesystem_path raylib_compiled=
+				ust::path::join(
+					raylib_build_path,
+					"raylib",
+					( is_target_windows
+						? ust::string_view8( "raylib.lib" )
+						: ust::string_view8( "libraylib.a" ) ) );
+
+			var ust::filesystem_path raylib_header= ust::path::join( raylib_src_path, "src", "raylib.h" );
+
+			var ust::string_view8 mut cmake_build_type;
+			switch( build_system_interface.GetBuildConfiguration() )
+			{
+				BK::BuildConfiguration::Debug -> { cmake_build_type= "Debug"; },
+				BK::BuildConfiguration::Release -> { cmake_build_type= "Release"; },
+				BK::BuildConfiguration::MinSizeRelease -> { cmake_build_type= "MinSizeRel"; },
+			}
+
+			var ust::string8 cmake_executable =
 				ust::concat(
-					"--target=",
-					target_triple.architecture,
-					"-",
-					target_triple.vendor,
-					"-",
-					target_triple.operating_system,
-					"-",
-					target_triple.environment ) ),
-		},
-		.comment= sdl_header_converted_base_name,
-		.input_files= ust::make_array( sdl_header ),
-		.output_files= ust::make_array( sdl_header_converted ),
-	};
+					"cmake",
+					( is_host_windows ? ust::string_view8(".exe") : ust::string_view8("") ) );
 
-	var ust::filesystem_path sdl_opengl_header=
-		ust::path::join(
-			build_system_interface.GetCurrentPackageSourceDirectory(),
-			"sdl_wrapper/sdl_with_opengl.h" );
+			custom_build_steps.push_back(
+				BK::CustomBuildStep
+				{
+					.command= BK::CustomBuildStep::ExeCommand
+					{
+						.exe_path= cmake_executable,
+						.command_line= ust::make_array</ust::string8/>(
+							"-S", raylib_src_path,
+							"-B", raylib_build_path,
+							"-DBUILD_EXAMPLES=OFF",
+							ust::concat( "-DCMAKE_BUILD_TYPE=", cmake_build_type ),
+							"-G", "Ninja" )
+					},
+					.input_files= ust::make_array( ust::path::join( raylib_src_path, "CMakeLists.txt" ) ),
+					.output_files= ust::make_array( cmake_cache_file ),
+					.comment= "cmake generation for raylib",
+				} );
 
-	var ust::filesystem_path sdl_opengl_header_converted_base_name= "sdl_with_opengl.iu";
+			custom_build_steps.push_back(
+				BK::CustomBuildStep
+				{
+					.command= BK::CustomBuildStep::ExeCommand
+					{
+						.exe_path= cmake_executable,
+						.command_line= ust::make_array</ust::string8/>( "--build", raylib_build_path )
+					},
+					.input_files= ust::make_array( cmake_cache_file ),
+					.output_files= ust::make_array( raylib_compiled ),
+					.comment= "cmake build for raylib",
+				} );
 
-	var ust::filesystem_path sdl_opengl_header_converted=
-		ust::path::join(
-			build_system_interface.GetCurrentPackageBuildTargetGeneratedPublicHeadersDirectory( sdl_wrapper_target.name ),
-			sdl_opengl_header_converted_base_name );
+			var ust::filesystem_path_view raylib_header_converted_base_name= "raylib.iu";
 
-	sdl_wrapper_target.generated_public_header_files.push_back( sdl_opengl_header_converted_base_name );
+			var ust::filesystem_path raylib_header_converted=
+				ust::path::join(
+					build_system_interface.GetCurrentPackageBuildTargetGeneratedPublicHeadersDirectory( raylib_wrapper_target_name ),
+					raylib_header_converted_base_name );
 
-	var BK::CustomBuildStep mut sdl_opengl_header_generate_step
-	{
-		.command= BK::CustomBuildStep::ExeCommand
-		{
-			.exe_path= cpp_header_converter_path,
-			.command_line= ust::make_array</ust::string8/>(
-				sdl_opengl_header,
-				"-o",
-				sdl_opengl_header_converted,
-				"--",
-				"-std=c11",
-				"-I",
-				sdl_include_dir,
-				// Set clang "--target" option matching our current target triple.
-				ust::concat(
-					"--target=",
-					target_triple.architecture,
-					"-",
-					target_triple.vendor,
-					"-",
-					target_triple.operating_system,
-					"-",
-					target_triple.environment ) ),
-		},
-		.comment= sdl_opengl_header_converted_base_name,
-		.input_files= ust::make_array( sdl_opengl_header ),
-		.output_files= ust::make_array( sdl_opengl_header_converted ),
-	};
+			custom_build_steps.push_back(
+				BK::CustomBuildStep
+				{
+					.command= BK::CustomBuildStep::ExeCommand
+					{
+						.exe_path= cpp_header_converter_path,
+						.command_line= ust::make_array</ust::string8/>( raylib_header, "-o", raylib_header_converted, "--", "-std=c11" ),
+					},
+					.comment= raylib_header_converted_base_name,
+					.input_files= ust::make_array( raylib_header ),
+					.output_files= ust::make_array( raylib_header_converted ),
+				} );
 
-	//
-	// raylib build
-	//
+			raylib_wrapper_target.generated_public_header_files.push_back( raylib_header_converted_base_name );
 
-	var BK::BuildTarget mut raylib_wrapper_target
-	{
-		.target_type = BK::BuildTargetType::Library,
-		.name= "raylib_wrapper",
-	};
+			raylib_wrapper_target.external_libraries.push_back( raylib_compiled );
 
-	var ust::filesystem_path raylib_src_path= ust::path::join( build_system_interface.GetCurrentPackageSourceDirectory(), "raylib" );
-	var ust::filesystem_path raylib_build_path= ust::path::join( build_system_interface.GetCurrentPackageBuildDirectory(), "raylib_build" );
-	var ust::filesystem_path cmake_cache_file= ust::path::join( raylib_build_path, "CMakeCache.txt" );
+			if( is_target_windows )
+			{
+				raylib_wrapper_target.external_libraries.push_back( "gdi32.lib" );
+				raylib_wrapper_target.external_libraries.push_back( "user32.lib" );
+				raylib_wrapper_target.external_libraries.push_back( "shell32.lib" );
+				raylib_wrapper_target.external_libraries.push_back( "winmm.lib" );
+			}
+			else
+			{
+				raylib_wrapper_target.external_libraries.push_back( "-ldl" );
+			}
 
-	var ust::filesystem_path raylib_compiled=
-		ust::path::join(
-			raylib_build_path,
-			"raylib",
-			( is_target_windows
-				? ust::string_view8( "raylib.lib" )
-				: ust::string_view8( "libraylib.a" ) ) );
+			build_targets.push_back( move( raylib_wrapper_target ) );
+		}
 
-	var ust::filesystem_path raylib_header= ust::path::join( raylib_src_path, "src", "raylib.h" );
+		build_targets.push_back(
+			BK::BuildTarget
+			{
+				.target_type = BK::BuildTargetType::Executable,
+				.name= "map_viewer",
+				.source_files= ust::make_array</ ust::string8 />( "map_viewer/main.u" ),
+				.private_dependencies= ust::make_array(
+					BK::DependencyName{ .name= common_lib_target_name },
+					BK::DependencyName{ .name= raylib_wrapper_target_name } ),
+			} );
 
-	var ust::string_view8 mut cmake_build_type;
-	switch( build_system_interface.GetBuildConfiguration() )
-	{
-		BK::BuildConfiguration::Debug -> { cmake_build_type= "Debug"; },
-		BK::BuildConfiguration::Release -> { cmake_build_type= "Release"; },
-		BK::BuildConfiguration::MinSizeRelease -> { cmake_build_type= "MinSizeRel"; },
+		build_targets.push_back(
+			BK::BuildTarget
+			{
+				.target_type = BK::BuildTargetType::Executable,
+				.name= "model_viewer",
+				.source_files= ust::make_array</ ust::string8 />( "model_viewer/main.u" ),
+				.private_dependencies= ust::make_array(
+					BK::DependencyName{ .name= common_lib_target_name },
+					BK::DependencyName{ .name= raylib_wrapper_target_name } ),
+			} );
+
+		build_targets.push_back(
+			BK::BuildTarget
+			{
+				.target_type = BK::BuildTargetType::Executable,
+				.name= "billboards_viewer",
+				.source_files= ust::make_array</ ust::string8 />( "billboards_viewer/main.u" ),
+				.private_dependencies= ust::make_array(
+					BK::DependencyName{ .name= common_lib_target_name },
+					BK::DependencyName{ .name= raylib_wrapper_target_name } ),
+			} );
 	}
 
-	var ust::string8 cmake_executable =
-		ust::concat(
-			"cmake",
-			( is_host_windows ? ust::string_view8(".exe") : ust::string_view8("") ) );
-
-	var BK::CustomBuildStep mut raylib_cmake_generate_step
-	{
-		.command= BK::CustomBuildStep::ExeCommand
+	build_targets.push_back(
+		BK::BuildTarget
 		{
-			.exe_path= cmake_executable,
-			.command_line= ust::make_array</ust::string8/>(
-				"-S", raylib_src_path,
-				"-B", raylib_build_path,
-				"-DBUILD_EXAMPLES=OFF",
-				ust::concat( "-DCMAKE_BUILD_TYPE=", cmake_build_type ),
-				"-G", "Ninja" )
-		},
-		.input_files= ust::make_array( ust::path::join( raylib_src_path, "CMakeLists.txt" ) ),
-		.output_files= ust::make_array( cmake_cache_file ),
-		.comment= "cmake generation for raylib",
-	};
+			.target_type = BK::BuildTargetType::Executable,
+			.name= "archive_extractor",
+			.source_files= ust::make_array</ ust::string8 />( "archive_extractor/main.u" ),
+			.private_dependencies= ust::make_array( BK::DependencyName{ .name= common_lib_target_name } ),
+		} );
 
-	var BK::CustomBuildStep mut raylib_cmake_build_step
-	{
-		.command= BK::CustomBuildStep::ExeCommand
+	build_targets.push_back(
+		BK::BuildTarget
 		{
-			.exe_path= cmake_executable,
-			.command_line= ust::make_array</ust::string8/>( "--build", raylib_build_path )
-		},
-		.input_files= ust::make_array( cmake_cache_file ),
-		.output_files= ust::make_array( raylib_compiled ),
-		.comment= "cmake build for raylib",
-	};
-
-	var ust::filesystem_path_view raylib_header_converted_base_name= "raylib.iu";
-
-	var ust::filesystem_path raylib_header_converted=
-		ust::path::join(
-			build_system_interface.GetCurrentPackageBuildTargetGeneratedPublicHeadersDirectory( raylib_wrapper_target.name ),
-			raylib_header_converted_base_name );
-
-	var BK::CustomBuildStep mut raylib_header_convertion_step
-	{
-		.command= BK::CustomBuildStep::ExeCommand
-		{
-			.exe_path= cpp_header_converter_path,
-			.command_line= ust::make_array</ust::string8/>( raylib_header, "-o", raylib_header_converted, "--", "-std=c11" ),
-		},
-		.comment= raylib_header_converted_base_name,
-		.input_files= ust::make_array( raylib_header ),
-		.output_files= ust::make_array( raylib_header_converted ),
-	};
-
-	raylib_wrapper_target.generated_public_header_files.push_back( raylib_header_converted_base_name );
-
-	raylib_wrapper_target.external_libraries.push_back( raylib_compiled );
-
-	if( is_target_windows )
-	{
-		raylib_wrapper_target.external_libraries.push_back( "gdi32.lib" );
-		raylib_wrapper_target.external_libraries.push_back( "user32.lib" );
-		raylib_wrapper_target.external_libraries.push_back( "shell32.lib" );
-		raylib_wrapper_target.external_libraries.push_back( "winmm.lib" );
-	}
-	else
-	{
-		raylib_wrapper_target.external_libraries.push_back( "-ldl" );
-	}
-
-	//
-	// Our end build targets.
-	//
-
-	var BK::BuildTarget mut map_viewer_target
-	{
-		.target_type = BK::BuildTargetType::Executable,
-		.name= "map_viewer",
-		.source_files= ust::make_array</ ust::string8 />( "map_viewer/main.u" ),
-		.private_dependencies= ust::make_array(
-			BK::DependencyName{ .name= common_lib_target.name },
-			BK::DependencyName{ .name= raylib_wrapper_target.name } ),
-	};
-
-	var BK::BuildTarget mut model_viewer_target
-	{
-		.target_type = BK::BuildTargetType::Executable,
-		.name= "model_viewer",
-		.source_files= ust::make_array</ ust::string8 />( "model_viewer/main.u" ),
-		.private_dependencies= ust::make_array(
-			BK::DependencyName{ .name= common_lib_target.name },
-			BK::DependencyName{ .name= raylib_wrapper_target.name } ),
-	};
-
-	var BK::BuildTarget mut billboards_viewer_target
-	{
-		.target_type = BK::BuildTargetType::Executable,
-		.name= "billboards_viewer",
-		.source_files= ust::make_array</ ust::string8 />( "billboards_viewer/main.u" ),
-		.private_dependencies= ust::make_array(
-			BK::DependencyName{ .name= common_lib_target.name },
-			BK::DependencyName{ .name= raylib_wrapper_target.name } ),
-	};
-
-	var BK::BuildTarget mut archive_extractor_target
-	{
-		.target_type = BK::BuildTargetType::Executable,
-		.name= "archive_extractor",
-		.source_files= ust::make_array</ ust::string8 />( "archive_extractor/main.u" ),
-		.private_dependencies= ust::make_array( BK::DependencyName{ .name= common_lib_target.name } ),
-	};
-
-	var BK::BuildTarget mut map_stats_target
-	{
-		.target_type= BK::BuildTargetType::Executable,
-		.name= "map_stats",
-		.source_files= ust::make_array</ ust::string8 />( "map_stats/main.u" ),
-		.private_dependencies= ust::make_array( BK::DependencyName{ .name= common_lib_target.name } )
-	};
-
-	var BK::BuildTarget mut panzer_mortyr_target
-	{
-		.target_type = BK::BuildTargetType::Executable,
-		.name= "panzer_mortyr",
-		.private_dependencies= ust::make_array(
-			BK::DependencyName{ .name= common_lib_target.name },
-			BK::DependencyName{ .name= sdl_wrapper_target.name } ),
-	};
+			.target_type= BK::BuildTargetType::Executable,
+			.name= "map_stats",
+			.source_files= ust::make_array</ ust::string8 />( "map_stats/main.u" ),
+			.private_dependencies= ust::make_array( BK::DependencyName{ .name= common_lib_target_name } )
+		} );
 
 	var [ ust::filesystem_path_view, 39 ] panzer_mortyr_source_files
 	[
@@ -366,31 +413,27 @@ fn GetPackageInfo( BK::BuildSystemInterface &mut build_system_interface ) : BK::
 		"world_drawer.u"
 	];
 
+	var ust::vector</ust::filesystem_path/> mut panzer_mortyr_source_files_full;
+
 	foreach( &f : panzer_mortyr_source_files )
 	{
-		panzer_mortyr_target.source_files.push_back( ust::path::join( "panzer_mortyr", f ) );
+		panzer_mortyr_source_files_full.push_back( ust::path::join( "panzer_mortyr", f ) );
 	}
 
-	var ust::vector</BK::BuildTarget/> mut build_targets;
-	build_targets.push_back( move(common_lib_target) );
-	build_targets.push_back( move(sdl_wrapper_target) );
-	build_targets.push_back( move(raylib_wrapper_target) );
-	build_targets.push_back( move(map_viewer_target) );
-	build_targets.push_back( move(model_viewer_target) );
-	build_targets.push_back( move(billboards_viewer_target) );
-	build_targets.push_back( move(archive_extractor_target) );
-	build_targets.push_back( move(map_stats_target) );
-	build_targets.push_back( move(panzer_mortyr_target) );
+	build_targets.push_back(
+		BK::BuildTarget
+		{
+			.target_type = BK::BuildTargetType::Executable,
+			.name= "panzer_mortyr",
+			.source_files= move( panzer_mortyr_source_files_full ),
+			.private_dependencies= ust::make_array(
+				BK::DependencyName{ .name= common_lib_target_name },
+				BK::DependencyName{ .name= sdl_wrapper_target_name } ),
+		} );
 
 	return BK::PackageInfo
 	{
 		.build_targets= move(build_targets),
-		.custom_build_steps=
-			ust::make_array(
-				move( sdl_header_generate_step ),
-				move( sdl_opengl_header_generate_step ),
-				move( raylib_cmake_generate_step ),
-				move( raylib_cmake_build_step ),
-				move( raylib_header_convertion_step ) )
+		.custom_build_steps= move(custom_build_steps),
 	};
 }
