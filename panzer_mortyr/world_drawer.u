@@ -386,7 +386,7 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 			// Don't need adding constant factor to directional components.
 		}
 
-		( model_object.first_person_weapon ? first_person_models_to_draw_ : models_to_draw_ ).push_back(
+		( model_object.first_person_weapon ? first_person_weapon_models_to_draw_ : models_to_draw_ ).push_back(
 			ModelToDraw
 			{
 				.file_name= model_object.model_file_name,
@@ -405,7 +405,7 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 			};
 
 		ust::sort( models_to_draw_.range(), models_to_draw_file_name_compare );
-		ust::sort( first_person_models_to_draw_.range(), models_to_draw_file_name_compare );
+		ust::sort( first_person_weapon_models_to_draw_.range(), models_to_draw_file_name_compare );
 	}
 
 	// Perform actual models drawing.
@@ -467,9 +467,9 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 
 	ResetDynamicPolygonsBuffer( semitransparent_polygons_buffer_ );
 
-	// Draw first person models as last step.
-	DrawFirstPersonModels( models_, first_person_models_to_draw_, model_shader_, drawing_stats );
-	first_person_models_to_draw_.clear();
+	// Draw first person weapon models as last step.
+	DrawFirstPersonWeaponModels( models_, first_person_weapon_models_to_draw_, model_shader_, drawing_stats );
+	first_person_weapon_models_to_draw_.clear();
 
 	return drawing_stats;
 }
@@ -1102,24 +1102,23 @@ fn WorldDrawer::DrawModels(
 	}
 }
 
-fn WorldDrawer::DrawFirstPersonModels(
+fn WorldDrawer::DrawFirstPersonWeaponModels(
 	ModelsMap& models_map,
 	ust::array_view_imut</ModelToDraw/> models_to_draw,
 	ShaderProgram &mut shader,
 	DrawingStats &mut drawing_stats )
 {
-	//
-	// First draw all models with depth disabled. This clears depth buffer with model depth values.
-	//
+	// First draw all models with depth test disabled.
+	// This clears depth buffer with model depth values.
 
-	SetGLState( g_first_person_models_depth_clear_gl_state );
+	SetGLState( g_first_person_weapon_models_depth_clear_gl_state );
 
 	var u32 texture_slot= 0u;
 
+	unsafe( glActiveTexture( GLenum( GL_TEXTURE0 ) + GLenum(texture_slot) ) );
+
 	shader.Bind();
 	shader.SetUniform( "fu_texture", texture_slot );
-
-	unsafe( glActiveTexture( GLenum( GL_TEXTURE0 ) + GLenum(texture_slot) ) );
 
 	// Set some stub light.
 	shader.SetUniform( "fu_light_spherical_harmonics_r", 0.0f, 0.0f, 0.0f, 1.0f );
@@ -1174,9 +1173,7 @@ fn WorldDrawer::DrawFirstPersonModels(
 			ust::nullptr</byte8/>() ) );
 	}
 
-	//
 	// Then draw all models as usual.
-	//
 
 	DrawModels( models_map, models_to_draw, shader, drawing_stats );
 }
@@ -2915,18 +2912,20 @@ var GLState g_semitransparent_geometry_drawing_gl_state
 	.blend_destination_factor( GL_ONE_MINUS_SRC_ALPHA ),
 };
 
-var GLState g_first_person_models_depth_clear_gl_state
+var GLState g_first_person_weapon_models_depth_clear_gl_state
 {
+	// Don't bother writing color.
 	.color_write_enabled= false,
-	.depth_test_enabled= true,
 	// Stupid OpenGL!
 	//
 	// https://wikis.khronos.org/opengl/GLAPI/glDepthMask
+	//   Even if the depth buffer exists and the depth mask is non-zero,
+	//   the depth buffer is not updated if the depth test is disabled.
+	//   In order to unconditionally write to the depth buffer,
+	//   the depth test should be enabled and set to GL_ALWAYS (see glDepthFunc).
 	//
-	// Even if the depth buffer exists and the depth mask is non-zero,
-	// the depth buffer is not updated if the depth test is disabled.
-	// In order to unconditionally write to the depth buffer,
-	// the depth test should be enabled and set to GL_ALWAYS (see glDepthFunc).
+	// So, enable depth test but use ALWAYS constant.
+	.depth_test_enabled= true,
 	.depth_test_func( GL_ALWAYS ),
 	.depth_write_enabled= true,
 	.cull_face_enabled= true,
@@ -2940,7 +2939,7 @@ var GLState g_models_drawing_gl_state
 {
 	.color_write_enabled= true,
 	.depth_test_enabled= true,
-	.depth_test_func( GL_LEQUAL ), // <= for overlays.
+	.depth_test_func( GL_LEQUAL ), // <= for allowing drawing atop of the same model drawn in some previous pass.
 	.depth_write_enabled= true,
 	.cull_face_enabled= true,
 	.cull_face( GL_FRONT ),
