@@ -49,6 +49,10 @@ fn CreateNewMapGameState(
 				.night_vision_is_active= false,
 				.infrared_vision_is_active= false,
 			},
+			.last_requested_key_type= EntitiesDescription::ToolType::None,
+			.last_key_request_step= 0u,
+			.opened_secrets_mask= 0u,
+			.last_opened_secret_area_step= 0u,
 		},
 	};
 
@@ -168,6 +172,10 @@ fn CreateNewMapGameState(
 						.night_vision_is_active= false,
 						.infrared_vision_is_active= false,
 					},
+					.last_requested_key_type= EntitiesDescription::ToolType::None,
+					.last_key_request_step= 0u,
+					.opened_secrets_mask= 0u,
+					.last_opened_secret_area_step= 0u,
 				};
 
 			if_var( &prev_state : prev_player_state )
@@ -1895,10 +1903,16 @@ fn ProcessDynamicClustersLogicStep( GameMapData& map_data, GameState &mut game_s
 				}
 				else if(
 					!is_button_operated &&
-					HasNecessaryKeyForDynamicCluster( cluster, game_state.player ) &&
 					game_state.dynamic_cluster_colliders[i].bbox.InstersectsOrTouches( player_touch_bbox ) )
 				{
-					cluster_state.num_steps_to_movement_stage_transition= c_dynamic_cluster_activation_delay_steps;
+					if( HasNecessaryKeyForDynamicCluster( cluster, game_state.player ) )
+					{
+						cluster_state.num_steps_to_movement_stage_transition= c_dynamic_cluster_activation_delay_steps;
+					}
+					else
+					{
+						ProcessClusterKeyRequirement( cluster, game_state.player, game_state.step_index );
+					}
 				}
 			},
 			DynamicClusterState::MovementStage::MoveForward ->
@@ -1949,10 +1963,16 @@ fn ProcessDynamicClustersLogicStep( GameMapData& map_data, GameState &mut game_s
 				}
 				else if(
 					!is_button_operated &&
-					HasNecessaryKeyForDynamicCluster( cluster, game_state.player ) &&
 					game_state.dynamic_cluster_colliders[i].bbox.InstersectsOrTouches( player_touch_bbox ) )
 				{
-					cluster_state.num_steps_to_movement_stage_transition= c_dynamic_cluster_activation_delay_steps;
+					if( HasNecessaryKeyForDynamicCluster( cluster, game_state.player ) )
+					{
+						cluster_state.num_steps_to_movement_stage_transition= c_dynamic_cluster_activation_delay_steps;
+					}
+					else
+					{
+						ProcessClusterKeyRequirement( cluster, game_state.player, game_state.step_index );
+					}
 				}
 			},
 			DynamicClusterState::MovementStage::MoveBackward ->
@@ -2130,6 +2150,20 @@ fn HasNecessaryKeyForDynamicCluster( ZvoxCluster& cluster, PlayerState& player_s
 		ZvoxCluster::c_contents_key_c -> { return player_state.inventory[ size_type( TT::KeyC ) ] > 0u; },
 		default -> { return true; } // No key required
 	}
+}
+
+fn ProcessClusterKeyRequirement( ZvoxCluster& cluster, PlayerState &mut player, u32 current_step )
+{
+	type TT= EntitiesDescription::ToolType;
+	switch( cluster.contents )
+	{
+		ZvoxCluster::c_contents_key_a -> { player.last_requested_key_type= TT::KeyA; },
+		ZvoxCluster::c_contents_key_b -> { player.last_requested_key_type= TT::KeyB; },
+		ZvoxCluster::c_contents_key_c -> { player.last_requested_key_type= TT::KeyC; },
+		default -> {} // No key required
+	}
+
+	player.last_key_request_step= current_step;
 }
 
 // Returns true if can move and false if movement is blocked.
@@ -2955,8 +2989,12 @@ fn InteractWithTriggerVolumes( GameMapData& map_data, GameState &mut game_state 
 
 	var BBox3f& player_bbox= game_state.colliders[ size_type( game_state.player.collider_index ) ].bbox;
 
-	foreach( &trigger_volume : map_data.zvox_data.deref().trigger_volumes )
+	var ust::array_view_imut</ZvoxTriggerVolume/> trigger_volumes= map_data.zvox_data.deref().trigger_volumes;
+
+	for( var size_type mut trigger_volumen_index= 0s; trigger_volumen_index < trigger_volumes.size(); ++trigger_volumen_index )
 	{
+		var ZvoxTriggerVolume& trigger_volume= trigger_volumes[ trigger_volumen_index ];
+
 		var BBox3f trigger_bbox
 		{
 			.min(
@@ -2982,7 +3020,15 @@ fn InteractWithTriggerVolumes( GameMapData& map_data, GameState &mut game_state 
 			},
 			ZvoxTriggerVolume::c_trigger_type_secret_area ->
 			{
-				// TODO - show the message "you have found a secret area"
+				if( trigger_volumen_index < 32s )
+				{
+					var u32 mask= 1u << trigger_volumen_index;
+					if( ( game_state.player.opened_secrets_mask & mask ) == 0u )
+					{
+						game_state.player.opened_secrets_mask |= mask;
+						game_state.player.last_opened_secret_area_step= game_state.step_index;
+					}
+				}
 			},
 			ZvoxTriggerVolume::c_trigger_type_character_speech ->
 			{
