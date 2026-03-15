@@ -2,7 +2,6 @@
 
 uniform mat4 vu_matrix;
 
-uniform vec3 vu_light_add;
 uniform vec3 vu_light_scale;
 
 layout( location= 0 ) in vec3 v_position;
@@ -18,5 +17,5 @@ void main()
 	gl_Position= vec4( v_position, 1.0 ) * vu_matrix;
 	f_texture_coordinates= v_texture_coordinates.xy;
 	f_texture_layer= v_texture_coordinates.z;
-	f_light= vu_light_add + v_light * vu_light_scale;
+	f_light= v_light * vu_light_scale;
 }

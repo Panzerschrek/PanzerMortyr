@@ -103,7 +103,6 @@ PanzerMortyr game logic:
 * Perform camera Z coordinate smoothing while climbing steps, so that camera movement doesn't look jaggy.
 * Perform separate collisions calculation with glass quads - to skip broken glass quads.
 * Implement jetpack tool.
-* Implement infrared vision tool.
 * Implement flashlight tool.
 * Implement invisibility tool (false documents) and enemy properties allowing to uncover the player having invisibility.
 * Implement logic elements used by explosive decorations - with splash damage, flames, smoke, etc.

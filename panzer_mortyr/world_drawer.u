@@ -69,6 +69,7 @@ fn WorldDrawer::constructor(
 		test_primitive_shader_(
 			embed</char8/>( "shaders/test_primitive.vert.glsl" ),
 			embed</char8/>( "shaders/test_primitive.frag.glsl" ) ),
+		stub_white_texture_= CreateStubWhiteTexture(),
 		semitransparent_polygons_buffer_
 		{
 			.vertex_buffer=
@@ -145,12 +146,35 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 	}
 
 	var GlobalLightParams mut global_light_params{ .light_add[ 0.0f ... ], .light_scale[ 1.0f ... ] };
+	var GlobalLightParams mut model_light_params= global_light_params;
+	var GlobalLightParams mut first_person_weapon_model_light_params= model_light_params;
 
-	if( drawing_info.fullscreen_effect == WorldDrawingInfo::FullscreenEffect::NightVision )
+	switch( drawing_info.fullscreen_effect )
 	{
-		// For night vision set red and blue components to zero, add some light to green component and scale it up.
-		global_light_params.light_add= ust::make_array( 0.0f, 0.3f, 0.0f );
-		global_light_params.light_scale= ust::make_array( 0.0f, 1.3f, 0.0f );
+		WorldDrawingInfo::FullscreenEffect::None -> {},
+		WorldDrawingInfo::FullscreenEffect::NightVision ->
+		{
+			// For night vision set red and blue components to zero, add some light to green component and scale it up.
+			global_light_params.light_add= ust::make_array( 0.0f, 0.3f, 0.0f );
+			global_light_params.light_scale= ust::make_array( 0.0f, 1.3f, 0.0f );
+
+			// Models have the same light params as the rest of the world in night vision mode.
+			model_light_params= global_light_params;
+			first_person_weapon_model_light_params= model_light_params;
+		},
+		WorldDrawingInfo::FullscreenEffect::InfraredVision ->
+		{
+			// For infrared vision make anything red.
+			global_light_params.light_add= ust::make_array( 0.0f, 0.0f, 0.0f );
+			global_light_params.light_scale= ust::make_array( 1.5f, 0.0f, 0.0f );
+
+			// But draw models with constant orange light.
+			model_light_params.light_scale= ust::make_array( 0.0f, 0.0f, 0.0f );
+			model_light_params.light_add= ust::make_array( 1.0f, 0.4f, 0.1f );
+
+			// Draw first person weapon as the rest of the world.
+			first_person_weapon_model_light_params= global_light_params;
+		}
 	}
 
 	var MapDrawData& map_data= map_data_.try_deref();
@@ -372,18 +396,23 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 			}
 		}
 
-		// Apply global lighting params for model ligth.
-		for( auto mut i= 0s; i < 3s; ++i )
+		// Apply lighting params for model ligth.
 		{
-			var SphericalHarmonics& mut l= light[i];
-			var f32 light_scale= global_light_params.light_scale[i];
-			var f32 light_add= global_light_params.light_add[i];
+			var GlobalLightParams& light_params=
+				( model_object.first_person_weapon ? first_person_weapon_model_light_params : model_light_params );
 
-			l.constant_component*= light_scale;
-			l.constant_component+= light_add;
+			for( auto mut i= 0s; i < 3s; ++i )
+			{
+				var SphericalHarmonics& mut l= light[i];
+				var f32 light_scale= light_params.light_scale[i];
+				var f32 light_add= light_params.light_add[i];
 
-			l.directional_components*= light_scale;
-			// Don't need adding constant factor to directional components.
+				l.constant_component*= light_scale;
+				l.constant_component+= light_add;
+
+				l.directional_components*= light_scale;
+				// Don't need adding constant factor to directional components.
+			}
 		}
 
 		( model_object.first_person_weapon ? first_person_weapon_models_to_draw_ : models_to_draw_ ).push_back(
@@ -409,7 +438,16 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 	}
 
 	// Perform actual models drawing.
-	DrawModels( models_, models_to_draw_, model_shader_, drawing_stats );
+	DrawModels(
+		models_,
+		models_to_draw_,
+		model_shader_,
+		// If infrared vision is active draw all models with stub white texture.
+		( drawing_info.fullscreen_effect == WorldDrawingInfo::FullscreenEffect::InfraredVision
+			? ust::optional_ref_imut</Texture/>( stub_white_texture_ )
+			: ust::optional_ref_imut</Texture/>() ),
+		drawing_stats );
+
 	models_to_draw_.clear();
 
 	DrawTestPrimitives(
@@ -461,7 +499,8 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 		semitransparent_geometry_shader_,
 		map_data.map_textures_array,
 		view_matrix,
-		global_light_params );
+		// Only scale light for semitransparent polygons, but not add it.
+		global_light_params.light_scale );
 
 	drawing_stats.num_visible_semitransparent_triangles+= u32( semitransparent_polygons_buffer_.indices.size() ) / 3u;
 
@@ -1009,6 +1048,7 @@ fn WorldDrawer::DrawModels(
 	ModelsMap& models_map,
 	ust::array_view_imut</ModelToDraw/> models_to_draw,
 	ShaderProgram &mut shader,
+	ust::optional_ref_imut</Texture/> stub_texture,
 	DrawingStats &mut drawing_stats )
 {
 	var ResourceString mut prev_model_file_name= zero_init;
@@ -1046,7 +1086,14 @@ fn WorldDrawer::DrawModels(
 
 			prev_model_file_name= model_to_draw.file_name;
 
-			model.textures.back().Bind();
+			if_var( &t : stub_texture )
+			{
+				t.Bind();
+			}
+			else
+			{
+				model.textures.back().Bind();
+			}
 
 			model.vertex_array_object.Bind();
 
@@ -1175,7 +1222,7 @@ fn WorldDrawer::DrawFirstPersonWeaponModels(
 
 	// Then draw all models as usual.
 
-	DrawModels( models_map, models_to_draw, shader, drawing_stats );
+	DrawModels( models_map, models_to_draw, shader, ust::null_optional_ref, drawing_stats );
 }
 
 fn WorldDrawer::DrawSemitransparentGeometry(
@@ -1183,7 +1230,7 @@ fn WorldDrawer::DrawSemitransparentGeometry(
 	ShaderProgram &mut shader,
 	Texture& map_textures_array,
 	Mat4f& view_matrix,
-	GlobalLightParams& global_light_params )
+	[ f32, 3 ]& light_scale )
 {
 	var size_type num_indices=
 		ust::min( dynamic_polygons_buffer.indices.size(), dynamic_polygons_buffer.max_indices );
@@ -1202,8 +1249,7 @@ fn WorldDrawer::DrawSemitransparentGeometry(
 	shader.SetUniform( "vu_matrix", view_matrix );
 	shader.SetUniform( "fu_texture", texture_slot );
 
-	shader.SetUniform( "vu_light_add", Vec3f( global_light_params.light_add ) );
-	shader.SetUniform( "vu_light_scale", Vec3f( global_light_params.light_scale ) );
+	shader.SetUniform( "vu_light_scale", Vec3f( light_scale ) );
 
 	unsafe( glDrawElements(
 		GLenum( GL_TRIANGLES ), GLsizei( num_indices ), GLenum( GL_UNSIGNED_SHORT ), ust::nullptr</byte8/>() ) );
@@ -1566,6 +1612,32 @@ fn UploadMapTextureLayers(
 				ust::ptr_cast_to_byte8( $<( temp_texture_data ) ) ) );
 		}
 	}
+}
+
+fn CreateStubWhiteTexture() : Texture
+{
+	var Texture texture= Texture::Create( GLenum( GL_TEXTURE_2D ) );
+	texture.Bind();
+
+	var size_type size= 8s;
+
+	var [ [ u8, 4 ], size * size ] texture_data[ [ 255u8 ... ] ... ];
+
+	unsafe( glTexImage2D(
+		GLenum( GL_TEXTURE_2D ),
+		0,
+		GLint( GL_RGBA8 ),
+		GLsizei( size ),
+		GLsizei( size ),
+		0,
+		GLenum( GL_RGBA ),
+		GLenum( GL_UNSIGNED_BYTE ),
+		ust::ptr_cast_to_byte8( $<( cast_mut( texture_data ) ) ) ) );
+
+	unsafe( glTexParameteri( GLenum( GL_TEXTURE_2D ), GLenum( GL_TEXTURE_MAG_FILTER ), GLint( GL_NEAREST ) ) );
+	unsafe( glTexParameteri( GLenum( GL_TEXTURE_2D ), GLenum( GL_TEXTURE_MIN_FILTER ), GLint( GL_NEAREST ) ) );
+
+	return texture;
 }
 
 fn PrepareVertexArrayObjectWithMapVertexFormat(
