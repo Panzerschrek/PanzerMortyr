@@ -147,6 +147,7 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 
 	var GlobalLightParams mut global_light_params{ .light_add[ 0.0f ... ], .light_scale[ 1.0f ... ] };
 	var GlobalLightParams mut model_light_params{ .light_add[ 0.0f ... ], .light_scale[ 1.0f ... ] };
+	var GlobalLightParams mut first_person_weapon_model_light_params{ .light_add[ 0.0f ... ], .light_scale[ 1.0f ... ] };
 
 	switch( drawing_info.fullscreen_effect )
 	{
@@ -156,16 +157,22 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 			// For night vision set red and blue components to zero, add some light to green component and scale it up.
 			global_light_params.light_add= ust::make_array( 0.0f, 0.3f, 0.0f );
 			global_light_params.light_scale= ust::make_array( 0.0f, 1.3f, 0.0f );
+
 			model_light_params= global_light_params;
+			first_person_weapon_model_light_params= model_light_params;
 		},
 		WorldDrawingInfo::FullscreenEffect::InfraredVision ->
 		{
 			// For infrared vision make anything red.
 			global_light_params.light_add= ust::make_array( 0.0f, 0.0f, 0.0f );
 			global_light_params.light_scale= ust::make_array( 1.5f, 0.0f, 0.0f );
+
 			// But draw models with constant orange light.
 			model_light_params.light_scale= ust::make_array( 0.0f, 0.0f, 0.0f );
 			model_light_params.light_add= ust::make_array( 1.0f, 0.5f, 0.0f );
+
+			// Draw first person weapon as the rest of the world.
+			first_person_weapon_model_light_params= global_light_params;
 		}
 	}
 
@@ -388,18 +395,23 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 			}
 		}
 
-		// Apply global lighting params for model ligth.
-		for( auto mut i= 0s; i < 3s; ++i )
+		// Apply lighting params for model ligth.
 		{
-			var SphericalHarmonics& mut l= light[i];
-			var f32 light_scale= model_light_params.light_scale[i];
-			var f32 light_add= model_light_params.light_add[i];
+			var GlobalLightParams& light_params=
+				( model_object.first_person_weapon ? first_person_weapon_model_light_params : model_light_params );
 
-			l.constant_component*= light_scale;
-			l.constant_component+= light_add;
+			for( auto mut i= 0s; i < 3s; ++i )
+			{
+				var SphericalHarmonics& mut l= light[i];
+				var f32 light_scale= light_params.light_scale[i];
+				var f32 light_add= light_params.light_add[i];
 
-			l.directional_components*= light_scale;
-			// Don't need adding constant factor to directional components.
+				l.constant_component*= light_scale;
+				l.constant_component+= light_add;
+
+				l.directional_components*= light_scale;
+				// Don't need adding constant factor to directional components.
+			}
 		}
 
 		( model_object.first_person_weapon ? first_person_weapon_models_to_draw_ : models_to_draw_ ).push_back(
