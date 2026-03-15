@@ -49,6 +49,8 @@ fn CreateNewMapGameState(
 				.night_vision_is_active= false,
 				.infrared_vision_is_active= false,
 			},
+			.last_requested_key_type= EntitiesDescription::ToolType::None,
+			.last_key_request_step= 0u,
 		},
 	};
 
@@ -168,6 +170,8 @@ fn CreateNewMapGameState(
 						.night_vision_is_active= false,
 						.infrared_vision_is_active= false,
 					},
+					.last_requested_key_type= EntitiesDescription::ToolType::None,
+					.last_key_request_step= 0u,
 				};
 
 			if_var( &prev_state : prev_player_state )
@@ -1895,10 +1899,16 @@ fn ProcessDynamicClustersLogicStep( GameMapData& map_data, GameState &mut game_s
 				}
 				else if(
 					!is_button_operated &&
-					HasNecessaryKeyForDynamicCluster( cluster, game_state.player ) &&
 					game_state.dynamic_cluster_colliders[i].bbox.InstersectsOrTouches( player_touch_bbox ) )
 				{
-					cluster_state.num_steps_to_movement_stage_transition= c_dynamic_cluster_activation_delay_steps;
+					if( HasNecessaryKeyForDynamicCluster( cluster, game_state.player ) )
+					{
+						cluster_state.num_steps_to_movement_stage_transition= c_dynamic_cluster_activation_delay_steps;
+					}
+					else
+					{
+						ProcessClusterKeyRequirement( cluster, game_state.player, game_state.step_index );
+					}
 				}
 			},
 			DynamicClusterState::MovementStage::MoveForward ->
@@ -1949,10 +1959,16 @@ fn ProcessDynamicClustersLogicStep( GameMapData& map_data, GameState &mut game_s
 				}
 				else if(
 					!is_button_operated &&
-					HasNecessaryKeyForDynamicCluster( cluster, game_state.player ) &&
 					game_state.dynamic_cluster_colliders[i].bbox.InstersectsOrTouches( player_touch_bbox ) )
 				{
-					cluster_state.num_steps_to_movement_stage_transition= c_dynamic_cluster_activation_delay_steps;
+					if( HasNecessaryKeyForDynamicCluster( cluster, game_state.player ) )
+					{
+						cluster_state.num_steps_to_movement_stage_transition= c_dynamic_cluster_activation_delay_steps;
+					}
+					else
+					{
+						ProcessClusterKeyRequirement( cluster, game_state.player, game_state.step_index );
+					}
 				}
 			},
 			DynamicClusterState::MovementStage::MoveBackward ->
@@ -2130,6 +2146,20 @@ fn HasNecessaryKeyForDynamicCluster( ZvoxCluster& cluster, PlayerState& player_s
 		ZvoxCluster::c_contents_key_c -> { return player_state.inventory[ size_type( TT::KeyC ) ] > 0u; },
 		default -> { return true; } // No key required
 	}
+}
+
+fn ProcessClusterKeyRequirement( ZvoxCluster& cluster, PlayerState &mut player, u32 current_step )
+{
+	type TT= EntitiesDescription::ToolType;
+	switch( cluster.contents )
+	{
+		ZvoxCluster::c_contents_key_a -> { player.last_requested_key_type= TT::KeyA; },
+		ZvoxCluster::c_contents_key_b -> { player.last_requested_key_type= TT::KeyC; },
+		ZvoxCluster::c_contents_key_c -> { player.last_requested_key_type= TT::KeyB; },
+		default -> {} // No key required
+	}
+
+	player.last_key_request_step= current_step;
 }
 
 // Returns true if can move and false if movement is blocked.
