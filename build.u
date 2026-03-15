@@ -37,13 +37,14 @@ fn GetPackageInfo( BK::BuildSystemInterface &mut build_system_interface ) : BK::
 
 	auto build_system_executable_path= build_system_interface.GetBuildSystemExecutablePath();
 	auto bin_path_opt= ust::path::get_parent_path( build_system_executable_path );
+	var ust::filesystem_path bin_path= bin_path_opt.deref_or( ust::filesystem_path() );
 
 	var ust::string8 cpp_header_converter_executable_name=
 		ust::concat(
 			"u.._cpp_header_converter", ( is_host_windows ? ust::string_view8(".exe") : ust::string_view8("") ) );
 
 	var ust::filesystem_path cpp_header_converter_path=
-		ust::path::join( bin_path_opt.try_deref(), cpp_header_converter_executable_name );
+		ust::path::join( bin_path, cpp_header_converter_executable_name );
 
 	auto& sdl_wrapper_target_name= "sdl";
 
@@ -420,6 +421,45 @@ fn GetPackageInfo( BK::BuildSystemInterface &mut build_system_interface ) : BK::
 		panzer_mortyr_source_files_full.push_back( ust::path::join( "panzer_mortyr", f ) );
 	}
 
+	var ust::vector</ ust::filesystem_path /> mut panzer_mortyr_external_libraries;
+
+	if( is_target_windows )
+	{
+		var ust::string8 llvm_rc_executable_name=
+			ust::concat( "llvm-rc", ( is_host_windows ? ust::string_view8(".exe") : ust::string_view8("") ) );
+
+		var ust::filesystem_path llvm_rc_path=
+			ust::path::join( bin_path, llvm_rc_executable_name );
+
+		var ust::filesystem_path res_file_in=
+			ust::path::join(
+				build_system_interface.GetCurrentPackageSourceDirectory(),
+				"panzer_mortyr/res.rc" );
+
+		var ust::filesystem_path icon_file_in=
+			ust::path::join(
+				build_system_interface.GetCurrentPackageSourceDirectory(),
+				"panzer_mortyr/icon.ico" );
+
+		var ust::filesystem_path res_file_out=
+			ust::path::join( build_system_interface.GetCurrentPackageBuildDirectory(), "res.rc.res" );
+
+		custom_build_steps.push_back(
+			BK::CustomBuildStep
+			{
+				.command= BK::CustomBuildStep::ExeCommand
+				{
+					.exe_path= llvm_rc_path,
+					.command_line= ust::make_array( res_file_in, "/fo", res_file_out ),
+				},
+				.comment= "panzer_mortyr Windows resource file",
+				.input_files= ust::make_array( res_file_in, icon_file_in ),
+				.output_files= ust::make_array( res_file_out ),
+			} );
+
+		panzer_mortyr_external_libraries.push_back( res_file_out );
+	}
+
 	build_targets.push_back(
 		BK::BuildTarget
 		{
@@ -429,6 +469,7 @@ fn GetPackageInfo( BK::BuildSystemInterface &mut build_system_interface ) : BK::
 			.private_dependencies= ust::make_array(
 				BK::DependencyName{ .name= common_lib_target_name },
 				BK::DependencyName{ .name= sdl_wrapper_target_name } ),
+			.external_libraries= move( panzer_mortyr_external_libraries ),
 		} );
 
 	return BK::PackageInfo
