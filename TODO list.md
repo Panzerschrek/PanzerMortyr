@@ -182,7 +182,7 @@ PanzerMortyr menus and HUD:
 * Extend existing setting menus/add new ones for extra options specific for PanzerMortyr.
 * Show low health and armor numbers in HUD using red color.
 * Display note images.
-* Display images related to game events (secret found, gold/silver/blue key required).
+* Fix transparensy for menu and notification images - it should be exactly like in the original game.
 * Consider displaying in HUD amounts of tools in inventory, at least important ones - health, ammo.
 * Consider drawing active tools at some edge (left or right) of the screen.
 * Allow configuring crosshair kind, investigate what kinds of crosshairs are available in the original game.
