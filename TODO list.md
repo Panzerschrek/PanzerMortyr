@@ -105,12 +105,11 @@ PanzerMortyr game logic:
 * Implement jetpack tool.
 * Implement flashlight tool.
 * Implement invisibility tool (false documents) and enemy properties allowing to uncover the player having invisibility.
-* Implement logic elements used by explosive decorations - with splash damage, flames, smoke, etc.
+* Implement logic elements used by explosive decorations - with splash damage, flame billboards, (maybe) smoke, etc.
 * Spawn bullet holes on walls, including holes attached to dynamic (movable) clusters.
 * Leave blood makrs on walls.
-* Spawn blood billboards on player or entity damaging.
 * Leave footsteps where they should be.
-* Implement bullet hit effects (smoke, sparkles, explosion billboards, sticky flames).
+* Implement remaining projectile hit effects (smoke, sparkles, blood, sticky flames).
 * Use bullet hit smoke effects for the Volkssturm enemy (via "dymek" property).
 * Draw muzzle flash sprites.
 * Implement shot recoil (where it should be) for both player and enemies.

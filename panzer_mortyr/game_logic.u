@@ -305,6 +305,8 @@ fn nodiscard ProcessGameLogicStep(
 
 	ApplySplashDamageEvents( game_state );
 
+	ProcessExplosionParticlesLogicStep( game_state.explosion_particles );
+
 	ProcessSmokeParticlesLogicStep( game_state.smoke_particles );
 
 	ProcessSmokeTrailParticlesLogicStep( game_state.smoke_trail_particles );
@@ -2482,6 +2484,8 @@ fn ProcessProjectilesLogicStep( GameMapData& map_data, GameState &mut game_state
 					var Vec3f hit_position=
 						projectile.position + velocity_slightly_elongated * smallest_travelled_distance;
 
+					var size_type mut collision_kind_index= 0s; // See EntitiesDescription::Tool::collision_handling.
+
 					if( hit_entity_index != ~0u )
 					{
 						if( weapon_tool.splash_damage_area_size == 0u )
@@ -2490,15 +2494,30 @@ fn ProcessProjectilesLogicStep( GameMapData& map_data, GameState &mut game_state
 							DamageEntityOrPlayer(
 								game_state.entities, game_state.player, hit_entity_index, weapon_tool.damage );
 						}
+
+						collision_kind_index= 1s;
+
+						if( size_type( hit_entity_index ) < game_state.entities.size() )
+						{
+							if_var( &entity : game_state.entities[ size_type( hit_entity_index ) ] )
+							{
+								var size_type entity_kind( entity.kind );
+								if( entity_kind < entities_description.entities.size()  )
+								{
+									if( entities_description.entities[ entity_kind ].mode ==
+										EntitiesDescription::EntityDescription::c_mode_enemy )
+									{
+										collision_kind_index= 2s;
+									}
+								}
+							}
+						}
 					}
 					else
 					{
-						// If collided with the world - add a bullet hole.
 						if( weapon_tool.wall_mark >= 0 )
 						{
-							// TODO - check if it's appropriate to leave bullet holes on the quad's material.
-							// TODO - detect collisions with dynamic clusters and attach a bullet hole to this cluster.
-							game_state.bullet_holes.push_back( hit_position );
+							// TODO - add a bullet hole.
 						}
 
 						if( weapon_tool.projectile_kind == EntitiesDescription::Tool::c_projectile_kind_ricocheting_bullet |
@@ -2545,7 +2564,23 @@ fn ProcessProjectilesLogicStep( GameMapData& map_data, GameState &mut game_state
 							} );
 					}
 
-					// TODO - spawn sparks and smoke effects (if enabled).
+					// Spawn hit effects if it's a non-bouncing projectile.
+					switch( weapon_tool.collision_handling[ collision_kind_index ] )
+					{
+						EntitiesDescription::Tool::c_projectile_collision_effect_small_explosion ->
+						{
+							game_state.explosion_particles.push_back(
+								ExplosionParticle{ .large= false, .position= hit_position, .age_steps= 0u, } );
+						},
+						EntitiesDescription::Tool::c_projectile_collision_effect_large_explosion ->
+						{
+							game_state.explosion_particles.push_back(
+								ExplosionParticle{ .large= true, .position= hit_position, .age_steps= 0u, } );
+						},
+						// TODO - handle other known kinds.
+						default -> {},
+					}
+
 					// TODO - spawn a dynamic light if necessary.
 
 					need_to_remove= true;
@@ -2596,6 +2631,22 @@ fn ProcessProjectilesLogicStep( GameMapData& map_data, GameState &mut game_state
 							.radius( weapon_tool.splash_damage_area_size ),
 							.damage= weapon_tool.damage,
 						} );
+				}
+
+				switch( weapon_tool.collision_handling[0] )
+				{
+					EntitiesDescription::Tool::c_projectile_collision_effect_small_explosion ->
+					{
+						game_state.explosion_particles.push_back(
+							ExplosionParticle{ .large= false, .position= projectile.position, .age_steps= 0u, } );
+					},
+					EntitiesDescription::Tool::c_projectile_collision_effect_large_explosion ->
+					{
+						game_state.explosion_particles.push_back(
+							ExplosionParticle{ .large= true, .position= projectile.position, .age_steps= 0u, } );
+					},
+					// TODO - handle other known kinds.
+					default -> {},
 				}
 			}
 		}
@@ -2716,6 +2767,36 @@ fn ApplySplashDamageEvents( GameState &mut game_state )
 	}
 
 	game_state.splash_damage_events.clear();
+}
+
+fn ProcessExplosionParticlesLogicStep(  ust::vector</ExplosionParticle/> &mut explosion_particles )
+{
+	for( auto mut i= 0s; i < explosion_particles.size(); )
+	{
+		var bool mut need_to_remove= false;
+
+		{
+			var ExplosionParticle &mut explosion_particle= explosion_particles[i];
+
+			++explosion_particle.age_steps;
+
+			if( explosion_particle.age_steps >= c_explosion_particle_max_age )
+			{
+				need_to_remove= true;
+			}
+		}
+
+		if( need_to_remove )
+		{
+			var size_type last_index= explosion_particles.size() - 1s;
+			explosion_particles.swap( i, last_index );
+			explosion_particles.drop_back();
+		}
+		else
+		{
+			++i;
+		}
+	}
 }
 
 fn ProcessSmokeParticlesLogicStep( ust::vector</SmokeParticle/> &mut smoke_particles )
