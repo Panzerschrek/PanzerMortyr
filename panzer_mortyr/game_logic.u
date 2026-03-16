@@ -309,6 +309,8 @@ fn nodiscard ProcessGameLogicStep(
 
 	ProcessExplosionParticlesLogicStep( game_state.explosion_particles );
 
+	ProcessFlameParticlesLogicStep( game_state.flame_particles );
+
 	ProcessSmokeParticlesLogicStep( game_state.smoke_particles );
 
 	ProcessSmokeTrailParticlesLogicStep( game_state.smoke_trail_particles );
@@ -2579,6 +2581,36 @@ fn ProcessProjectilesLogicStep( GameMapData& map_data, GameState &mut game_state
 					// Spawn hit effects if it's a non-bouncing projectile.
 					switch( weapon_tool.collision_handling[ collision_kind_index ] )
 					{
+						EntitiesDescription::Tool::c_projectile_collision_effect_flame ->
+						{
+							var Vec3f mut flame_position= hit_position;
+
+							// Slightly offset flame position using hit point normal.
+							// It's necessary to avoid ugly clipping of flame billboards on walls.
+							auto& quads= map_data.zmap_data.deref().quads;
+							if( size_type( hit_quad_index ) < quads.size() )
+							{
+								var Vec3f normal= CalculateQuadNormal( quads[ size_type( hit_quad_index ) ] );
+								var f32 normal_length= normal.Length();
+								if( normal_length != 0.0f )
+								{
+									var f32 scale= 3.0f / normal_length;
+									flame_position.x+= normal.x * scale;
+									flame_position.y+= normal.y * scale;
+									if( normal.z > 0.0f ) // Offset down, but not up.
+									{
+										var f32 vertical_scale= 12.0f / normal_length;
+										flame_position.z+= normal.z * vertical_scale;
+									}
+								}
+							}
+
+							if( !IsPointInLiquid( map_data, flame_position ) )
+							{
+								game_state.flame_particles.push_back(
+									FlameParticle{ .position= flame_position, .age_steps= 0u, } );
+							}
+						},
 						EntitiesDescription::Tool::c_projectile_collision_effect_small_explosion ->
 						{
 							game_state.explosion_particles.push_back(
@@ -2647,6 +2679,14 @@ fn ProcessProjectilesLogicStep( GameMapData& map_data, GameState &mut game_state
 
 				switch( weapon_tool.collision_handling[0] )
 				{
+					EntitiesDescription::Tool::c_projectile_collision_effect_flame ->
+					{
+						if( !IsPointInLiquid( map_data, projectile.position ) )
+						{
+							game_state.flame_particles.push_back(
+								FlameParticle{ .position= projectile.position, .age_steps= 0u, } );
+						}
+					},
 					EntitiesDescription::Tool::c_projectile_collision_effect_small_explosion ->
 					{
 						game_state.explosion_particles.push_back(
@@ -2833,6 +2873,36 @@ fn ProcessExplosionParticlesLogicStep( ust::vector</ExplosionParticle/> &mut exp
 			var size_type last_index= explosion_particles.size() - 1s;
 			explosion_particles.swap( i, last_index );
 			explosion_particles.drop_back();
+		}
+		else
+		{
+			++i;
+		}
+	}
+}
+
+fn ProcessFlameParticlesLogicStep( ust::vector</FlameParticle/> &mut flame_particles )
+{
+	for( auto mut i= 0s; i < flame_particles.size(); )
+	{
+		var bool mut need_to_remove= false;
+
+		{
+			var FlameParticle &mut flame_particle= flame_particles[i];
+
+			++flame_particle.age_steps;
+
+			if( flame_particle.age_steps >= c_flame_particle_max_age )
+			{
+				need_to_remove= true;
+			}
+		}
+
+		if( need_to_remove )
+		{
+			var size_type last_index= flame_particles.size() - 1s;
+			flame_particles.swap( i, last_index );
+			flame_particles.drop_back();
 		}
 		else
 		{
