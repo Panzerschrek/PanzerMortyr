@@ -109,7 +109,7 @@ PanzerMortyr game logic:
 * Spawn bullet holes on walls, including holes attached to dynamic (movable) clusters.
 * Leave blood makrs on walls.
 * Leave footsteps where they should be.
-* Implement remaining projectile hit effects (smoke, sparkles, blood, sticky flames).
+* Implement remaining projectile hit effects (smoke, sparkles, blood).
 * Use bullet hit smoke effects for the Volkssturm enemy (via "dymek" property).
 * Implement shot recoil (where it should be) for both player and enemies.
 * Implement weapon lowering on reloading for weapons where it's necessary (grenades).
@@ -139,6 +139,7 @@ PanzerMortyr game logic:
 * Perform proper player to entity visibility check while doing entity state transition based on "w_zasiegu_widocznosci" property.
 * Make sure muzzle flashes are drawn as close to the original game as possible (their position is correct).
 * Consider displaying some sort of billboards indicating places with notes - so that players don't miss notes, which are used for storytelling.
+* Consider disabling all or at least some weapons of the player if weapon shot start position is in water or other liquid.
 
 PanzerMortyr rendering:
 
