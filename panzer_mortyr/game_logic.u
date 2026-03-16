@@ -305,6 +305,8 @@ fn nodiscard ProcessGameLogicStep(
 
 	ApplySplashDamageEvents( game_state );
 
+	ProcessMuzzleFlashesLogicStep( game_state.muzzle_flashes );
+
 	ProcessExplosionParticlesLogicStep( game_state.explosion_particles );
 
 	ProcessSmokeParticlesLogicStep( game_state.smoke_particles );
@@ -400,17 +402,13 @@ fn PerformPlayerWeaponLogic( GameMapData& map_data, PlayerInput& player_input, G
 
 					if( !out_of_ammo )
 					{
-						// Each odd shot for weapons firing more than one bullet is fired slighly upper.
-						// This behavior is observable in the original game.
-						var f32 extra_elevation= f32( shot[0] & 1 ) * ( -0.75f / 360.0f * c_tau );
-
 						auto [ position, direction ]=
 							GetPlayerShotStartAndDirection(
 								shot,
 								game_state.player.position,
 								game_state.player.crouching_phase,
 								player_input.azimuth,
-								player_input.elevation + extra_elevation );
+								player_input.elevation );
 
 						var Vec3f direction_with_random_spread=
 							RandomOffsetShotVector( direction, tool.player_weapon_accuracy, game_state.random );
@@ -424,6 +422,19 @@ fn PerformPlayerWeaponLogic( GameMapData& map_data, PlayerInput& player_input, G
 								.position= position,
 								.velocity= f32( tool.speed ) * direction_with_random_spread,
 							} );
+
+						if( tool.muzzle_flash_model >= 0 )
+						{
+							game_state.muzzle_flashes.push_back(
+								MuzzleFlash
+								{
+									.model( tool.muzzle_flash_model ),
+									.owner_entity_index= c_player_entity_index,
+									.relative_position(
+										f32( shot[2] ), f32( shot[3] ), f32( shot[4] ) - c_camera_z_offset ),
+									.age_steps= 0u,
+								} );
+						}
 					}
 				}
 			}
@@ -1559,7 +1570,8 @@ fn ProcessEntitiesLogicStep( GameGlobalData& game_global_data, GameMapData& map_
 									u32( entity_index ),
 									game_state.player.crouching_phase,
 									game_state.random,
-									game_state.projectiles );
+									game_state.projectiles,
+									game_state.muzzle_flashes );
 							}
 						}
 					}
@@ -2769,7 +2781,37 @@ fn ApplySplashDamageEvents( GameState &mut game_state )
 	game_state.splash_damage_events.clear();
 }
 
-fn ProcessExplosionParticlesLogicStep(  ust::vector</ExplosionParticle/> &mut explosion_particles )
+fn ProcessMuzzleFlashesLogicStep( ust::vector</MuzzleFlash/> &mut muzzle_flashes )
+{
+	for( auto mut i= 0s; i < muzzle_flashes.size(); )
+	{
+		var bool mut need_to_remove= false;
+
+		{
+			var MuzzleFlash &mut muzzle_flash= muzzle_flashes[i];
+
+			++muzzle_flash.age_steps;
+
+			if( muzzle_flash.age_steps >= c_muzzle_flash_max_age )
+			{
+				need_to_remove= true;
+			}
+		}
+
+		if( need_to_remove )
+		{
+			var size_type last_index= muzzle_flashes.size() - 1s;
+			muzzle_flashes.swap( i, last_index );
+			muzzle_flashes.drop_back();
+		}
+		else
+		{
+			++i;
+		}
+	}
+}
+
+fn ProcessExplosionParticlesLogicStep( ust::vector</ExplosionParticle/> &mut explosion_particles )
 {
 	for( auto mut i= 0s; i < explosion_particles.size(); )
 	{
@@ -3885,7 +3927,8 @@ fn EntityShoot(
 	u32 entity_index,
 	f32 player_crouching_phase, // Assume an entity knows player's crouching phase if it can see him right now.
 	PseudoRandomGenerator &mut rand,
-	ust::vector</Projectile/> &mut projectiles )
+	ust::vector</Projectile/> &mut projectiles,
+	ust::vector</MuzzleFlash/> &mut muzzle_flashes )
 {
 	if( entity.ammo == 0u )
 	{
@@ -3913,9 +3956,9 @@ fn EntityShoot(
 
 	var Mat4f rotation_matrix= Mat4f::MakeRotationZ( entity.azimuth );
 
-	var Vec3f shot_position=
-		entity.position +
-		Vec3f( f32( item[1] ), f32( item[2] ), f32( item[3] ) ) * rotation_matrix;
+	var Vec3f shot_relative_position( f32( item[1] ), f32( item[2] ), f32( item[3] ) );
+
+	var Vec3f shot_position= entity.position + shot_relative_position * rotation_matrix;
 
 	// Just shoot towards the target.
 	// Assume, that we have rotation towards the target,
@@ -3941,6 +3984,18 @@ fn EntityShoot(
 		} );
 
 	--entity.ammo;
+
+	if( weapon_tool.muzzle_flash_model >= 0 )
+	{
+		muzzle_flashes.push_back(
+			MuzzleFlash
+			{
+				.model( weapon_tool.muzzle_flash_model ),
+				.owner_entity_index= entity_index,
+				.relative_position= shot_relative_position,
+				.age_steps= 0u,
+			} );
+	}
 }
 
 fn EntityDirectionalShot(
@@ -4610,25 +4665,27 @@ fn GetPlayerShotStartAndDirection(
 	f32 camera_azimuth,
 	f32 camera_elevation ) : [ Vec3f, 2 ]
 {
-	var f32 shot_elevation= ( c_weapon_angles_scale * c_tau ) * f32( shot[5] );
-
-	var Vec2f offset_xy( f32( shot[2] ), f32( shot[3] ) );
-	var f32 offset_z( shot[4] );
-
-	// TODO - apply also constant per-shot rotation.
-	var Mat4f rotation_matrix=
-		Mat4f::MakeRotationX( camera_elevation + shot_elevation ) *
+	var Mat4f camera_rotation_matrix=
+		Mat4f::MakeRotationX( camera_elevation ) *
 		Mat4f::MakeRotationZ( camera_azimuth );
 
-	var Vec3f offset_xy_transformed= Vec3f( offset_xy, 0.0f ) * rotation_matrix;
+	var f32 shot_elevation= ( c_weapon_angles_scale * c_tau ) * f32( shot[5] );
 
-	var Vec3f offset(
-		offset_xy_transformed.xy(),
-		offset_xy_transformed.z + offset_z + crouching_phase * c_crouching_height_delta );
+	// Each odd shot for weapons firing more than one bullet is fired slighly upper.
+	// This behavior is observable in the original game.
+	var f32 extra_elevation= f32( shot[0] & 1 ) * ( -0.75f / 360.0f * c_tau );
+
+	var Mat4f shot_rotation_matrix= Mat4f::MakeRotationX( shot_elevation + extra_elevation );
+
+	var Vec3f shot_relative_position( f32( shot[2] ), f32( shot[3] ), f32( shot[4] ) - c_camera_z_offset );
 
 	return ust::make_array(
-		player_position + offset,
-		Vec3f( 0.0f, 1.0f, 0.0f ) * rotation_matrix );
+		// Shot position isn't affected by shot elevation.
+		player_position +
+			Vec3f( 0.0f, 0.0f, c_camera_z_offset + crouching_phase * c_crouching_height_delta ) +
+			shot_relative_position * camera_rotation_matrix,
+		// Shot direction IS affected by shot elevation.
+		Vec3f( 0.0f, 1.0f, 0.0f ) * shot_rotation_matrix * camera_rotation_matrix );
 }
 
 // Input vector may be non-normalized.

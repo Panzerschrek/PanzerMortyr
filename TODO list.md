@@ -111,7 +111,6 @@ PanzerMortyr game logic:
 * Leave footsteps where they should be.
 * Implement remaining projectile hit effects (smoke, sparkles, blood, sticky flames).
 * Use bullet hit smoke effects for the Volkssturm enemy (via "dymek" property).
-* Draw muzzle flash sprites.
 * Implement shot recoil (where it should be) for both player and enemies.
 * Implement weapon lowering on reloading for weapons where it's necessary (grenades).
 * Spawn light flashes while shooting.
@@ -138,7 +137,8 @@ PanzerMortyr game logic:
 * For flamethrower spawn sticky flame objects slowly damaging enemies and the player.
 * Implement behavior specific for the mind control weapon - with enemies attacking their allies.
 * Perform proper player to entity visibility check while doing entity state transition based on "w_zasiegu_widocznosci" property.
-
+* Make sure muzzle flashes are drawn as close to the original game as possible (their position is correct).
+* Consider displaying some sort of billboards indicating places with notes - so that players don't miss notes, which are used for storytelling.
 
 PanzerMortyr rendering:
 
@@ -186,6 +186,7 @@ PanzerMortyr menus and HUD:
 * Consider drawing active tools at some edge (left or right) of the screen.
 * Allow configuring crosshair kind, investigate what kinds of crosshairs are available in the original game.
 * Display short game-related mesages (as the original does).
+* Consider displaying some sort of a progress bar while going close to the map exit trigger - as RtCW does.
 
 PanzerMortyr sound:
 

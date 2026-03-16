@@ -8,6 +8,7 @@ import "game.iu"
 import "game_constants.iu"
 import "game_logic.iu"
 import "geometry_utils.iu"
+import "mat.iu"
 
 namespace PM
 {
@@ -139,7 +140,7 @@ fn Game::ProcessMouseButtonPress( mut this, u32 button_index )
 
 		var Vec3f direction_vector= 16384.0f * Vec3f( -ust::sin(azimuth) * elevation_cos, ust::cos(azimuth) * elevation_cos, elevation_sin );
 
-		var Vec3f ray_start= GetCameraPositionForPlayer( game_state.player );
+		var Vec3f ray_start= GetCameraPositionForPlayerWithExtraDepthShift( game_state.player, camera_controller_ );
 
 		var ZmapData& zmap_data= map_data.zmap_data.deref();
 		var ZvoxData& zvox_data= map_data.zvox_data.deref();
@@ -207,7 +208,11 @@ fn Game::GetWorldDrawingInfo( this ) : WorldDrawingInfo
 		drawing_info.used_models= map_data.used_models;
 
 		drawing_info.map_index= map_data.map_index;
-		drawing_info.camera_params.position= GetCameraPositionForPlayer( game_state.player );
+
+		var Vec3f camera_position_without_depth_shift= GetCameraPositionForPlayer( game_state.player );
+
+		drawing_info.camera_params.position=
+			camera_position_without_depth_shift + GetCameraDepthShift( camera_controller_ );
 
 		var EntitiesDescription& entities_description= map_data.entities_description.deref();
 
@@ -374,6 +379,74 @@ fn Game::GetWorldDrawingInfo( this ) : WorldDrawingInfo
 			}
 		}
 
+		foreach( &muzzle_flash : game_state.muzzle_flashes )
+		{
+			var Vec3f mut absolute_position= Vec3f::MakeZero();
+			var Vec3f mut custom_axis= Vec3f::MakeZero();
+
+			var u32 c_first_axis_aligned_shot= 19u;
+			var bool is_axis_aligned_shot= muzzle_flash.model >= c_first_axis_aligned_shot;
+
+			if( muzzle_flash.owner_entity_index == c_player_entity_index )
+			{
+				var Mat4f rotation_matrix=
+					Mat4f::MakeRotationX( drawing_info.camera_params.elevation ) *
+					Mat4f::MakeRotationZ( drawing_info.camera_params.azimuth );
+
+				// HACK! Add extra shift to match how muzzle flashes look like in the original game.
+				// TODO - try removing it by tweaking code calculating billboard position?
+				var Vec3f extra_shift( 0.0f, ( is_axis_aligned_shot ? 24.0f : 0.0f ), 0.0f );
+
+				absolute_position=
+					camera_position_without_depth_shift +
+					( muzzle_flash.relative_position + extra_shift ) * rotation_matrix;
+
+				custom_axis= Vec3f( 0.0f, 1.0f, 0.0f ) * rotation_matrix;
+			}
+			else
+			{
+				if( size_type( muzzle_flash.owner_entity_index ) < game_state.entities.size() )
+				{
+					if_var( &entity : game_state.entities[ size_type( muzzle_flash.owner_entity_index ) ] )
+					{
+						var Mat4f rotation_matrix= Mat4f::MakeRotationZ( entity.azimuth );
+
+						absolute_position= entity.position + muzzle_flash.relative_position * rotation_matrix;
+						custom_axis= Vec3f( 0.0f, 1.0f, 0.0f ) * rotation_matrix;
+					}
+					else
+					{
+						continue;
+					}
+				}
+				else
+				{
+					continue;
+				}
+			}
+
+			if( size_type( muzzle_flash.model ) < typeinfo</ typeof( BillboardConstants::c_shot_ids ) />.element_count )
+			{
+				var u32 billboard_id= BillboardConstants::c_shot_ids[ muzzle_flash.model ];
+
+				drawing_info.billboards.push_back(
+					WorldDrawingInfo::Billboard
+					{
+						.alignment=
+							( is_axis_aligned_shot
+								? WorldDrawingInfo::Billboard::Alignment::ToCustomAxis
+								: WorldDrawingInfo::Billboard::Alignment:: ToCamera ),
+						.billboard_index( billboard_id ),
+						.position= absolute_position,
+						.custom_axis= custom_axis,
+						// Reduce brightness with time.
+						.brightness= 1.0f - f32( ust::max( 1u, muzzle_flash.age_steps ) - 1u ) / f32( c_muzzle_flash_max_age ),
+						 // Make axis-aligned muzzle flashes slightly bigger. They are way to small.
+						.scale= ( is_axis_aligned_shot ? 6.0f : 1.0f ),
+					} );
+			}
+		}
+
 		foreach( &explosion_particle : game_state.explosion_particles )
 		{
 			auto [ first_id, count ] =
@@ -490,7 +563,7 @@ fn Game::GetWorldDrawingInfo( this ) : WorldDrawingInfo
 						WorldDrawingInfo::ModelObject
 						{
 							.model_file_name= animation.model_file_name,
-							.position= drawing_info.camera_params.position,
+							.position= camera_position_without_depth_shift,
 							.azimuth= camera_controller_.GetAzimuth(),
 							.elevation= camera_controller_.GetElevation() + elevation_add,
 							.frame= game_state.player.weapon_state.current_animation_step / c_num_steps_per_animation_frame,
@@ -927,7 +1000,7 @@ fn Game::GetCrosshairDrawingInfo( this ) : CrosshairDrawingInfo
 		var GameMapData& map_data= map_data_.try_deref();
 		var GameState& game_state= game_state_.try_deref();
 
-		drawing_info.camera_position= GetCameraPositionForPlayer( game_state.player );
+		drawing_info.camera_position= GetCameraPositionForPlayerWithExtraDepthShift( game_state.player, camera_controller_ );
 
 		auto [ position, kind ]=
 			GetCrosshairPositionAndKind( map_data, game_state, drawing_info.camera_azimuth, drawing_info.camera_elevation );
@@ -1079,13 +1152,26 @@ fn Game::PerformMapTransition(
 
 fn GetCameraPositionForPlayer( PlayerState& player_state ) : Vec3f
 {
+	var f32 crouching_z_offset= player_state.crouching_phase * c_crouching_height_delta;
+	return Vec3f( player_state.position.xy(), player_state.position.z + c_camera_z_offset + crouching_z_offset );
+}
+
+fn GetCameraDepthShift( CameraController& camera_controller ) : Vec3f
+{
+	var Mat4f camera_rotation_matrix=
+		Mat4f::MakeRotationX( camera_controller.GetElevation() ) *
+		Mat4f::MakeRotationZ( camera_controller.GetAzimuth() );
+
 	// The original game moves camera slightly backwards. Do exactly this.
 	// TODO - fine-tune this constant.
-	var Vec2f xy_offset= (-9.0f) * Vec2f( -ust::sin( player_state.azimuth ), ust::cos( player_state.azimuth ) );
+	var f32 c_camera_depth_offset= -14.0f;
 
-	var f32 crouching_z_offset= player_state.crouching_phase * c_crouching_height_delta;
+	return Vec3f( 0.0f, c_camera_depth_offset, 0.0f ) * camera_rotation_matrix;
+}
 
-	return player_state.position + Vec3f( xy_offset, c_camera_z_offset + crouching_z_offset );
+fn GetCameraPositionForPlayerWithExtraDepthShift( PlayerState& player_state, CameraController& camera_controller ) : Vec3f
+{
+	return GetCameraPositionForPlayer( player_state ) + GetCameraDepthShift( camera_controller );
 }
 
 fn LoadGlobalData( CachingGameResourcesLoaderPtr& caching_game_resources_loader_ptr ) : GameGlobalData
