@@ -114,6 +114,10 @@ PanzerMortyr game logic:
 * Use bullet hit smoke effects for the Volkssturm enemy (via "dymek" property).
 * Implement shot recoil (where it should be) for both player and enemies.
 * Implement weapon lowering on reloading for weapons where it's necessary (grenades).
+* Rework code doing first person weapon idle/walking animations. Consider adding states where no animation is played at all.
+* Switch to a new weapon when picking it up (investigate when such switchinh takes place in the original game).
+* Implement weapon switching in case of out of ammo.
+* Implement kick as separate "weapon" which can be fired when some other weapon is active (including kicking leg animation shown).
 * Spawn light flashes while shooting.
 * Attach dynamic light sources to projectiles (where they should be).
 * Spawn bubble sprites while swimming in water.
@@ -140,6 +144,7 @@ PanzerMortyr game logic:
 * Make sure muzzle flashes are drawn as close to the original game as possible (their position is correct).
 * Consider displaying some sort of billboards indicating places with notes - so that players don't miss notes, which are used for storytelling.
 * Consider disabling all or at least some weapons of the player if weapon shot start position is in water or other liquid.
+* Consider extinguish damaging flames on entities located inside liquids.
 
 PanzerMortyr rendering:
 
@@ -169,6 +174,7 @@ PanzerMortyr rendering:
 * Consider colorizing the whole image while the acid protection suit is active.
 * Consider drawing some extra effects for the night vision mode, like fullscreen radial brightness gradient or something similar.
 * Draw entities having one or more attached flame object in flames. Consider implementing an effect similar to one used in RtCW for burning enemies.
+* Make sure clouds have proper scale and speed (similar to the original game).
 
 PanzerMortyr menus and HUD:
 
