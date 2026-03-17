@@ -56,6 +56,7 @@ Gameplay investigation:
 * Investigate whether silencer is ever used in the original game.
 * Investigate whether super armor is ever used in the original game.
 * Investigate how the ability for entities to be covered with blood is stored.
+* Investigate whether armor absorbs flame damage.
 
 PanzerMortyr general:
 
@@ -134,12 +135,13 @@ PanzerMortyr game logic:
 * Adjust rotation angles for grenade projectiles, so that they look nicely.
 * Tune granades exposion delay.
 * Tune projectiles maximum age.
-* For flamethrower spawn sticky flame objects slowly damaging enemies and the player.
 * Implement behavior specific for the mind control weapon - with enemies attacking their allies.
 * Perform proper player to entity visibility check while doing entity state transition based on "w_zasiegu_widocznosci" property.
 * Make sure muzzle flashes are drawn as close to the original game as possible (their position is correct).
 * Consider displaying some sort of billboards indicating places with notes - so that players don't miss notes, which are used for storytelling.
 * Consider disabling all or at least some weapons of the player if weapon shot start position is in water or other liquid.
+* Spawn flame and explosion visual effects if a projectile was collided with a moving dynamic cluster or with an entity during their own movement.
+* Attach flame visual effects to dynamic clusters so that flames are moving toherher with it.
 
 PanzerMortyr rendering:
 
@@ -151,6 +153,8 @@ PanzerMortyr rendering:
 * Use smooth animation for animated models (with two or more frames interpolation).
 * Draw decals (bullet holes, blood).
 * Draw injured enemies covered with blood.
+* Draw burning entities with some kind of burning effect (like in RtCW).
+* Draw some fullscreen burning effect if the player is burning.
 * Implement dynamic lights (gun flashes, explosions).
 * Draw weather effects (rain, snow).
 * Draw breaking window animation (with falling splinters).
