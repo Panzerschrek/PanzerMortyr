@@ -1002,7 +1002,6 @@ fn PerformPlayerMovement(
 			c_player_entity_index,
 			game_state.projectiles,
 			game_state.projectile_hit_events,
-			game_state.splash_damage_events,
 			game_state.damaging_flames );
 
 	DamagePlayer( game_state.player, projectile_damage );
@@ -1822,7 +1821,6 @@ fn ProcessEntitiesLogicStep( GameGlobalData& game_global_data, GameMapData& map_
 				game_state.colliders,
 				game_state.projectiles,
 				game_state.projectile_hit_events,
-				game_state.splash_damage_events,
 				game_state.damaging_flames,
 				entity,
 				u32(entity_index),
@@ -1956,7 +1954,6 @@ fn ProcessDynamicClustersLogicStep( GameMapData& map_data, GameState &mut game_s
 						game_state.player,
 						game_state.projectiles,
 						game_state.projectile_hit_events,
-						game_state.splash_damage_events,
 						game_state.damaging_flames ) )
 				{
 					cluster_state.distance_from_start+= movement_speed;
@@ -2018,7 +2015,6 @@ fn ProcessDynamicClustersLogicStep( GameMapData& map_data, GameState &mut game_s
 						game_state.player,
 						game_state.projectiles,
 						game_state.projectile_hit_events,
-						game_state.splash_damage_events,
 						game_state.damaging_flames ) )
 				{
 					cluster_state.distance_from_start-= movement_speed;
@@ -2210,7 +2206,6 @@ fn PushMoveDynamicCluster(
 	PlayerState &mut player_state,
 	ust::vector</Projectile/> &mut projectiles,
 	ust::vector</ProjectileHitEvent/> &mut projectile_hit_events,
-	ust::vector</SplashDamageEvent/> &mut splash_damage_events,
 	ust::vector</DamagingFlame/> &mut damaging_flames ) : bool
 {
 	var f32 movement_vector_length= in_movement_vector.Length();
@@ -2310,7 +2305,6 @@ fn PushMoveDynamicCluster(
 					collider.entity_index,
 					projectiles,
 					projectile_hit_events,
-					splash_damage_events,
 					damaging_flames );
 
 			DamageEntityOrPlayer( entities, player_state, collider.entity_index, projectile_damage );
@@ -2399,17 +2393,6 @@ fn PushMoveDynamicCluster(
 								.hit_quad_index= intersection_result.quad_index,
 								.collision_kind_index= 0u,
 							} );
-
-						if( weapon_tool.splash_damage_area_size > 0u )
-						{
-							splash_damage_events.push_back(
-								SplashDamageEvent
-								{
-									.position= projectile.position,
-									.radius( weapon_tool.splash_damage_area_size ),
-									.damage= weapon_tool.damage,
-								} );
-						}
 
 						need_to_remove= true;
 
@@ -2612,17 +2595,6 @@ fn ProcessProjectilesLogicStep( GameMapData& map_data, GameState &mut game_state
 							.collision_kind_index= collision_kind_index,
 						} );
 
-					if( weapon_tool.splash_damage_area_size > 0u )
-					{
-						game_state.splash_damage_events.push_back(
-							SplashDamageEvent
-							{
-								.position= hit_position,
-								.radius( weapon_tool.splash_damage_area_size ),
-								.damage= weapon_tool.damage,
-							} );
-					}
-
 					// TODO - spawn a dynamic light if necessary.
 
 					need_to_remove= true;
@@ -2663,17 +2635,6 @@ fn ProcessProjectilesLogicStep( GameMapData& map_data, GameState &mut game_state
 				// Explode grenades after some delay.
 
 				need_to_remove= true;
-
-				if( weapon_tool.splash_damage_area_size > 0u )
-				{
-					game_state.splash_damage_events.push_back(
-						SplashDamageEvent
-						{
-							.position= projectile.position,
-							.radius( weapon_tool.splash_damage_area_size ),
-							.damage= weapon_tool.damage,
-						} );
-				}
 
 				game_state.projectile_hit_events.push_back(
 					ProjectileHitEvent
@@ -2781,7 +2742,19 @@ fn ProcessProjectileHitEventsLogicStep( GameMapData& map_data, GameState &mut ga
 
 	foreach( &projectile_hit_event : game_state.projectile_hit_events )
 	{
-		var EntitiesDescription::Tool& weapon_tool= entities_description.tools[ size_type( projectile_hit_event.weapon_tool_index ) ];
+		var EntitiesDescription::Tool& weapon_tool=
+			entities_description.tools[ size_type( projectile_hit_event.weapon_tool_index ) ];
+
+		if( weapon_tool.splash_damage_area_size > 0u )
+		{
+			game_state.splash_damage_events.push_back(
+				SplashDamageEvent
+				{
+					.position= projectile_hit_event.position,
+					.radius( weapon_tool.splash_damage_area_size ),
+					.damage= weapon_tool.damage,
+				} );
+		}
 
 		switch( weapon_tool.collision_handling[ projectile_hit_event.collision_kind_index ] )
 		{
@@ -3350,7 +3323,6 @@ fn nodiscard CollideMovedEntityWithProjectiles(
 	u32 entity_index,
 	ust::vector</Projectile/> &mut projectiles,
 	ust::vector</ProjectileHitEvent/> &mut projectile_hit_events,
-	ust::vector</SplashDamageEvent/> &mut splash_damage_events,
 	ust::vector</DamagingFlame/> &mut damaging_flames ) : u32
 {
 	var u32 mut damage= 0u;
@@ -3393,18 +3365,7 @@ fn nodiscard CollideMovedEntityWithProjectiles(
 						var EntitiesDescription::Tool& weapon_tool=
 							entities_description.tools[ size_type( projectile.weapon_tool_index ) ];
 
-						if( weapon_tool.splash_damage_area_size > 0u )
-						{
-							// For weapons with splash damage add a splash damage event to hit this entity and other entities nearby.
-							splash_damage_events.push_back(
-								SplashDamageEvent
-								{
-									.position= projectile.position,
-									.radius( weapon_tool.splash_damage_area_size ),
-									.damage= weapon_tool.damage,
-								} );
-						}
-						else
+						if( weapon_tool.splash_damage_area_size == 0u )
 						{
 							// For weapons with no splash damage just apply damage directly.
 							damage+= weapon_tool.damage;
@@ -4236,7 +4197,6 @@ fn MoveEntity(
 	ust::array_view_imut</Collider/> extra_colliders,
 	ust::vector</Projectile/> &mut projectiles,
 	ust::vector</ProjectileHitEvent/> &mut projectile_hit_events,
-	ust::vector</SplashDamageEvent/> &mut splash_damage_events,
 	ust::vector</DamagingFlame/> &mut damaging_flames,
 	EntityState &mut entity,
 	u32 entity_index,
@@ -4375,7 +4335,6 @@ fn MoveEntity(
 				entity_index,
 				projectiles,
 				projectile_hit_events,
-				splash_damage_events,
 				damaging_flames );
 
 		DamageEntity( entity, projectile_damage );
