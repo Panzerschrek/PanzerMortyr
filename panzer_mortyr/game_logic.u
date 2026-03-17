@@ -2785,7 +2785,7 @@ fn ProcessProjectileHitEventsLogicStep( GameMapData& map_data, GameState &mut ga
 					}
 				}
 
-				if( !IsPointInLiquid( map_data, flame_position ) )
+				if( !IsPointInLiquidOrNearby( map_data, flame_position ) ) // Avoid spawning flames in liquids.
 				{
 					game_state.flame_particles.push_back(
 						FlameParticle{ .position= flame_position, .age_steps= 0u, } );
@@ -4555,6 +4555,40 @@ fn IsPointInLiquid( GameMapData& map_data, Vec3f& point ) : bool
 				cluster.contents == ZvoxCluster::c_contents_lava )
 			{
 				if( CreateClusterBBox( cluster ).PointIsInsideOrOnFace( point ) )
+				{
+					in_liquid= true;
+				}
+			}
+		} );
+
+	return in_liquid;
+}
+
+// In liquid check function version for cases where points slightly near liquid voluems should be still considered to be in liquid.
+// It's necessary to perform such check due to numerical imprecisions.
+fn IsPointInLiquidOrNearby( GameMapData& map_data, Vec3f& point ) : bool
+{
+	var f32 eps= 1.0f;
+	var BBox3f sample_box
+	{
+		.min= point - Vec3f( eps, eps, eps ),
+		.max= point + Vec3f( eps, eps, eps ),
+	};
+
+	var bool mut in_liquid= false;
+
+	VisitBoundingBoxesHierarchyForBBox(
+		map_data.room_clusters_hierarchy.deref(),
+		sample_box,
+		lambda[ clusters= map_data.zvox_data.deref().clusters.range(), &sample_box, &in_liquid ]( ClusterIndexInHierarchy c )
+		{
+			var ZvoxCluster& cluster= clusters[ size_type(c) ];
+
+			if( cluster.contents == ZvoxCluster::c_contents_water |
+				cluster.contents == ZvoxCluster::c_contents_acid |
+				cluster.contents == ZvoxCluster::c_contents_lava )
+			{
+				if( CreateClusterBBox( cluster ).InstersectsOrTouches( sample_box ) )
 				{
 					in_liquid= true;
 				}
