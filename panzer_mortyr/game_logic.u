@@ -316,7 +316,7 @@ fn nodiscard ProcessGameLogicStep(
 
 	ProcessExplosionParticlesLogicStep( game_state.explosion_particles );
 
-	ProcessFlameParticlesLogicStep( game_state.flame_particles );
+	ProcessFlameParticlesLogicStep( game_state );
 
 	ProcessSmokeParticlesLogicStep( game_state.smoke_particles );
 
@@ -2787,8 +2787,39 @@ fn ProcessProjectileHitEventsLogicStep( GameMapData& map_data, GameState &mut ga
 
 				if( !IsPointInLiquidOrNearby( map_data, flame_position ) ) // Avoid spawning flames in liquids.
 				{
+					// Check if this flame hit a dynamic cluster.
+					// If so - attach it to this cluster.
+					var u32 mut dynamic_cluster_object_index= ~0u;
+					var Vec3f mut relative_position= Vec3f::MakeZero();
+
+					var ust::array_view_imut</ZvoxCluster/> clusters= map_data.zvox_data.deref().clusters;
+
+					// Use linear search. It's mostly fine, since we have only a few of dynamic clusters.
+					for( auto mut i= 0s; i < game_state.dynamic_cluster_colliders.size(); ++i )
+					{
+						var DynamicClusterCollider& collider= game_state.dynamic_cluster_colliders[i];
+						if( size_type( collider.cluster_index ) < clusters.size() )
+						{
+							var ZvoxCluster& cluster= clusters[ size_type( collider.cluster_index ) ];
+							if( cluster.num_quads >= 0 &&
+								projectile_hit_event.hit_quad_index >= cluster.c.first_quad_index &&
+								projectile_hit_event.hit_quad_index < cluster.c.first_quad_index + u32( cluster.num_quads ) )
+							{
+								dynamic_cluster_object_index= u32(i);
+								relative_position= flame_position - collider.bbox.GetCenter();
+								break;
+							}
+						}
+					}
+
 					game_state.flame_particles.push_back(
-						FlameParticle{ .position= flame_position, .age_steps= 0u, } );
+						FlameParticle
+						{
+							.position= flame_position,
+							.dynamic_cluster_object_index= dynamic_cluster_object_index,
+							.relative_position= relative_position,
+							.age_steps= 0u,
+						} );
 				}
 			},
 			EntitiesDescription::Tool::c_projectile_collision_effect_small_explosion ->
@@ -2936,14 +2967,21 @@ fn ProcessExplosionParticlesLogicStep( ust::vector</ExplosionParticle/> &mut exp
 	}
 }
 
-fn ProcessFlameParticlesLogicStep( ust::vector</FlameParticle/> &mut flame_particles )
+fn ProcessFlameParticlesLogicStep( GameState &mut game_state )
 {
-	for( auto mut i= 0s; i < flame_particles.size(); )
+	for( auto mut i= 0s; i < game_state.flame_particles.size(); )
 	{
 		var bool mut need_to_remove= false;
 
 		{
-			var FlameParticle &mut flame_particle= flame_particles[i];
+			var FlameParticle &mut flame_particle= game_state.flame_particles[i];
+
+			if( size_type( flame_particle.dynamic_cluster_object_index ) < game_state.dynamic_cluster_colliders.size() )
+			{
+				var DynamicClusterCollider& collider=
+					game_state.dynamic_cluster_colliders[ size_type( flame_particle.dynamic_cluster_object_index ) ];
+				flame_particle.position= flame_particle.relative_position + collider.bbox.GetCenter();
+			}
 
 			++flame_particle.age_steps;
 
@@ -2955,9 +2993,9 @@ fn ProcessFlameParticlesLogicStep( ust::vector</FlameParticle/> &mut flame_parti
 
 		if( need_to_remove )
 		{
-			var size_type last_index= flame_particles.size() - 1s;
-			flame_particles.swap( i, last_index );
-			flame_particles.drop_back();
+			var size_type last_index= game_state.flame_particles.size() - 1s;
+			game_state.flame_particles.swap( i, last_index );
+			game_state.flame_particles.drop_back();
 		}
 		else
 		{

@@ -140,7 +140,6 @@ PanzerMortyr game logic:
 * Make sure muzzle flashes are drawn as close to the original game as possible (their position is correct).
 * Consider displaying some sort of billboards indicating places with notes - so that players don't miss notes, which are used for storytelling.
 * Consider disabling all or at least some weapons of the player if weapon shot start position is in water or other liquid.
-* Attach flame visual effects to dynamic clusters so that flames are moving toherher with it.
 
 PanzerMortyr rendering:
 
