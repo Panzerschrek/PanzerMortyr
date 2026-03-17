@@ -305,6 +305,13 @@ fn nodiscard ProcessGameLogicStep(
 
 	ApplySplashDamageEvents( game_state );
 
+	ProcessDamagingFlamesLogicStep(
+		global_data.game_params.deref(),
+		game_state.damaging_flames,
+		game_state.random,
+		game_state.entities,
+		game_state.player );
+
 	ProcessMuzzleFlashesLogicStep( game_state.muzzle_flashes );
 
 	ProcessExplosionParticlesLogicStep( game_state.explosion_particles );
@@ -992,7 +999,8 @@ fn PerformPlayerMovement(
 			player_bbox,
 			c_player_entity_index,
 			game_state.projectiles,
-			game_state.splash_damage_events );
+			game_state.splash_damage_events,
+			game_state.damaging_flames );
 
 	DamagePlayer( game_state.player, projectile_damage );
 }
@@ -1811,6 +1819,7 @@ fn ProcessEntitiesLogicStep( GameGlobalData& game_global_data, GameMapData& map_
 				game_state.colliders,
 				game_state.projectiles,
 				game_state.splash_damage_events,
+				game_state.damaging_flames,
 				entity,
 				u32(entity_index),
 				entity_description,
@@ -1942,7 +1951,8 @@ fn ProcessDynamicClustersLogicStep( GameMapData& map_data, GameState &mut game_s
 						game_state.dynamic_cluster_colliders,
 						game_state.player,
 						game_state.projectiles,
-						game_state.splash_damage_events ) )
+						game_state.splash_damage_events,
+						game_state.damaging_flames ) )
 				{
 					cluster_state.distance_from_start+= movement_speed;
 
@@ -2002,7 +2012,8 @@ fn ProcessDynamicClustersLogicStep( GameMapData& map_data, GameState &mut game_s
 						game_state.dynamic_cluster_colliders,
 						game_state.player,
 						game_state.projectiles,
-						game_state.splash_damage_events ) )
+						game_state.splash_damage_events,
+						game_state.damaging_flames ) )
 				{
 					cluster_state.distance_from_start-= movement_speed;
 
@@ -2192,7 +2203,8 @@ fn PushMoveDynamicCluster(
 	ust::array_view_imut</DynamicClusterCollider/> dynamic_cluster_colliders,
 	PlayerState &mut player_state,
 	ust::vector</Projectile/> &mut projectiles,
-	ust::vector</SplashDamageEvent/> &mut splash_damage_events ) : bool
+	ust::vector</SplashDamageEvent/> &mut splash_damage_events,
+	ust::vector</DamagingFlame/> &mut damaging_flames ) : bool
 {
 	var f32 movement_vector_length= in_movement_vector.Length();
 	if( movement_vector_length == 0.0f )
@@ -2290,7 +2302,8 @@ fn PushMoveDynamicCluster(
 					collider.bbox,
 					collider.entity_index,
 					projectiles,
-					splash_damage_events );
+					splash_damage_events,
+					damaging_flames );
 
 			DamageEntityOrPlayer( entities, player_state, collider.entity_index, projectile_damage );
 
@@ -2525,6 +2538,12 @@ fn ProcessProjectilesLogicStep( GameMapData& map_data, GameState &mut game_state
 									}
 								}
 							}
+						}
+
+						if( weapon_tool.napalm != 0u )
+						{
+							game_state.damaging_flames.push_back(
+								DamagingFlame{ .entity_index= hit_entity_index, .age_steps= 0u } );
 						}
 					}
 					else
@@ -2819,6 +2838,66 @@ fn ApplySplashDamageEvents( GameState &mut game_state )
 	}
 
 	game_state.splash_damage_events.clear();
+}
+
+fn ProcessDamagingFlamesLogicStep(
+	GameParams& game_params,
+	ust::vector</DamagingFlame/> &mut damaging_flames,
+	PseudoRandomGenerator &mut rand,
+	ust::array_view_mut</ ust::optional</EntityState /> /> entities,
+	PlayerState &mut player )
+{
+	/*
+		In the original game damaging flames work in the following way:
+			For each game logic step with ( step_number & game_params.fire_damage[0] ) == 0 flame damage is applied.
+			Value from game_params.fire_damage[1] is divided by 16 to obtain damage from this flame.
+			Damage from all flames is accumulated for each entity and rounded down to nearest integer.
+			Since game_params.fire_damage[1] value is set to 8 in settings, a single flame doesn't deal damage at all.
+
+		We do this differently:
+			Damaging step for each projectile is calculated individually, so that many flames deal damage in a smooth way.
+			A little bit of random is added to damage to compensate rounding errors, so that even single flame damages sometimes.
+	*/
+
+	var u32 damage_step_mask= game_params.fire_damage[0];
+	var u32 base_flame_damage= game_params.fire_damage[1];
+	var u32 constexpr c_flame_damage_divisor= 16u;
+
+	for( auto mut i= 0s; i < damaging_flames.size(); )
+	{
+		var bool mut need_to_remove= false;
+
+		{
+			var DamagingFlame &mut damaging_flame= damaging_flames[i];
+
+			if( ( damaging_flame.age_steps & damage_step_mask ) == 0u )
+			{
+				var u32 damage= ( base_flame_damage + rand.Next() % c_flame_damage_divisor ) / c_flame_damage_divisor;
+				if( damage > 0u )
+				{
+					DamageEntityOrPlayer( entities, player, damaging_flame.entity_index, damage );
+				}
+			}
+
+			++damaging_flame.age_steps;
+
+			if( damaging_flame.age_steps >= c_damaging_flame_max_age )
+			{
+				need_to_remove= true;
+			}
+		}
+
+		if( need_to_remove )
+		{
+			var size_type last_index= damaging_flames.size() - 1s;
+			damaging_flames.swap( i, last_index );
+			damaging_flames.drop_back();
+		}
+		else
+		{
+			++i;
+		}
+	}
 }
 
 fn ProcessMuzzleFlashesLogicStep( ust::vector</MuzzleFlash/> &mut muzzle_flashes )
@@ -3248,7 +3327,8 @@ fn nodiscard CollideMovedEntityWithProjectiles(
 	BBox3f& bbox,
 	u32 entity_index,
 	ust::vector</Projectile/> &mut projectiles,
-	ust::vector</SplashDamageEvent/> &mut splash_damage_events ) : u32
+	ust::vector</SplashDamageEvent/> &mut splash_damage_events,
+	ust::vector</DamagingFlame/> &mut damaging_flames ) : u32
 {
 	var u32 mut damage= 0u;
 
@@ -3305,6 +3385,11 @@ fn nodiscard CollideMovedEntityWithProjectiles(
 						{
 							// For weapons with no splash damage just apply damage directly.
 							damage+= weapon_tool.damage;
+						}
+
+						if( weapon_tool.napalm != 0u )
+						{
+							damaging_flames.push_back( DamagingFlame{ .entity_index= entity_index, .age_steps= 0u } );
 						}
 
 						need_to_remove= true;
@@ -4119,6 +4204,7 @@ fn MoveEntity(
 	ust::array_view_imut</Collider/> extra_colliders,
 	ust::vector</Projectile/> &mut projectiles,
 	ust::vector</SplashDamageEvent/> &mut splash_damage_events,
+	ust::vector</DamagingFlame/> &mut damaging_flames,
 	EntityState &mut entity,
 	u32 entity_index,
 	EntitiesDescription::EntityDescription& entity_description,
@@ -4255,7 +4341,8 @@ fn MoveEntity(
 				collider_bbox,
 				entity_index,
 				projectiles,
-				splash_damage_events );
+				splash_damage_events,
+				damaging_flames );
 
 		DamageEntity( entity, projectile_damage );
 	}
