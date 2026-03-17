@@ -308,6 +308,7 @@ fn nodiscard ProcessGameLogicStep(
 	ProcessDamagingFlamesLogicStep(
 		global_data.game_params.deref(),
 		game_state.damaging_flames,
+		game_state.random,
 		game_state.entities,
 		game_state.player );
 
@@ -2840,6 +2841,7 @@ fn ApplySplashDamageEvents( GameState &mut game_state )
 fn ProcessDamagingFlamesLogicStep(
 	GameParams& game_params,
 	ust::vector</DamagingFlame/> &mut damaging_flames,
+	PseudoRandomGenerator &mut rand,
 	ust::array_view_mut</ ust::optional</EntityState /> /> entities,
 	PlayerState &mut player )
 {
@@ -2849,10 +2851,15 @@ fn ProcessDamagingFlamesLogicStep(
 			Value from game_params.fire_damage[1] is divided by 16 to obtain damage from this flame.
 			Damage from all flames is accumulated for each entity and rounded down to nearest integer.
 			Since from game_params.fire_damage[1] value is set to 8 in settings, single flame doesn't deal damage at all.
+
+		We do this differently:
+			Apply time for each projectile is calculated individually, so that many flames deal damage in a smooth way.
+			A little bit of random is added to damage to compensate rounding errors, so that even single flame damages sometimes.
 	*/
 
-	var u32 damage_period= ust::max( game_params.fire_damage[0], 1u );
-	var u32 damage= game_params.fire_damage[1];
+	var u32 damage_step_mask= game_params.fire_damage[0];
+	var u32 base_flame_damage= game_params.fire_damage[1];
+	var u32 constexpr c_flame_damage_divisor= 16u;
 
 	for( auto mut i= 0s; i < damaging_flames.size(); )
 	{
@@ -2861,9 +2868,13 @@ fn ProcessDamagingFlamesLogicStep(
 		{
 			var DamagingFlame &mut damaging_flame= damaging_flames[i];
 
-			if( damaging_flame.age_steps % damage_period == 0u )
+			if( ( damaging_flame.age_steps & damage_step_mask ) == 0u )
 			{
-				DamageEntityOrPlayer( entities, player, damaging_flame.entity_index, damage );
+				var u32 damage= ( base_flame_damage + rand.Next() % c_flame_damage_divisor ) / c_flame_damage_divisor;
+				if( damage > 0u )
+				{
+					DamageEntityOrPlayer( entities, player, damaging_flame.entity_index, damage );
+				}
 			}
 
 			++damaging_flame.age_steps;
