@@ -305,8 +305,6 @@ fn nodiscard ProcessGameLogicStep(
 
 	ProcessProjectileHitEventsLogicStep( map_data, game_state );
 
-	ApplySplashDamageEvents( game_state );
-
 	ProcessDamagingFlamesLogicStep(
 		global_data.game_params.deref(),
 		game_state.damaging_flames,
@@ -2740,13 +2738,35 @@ fn ProcessProjectileHitEventsLogicStep( GameMapData& map_data, GameState &mut ga
 
 		if( weapon_tool.splash_damage_area_size > 0u )
 		{
-			game_state.splash_damage_events.push_back(
-				SplashDamageEvent
+			// Apply splash damage.
+
+			// Assume this param to be radius.
+			var f32 splash_damage_radius( weapon_tool.splash_damage_area_size );
+			// Assume splash base damage equal to weapon damage.
+			var f32 splash_damage_value( weapon_tool.damage );
+
+			var Vec3f& splash_damage_center= projectile_hit_event.position;
+
+			foreach( &collider : game_state.colliders )
+			{
+				var Vec3f bbox_dimensions= collider.bbox.GetDimensions();
+				var f32 approximate_bbox_radius=
+					0.5f * ust::min( bbox_dimensions.x, ust::min( bbox_dimensions.y, bbox_dimensions.z ) );
+
+				// Calculate approximate distance to the edge of a sphere roughly representing this bbox.
+				var f32 distane=
+					ust::max(
+						0.0f,
+						( collider.bbox.GetCenter() - splash_damage_center ).Length() - approximate_bbox_radius );
+
+				if( distane < splash_damage_radius )
 				{
-					.position= projectile_hit_event.position,
-					.radius( weapon_tool.splash_damage_area_size ),
-					.damage= weapon_tool.damage,
-				} );
+					// Use simple linear distance to damage relation.
+					var f32 damage_fraction= 1.0f - distane / splash_damage_radius;
+					var u32 damage_at_distance( splash_damage_value * damage_fraction );
+					DamageEntityOrPlayer( game_state.entities, game_state.player, collider.entity_index, damage_at_distance );
+				}
+			}
 		}
 
 		switch( weapon_tool.collision_handling[ collision_kind_index ] )
@@ -2797,35 +2817,6 @@ fn ProcessProjectileHitEventsLogicStep( GameMapData& map_data, GameState &mut ga
 	}
 
 	game_state.projectile_hit_events.clear();
-}
-
-fn ApplySplashDamageEvents( GameState &mut game_state )
-{
-	foreach( &splash_damage_event : game_state.splash_damage_events )
-	{
-		foreach( &collider : game_state.colliders )
-		{
-			var Vec3f bbox_dimensions= collider.bbox.GetDimensions();
-			var f32 approximate_bbox_radius=
-				0.5f * ust::min( bbox_dimensions.x, ust::min( bbox_dimensions.y, bbox_dimensions.z ) );
-
-			// Calculate approximate distance to the edge of a sphere roughly representing this bbox.
-			var f32 distane=
-				ust::max(
-					0.0f,
-					( collider.bbox.GetCenter() - splash_damage_event.position ).Length() - approximate_bbox_radius );
-
-			if( distane < splash_damage_event.radius )
-			{
-				// Use simple linear distance to damage relation.
-				var f32 damage_fraction= 1.0f - distane / splash_damage_event.radius;
-				var u32 damage_at_distance( f32(splash_damage_event.damage) * damage_fraction );
-				DamageEntityOrPlayer( game_state.entities, game_state.player, collider.entity_index, damage_at_distance );
-			}
-		}
-	}
-
-	game_state.splash_damage_events.clear();
 }
 
 fn ProcessDamagingFlamesLogicStep(
