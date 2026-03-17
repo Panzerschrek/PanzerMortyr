@@ -1001,6 +1001,7 @@ fn PerformPlayerMovement(
 			player_bbox,
 			c_player_entity_index,
 			game_state.projectiles,
+			game_state.projectile_hit_events,
 			game_state.splash_damage_events,
 			game_state.damaging_flames );
 
@@ -1820,6 +1821,7 @@ fn ProcessEntitiesLogicStep( GameGlobalData& game_global_data, GameMapData& map_
 				game_state.dynamic_cluster_colliders,
 				game_state.colliders,
 				game_state.projectiles,
+				game_state.projectile_hit_events,
 				game_state.splash_damage_events,
 				game_state.damaging_flames,
 				entity,
@@ -1953,6 +1955,7 @@ fn ProcessDynamicClustersLogicStep( GameMapData& map_data, GameState &mut game_s
 						game_state.dynamic_cluster_colliders,
 						game_state.player,
 						game_state.projectiles,
+						game_state.projectile_hit_events,
 						game_state.splash_damage_events,
 						game_state.damaging_flames ) )
 				{
@@ -2014,6 +2017,7 @@ fn ProcessDynamicClustersLogicStep( GameMapData& map_data, GameState &mut game_s
 						game_state.dynamic_cluster_colliders,
 						game_state.player,
 						game_state.projectiles,
+						game_state.projectile_hit_events,
 						game_state.splash_damage_events,
 						game_state.damaging_flames ) )
 				{
@@ -2205,6 +2209,7 @@ fn PushMoveDynamicCluster(
 	ust::array_view_imut</DynamicClusterCollider/> dynamic_cluster_colliders,
 	PlayerState &mut player_state,
 	ust::vector</Projectile/> &mut projectiles,
+	ust::vector</ProjectileHitEvent/> &mut projectile_hit_events,
 	ust::vector</SplashDamageEvent/> &mut splash_damage_events,
 	ust::vector</DamagingFlame/> &mut damaging_flames ) : bool
 {
@@ -2304,6 +2309,7 @@ fn PushMoveDynamicCluster(
 					collider.bbox,
 					collider.entity_index,
 					projectiles,
+					projectile_hit_events,
 					splash_damage_events,
 					damaging_flames );
 
@@ -2342,6 +2348,8 @@ fn PushMoveDynamicCluster(
 			{
 				if( intersection_result.distance <= 1.0f )
 				{
+					projectile.position+= movement_vector_elongated * ( 1.0f - intersection_result.distance );
+
 					var EntitiesDescription& entities_description= map_data.entities_description.deref();
 
 					var EntitiesDescription::Tool& weapon_tool=
@@ -2361,9 +2369,6 @@ fn PushMoveDynamicCluster(
 							var f32 normal_square_length= normal.SquareLength();
 							if( normal_square_length > 0.0f )
 							{
-								projectile.position+=
-									movement_vector_elongated * ( 1.0f - intersection_result.distance );
-
 								// Move position slightly away from the collider plane.
 								projectile.position+= ( ( 1.0f / 32.0f ) / ust::sqrt( normal_square_length ) ) * normal;
 
@@ -2385,6 +2390,13 @@ fn PushMoveDynamicCluster(
 					else
 					{
 						// Non-bouncing projectile - just destroy it.
+
+						projectile_hit_events.push_back(
+							ProjectileHitEvent
+							{
+								.weapon_tool_index= projectile.weapon_tool_index,
+								.position= projectile.position,
+							} );
 
 						if( weapon_tool.splash_damage_area_size > 0u )
 						{
@@ -3348,6 +3360,7 @@ fn nodiscard CollideMovedEntityWithProjectiles(
 	BBox3f& bbox,
 	u32 entity_index,
 	ust::vector</Projectile/> &mut projectiles,
+	ust::vector</ProjectileHitEvent/> &mut projectile_hit_events,
 	ust::vector</SplashDamageEvent/> &mut splash_damage_events,
 	ust::vector</DamagingFlame/> &mut damaging_flames ) : u32
 {
@@ -3407,6 +3420,13 @@ fn nodiscard CollideMovedEntityWithProjectiles(
 							// For weapons with no splash damage just apply damage directly.
 							damage+= weapon_tool.damage;
 						}
+
+						projectile_hit_events.push_back(
+							ProjectileHitEvent
+							{
+								.weapon_tool_index= projectile.weapon_tool_index,
+								.position= projectile.position,
+							} );
 
 						if( weapon_tool.napalm != 0u )
 						{
@@ -4224,6 +4244,7 @@ fn MoveEntity(
 	ust::array_view_imut</DynamicClusterCollider/> dynamic_cluster_colliders,
 	ust::array_view_imut</Collider/> extra_colliders,
 	ust::vector</Projectile/> &mut projectiles,
+	ust::vector</ProjectileHitEvent/> &mut projectile_hit_events,
 	ust::vector</SplashDamageEvent/> &mut splash_damage_events,
 	ust::vector</DamagingFlame/> &mut damaging_flames,
 	EntityState &mut entity,
@@ -4362,6 +4383,7 @@ fn MoveEntity(
 				collider_bbox,
 				entity_index,
 				projectiles,
+				projectile_hit_events,
 				splash_damage_events,
 				damaging_flames );
 
