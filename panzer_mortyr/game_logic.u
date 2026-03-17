@@ -2396,6 +2396,8 @@ fn PushMoveDynamicCluster(
 							{
 								.weapon_tool_index= projectile.weapon_tool_index,
 								.position= projectile.position,
+								.hit_quad_index= intersection_result.quad_index,
+								.collision_kind_index= 0u,
 							} );
 
 						if( weapon_tool.splash_damage_area_size > 0u )
@@ -2525,7 +2527,7 @@ fn ProcessProjectilesLogicStep( GameMapData& map_data, GameState &mut game_state
 					var Vec3f hit_position=
 						projectile.position + velocity_slightly_elongated * smallest_travelled_distance;
 
-					var size_type mut collision_kind_index= 0s; // See EntitiesDescription::Tool::collision_handling.
+					var u32 mut collision_kind_index= 0u; // See EntitiesDescription::Tool::collision_handling.
 
 					if( hit_entity_index != ~0u )
 					{
@@ -2536,8 +2538,9 @@ fn ProcessProjectilesLogicStep( GameMapData& map_data, GameState &mut game_state
 								game_state.entities, game_state.player, hit_entity_index, weapon_tool.damage );
 						}
 
-						collision_kind_index= 1s;
+						collision_kind_index= 1u;
 
+						// TODO - fix this, use "podatn" property.
 						if( size_type( hit_entity_index ) < game_state.entities.size() )
 						{
 							if_var( &entity : game_state.entities[ size_type( hit_entity_index ) ] )
@@ -2548,7 +2551,7 @@ fn ProcessProjectilesLogicStep( GameMapData& map_data, GameState &mut game_state
 									if( entities_description.entities[ entity_kind ].mode ==
 										EntitiesDescription::EntityDescription::c_mode_enemy )
 									{
-										collision_kind_index= 2s;
+										collision_kind_index= 2u;
 									}
 								}
 							}
@@ -2605,6 +2608,8 @@ fn ProcessProjectilesLogicStep( GameMapData& map_data, GameState &mut game_state
 						{
 							.weapon_tool_index= projectile.weapon_tool_index,
 							.position= hit_position,
+							.hit_quad_index= hit_quad_index,
+							.collision_kind_index= collision_kind_index,
 						} );
 
 					if( weapon_tool.splash_damage_area_size > 0u )
@@ -2616,53 +2621,6 @@ fn ProcessProjectilesLogicStep( GameMapData& map_data, GameState &mut game_state
 								.radius( weapon_tool.splash_damage_area_size ),
 								.damage= weapon_tool.damage,
 							} );
-					}
-
-					// Spawn hit effects if it's a non-bouncing projectile.
-					switch( weapon_tool.collision_handling[ collision_kind_index ] )
-					{
-						EntitiesDescription::Tool::c_projectile_collision_effect_flame ->
-						{
-							var Vec3f mut flame_position= hit_position;
-
-							// Slightly offset flame position using hit point normal.
-							// It's necessary to avoid ugly clipping of flame billboards on walls.
-							auto& quads= map_data.zmap_data.deref().quads;
-							if( size_type( hit_quad_index ) < quads.size() )
-							{
-								var Vec3f normal= CalculateQuadNormal( quads[ size_type( hit_quad_index ) ] );
-								var f32 normal_length= normal.Length();
-								if( normal_length != 0.0f )
-								{
-									var f32 scale= 3.0f / normal_length;
-									flame_position.x+= normal.x * scale;
-									flame_position.y+= normal.y * scale;
-									if( normal.z > 0.0f ) // Offset down, but not up.
-									{
-										var f32 vertical_scale= 12.0f / normal_length;
-										flame_position.z+= normal.z * vertical_scale;
-									}
-								}
-							}
-
-							if( !IsPointInLiquid( map_data, flame_position ) )
-							{
-								game_state.flame_particles.push_back(
-									FlameParticle{ .position= flame_position, .age_steps= 0u, } );
-							}
-						},
-						EntitiesDescription::Tool::c_projectile_collision_effect_small_explosion ->
-						{
-							game_state.explosion_particles.push_back(
-								ExplosionParticle{ .large= false, .position= hit_position, .age_steps= 0u, } );
-						},
-						EntitiesDescription::Tool::c_projectile_collision_effect_large_explosion ->
-						{
-							game_state.explosion_particles.push_back(
-								ExplosionParticle{ .large= true, .position= hit_position, .age_steps= 0u, } );
-						},
-						// TODO - handle other known kinds.
-						default -> {},
 					}
 
 					// TODO - spawn a dynamic light if necessary.
@@ -2834,11 +2792,57 @@ fn DamageEntity( EntityState &mut entity, u32 damage )
 
 fn ProcessProjectileHitEventsLogicStep( GameMapData& map_data, GameState &mut game_state )
 {
+	var EntitiesDescription& entities_description= map_data.entities_description.deref();
+
 	foreach( &projectile_hit_event : game_state.projectile_hit_events )
 	{
-		// TODO
-		ust::ignore_unused( map_data );
-		ust::ignore_unused( projectile_hit_event );
+		var EntitiesDescription::Tool& weapon_tool= entities_description.tools[ size_type( projectile_hit_event.weapon_tool_index ) ];
+
+		switch( weapon_tool.collision_handling[ projectile_hit_event.collision_kind_index ] )
+		{
+			EntitiesDescription::Tool::c_projectile_collision_effect_flame ->
+			{
+				var Vec3f mut flame_position= projectile_hit_event.position;
+
+				// Slightly offset flame position using hit point normal.
+				// It's necessary to avoid ugly clipping of flame billboards on walls.
+				auto& quads= map_data.zmap_data.deref().quads;
+				if( size_type( projectile_hit_event.hit_quad_index ) < quads.size() )
+				{
+					var Vec3f normal= CalculateQuadNormal( quads[ size_type( projectile_hit_event.hit_quad_index ) ] );
+					var f32 normal_length= normal.Length();
+					if( normal_length != 0.0f )
+					{
+						var f32 scale= 3.0f / normal_length;
+						flame_position.x+= normal.x * scale;
+						flame_position.y+= normal.y * scale;
+						if( normal.z > 0.0f ) // Offset down, but not up.
+						{
+							var f32 vertical_scale= 12.0f / normal_length;
+							flame_position.z+= normal.z * vertical_scale;
+						}
+					}
+				}
+
+				if( !IsPointInLiquid( map_data, flame_position ) )
+				{
+					game_state.flame_particles.push_back(
+						FlameParticle{ .position= flame_position, .age_steps= 0u, } );
+				}
+			},
+			EntitiesDescription::Tool::c_projectile_collision_effect_small_explosion ->
+			{
+				game_state.explosion_particles.push_back(
+					ExplosionParticle{ .large= false, .position= projectile_hit_event.position, .age_steps= 0u, } );
+			},
+			EntitiesDescription::Tool::c_projectile_collision_effect_large_explosion ->
+			{
+				game_state.explosion_particles.push_back(
+					ExplosionParticle{ .large= true, .position= projectile_hit_event.position, .age_steps= 0u, } );
+			},
+			// TODO - handle other known kinds.
+			default -> {},
+		}
 	}
 
 	game_state.projectile_hit_events.clear();
@@ -3426,6 +3430,8 @@ fn nodiscard CollideMovedEntityWithProjectiles(
 							{
 								.weapon_tool_index= projectile.weapon_tool_index,
 								.position= projectile.position,
+								.hit_quad_index= ~0u,
+								.collision_kind_index= 1u, // TODO - fix it.
 							} );
 
 						if( weapon_tool.napalm != 0u )
