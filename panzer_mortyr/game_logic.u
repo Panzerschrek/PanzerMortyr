@@ -38,6 +38,7 @@ fn CreateNewMapGameState(
 				.current_weapon= EntitiesDescription::ToolType::None,
 				.requested_weapon= EntitiesDescription::ToolType::None,
 				.switching_fraction= c_weapon_switching_half_time_steps,
+				.extra_lowering= 0.0f,
 				.current_animation= PlayerWeaponState::WeaponAnimation::None,
 				.current_animation_step= 0u,
 			},
@@ -161,6 +162,7 @@ fn CreateNewMapGameState(
 						.current_weapon= EntitiesDescription::ToolType::None,
 						.requested_weapon= EntitiesDescription::ToolType::None,
 						.switching_fraction= c_weapon_switching_half_time_steps,
+						.extra_lowering= 0.0f,
 						.current_animation= PlayerWeaponState::WeaponAnimation::None,
 						.current_animation_step= 0u,
 					},
@@ -374,6 +376,8 @@ fn PerformPlayerWeaponLogic( GameMapData& map_data, PlayerInput& player_input, G
 		game_state.player.weapon_state.requested_weapon= player_input.inventory_input.requested_weapon;
 	}
 
+	game_state.player.weapon_state.extra_lowering= 0.0f;
+
 	if( !game_state.player.weapon_state.num_active_shooting_steps.empty() )
 	{
 		// Process shooting logic.
@@ -457,12 +461,67 @@ fn PerformPlayerWeaponLogic( GameMapData& map_data, PlayerInput& player_input, G
 				}
 			}
 
-			if( game_state.player.weapon_state.num_active_shooting_steps.try_deref() >= tool.shooting || out_of_ammo )
+			var u32 cur_num_active_shooting_steps=
+				game_state.player.weapon_state.num_active_shooting_steps.try_deref();
+
+			if( tool.overload != 0u )
+			{
+				// Messy code created for grenades weapon.
+				// All parameters are just guessed.
+
+				var u32 mut first_shot_step= tool.shooting;
+				foreach( &shot : tool.shot_data )
+				{
+					if( shot[1] >= 0 )
+					{
+						ust::min_assign( first_shot_step, u32( shot[1] ) );
+					}
+				}
+
+				var u32 lowering_begin= ust::max( 2u, first_shot_step ) - 2u;
+				var u32 lowering_end= lowering_begin + 6u;
+
+				var u32 up_movement_begin= ust::min( lowering_end + 16u, tool.shooting - 2u );
+				var u32 up_movement_end= tool.shooting - 1u;
+
+				if( cur_num_active_shooting_steps < lowering_begin )
+				{
+					game_state.player.weapon_state.extra_lowering= 0.0f;
+				}
+				else if(
+					cur_num_active_shooting_steps >= lowering_begin &&
+					cur_num_active_shooting_steps < lowering_end )
+				{
+					game_state.player.weapon_state.extra_lowering=
+						f32( cur_num_active_shooting_steps - lowering_begin ) / f32( lowering_end - lowering_begin );
+				}
+				else if(
+					cur_num_active_shooting_steps >= lowering_end &&
+					cur_num_active_shooting_steps < up_movement_begin )
+				{
+					game_state.player.weapon_state.extra_lowering= 1.0f;
+				}
+				else if(
+					cur_num_active_shooting_steps >= up_movement_begin &&
+					cur_num_active_shooting_steps < up_movement_end )
+				{
+					game_state.player.weapon_state.extra_lowering=
+						f32( up_movement_end - 1u - cur_num_active_shooting_steps ) /
+						f32( up_movement_end - up_movement_begin );
+				}
+				else
+				{
+					game_state.player.weapon_state.extra_lowering= 0.0f;
+				}
+			}
+
+			if( cur_num_active_shooting_steps >= tool.shooting || out_of_ammo )
 			{
 				// Finish shooting.
 				game_state.player.weapon_state.num_active_shooting_steps.reset();
 				game_state.player.weapon_state.current_animation= PlayerWeaponState::WeaponAnimation::None;
 				game_state.player.weapon_state.current_animation_step= 0u;
+				game_state.player.weapon_state.extra_lowering= 0.0f;
 			}
 		}
 	}
