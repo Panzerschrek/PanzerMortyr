@@ -266,6 +266,7 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 		drawing_info.dynamic_cluster_objects,
 		map_shader_,
 		view_matrix,
+		drawing_info.game_time_s,
 		global_light_params,
 		drawing_stats );
 
@@ -619,47 +620,20 @@ fn WorldDrawer::SetMap( mut this, u32 map_index )
 
 			var size_type base_vertex_index= vertices.size() - cluser_first_vertex_index;
 
-			if(
-				// Don't draw sky quads at all.
-				u32( quad.texture_id ) ==
-					MaterialsDescription::c_special_material_texture_indices[ size_type( MaterialsDescription::SpecialMaterial::Sky ) ] |
-				// Draw glass in a special way later.
-				u32( quad.texture_id ) ==
-					MaterialsDescription::c_special_material_texture_indices[ size_type( MaterialsDescription::SpecialMaterial::Glass ) ] |
-				// Draw armored glass in a special way later.
-				u32( quad.texture_id ) ==
-					MaterialsDescription::c_special_material_texture_indices[ size_type( MaterialsDescription::SpecialMaterial::ArmoredGlass ) ] |
-				// Draw water in a special way later.
-				u32( quad.texture_id ) ==
-					MaterialsDescription::c_special_material_texture_indices[ size_type( MaterialsDescription::SpecialMaterial::Water ) ] |
-				// Draw acid in a special way later.
-				u32( quad.texture_id ) ==
-					MaterialsDescription::c_special_material_texture_indices[ size_type( MaterialsDescription::SpecialMaterial::Acid ) ] |
-				// Draw alternative acid in a special way later.
-				u32( quad.texture_id ) ==
-					MaterialsDescription::c_special_material_texture_indices[ size_type( MaterialsDescription::SpecialMaterial::AcidAlternative ) ] |
-				// Draw lava in a special way later.
-				u32( quad.texture_id ) ==
-					MaterialsDescription::c_special_material_texture_indices[ size_type( MaterialsDescription::SpecialMaterial::Lava ) ] )
-			{
-				continue;
-			}
-
 			var f32 mut texture_id( quad.texture_id );
 
-			// TODO - use speacial passes for special materials.
-
-			if( size_type( quad.texture_id ) >=
-				materials_block.textures.size() * size_type( MaterialsDescription::c_texture_file_num_tiles_x * MaterialsDescription::c_texture_file_num_tiles_y ) )
+			if( u32( quad.texture_id ) >= 1000u )
 			{
-				// TODO - optimize this lookup, use a hash-map instead.
-				for( auto mut j= 0s; j < typeinfo</MaterialsDescription::SpecialMaterial/>.element_count; ++j )
+				// Don't draw quads with special materials in usual way.
+				// The only exceptions are mirrors.
+				auto m= size_type( MaterialsDescription::SpecialMaterial::Mirror );
+				if( u32( quad.texture_id ) == MaterialsDescription::c_special_material_texture_indices[m] )
 				{
-					if( u32( quad.texture_id ) == MaterialsDescription::c_special_material_texture_indices[j] )
-					{
-						texture_id= f32( materials_block.special_material_indices[j] );
-						break;
-					}
+					texture_id= f32( materials_block.special_material_indices[m] );
+				}
+				else
+				{
+					continue;
 				}
 			}
 
@@ -768,6 +742,117 @@ fn WorldDrawer::SetMap( mut this, u32 map_index )
 		cluster_draw_data.has_liquid_quads= has_liquid_quads;
 	}
 
+	// Combine all map quads with special material "valve" into a single mesh for each animation frame,
+	// in order to be able to draw all quads at once.
+	// It's fine, sice we have not so many such quads.
+	var [ SpecialMaterialQuadsMesh, 4 ] mut special_material_valve_meshes= zero_init;
+	for( auto mut i= 0u; i < 4u; ++i )
+	{
+		var size_type first_vertex_index= vertices.size();
+		var size_type first_index= indices.size();
+
+		var f32 texture_id(
+			materials_block.special_material_indices[ size_type( MaterialsDescription::SpecialMaterial::Valve ) ] );
+
+		var [ f32, 2 ] tc_offset[ f32( i & 1u ) * 0.5f, f32( i >> 1 ) * 0.5f ];
+
+		foreach( &cluster : zvox_data.clusters )
+		{
+			for( auto mut q= size_type( cluster.c.first_quad_index );
+				q < size_type( cluster.c.first_quad_index ) + size_type( cluster.num_quads );
+				++q )
+			{
+				var u32 t( zmap_data.quads[q].texture_id );
+
+				if( !(
+					t == MaterialsDescription::c_special_material_texture_indices[ size_type( MaterialsDescription::SpecialMaterial::Valve ) ] |
+					t == MaterialsDescription::c_special_material_texture_indices[ size_type( MaterialsDescription::SpecialMaterial::ValveAlternative ) ] ) )
+				{
+					continue;
+				}
+
+				if( q < zmap_lam_data.tessellated_quads.size() && zmap_lam_data.tessellated_quads[q].vertex_count > 0u )
+				{
+					var size_type num_vertices_before= vertices.size();
+
+					CreateTessellatedQuadGeometry(
+						zmap_lam_data, cluster, q, texture_id, vertices.size() - first_vertex_index, vertices, indices );
+
+					foreach( &mut v : vertices.range().subrange_start( num_vertices_before ) )
+					{
+						v.tex_coordinates[0]+= tc_offset[0];
+						v.tex_coordinates[1]+= tc_offset[1];
+					}
+				}
+			}
+		}
+
+		special_material_valve_meshes[i]=
+			SpecialMaterialQuadsMesh
+			{
+				.first_vertex_index= first_vertex_index,
+				.first_index= first_index,
+				.num_indices= indices.size() - first_index,
+			};
+	}
+
+	// Combine all map quads with special material "film" into a single mesh for each animation frame,
+	// in order to be able to draw all quads at once.
+	// It's fine, sice we have not so many such quads.
+	var [ SpecialMaterialQuadsMesh, 8 ] mut special_material_film_meshes= zero_init;
+	for( auto mut i= 0u; i < 8u; ++i )
+	{
+		var size_type first_vertex_index= vertices.size();
+		var size_type first_index= indices.size();
+
+		var u32 tile_x= i & 1u;
+		var u32 tile_y= i >> 2;
+		var u32 tile_index= tile_x + tile_y * 2u;
+
+		var f32 texture_id(
+			materials_block.special_material_indices[ size_type( MaterialsDescription::SpecialMaterial::Film ) ] +
+			tile_index );
+
+		var f32 tc_offset_y= f32( ( i >> 1 ) & 1u ) * 0.5f;
+
+		foreach( &cluster : zvox_data.clusters )
+		{
+			for( auto mut q= size_type( cluster.c.first_quad_index );
+				q < size_type( cluster.c.first_quad_index ) + size_type( cluster.num_quads );
+				++q )
+			{
+				var ZmapQuad& quad= zmap_data.quads[q];
+
+				if( u32( quad.texture_id ) !=
+					MaterialsDescription::c_special_material_texture_indices[ size_type( MaterialsDescription::SpecialMaterial::Film ) ] )
+				{
+					continue;
+				}
+
+				if( q < zmap_lam_data.tessellated_quads.size() && zmap_lam_data.tessellated_quads[q].vertex_count > 0u )
+				{
+					var size_type num_vertices_before= vertices.size();
+
+					CreateTessellatedQuadGeometry(
+						zmap_lam_data, cluster, q, texture_id, vertices.size() - first_vertex_index, vertices, indices );
+
+					foreach( &mut v : vertices.range().subrange_start( num_vertices_before ) )
+					{
+						v.tex_coordinates[1]+= tc_offset_y;
+					}
+				}
+			}
+		}
+
+		special_material_film_meshes[i]=
+			SpecialMaterialQuadsMesh
+			{
+				.first_vertex_index= first_vertex_index,
+				.first_index= first_index,
+				.num_indices= indices.size() - first_index,
+			};
+	}
+
 	if( settings_.lock_imut().deref().r_fullbright )
 	{
 		foreach( &mut v : vertices )
@@ -815,6 +900,8 @@ fn WorldDrawer::SetMap( mut this, u32 map_index )
 					gl_capabilities_ ),
 			.clouds_texture_layer= materials_block.special_material_indices[ size_type( MaterialsDescription::SpecialMaterial::Sky ) ],
 			.clusters_draw_data= move(clusters_draw_data),
+			.special_material_valve_meshes= move(special_material_valve_meshes),
+			.special_material_film_meshes= move(special_material_film_meshes),
 			.sky_background_buffer= CreateSkyBackgroundBuffer( map_description ),
 			.stars_buffer= CreateStarsBuffer( map_description, billboards_description_ ),
 			.sky_clouds_params= CreateSkyCloudsParams( map_description ),
@@ -936,6 +1023,7 @@ fn WorldDrawer::DrawMapPolygons(
 	ust::array_view_imut</WorldDrawingInfo::DynamicClusterObject/> dynamic_cluster_objects,
 	ShaderProgram &mut shader,
 	Mat4f& view_matrix,
+	f32 time_s,
 	GlobalLightParams& global_light_params,
 	DrawingStats &mut drawing_stats )
 {
@@ -1002,6 +1090,49 @@ fn WorldDrawer::DrawMapPolygons(
 		}
 
 		i+= num_clusters_in_group;
+	}
+
+	// Draw all geometry with animated special material "valve" in single draw call.
+	// It's fine to draw all quads with such muterials at once, since usually they are not so many.
+	{
+		var u32 constexpr num_frames( typeinfo</ typeof( map_data.special_material_valve_meshes ) />.element_count );
+		var u32 frame= u32( time_s * 16.0f ) % num_frames;
+
+		var SpecialMaterialQuadsMesh& mesh= map_data.special_material_valve_meshes[ frame ];
+
+		unsafe( glDrawElementsBaseVertex(
+			GLenum( GL_TRIANGLES ),
+			GLsizei( mesh.num_indices ),
+			GLenum( GL_UNSIGNED_SHORT ),
+			ust::nullptr</byte8/>() + typeinfo</u16/>.size_of * mesh.first_index,
+			GLint( mesh.first_vertex_index ) ) );
+
+		drawing_stats.num_visible_map_triangles+= u32( mesh.num_indices ) / 3u;
+	}
+
+	// Draw all geometry with animated special material "film".
+	// It's fine to draw all quads with such muterials at once, since usually they are not so many.
+	{
+		// Perform mirrored animation. It seems like the original does exactly this.
+		var u32 constexpr num_frames( typeinfo</ typeof( map_data.special_material_film_meshes ) />.element_count );
+		var u32 raw_frame= u32( time_s * 8.0f );
+		var u32 repetition= raw_frame / num_frames;
+		var u32 mut frame= raw_frame % num_frames;
+		if( ( repetition & 1u ) != 0u )
+		{
+			frame= num_frames - 1u - frame;
+		}
+
+		var SpecialMaterialQuadsMesh& mesh= map_data.special_material_film_meshes[ frame ];
+
+		unsafe( glDrawElementsBaseVertex(
+			GLenum( GL_TRIANGLES ),
+			GLsizei( mesh.num_indices ),
+			GLenum( GL_UNSIGNED_SHORT ),
+			ust::nullptr</byte8/>() + typeinfo</u16/>.size_of * mesh.first_index,
+			GLint( mesh.first_vertex_index ) ) );
+
+		drawing_stats.num_visible_map_triangles+= u32( mesh.num_indices ) / 3u;
 	}
 
 	var RoomClustersHierarchy& room_clusters_hierarchy= map_data.room_clusters_hierarchy.deref();
