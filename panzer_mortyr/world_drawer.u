@@ -771,6 +771,47 @@ fn WorldDrawer::SetMap( mut this, u32 map_index )
 		cluster_draw_data.has_liquid_quads= has_liquid_quads;
 	}
 
+	// Combine all map quads with special material "valve" into a single mesh.
+	// It's fine, sice we have not so many such quads.
+	var SpecialMaterialQuadsMesh mut special_material_valve_mesh= zero_init;
+	{
+		var size_type first_vertex_index= vertices.size();
+		var size_type first_index= indices.size();
+
+		var f32 texture_id(
+			materials_block.special_material_indices[ size_type( MaterialsDescription::SpecialMaterial::Valve ) ] );
+
+		foreach( &cluster : zvox_data.clusters )
+		{
+			for( auto mut q= size_type( cluster.c.first_quad_index );
+				q < size_type( cluster.c.first_quad_index ) + size_type( cluster.num_quads );
+				++q )
+			{
+				var ZmapQuad& quad= zmap_data.quads[q];
+
+				if( u32( quad.texture_id ) !=
+					MaterialsDescription::c_special_material_texture_indices[ size_type( MaterialsDescription::SpecialMaterial::Valve ) ] )
+				{
+					continue;
+				}
+
+				if( q < zmap_lam_data.tessellated_quads.size() && zmap_lam_data.tessellated_quads[q].vertex_count > 0u )
+				{
+					CreateTessellatedQuadGeometry(
+						zmap_lam_data, cluster, q, texture_id, vertices.size() - first_vertex_index, vertices, indices );
+				}
+			}
+		}
+
+		special_material_valve_mesh=
+			SpecialMaterialQuadsMesh
+			{
+				.first_vertex_index= first_vertex_index,
+				.first_index= first_index,
+				.num_indices= indices.size() - first_index,
+			};
+	}
+
 	if( settings_.lock_imut().deref().r_fullbright )
 	{
 		foreach( &mut v : vertices )
@@ -818,6 +859,7 @@ fn WorldDrawer::SetMap( mut this, u32 map_index )
 					gl_capabilities_ ),
 			.clouds_texture_layer= materials_block.special_material_indices[ size_type( MaterialsDescription::SpecialMaterial::Sky ) ],
 			.clusters_draw_data= move(clusters_draw_data),
+			.special_material_valve_mesh= move(special_material_valve_mesh),
 			.sky_background_buffer= CreateSkyBackgroundBuffer( map_description ),
 			.stars_buffer= CreateStarsBuffer( map_description, billboards_description_ ),
 			.sky_clouds_params= CreateSkyCloudsParams( map_description ),
@@ -1005,6 +1047,19 @@ fn WorldDrawer::DrawMapPolygons(
 		}
 
 		i+= num_clusters_in_group;
+	}
+
+	// Draw all geometry with animated special material "valve".
+	// Draw all of them, since usually they are not so many.
+	{
+		var SpecialMaterialQuadsMesh& mesh= map_data.special_material_valve_mesh;
+
+		unsafe( glDrawElementsBaseVertex(
+			GLenum( GL_TRIANGLES ),
+			GLsizei( mesh.num_indices ),
+			GLenum( GL_UNSIGNED_SHORT ),
+			ust::nullptr</byte8/>() + typeinfo</u16/>.size_of * mesh.first_index,
+			GLint( mesh.first_vertex_index ) ) );
 	}
 
 	var RoomClustersHierarchy& room_clusters_hierarchy= map_data.room_clusters_hierarchy.deref();
