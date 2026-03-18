@@ -827,6 +827,47 @@ fn WorldDrawer::SetMap( mut this, u32 map_index )
 			};
 	}
 
+	// Combine all map quads with special material "film" into a single mesh.
+	// It's fine, sice we have not so many such quads.
+	var SpecialMaterialQuadsMesh mut special_material_film_mesh= zero_init;
+	{
+		var size_type first_vertex_index= vertices.size();
+		var size_type first_index= indices.size();
+
+		var f32 texture_id(
+			materials_block.special_material_indices[ size_type( MaterialsDescription::SpecialMaterial::Film ) ] );
+
+		foreach( &cluster : zvox_data.clusters )
+		{
+			for( auto mut q= size_type( cluster.c.first_quad_index );
+				q < size_type( cluster.c.first_quad_index ) + size_type( cluster.num_quads );
+				++q )
+			{
+				var ZmapQuad& quad= zmap_data.quads[q];
+
+				if( u32( quad.texture_id ) !=
+					MaterialsDescription::c_special_material_texture_indices[ size_type( MaterialsDescription::SpecialMaterial::Film ) ] )
+				{
+					continue;
+				}
+
+				if( q < zmap_lam_data.tessellated_quads.size() && zmap_lam_data.tessellated_quads[q].vertex_count > 0u )
+				{
+					CreateTessellatedQuadGeometry(
+						zmap_lam_data, cluster, q, texture_id, vertices.size() - first_vertex_index, vertices, indices );
+				}
+			}
+		}
+
+		special_material_film_mesh=
+			SpecialMaterialQuadsMesh
+			{
+				.first_vertex_index= first_vertex_index,
+				.first_index= first_index,
+				.num_indices= indices.size() - first_index,
+			};
+	}
+
 	if( settings_.lock_imut().deref().r_fullbright )
 	{
 		foreach( &mut v : vertices )
@@ -875,6 +916,7 @@ fn WorldDrawer::SetMap( mut this, u32 map_index )
 			.clouds_texture_layer= materials_block.special_material_indices[ size_type( MaterialsDescription::SpecialMaterial::Sky ) ],
 			.clusters_draw_data= move(clusters_draw_data),
 			.special_material_valve_meshes= move(special_material_valve_meshes),
+			.special_material_film_mesh= move(special_material_film_mesh),
 			.sky_background_buffer= CreateSkyBackgroundBuffer( map_description ),
 			.stars_buffer= CreateStarsBuffer( map_description, billboards_description_ ),
 			.sky_clouds_params= CreateSkyCloudsParams( map_description ),
@@ -1072,6 +1114,19 @@ fn WorldDrawer::DrawMapPolygons(
 		var u32 frame= u32( time_s * 16.0f ) % num_frames;
 
 		var SpecialMaterialQuadsMesh& mesh= map_data.special_material_valve_meshes[ frame ];
+
+		unsafe( glDrawElementsBaseVertex(
+			GLenum( GL_TRIANGLES ),
+			GLsizei( mesh.num_indices ),
+			GLenum( GL_UNSIGNED_SHORT ),
+			ust::nullptr</byte8/>() + typeinfo</u16/>.size_of * mesh.first_index,
+			GLint( mesh.first_vertex_index ) ) );
+	}
+
+	// Draw all geometry with animated special material "film".
+	// Draw all of them, since usually they are not so many.
+	{
+		var SpecialMaterialQuadsMesh& mesh= map_data.special_material_film_mesh;
 
 		unsafe( glDrawElementsBaseVertex(
 			GLenum( GL_TRIANGLES ),
