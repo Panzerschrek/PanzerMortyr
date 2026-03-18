@@ -164,7 +164,6 @@ PanzerMortyr rendering:
 * Consider optimizing calculating light from point light sources for models - avoid enumerating all lights.
 * Consider drawing blob shadows under models (as some sort of decal?).
 * Allow changing brightness, maybe by tuning lights power.
-* Consider using non-zero alpha for glass, so that it's not so bright.
 * Consider drawing map polygons with detail textures (generate such textures somehow).
 * Consider drawing some sort of fullscreen frame-like image of the acid protection suit mask if this powerup is active.
 * Consider colorizing the whole image while the acid protection suit is active.
