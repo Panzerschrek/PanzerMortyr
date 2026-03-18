@@ -266,6 +266,7 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 		drawing_info.dynamic_cluster_objects,
 		map_shader_,
 		view_matrix,
+		drawing_info.game_time_s,
 		global_light_params,
 		drawing_stats );
 
@@ -773,13 +774,16 @@ fn WorldDrawer::SetMap( mut this, u32 map_index )
 
 	// Combine all map quads with special material "valve" into a single mesh.
 	// It's fine, sice we have not so many such quads.
-	var SpecialMaterialQuadsMesh mut special_material_valve_mesh= zero_init;
+	var [ SpecialMaterialQuadsMesh, 4 ] mut special_material_valve_meshes= zero_init;
+	for( auto mut i= 0u; i < 4u; ++i )
 	{
 		var size_type first_vertex_index= vertices.size();
 		var size_type first_index= indices.size();
 
 		var f32 texture_id(
 			materials_block.special_material_indices[ size_type( MaterialsDescription::SpecialMaterial::Valve ) ] );
+
+		var [ f32, 2 ] tc_offset[ f32( i & 1u ) * 0.5f, f32( i >> 1 ) * 0.5f ];
 
 		foreach( &cluster : zvox_data.clusters )
 		{
@@ -797,13 +801,21 @@ fn WorldDrawer::SetMap( mut this, u32 map_index )
 
 				if( q < zmap_lam_data.tessellated_quads.size() && zmap_lam_data.tessellated_quads[q].vertex_count > 0u )
 				{
+					var size_type num_vertices_before= vertices.size();
+
 					CreateTessellatedQuadGeometry(
 						zmap_lam_data, cluster, q, texture_id, vertices.size() - first_vertex_index, vertices, indices );
+
+					foreach( &mut v : vertices.range().subrange_start( num_vertices_before ) )
+					{
+						v.tex_coordinates[0]+= tc_offset[0];
+						v.tex_coordinates[1]+= tc_offset[1];
+					}
 				}
 			}
 		}
 
-		special_material_valve_mesh=
+		special_material_valve_meshes[i]=
 			SpecialMaterialQuadsMesh
 			{
 				.first_vertex_index= first_vertex_index,
@@ -859,7 +871,7 @@ fn WorldDrawer::SetMap( mut this, u32 map_index )
 					gl_capabilities_ ),
 			.clouds_texture_layer= materials_block.special_material_indices[ size_type( MaterialsDescription::SpecialMaterial::Sky ) ],
 			.clusters_draw_data= move(clusters_draw_data),
-			.special_material_valve_mesh= move(special_material_valve_mesh),
+			.special_material_valve_meshes= move(special_material_valve_meshes),
 			.sky_background_buffer= CreateSkyBackgroundBuffer( map_description ),
 			.stars_buffer= CreateStarsBuffer( map_description, billboards_description_ ),
 			.sky_clouds_params= CreateSkyCloudsParams( map_description ),
@@ -981,6 +993,7 @@ fn WorldDrawer::DrawMapPolygons(
 	ust::array_view_imut</WorldDrawingInfo::DynamicClusterObject/> dynamic_cluster_objects,
 	ShaderProgram &mut shader,
 	Mat4f& view_matrix,
+	f32 time_s,
 	GlobalLightParams& global_light_params,
 	DrawingStats &mut drawing_stats )
 {
@@ -1052,7 +1065,10 @@ fn WorldDrawer::DrawMapPolygons(
 	// Draw all geometry with animated special material "valve".
 	// Draw all of them, since usually they are not so many.
 	{
-		var SpecialMaterialQuadsMesh& mesh= map_data.special_material_valve_mesh;
+		var u32 constexpr num_frames( typeinfo</ typeof( map_data.special_material_valve_meshes ) />.element_count );
+		var u32 frame= u32( time_s * 16.0f ) % num_frames;
+
+		var SpecialMaterialQuadsMesh& mesh= map_data.special_material_valve_meshes[ frame ];
 
 		unsafe( glDrawElementsBaseVertex(
 			GLenum( GL_TRIANGLES ),
