@@ -111,7 +111,6 @@ PanzerMortyr game logic:
 * Leave footsteps where they should be.
 * Implement remaining projectile hit effects (smoke, sparkles, blood).
 * Use bullet hit smoke effects for the Volkssturm enemy (via "dymek" property).
-* Implement shot recoil (where it should be) for both player and enemies.
 * Implement weapon lowering on reloading for weapons where it's necessary (grenades).
 * Rework code doing first person weapon idle/walking animations. Consider adding states where no animation is played at all.
 * Switch to a new weapon when picking it up (investigate when such switchinh takes place in the original game).
