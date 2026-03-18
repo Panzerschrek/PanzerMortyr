@@ -7,7 +7,6 @@ Map format investigation:
 * Investigate meaning of remaining fields of "ZvoxTriggerVolume" struct.
 * Investigate meaning of remaining fields of "ZpozEntityNavigationInfo" struct.
 * Investigate what remaining fields of ZvoxCluster structure mean.
-* Investigate how exactly light-related sprites (flames, coronas) are defined.
 * Investigate exact meaning of many ZpozEntity fields.
 * Investigate meaning of remaining fields of "ZpozMultiplayerSpawnPoint" struct.
 * Investigate what exact kind of visibility data is stored in ZPOZ file and why it seems to have 4 blocks of such data for each cluster.
