@@ -11,6 +11,7 @@ import "cluster_utils.iu"
 import "gl_functions.iu"
 import "gl_state.iu"
 import "image_loading.iu"
+import "map_quad_utils.iu"
 import "math_constants.iu"
 import "plane.iu"
 import "world_drawer.iu"
@@ -2421,136 +2422,6 @@ fn CreateLightShaftsBoxPolygons(
 	indices.push_back( u16( base_vertex_index + 0s ) );
 	indices.push_back( u16( base_vertex_index + 7s ) );
 	indices.push_back( u16( base_vertex_index + 4s ) );
-}
-
-fn CalculateMapQuadTextureBasis( ZmapQuad& quad, bool is_regular_cluster ) : [ Vec3f, 2 ]
-{
-	var Vec3f mut u_vec( 0.0f, 1.0f, 0.0f );
-	var Vec3f mut v_vec( 1.0f, 0.0f, 0.0f );
-
-	// Avoid applying texture roll for quads of dynamic clusters.
-	// This fixes incorrect texture coordinates for the floor hatch on map 11.
-	// No other dynamic cluster in the whole game has non-zero texture roll.
-	if( is_regular_cluster )
-	{
-		var f32 angle= f32( i32( quad.packed_texture_roll_scale ) & ~15 ) * ( -c_tau / 256.0f );
-		var f32 c= ust::cos(angle);
-		var f32 s= ust::sin(angle);
-
-		u_vec= Vec3f( u_vec.x * c - u_vec.y * s, u_vec.x * s + u_vec.y * c, u_vec.z );
-		v_vec= Vec3f( v_vec.x * c - v_vec.y * s, v_vec.x * s + v_vec.y * c, v_vec.z );
-	}
-	{
-		var f32 angle= ( f32( quad.normal_elevation ) + 256.0f ) * ( c_tau / 1024.0f );
-		var f32 c= ust::cos(angle);
-		var f32 s= ust::sin(angle);
-
-		u_vec= Vec3f( u_vec.x * c - u_vec.z * s, u_vec.y, u_vec.x * s + u_vec.z * c );
-		v_vec= Vec3f( v_vec.x * c - v_vec.z * s, v_vec.y, v_vec.x * s + v_vec.z * c );
-	}
-	{
-		var f32 angle= ( 768.0f - f32(quad.normal_azimuth) ) * ( c_tau / 1024.0f );
-		var f32 c= ust::cos(angle);
-		var f32 s= ust::sin(angle);
-
-		u_vec= Vec3f( u_vec.x * c - u_vec.y * s, u_vec.x * s + u_vec.y * c, u_vec.z );
-		v_vec= Vec3f( v_vec.x * c - v_vec.y * s, v_vec.x * s + v_vec.y * c, v_vec.z );
-	}
-	{
-		var i32 scale_bits= i32( quad.packed_texture_roll_scale ) & 15;
-		if( scale_bits != 0 )
-		{
-			var f32 vecs_scale=
-				( scale_bits >= 8
-					? f32( scale_bits - 3 ) * 0.25f
-					: 1.0f - f32( scale_bits ) * 0.125f );
-			u_vec*= vecs_scale;
-			v_vec*= vecs_scale;
-		}
-	}
-
-	return ust::make_array( u_vec, v_vec );
-}
-
-fn CreateTessellatedQuadGeometry(
-	ZmapLamData& zmap_lam_data,
-	ZvoxCluster& cluster,
-	size_type quad_index,
-	f32 texture_id,
-	size_type base_vertex_index,
-	ust::vector</MapVertex/> &mut vertices,
-	ust::vector</u16/> &mut indices )
-{
-	var ZmapLamTesselaltedQuad& tessellated_quad= zmap_lam_data.tessellated_quads[ quad_index ];
-
-	var size_type tessellated_vertex_count( tessellated_quad.vertex_count );
-
-	var size_type tessellatted_quad_data_offset( tessellated_quad.data_offset );
-
-	var ust::array_view_imut</byte32/> vertex_data=
-		zmap_lam_data.tessellated_quads_data.range().subrange(
-			tessellatted_quad_data_offset,
-			tessellatted_quad_data_offset + tessellated_vertex_count * 6s );
-
-	for( var size_type mut i= 0s, i_end= tessellated_vertex_count * 6s; i < i_end; i+= 6s )
-	{
-		var u32 c( vertex_data[ i + 5s ] );
-
-		vertices.push_back(
-			MapVertex
-			{
-				.position
-				[
-					f32( cluster.c.center[0] ) + f32( vertex_data[ i + 0s ] ),
-					f32( cluster.c.center[1] ) + f32( vertex_data[ i + 1s ] ),
-					f32( cluster.c.center[2] ) + f32( vertex_data[ i + 2s ] ),
-				],
-				.light[ ( c >> 16 ), ( c >> 8 ), ( c) ],
-				.padding15= zero_init,
-				.tex_coordinates
-				[
-					( vertex_data[ i + 3s ] ),
-					( vertex_data[ i + 4s ] ),
-					texture_id
-				],
-				.padding31= zero_init,
-			} );
-	}
-
-	var size_type polygons_data_offset= tessellatted_quad_data_offset + tessellated_vertex_count * 6s;
-
-	var size_type polygon_count( u32( cast_imut(zmap_lam_data).tessellated_quads_data[ polygons_data_offset ] ) );
-
-	var ust::array_view_imut</byte32/> polygons_data=
-		cast_imut(zmap_lam_data).tessellated_quads_data .range().subrange(
-			polygons_data_offset + 2s,
-			polygons_data_offset + 2s + polygon_count * 8s );
-
-	for( auto mut i= 0s; i < polygon_count; ++i )
-	{
-		var ust::array_view_imut</byte32/> polygon_data= polygons_data.subrange( i * 8s, i * 8s + 8s );
-
-		var size_type polygon_vertex_count( u32( polygon_data[0s] ) );
-
-		var size_type polygon_triangle_count= polygon_vertex_count - 2s;
-
-		for( auto mut j= 0s; j < polygon_triangle_count; ++j )
-		{
-			indices.push_back( u16( base_vertex_index + size_type( u32( polygon_data[ 2s + 0s ] ) ) ) );
-			indices.push_back( u16( base_vertex_index + size_type( u32( polygon_data[ 2s + j + 1s ] ) ) ) );
-			indices.push_back( u16( base_vertex_index + size_type( u32( polygon_data[ 2s + j + 2s ] ) ) ) );
-		}
-	}
-}
-
-fn PushQuadIndices( ust::vector</u16/> &mut indices, size_type base_vertex_index )
-{
-	indices.push_back( u16( base_vertex_index + 0s ) );
-	indices.push_back( u16( base_vertex_index + 1s ) );
-	indices.push_back( u16( base_vertex_index + 2s ) );
-	indices.push_back( u16( base_vertex_index + 0s ) );
-	indices.push_back( u16( base_vertex_index + 2s ) );
-	indices.push_back( u16( base_vertex_index + 3s ) );
 }
 
 fn DrawSkyBackground(
