@@ -16,13 +16,33 @@ fn CreateBreakingGlassShards(
 	auto& center= cluster.c.center;
 	auto& in_vertices= quad.vertices;
 
-	var [ Vec3f, 4 ] vertices
+	// TODO - calculate texture coordinates properly.
+
+	var [ GlassShardVertex, 4 ] vertices
 	[
-		( f32( center[0] + i32( in_vertices[0][0] ) ), f32( center[1] + i32( in_vertices[0][1] ) ), f32( center[2] + i32( in_vertices[0][2] ) ) ),
-		( f32( center[0] + i32( in_vertices[1][0] ) ), f32( center[1] + i32( in_vertices[1][1] ) ), f32( center[2] + i32( in_vertices[1][2] ) ) ),
-		( f32( center[0] + i32( in_vertices[2][0] ) ), f32( center[1] + i32( in_vertices[2][1] ) ), f32( center[2] + i32( in_vertices[2][2] ) ) ),
-		( f32( center[0] + i32( in_vertices[3][0] ) ), f32( center[1] + i32( in_vertices[3][1] ) ), f32( center[2] + i32( in_vertices[3][2] ) ) ),
+		{
+			.position( f32( center[0] + i32( in_vertices[0][0] ) ), f32( center[1] + i32( in_vertices[0][1] ) ), f32( center[2] + i32( in_vertices[0][2] ) ) ),
+			.texture_coordinates( 0.0f, 0.0f ),
+		},
+		{
+			.position( f32( center[0] + i32( in_vertices[1][0] ) ), f32( center[1] + i32( in_vertices[1][1] ) ), f32( center[2] + i32( in_vertices[1][2] ) ) ),
+			.texture_coordinates( 1.0f, 0.0f ),
+		},
+		{
+			.position( f32( center[0] + i32( in_vertices[2][0] ) ), f32( center[1] + i32( in_vertices[2][1] ) ), f32( center[2] + i32( in_vertices[2][2] ) ) ),
+			.texture_coordinates( 1.0f, 1.0f ),
+		},
+		{
+			.position( f32( center[0] + i32( in_vertices[3][0] ) ), f32( center[1] + i32( in_vertices[3][1] ) ), f32( center[2] + i32( in_vertices[3][2] ) ) ),
+			.texture_coordinates( 0.0f, 1.0f ),
+		}
 	];
+
+	var GlassShardVertex hit_vertex
+	{
+		.position= breaking_glass.hit_position,
+		.texture_coordinates( 0.5f, 0.5f ),
+	};
 
 	var f32 texture_layer= 57.0f;
 
@@ -33,10 +53,10 @@ fn CreateBreakingGlassShards(
 		.texture_layer= texture_layer,
 	};
 
-	MakeShardBaseTriangles_r( context, breaking_glass.hit_position, vertices[0], vertices[1], out_vertices, out_indices );
-	MakeShardBaseTriangles_r( context, breaking_glass.hit_position, vertices[1], vertices[2], out_vertices, out_indices );
-	MakeShardBaseTriangles_r( context, breaking_glass.hit_position, vertices[2], vertices[3], out_vertices, out_indices );
-	MakeShardBaseTriangles_r( context, breaking_glass.hit_position, vertices[3], vertices[0], out_vertices, out_indices );
+	MakeShardBaseTriangles_r( context, hit_vertex, vertices[0], vertices[1], out_vertices, out_indices );
+	MakeShardBaseTriangles_r( context, hit_vertex, vertices[1], vertices[2], out_vertices, out_indices );
+	MakeShardBaseTriangles_r( context, hit_vertex, vertices[2], vertices[3], out_vertices, out_indices );
+	MakeShardBaseTriangles_r( context, hit_vertex, vertices[3], vertices[0], out_vertices, out_indices );
 }
 
 struct BreakingGlassContext
@@ -46,11 +66,17 @@ struct BreakingGlassContext
 	f32 texture_layer;
 }
 
+struct GlassShardVertex
+{
+	Vec3f position;
+	Vec2f texture_coordinates;
+}
+
 fn MakeShardBaseTriangles_r(
 	BreakingGlassContext& context,
-	Vec3f& v0,
-	Vec3f& v1,
-	Vec3f& v2,
+	GlassShardVertex& v0,
+	GlassShardVertex& v1,
+	GlassShardVertex& v2,
 	ust::vector</MapVertex/> &mut out_vertices,
 	ust::vector</u16/> &mut out_indices )
 {
@@ -59,16 +85,20 @@ fn MakeShardBaseTriangles_r(
 	var f32 constexpr c_min_length_to_split= 8.0f;
 	var f32 constexpr c_max_angle_cos= 0.75f;
 
-	if( ( v2 - v1 ).SquareLength() >= c_min_length_to_split * c_min_length_to_split )
+	if( ( v2.position - v1.position ).SquareLength() >= c_min_length_to_split * c_min_length_to_split )
 	{
-		var Vec3f edge1= v1 - v0;
-		var Vec3f edge2= v2 - v0;
+		var Vec3f edge1= v1.position - v0.position;
+		var Vec3f edge2= v2 .position- v0.position;
 
 		var f32 edges_length_product= ust::sqrt( edge1.SquareLength() * edge2.SquareLength() );
 
 		if( edge1.Dot( edge2 ) <= c_max_angle_cos * edges_length_product )
 		{
-			var Vec3f middle= ( v1 + v2 ) * 0.5f;
+			var GlassShardVertex middle
+			{
+				.position= ( v1.position + v2.position ) * 0.5f,
+				.texture_coordinates= ( v1.texture_coordinates + v2.texture_coordinates ) * 0.5f,
+			};
 			MakeShardBaseTriangles_r( context, v0, v1, middle, out_vertices, out_indices );
 			MakeShardBaseTriangles_r( context, v0, middle, v2, out_vertices, out_indices );
 			return;
@@ -80,9 +110,9 @@ fn MakeShardBaseTriangles_r(
 
 fn MakeShardTriangles_r(
 	BreakingGlassContext& context,
-	Vec3f& v0,
-	Vec3f& v1,
-	Vec3f& v2,
+	GlassShardVertex& v0,
+	GlassShardVertex& v1,
+	GlassShardVertex& v2,
 	ust::vector</MapVertex/> &mut out_vertices,
 	ust::vector</u16/> &mut out_indices )
 {
@@ -91,14 +121,14 @@ fn MakeShardTriangles_r(
 		var f32 constexpr c_max_length= 32.0f;
 		var f32 constexpr c_max_square_length= c_max_length * c_max_length;
 
-		var f32 l0= ( v1 - v2 ).SquareLength();
-		var f32 l1= ( v0 - v2 ).SquareLength();
-		var f32 l2= ( v0 - v1 ).SquareLength();
+		var f32 l0= ( v1.position - v2.position ).SquareLength();
+		var f32 l1= ( v0.position - v2.position ).SquareLength();
+		var f32 l2= ( v0.position - v1.position ).SquareLength();
 		if( l0 >= l1 && l0 >= l2 )
 		{
 			if( l0 > c_max_square_length )
 			{
-				var Vec3f middle= v1 * 0.6f + v2 * 0.4f;
+				var GlassShardVertex middle= MixGlassShardVertices( v1, v2, 0.6f );
 				MakeShardTriangles_r( context, v0, v1, middle, out_vertices, out_indices );
 				MakeShardTriangles_r( context, v0, middle, v2, out_vertices, out_indices );
 				return;
@@ -108,7 +138,7 @@ fn MakeShardTriangles_r(
 		{
 			if( l1 > c_max_square_length )
 			{
-				var Vec3f middle= v0 * 0.55f + v2 * 0.45f;
+				var GlassShardVertex middle= MixGlassShardVertices( v0, v2, 0.55f );
 				MakeShardTriangles_r( context, v1, v0, middle, out_vertices, out_indices );
 				MakeShardTriangles_r( context, v1, middle, v2, out_vertices, out_indices );
 				return;
@@ -118,7 +148,7 @@ fn MakeShardTriangles_r(
 		{
 			if( l2 > c_max_square_length )
 			{
-				var Vec3f middle= v0 * 0.35f + v1 * 0.65f;
+				var GlassShardVertex middle= MixGlassShardVertices( v0, v1, 0.35f );
 				MakeShardTriangles_r( context, v2, v0, middle, out_vertices, out_indices );
 				MakeShardTriangles_r( context, v2, middle, v1, out_vertices, out_indices );
 				return;
@@ -126,30 +156,34 @@ fn MakeShardTriangles_r(
 		}
 	}
 
-	var Vec3f center= 0.333333333f * ( v0 + v1 + v2 );
+	var Vec3f center= 0.333333333f * ( v0.position + v1.position + v2.position );
 	var Vec3f vec_to_center= center - context.hit_position;
 
 	var Vec3f offset= vec_to_center * context.age;
 
-	var [ Vec3f, 3 ] vertices_transformed
+	var [ Vec3f, 3 ] positions_transformed
 	[
-		v0 + offset,
-		v1 + offset,
-		v2 + offset,
+		v0.position + offset,
+		v1.position + offset,
+		v2.position + offset,
 	];
+
+	var [ Vec2f, 3 ] tex_coords[ v0.texture_coordinates, v1.texture_coordinates, v2.texture_coordinates ];
 
 	var size_type base_vertex= out_vertices.size();
 
 	for( auto mut i= 0s; i < 3s; ++i )
 	{
-		var Vec3f& v= vertices_transformed[i];
+		var Vec3f& v= positions_transformed[i];
+		var Vec2f& tc= tex_coords[i];
+
 		out_vertices.push_back(
 			MapVertex
 			{
 				.position[ v.x, v.y, v.z ],
 				.light[ 255u8 ... ],
 				.padding15= zero_init,
-				.tex_coordinates[ 0.0f, 0.0f, context.texture_layer ],
+				.tex_coordinates[ tc.x, tc.y, context.texture_layer ],
 				.padding31= zero_init,
 			}
 		);
@@ -158,6 +192,16 @@ fn MakeShardTriangles_r(
 	out_indices.push_back( u16( base_vertex + 0s ) );
 	out_indices.push_back( u16( base_vertex + 1s ) );
 	out_indices.push_back( u16( base_vertex + 2s ) );
+}
+
+fn MixGlassShardVertices( GlassShardVertex& v0, GlassShardVertex& v1, f32 factor ) : GlassShardVertex
+{
+	var f32 one_minus_factor= 1.0f - factor;
+	return GlassShardVertex
+	{
+		.position= v0.position * factor + v1.position * one_minus_factor,
+		.texture_coordinates= v0.texture_coordinates * factor + v1.texture_coordinates * one_minus_factor,
+	};
 }
 
 } // namespace PM
