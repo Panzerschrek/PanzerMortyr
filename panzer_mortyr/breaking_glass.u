@@ -68,11 +68,24 @@ fn CreateBreakingGlassShards(
 
 	var f32 texture_layer= 57.0f;
 
+	var Vec3f normal=
+		( vertices[0].position - vertices[1].position ).Cross( vertices[1].position - vertices[2].position ) +
+		( vertices[1].position - vertices[2].position ).Cross( vertices[2].position - vertices[3].position ) +
+		( vertices[2].position - vertices[3].position ).Cross( vertices[3].position - vertices[0].position ) +
+		( vertices[3].position - vertices[0].position ).Cross( vertices[0].position - vertices[1].position );
+
+	var f32 normal_length= normal.Length();
+	if( normal_length == 0.0f )
+	{
+		return;
+	}
+
 	var BreakingGlassContext context
 	{
 		.hit_position= breaking_glass.hit_position,
 		.age= breaking_glass.age,
 		.texture_layer= texture_layer,
+		.plane_normal_normalized= normal / normal_length,
 	};
 
 	MakeShardBaseTriangles_r( context, hit_vertex, vertices[0], vertices[1], out_vertices, out_indices );
@@ -86,6 +99,7 @@ struct BreakingGlassContext
 	Vec3f hit_position;
 	f32 age;
 	f32 texture_layer;
+	Vec3f plane_normal_normalized;
 }
 
 struct GlassShardVertex
@@ -213,14 +227,20 @@ fn MakeShardTriangle(
 
 	var Vec3f offset( 0.0f, 0.0f, relative_age * relative_age * ( c_vertical_acceleration / 2.0f ) );
 
-	var f32 rotation_speed= 1024.0f / ( distance_to_center + 4.0f );
+	var f32 rotation_speed= 2048.0f / ( distance_to_center + 16.0f );
 	var f32 rotation_angle= relative_age * rotation_speed;
 
-	// TODO - make rotation matrix to be cross product of quad normal (or even projectle direction) and direction to hit position.
+	var Vec3f rotation_axis= vec_to_center.Cross( context.plane_normal_normalized );
+	var f32 rotation_axis_length= rotation_axis.Length();
+
+	var Mat4f mut rotation_matrix=
+		( rotation_axis_length == 0.0f
+			? Mat4f::MakeIdentity() :
+			Mat4f::MakeRotationAroundNormalizedAxis( rotation_axis / rotation_axis_length, rotation_angle ) );
 
 	var Mat4f matrix=
 		Mat4f::MakeTranslation( -center ) *
-		Mat4f::MakeRotationY( rotation_angle ) *
+		rotation_matrix *
 		Mat4f::MakeTranslation( offset + center );
 
 	var [ Vec3f, 3 ] positions_transformed
