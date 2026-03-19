@@ -26,26 +26,70 @@ fn CreateBreakingGlassShards(
 
 	var f32 texture_layer= 57.0f;
 
-	MakeTriangle( breaking_glass, breaking_glass.hit_position, vertices[0], vertices[1], texture_layer, out_vertices, out_indices );
-	MakeTriangle( breaking_glass, breaking_glass.hit_position, vertices[1], vertices[2], texture_layer, out_vertices, out_indices );
-	MakeTriangle( breaking_glass, breaking_glass.hit_position, vertices[2], vertices[3], texture_layer, out_vertices, out_indices );
-	MakeTriangle( breaking_glass, breaking_glass.hit_position, vertices[3], vertices[0], texture_layer, out_vertices, out_indices );
+	var BreakingGlassContext context
+	{
+		.hit_position= breaking_glass.hit_position,
+		.age= breaking_glass.age,
+		.texture_layer= texture_layer,
+	};
+
+	MakeShardBaseTriangles_r( context, breaking_glass.hit_position, vertices[0], vertices[1], out_vertices, out_indices );
+	MakeShardBaseTriangles_r( context, breaking_glass.hit_position, vertices[1], vertices[2], out_vertices, out_indices );
+	MakeShardBaseTriangles_r( context, breaking_glass.hit_position, vertices[2], vertices[3], out_vertices, out_indices );
+	MakeShardBaseTriangles_r( context, breaking_glass.hit_position, vertices[3], vertices[0], out_vertices, out_indices );
 }
 
+struct BreakingGlassContext
+{
+	Vec3f hit_position;
+	f32 age;
+	f32 texture_layer;
+}
 
-fn MakeTriangle(
-	WorldDrawingInfo::BreakingGlass& breaking_glass,
+fn MakeShardBaseTriangles_r(
+	BreakingGlassContext& context,
 	Vec3f& v0,
 	Vec3f& v1,
 	Vec3f& v2,
-	f32 texture_layer,
+	ust::vector</MapVertex/> &mut out_vertices,
+	ust::vector</u16/> &mut out_indices )
+{
+	// Split base triangles recursively until we don't have pretty sharp angles.
+
+	var f32 constexpr c_min_length_to_split= 8.0f;
+	var f32 constexpr c_max_angle_cos= 0.75f;
+
+	if( ( v2 - v1 ).SquareLength() >= c_min_length_to_split * c_min_length_to_split )
+	{
+		var Vec3f edge1= v1 - v0;
+		var Vec3f edge2= v2 - v0;
+
+		var f32 edges_length_product= ust::sqrt( edge1.SquareLength() * edge2.SquareLength() );
+
+		if( edge1.Dot( edge2 ) <= c_max_angle_cos * edges_length_product )
+		{
+			var Vec3f center= ( v1 + v2 ) * 0.5f;
+			MakeShardBaseTriangles_r( context, v0, v1, center, out_vertices, out_indices );
+			MakeShardBaseTriangles_r( context, v0, v2, center, out_vertices, out_indices );
+			return;
+		}
+	}
+
+	MakeShardTriangles( context, v0, v1, v2, out_vertices, out_indices );
+}
+
+fn MakeShardTriangles(
+	BreakingGlassContext& context,
+	Vec3f& v0,
+	Vec3f& v1,
+	Vec3f& v2,
 	ust::vector</MapVertex/> &mut out_vertices,
 	ust::vector</u16/> &mut out_indices )
 {
 	var Vec3f center= 0.333333333f * ( v0 + v1 + v2 );
-	var Vec3f vec_to_center= center - breaking_glass.hit_position;
+	var Vec3f vec_to_center= center - context.hit_position;
 
-	var Vec3f offset= vec_to_center * breaking_glass.age;
+	var Vec3f offset= vec_to_center * context.age;
 
 	var [ Vec3f, 3 ] vertices_transformed
 	[
@@ -65,7 +109,7 @@ fn MakeTriangle(
 				.position[ v.x, v.y, v.z ],
 				.light[ 255u8 ... ],
 				.padding15= zero_init,
-				.tex_coordinates[ 0.0f, 0.0f, texture_layer ],
+				.tex_coordinates[ 0.0f, 0.0f, context.texture_layer ],
 				.padding31= zero_init,
 			}
 		);
