@@ -27,11 +27,12 @@ Changes:
 * Liquid surfaces use texture projection different from the original game and are animated via periodical texture coordinates shifts.
 * Smoke trails look slightly different and live not so long as in the original game.
 * Torch flames are slightly elongated compared to the original game.
-* Light coronas are aligned a little bit different.
+* Light coronas are aligned in a little bit different way.
 * Clouds look different, code calculating texture coordinates for them uses a more advanced formula.
 * Sky background and sky elements may have slightly different brightness compared to the original.
 * Lighting for models may be different from the original game, since lighting formulas are just guessed.
 * Many elevators/doors/buttons are no longer pitch-dark, but their lighting is also static (doesn't change with position change).
+* Glass breaking animation looks differently from the original game.
 
 
 ### Gameplay
@@ -50,6 +51,8 @@ Changes:
 * Swimming speed/acceleration/deceleration behavior is mostly guessed.
 * Door/elevator/button movement speed may be different - it's just guessed.
 * Zooming works differently - it requires holding the zoom button, maximum zoom is decreased and zooming speed is increased.
+* Fire damage is calculated in a different way, so that even a single flame can hurt its target sometimes.
+* Grenade throwing animation may look slightly different. The exact pattern of lowering animation in the original game is unclear.
 
 
 ### HUD and menus
