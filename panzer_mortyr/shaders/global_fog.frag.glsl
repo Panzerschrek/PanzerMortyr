@@ -1,6 +1,7 @@
 #version 330
 
 uniform sampler2D fu_depth_texture;
+uniform vec3 fu_fog_color;
 
 in vec2 f_tex_coord;
 flat in mat4 f_inverse_projection_matrix;
@@ -21,5 +22,5 @@ void main()
 	float distance_scale= 1.0 / 8192.0;
 	float fog_density= 1.0 - exp( -linear_distance * distance_scale );
 
-	color= vec4( 1.0, 0.0, 1.0, fog_density );
+	color= vec4( fu_fog_color, fog_density );
 }
