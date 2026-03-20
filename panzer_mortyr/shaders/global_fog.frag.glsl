@@ -17,7 +17,9 @@ void main()
 	// Assume that the camera is located at origin.
 	float linear_distance= length( view_space_position.xyz ) / view_space_position.w;
 
-	float fog_density= min( linear_distance / 256.0, 1.0 );
+	// Use exponential fog formula.
+	float distance_scale= 1.0 / 8192.0;
+	float fog_density= 1.0 - exp( -linear_distance * distance_scale );
 
 	color= vec4( 1.0, 0.0, 1.0, fog_density );
 }
