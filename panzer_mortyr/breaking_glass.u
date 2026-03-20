@@ -1,4 +1,6 @@
+import "bounding_boxes_hierarchy_visiting.iu"
 import "breaking_glass.iu"
+import "cluster_utils.iu"
 import "map_quad_utils.iu"
 import "mat.iu"
 
@@ -8,6 +10,7 @@ namespace PM
 fn CreateBreakingGlassShards(
 	ust::array_view_imut</ZvoxCluster/> clusters,
 	ust::array_view_imut</ZmapQuad/> quads,
+	RoomClustersHierarchy& room_clusters_hierarchy,
 	ZmapLamData& zmap_lam_data,
 	MaterialsDescription::Block& materials_block,
 	ust::array_view_imut</WorldDrawingInfo::BreakingGlass/> breaking_glass_effects,
@@ -17,13 +20,21 @@ fn CreateBreakingGlassShards(
 	foreach( &breaking_glass : breaking_glass_effects )
 	{
 		CreateBreakingGlassShards(
-			clusters, quads, zmap_lam_data, materials_block, breaking_glass, out_vertices, out_indices );
+			clusters,
+			quads,
+			room_clusters_hierarchy,
+			zmap_lam_data,
+			materials_block,
+			breaking_glass,
+			out_vertices,
+			out_indices );
 	}
 }
 
 fn CreateBreakingGlassShards(
 	ust::array_view_imut</ZvoxCluster/> clusters,
 	ust::array_view_imut</ZmapQuad/> quads,
+	RoomClustersHierarchy& room_clusters_hierarchy,
 	ZmapLamData& zmap_lam_data,
 	MaterialsDescription::Block& materials_block,
 	WorldDrawingInfo::BreakingGlass& breaking_glass,
@@ -100,13 +111,22 @@ fn CreateBreakingGlassShards(
 		return;
 	}
 
+	var Vec3f normal_normalized= normal / normal_length;
+
+	// We can't perform proper collisions calculation for glass shards, since it would be too costly.
+	// Instead just use floor level of the room cluster where this breaking glass effect is located
+	// and stop movement of each shard when this level is reached.
+	var Vec3f cluster_sample_position= hit_vertex.position + normal_normalized * 16.0f;
+	var f32 floor_level= GetFloorLevel( clusters, room_clusters_hierarchy, cluster_sample_position );
+
 	var BreakingGlassContext context
 	{
 		.hit_position= breaking_glass.hit_position,
 		.age= breaking_glass.age,
 		.light= GetAverageQuadVerticesLight( breaking_glass.quad_index, zmap_lam_data ),
 		.texture_layer( texture_layer ),
-		.plane_normal_normalized= normal / normal_length,
+		.plane_normal_normalized= normal_normalized,
+		.floor_level= floor_level,
 	};
 
 	MakeShardBaseTriangles_r( context, hit_vertex, vertices[0], vertices[1], out_vertices, out_indices );
@@ -150,6 +170,29 @@ fn GetAverageQuadVerticesLight( u32 quad_index, ZmapLamData& zmap_lam_data ) : [
 			u8( light_sum[2] / tessellated_quad.vertex_count ) );
 }
 
+fn GetFloorLevel(
+	ust::array_view_imut</ZvoxCluster/> clusters,
+	RoomClustersHierarchy& room_clusters_hierarchy,
+	Vec3f& sample_position ) : f32
+{
+	var f32 mut floor_level= 9999999.0f;
+
+	VisitBoundingBoxesHierarchyForPoint(
+		room_clusters_hierarchy,
+		sample_position,
+		lambda[&]( ClusterIndexInHierarchy c )
+		{
+			var size_type cluster_index(c);
+			var BBox3f cluster_bbox= CreateClusterBBox( clusters[ cluster_index ] );
+			if( cluster_bbox.PointIsInsideOrOnFace( sample_position ) )
+			{
+				ust::min_assign( floor_level, cluster_bbox.max.z );
+			}
+		} );
+
+	return floor_level;
+}
+
 struct BreakingGlassContext
 {
 	Vec3f hit_position;
@@ -157,6 +200,7 @@ struct BreakingGlassContext
 	[ u8, 3 ] light;
 	f32 texture_layer;
 	Vec3f plane_normal_normalized;
+	f32 floor_level;
 }
 
 struct GlassShardVertex
@@ -283,9 +327,13 @@ fn MakeShardTriangle(
 	var f32 constexpr c_vertical_acceleration= 6144.0f;
 	var f32 constexpr c_horizontal_speed= 144.0f;
 
+	var f32 max_translation= context.floor_level - center.z;
+
+	var f32 z_translation=
+		ust::min( relative_age * relative_age * ( c_vertical_acceleration / 2.0f ), max_translation );
+
 	var Vec3f offset=
-		( relative_age * c_horizontal_speed ) * context.plane_normal_normalized +
-		Vec3f( 0.0f, 0.0f, relative_age * relative_age * ( c_vertical_acceleration / 2.0f ) );
+		( relative_age * c_horizontal_speed ) * context.plane_normal_normalized + Vec3f( 0.0f, 0.0f, z_translation );
 
 	var f32 rotation_speed= 2048.0f / ( distance_to_center + 16.0f );
 	var f32 rotation_angle= relative_age * rotation_speed;
