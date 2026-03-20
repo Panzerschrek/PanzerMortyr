@@ -6,10 +6,12 @@ import "/string_conversions.iu"
 import "/common_lib/materials_file.iu"
 
 import "bounding_boxes_hierarchy_visiting.iu"
+import "breaking_glass.iu"
 import "cluster_utils.iu"
 import "gl_functions.iu"
 import "gl_state.iu"
 import "image_loading.iu"
+import "map_quad_utils.iu"
 import "math_constants.iu"
 import "plane.iu"
 import "world_drawer.iu"
@@ -477,13 +479,28 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 		if( size_type( map_index_ ) < maps_description.maps.size() )
 		{
 			var MapsDescription::MapDescription& map_description= maps_description.maps[ size_type( map_index_ ) ];
+			var MaterialsDescription::Block& materials_block=
+				materials_description_.deref().blocks[ map_description.materials_block ]; // Halts if not found.
 
 			CreateSemitransparentMapPolygons(
 				map_data,
-				materials_description_.deref().blocks[ map_description.materials_block ], // Halts if not found.
+				materials_block,
 				visible_room_cluster_flags,
 				drawing_info.dynamic_cluster_objects,
 				drawing_info.game_time_s,
+				semitransparent_polygons_buffer_.vertices,
+				semitransparent_polygons_buffer_.indices );
+
+			// Draw breaking glass shards always as semitransparent,
+			// because the glass special material is semitransparent
+			// and because alpha-fading is used even for glass shard with non-transparent textures.
+			CreateBreakingGlassShards(
+				clusters,
+				map_data.zmap_data.deref().quads,
+				room_clusters_hierarchy,
+				map_data.zmap_lam_data.deref(),
+				materials_block,
+				drawing_info.breaking_glass_effects,
 				semitransparent_polygons_buffer_.vertices,
 				semitransparent_polygons_buffer_.indices );
 		}
@@ -692,8 +709,8 @@ fn WorldDrawer::SetMap( mut this, u32 map_index )
 								( ust::max( 0.0f, ust::min( light[0].constant_component * 255.0f, 255.0f ) ) ),
 								( ust::max( 0.0f, ust::min( light[1].constant_component * 255.0f, 255.0f ) ) ),
 								( ust::max( 0.0f, ust::min( light[2].constant_component * 255.0f, 255.0f ) ) ),
+								255u8,
 							],
-							.padding15= zero_init,
 							.tex_coordinates
 							[
 								tc_scale * ( vertex_relative_shift.Dot( u_vec ) + tc_offset.x ),
@@ -1815,7 +1832,7 @@ fn PrepareVertexArrayObjectWithMapVertexFormat(
 
 	unsafe( glVertexAttribPointer(
 		c_light_attrib,
-		3,
+		4,
 		GLenum( GL_UNSIGNED_BYTE ),
 		GLboolean(1),
 		GLsizei( typeinfo</MapVertex/>.size_of ),
@@ -1962,14 +1979,13 @@ fn BuildBillboardPolygons(
 		];
 
 		var u8 brightness( ust::max( 0.0f, ust::min( billboard.brightness * 255.0f, 255.0f ) ) );
-		var [ u8, 3 ] light[ brightness, brightness, brightness ];
+		var [ u8, 4 ] light[ brightness ... ];
 
 		vertices.push_back(
 			MapVertex
 			{
 				.position[ positions[0].x, positions[0].y, positions[0].z ],
 				.light= light,
-				.padding15= zero_init,
 				.tex_coordinates[ tex_coords[0][0], tex_coords[0][1], texture_layer ],
 				.padding31= zero_init,
 			} );
@@ -1979,7 +1995,6 @@ fn BuildBillboardPolygons(
 			{
 				.position[ positions[1].x, positions[1].y, positions[1].z ],
 				.light= light,
-				.padding15= zero_init,
 				.tex_coordinates[ tex_coords[1][0], tex_coords[0][1], texture_layer ],
 				.padding31= zero_init,
 			} );
@@ -1989,7 +2004,6 @@ fn BuildBillboardPolygons(
 			{
 				.position[ positions[2].x, positions[2].y, positions[2].z ],
 				.light= light,
-				.padding15= zero_init,
 				.tex_coordinates[ tex_coords[0][0], tex_coords[1][1], texture_layer ],
 				.padding31= zero_init,
 			} );
@@ -1999,7 +2013,6 @@ fn BuildBillboardPolygons(
 			{
 				.position[ positions[3].x, positions[3].y, positions[3].z ],
 				.light= light,
-				.padding15= zero_init,
 				.tex_coordinates[ tex_coords[1][0], tex_coords[1][1], texture_layer ],
 				.padding31= zero_init,
 			} );
@@ -2199,8 +2212,7 @@ fn CreateClusterGlassPolygons(
 						],
 						// Stub light for dynamic glass polygons.
 						// It's fine to use it, since there are only a couple of such polygons in the whole game.
-						.light[ 48u8, 48u8, 48u8 ],
-						.padding15= zero_init,
+						.light[ 48u8, 48u8, 48u8, 255u8 ],
 						.tex_coordinates
 						[
 							tc_scale * ( vertex_relative_shift.Dot( u_vec ) + tc_offset.x ),
@@ -2331,21 +2343,23 @@ fn CreateLightShaftsBoxPolygons(
 
 	var f32 constexpr texture_layer= 152.0f;
 
-	var [ u8, 3 ] color_top
+	var [ u8, 4 ] color_top
 	[
 		( light_shafts_box.color_top >> 16u ),
 		( light_shafts_box.color_top >>  8u ),
 		( light_shafts_box.color_top >>  0u ),
+		255u8,
 	];
 
-	var [ u8, 3 ] color_bottom
+	var [ u8, 4 ] color_bottom
 	[
 		( light_shafts_box.color_bottom >> 16u ),
 		( light_shafts_box.color_bottom >>  8u ),
 		( light_shafts_box.color_bottom >>  0u ),
+		255u8,
 	];
 
-	var [ [ u8, 3 ], 8 ] vertex_lights
+	var [ [ u8, 4 ], 8 ] vertex_lights
 	[
 		color_top,
 		color_top,
@@ -2374,7 +2388,6 @@ fn CreateLightShaftsBoxPolygons(
 					f32( light_shafts_box.center[2] + i32( in_vertex[2] ) ),
 				],
 				.light= vertex_lights[i],
-				.padding15= zero_init,
 				.tex_coordinates[ tc[0], tc[1], texture_layer ],
 				.padding31= zero_init,
 			} );
@@ -2407,136 +2420,6 @@ fn CreateLightShaftsBoxPolygons(
 	indices.push_back( u16( base_vertex_index + 0s ) );
 	indices.push_back( u16( base_vertex_index + 7s ) );
 	indices.push_back( u16( base_vertex_index + 4s ) );
-}
-
-fn CalculateMapQuadTextureBasis( ZmapQuad& quad, bool is_regular_cluster ) : [ Vec3f, 2 ]
-{
-	var Vec3f mut u_vec( 0.0f, 1.0f, 0.0f );
-	var Vec3f mut v_vec( 1.0f, 0.0f, 0.0f );
-
-	// Avoid applying texture roll for quads of dynamic clusters.
-	// This fixes incorrect texture coordinates for the floor hatch on map 11.
-	// No other dynamic cluster in the whole game has non-zero texture roll.
-	if( is_regular_cluster )
-	{
-		var f32 angle= f32( i32( quad.packed_texture_roll_scale ) & ~15 ) * ( -c_tau / 256.0f );
-		var f32 c= ust::cos(angle);
-		var f32 s= ust::sin(angle);
-
-		u_vec= Vec3f( u_vec.x * c - u_vec.y * s, u_vec.x * s + u_vec.y * c, u_vec.z );
-		v_vec= Vec3f( v_vec.x * c - v_vec.y * s, v_vec.x * s + v_vec.y * c, v_vec.z );
-	}
-	{
-		var f32 angle= ( f32( quad.normal_elevation ) + 256.0f ) * ( c_tau / 1024.0f );
-		var f32 c= ust::cos(angle);
-		var f32 s= ust::sin(angle);
-
-		u_vec= Vec3f( u_vec.x * c - u_vec.z * s, u_vec.y, u_vec.x * s + u_vec.z * c );
-		v_vec= Vec3f( v_vec.x * c - v_vec.z * s, v_vec.y, v_vec.x * s + v_vec.z * c );
-	}
-	{
-		var f32 angle= ( 768.0f - f32(quad.normal_azimuth) ) * ( c_tau / 1024.0f );
-		var f32 c= ust::cos(angle);
-		var f32 s= ust::sin(angle);
-
-		u_vec= Vec3f( u_vec.x * c - u_vec.y * s, u_vec.x * s + u_vec.y * c, u_vec.z );
-		v_vec= Vec3f( v_vec.x * c - v_vec.y * s, v_vec.x * s + v_vec.y * c, v_vec.z );
-	}
-	{
-		var i32 scale_bits= i32( quad.packed_texture_roll_scale ) & 15;
-		if( scale_bits != 0 )
-		{
-			var f32 vecs_scale=
-				( scale_bits >= 8
-					? f32( scale_bits - 3 ) * 0.25f
-					: 1.0f - f32( scale_bits ) * 0.125f );
-			u_vec*= vecs_scale;
-			v_vec*= vecs_scale;
-		}
-	}
-
-	return ust::make_array( u_vec, v_vec );
-}
-
-fn CreateTessellatedQuadGeometry(
-	ZmapLamData& zmap_lam_data,
-	ZvoxCluster& cluster,
-	size_type quad_index,
-	f32 texture_id,
-	size_type base_vertex_index,
-	ust::vector</MapVertex/> &mut vertices,
-	ust::vector</u16/> &mut indices )
-{
-	var ZmapLamTesselaltedQuad& tessellated_quad= zmap_lam_data.tessellated_quads[ quad_index ];
-
-	var size_type tessellated_vertex_count( tessellated_quad.vertex_count );
-
-	var size_type tessellatted_quad_data_offset( tessellated_quad.data_offset );
-
-	var ust::array_view_imut</byte32/> vertex_data=
-		zmap_lam_data.tessellated_quads_data.range().subrange(
-			tessellatted_quad_data_offset,
-			tessellatted_quad_data_offset + tessellated_vertex_count * 6s );
-
-	for( var size_type mut i= 0s, i_end= tessellated_vertex_count * 6s; i < i_end; i+= 6s )
-	{
-		var u32 c( vertex_data[ i + 5s ] );
-
-		vertices.push_back(
-			MapVertex
-			{
-				.position
-				[
-					f32( cluster.c.center[0] ) + f32( vertex_data[ i + 0s ] ),
-					f32( cluster.c.center[1] ) + f32( vertex_data[ i + 1s ] ),
-					f32( cluster.c.center[2] ) + f32( vertex_data[ i + 2s ] ),
-				],
-				.light[ ( c >> 16 ), ( c >> 8 ), ( c) ],
-				.padding15= zero_init,
-				.tex_coordinates
-				[
-					( vertex_data[ i + 3s ] ),
-					( vertex_data[ i + 4s ] ),
-					texture_id
-				],
-				.padding31= zero_init,
-			} );
-	}
-
-	var size_type polygons_data_offset= tessellatted_quad_data_offset + tessellated_vertex_count * 6s;
-
-	var size_type polygon_count( u32( cast_imut(zmap_lam_data).tessellated_quads_data[ polygons_data_offset ] ) );
-
-	var ust::array_view_imut</byte32/> polygons_data=
-		cast_imut(zmap_lam_data).tessellated_quads_data .range().subrange(
-			polygons_data_offset + 2s,
-			polygons_data_offset + 2s + polygon_count * 8s );
-
-	for( auto mut i= 0s; i < polygon_count; ++i )
-	{
-		var ust::array_view_imut</byte32/> polygon_data= polygons_data.subrange( i * 8s, i * 8s + 8s );
-
-		var size_type polygon_vertex_count( u32( polygon_data[0s] ) );
-
-		var size_type polygon_triangle_count= polygon_vertex_count - 2s;
-
-		for( auto mut j= 0s; j < polygon_triangle_count; ++j )
-		{
-			indices.push_back( u16( base_vertex_index + size_type( u32( polygon_data[ 2s + 0s ] ) ) ) );
-			indices.push_back( u16( base_vertex_index + size_type( u32( polygon_data[ 2s + j + 1s ] ) ) ) );
-			indices.push_back( u16( base_vertex_index + size_type( u32( polygon_data[ 2s + j + 2s ] ) ) ) );
-		}
-	}
-}
-
-fn PushQuadIndices( ust::vector</u16/> &mut indices, size_type base_vertex_index )
-{
-	indices.push_back( u16( base_vertex_index + 0s ) );
-	indices.push_back( u16( base_vertex_index + 1s ) );
-	indices.push_back( u16( base_vertex_index + 2s ) );
-	indices.push_back( u16( base_vertex_index + 0s ) );
-	indices.push_back( u16( base_vertex_index + 2s ) );
-	indices.push_back( u16( base_vertex_index + 3s ) );
 }
 
 fn DrawSkyBackground(
@@ -3025,7 +2908,8 @@ var f32 c_clouds_scale= c_sky_scale;
 
 var size_type c_max_test_primitive_vertices= 4096s;
 
-// Enough vertices/indices for 4096 quads.
+// Enough vertices/indices for 4096 quads or 5461 triangles.
+// We require so many, since we can have a lot of glass shards.
 var size_type c_max_semitransparent_polygon_vertices= 16384s;
 var size_type c_max_semitransparent_polygon_indices= c_max_semitransparent_polygon_vertices * 3s / 2s;
 

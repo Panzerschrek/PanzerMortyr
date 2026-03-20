@@ -314,6 +314,8 @@ fn nodiscard ProcessGameLogicStep(
 		game_state.entities,
 		game_state.player );
 
+	ProcessBreakingGlassLogicStep( game_state.breaking_glass_effects );
+
 	ProcessMuzzleFlashesLogicStep( game_state.muzzle_flashes );
 
 	ProcessExplosionParticlesLogicStep( game_state.explosion_particles );
@@ -2442,6 +2444,7 @@ fn PushMoveDynamicCluster(
 							{
 								.weapon_tool_index= projectile.weapon_tool_index,
 								.position= projectile.position,
+								.hit_cluster_index= intersection_result.cluster_index,
 								.hit_quad_index= intersection_result.quad_index,
 								.hit_entity_index= ~0u,
 							} );
@@ -2514,7 +2517,7 @@ fn ProcessProjectilesLogicStep( GameMapData& map_data, GameState &mut game_state
 
 				var f32 mut smallest_travelled_distance= 1.0f;
 
-				var u32 mut hit_quad_index= ~0u;
+				var u32 mut hit_cluster_index= ~0u, mut hit_quad_index= ~0u;
 				var u32 mut hit_entity_index= ~0u;
 
 				if_var( &line_trace_result : LineTrace(
@@ -2523,6 +2526,7 @@ fn ProcessProjectilesLogicStep( GameMapData& map_data, GameState &mut game_state
 					if( line_trace_result.distance < 1.0f )
 					{
 						smallest_travelled_distance= line_trace_result.distance;
+						hit_cluster_index= line_trace_result.cluster_index;
 						hit_quad_index= line_trace_result.quad_index;
 					}
 				}
@@ -2600,6 +2604,7 @@ fn ProcessProjectilesLogicStep( GameMapData& map_data, GameState &mut game_state
 						{
 							.weapon_tool_index= projectile.weapon_tool_index,
 							.position= hit_position,
+							.hit_cluster_index= hit_cluster_index,
 							.hit_quad_index= hit_quad_index,
 							.hit_entity_index= hit_entity_index,
 						} );
@@ -2648,6 +2653,7 @@ fn ProcessProjectilesLogicStep( GameMapData& map_data, GameState &mut game_state
 					{
 						.weapon_tool_index= projectile.weapon_tool_index,
 						.position= projectile.position,
+						.hit_cluster_index= ~0u,
 						.hit_quad_index= ~0u,
 						.hit_entity_index= ~0u,
 					} );
@@ -2753,6 +2759,9 @@ fn ProcessProjectileHitEventsLogicStep( GameMapData& map_data, GameState &mut ga
 {
 	var EntitiesDescription& entities_description= map_data.entities_description.deref();
 
+	var ust::array_view_imut</ZvoxCluster/> clusters= map_data.zvox_data.deref().clusters;
+	var ust::array_view_imut</ZmapQuad/> quads= map_data.zmap_data.deref().quads;
+
 	foreach( &projectile_hit_event : game_state.projectile_hit_events )
 	{
 		var EntitiesDescription::Tool& weapon_tool=
@@ -2835,7 +2844,6 @@ fn ProcessProjectileHitEventsLogicStep( GameMapData& map_data, GameState &mut ga
 
 				// Slightly offset flame position using hit point normal.
 				// It's necessary to avoid ugly clipping of flame billboards on walls.
-				auto& quads= map_data.zmap_data.deref().quads;
 				if( size_type( projectile_hit_event.hit_quad_index ) < quads.size() )
 				{
 					var Vec3f normal= CalculateQuadNormal( quads[ size_type( projectile_hit_event.hit_quad_index ) ] );
@@ -2859,8 +2867,6 @@ fn ProcessProjectileHitEventsLogicStep( GameMapData& map_data, GameState &mut ga
 					// If so - attach it to this cluster.
 					var u32 mut dynamic_cluster_object_index= ~0u;
 					var Vec3f mut relative_position= Vec3f::MakeZero();
-
-					var ust::array_view_imut</ZvoxCluster/> clusters= map_data.zvox_data.deref().clusters;
 
 					// Use linear search. It's mostly fine, since we have only a few of dynamic clusters.
 					for( auto mut i= 0s; i < game_state.dynamic_cluster_colliders.size(); ++i )
@@ -2902,6 +2908,25 @@ fn ProcessProjectileHitEventsLogicStep( GameMapData& map_data, GameState &mut ga
 			},
 			// TODO - handle other known kinds.
 			default -> {},
+		}
+
+		if( size_type( projectile_hit_event.hit_cluster_index ) < clusters.size() &&
+			size_type( projectile_hit_event.hit_quad_index ) < quads.size() )
+		{
+			// TODO - memorize that this glass quad has been broken in order to spawn breaking effect only once.
+			var ZmapQuad& quad= quads[ size_type( projectile_hit_event.hit_quad_index ) ];
+			if( u32( quad.texture_id ) ==
+				MaterialsDescription::c_special_material_texture_indices[ size_type( MaterialsDescription::SpecialMaterial::Glass ) ] )
+			{
+				game_state.breaking_glass_effects.push_back(
+					BreakingGlassEffect
+					{
+						.hit_position= projectile_hit_event.position,
+						.cluster_index= projectile_hit_event.hit_cluster_index,
+						.quad_index= projectile_hit_event.hit_quad_index,
+						.age_steps= 0u,
+					} );
+			}
 		}
 
 		if( weapon_tool.wall_mark >= 0 )
@@ -2967,6 +2992,36 @@ fn ProcessDamagingFlamesLogicStep(
 			var size_type last_index= damaging_flames.size() - 1s;
 			damaging_flames.swap( i, last_index );
 			damaging_flames.drop_back();
+		}
+		else
+		{
+			++i;
+		}
+	}
+}
+
+fn ProcessBreakingGlassLogicStep( ust::vector</BreakingGlassEffect/> &mut breaking_glass_effects )
+{
+	for( auto mut i= 0s; i < breaking_glass_effects.size(); )
+	{
+		var bool mut need_to_remove= false;
+
+		{
+			var BreakingGlassEffect &mut breaking_glass_effect= breaking_glass_effects[i];
+
+			++breaking_glass_effect.age_steps;
+
+			if( breaking_glass_effect.age_steps >= c_breaking_glass_max_age )
+			{
+				need_to_remove= true;
+			}
+		}
+
+		if( need_to_remove )
+		{
+			var size_type last_index= breaking_glass_effects.size() - 1s;
+			breaking_glass_effects.swap( i, last_index );
+			breaking_glass_effects.drop_back();
 		}
 		else
 		{
@@ -3458,6 +3513,7 @@ fn CollideMovedEntityWithProjectiles(
 							{
 								.weapon_tool_index= projectile.weapon_tool_index,
 								.position= projectile.position,
+								.hit_cluster_index= ~0u,
 								.hit_quad_index= ~0u,
 								.hit_entity_index= entity_index,
 							} );

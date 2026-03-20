@@ -1,0 +1,418 @@
+import "bounding_boxes_hierarchy_visiting.iu"
+import "breaking_glass.iu"
+import "cluster_utils.iu"
+import "map_quad_utils.iu"
+import "mat.iu"
+
+namespace PM
+{
+
+fn CreateBreakingGlassShards(
+	ust::array_view_imut</ZvoxCluster/> clusters,
+	ust::array_view_imut</ZmapQuad/> quads,
+	RoomClustersHierarchy& room_clusters_hierarchy,
+	ZmapLamData& zmap_lam_data,
+	MaterialsDescription::Block& materials_block,
+	ust::array_view_imut</WorldDrawingInfo::BreakingGlass/> breaking_glass_effects,
+	ust::vector</MapVertex/> &mut out_vertices,
+	ust::vector</u16/> &mut out_indices )
+{
+	var size_type num_vertices_before= out_vertices.size();
+
+	// Glass shards are supported only for single special material - glass.
+	// Other special materials are unbreakable in the original game anyway.
+	var u32 glass_texture_layer=
+		materials_block.special_material_indices[ size_type( MaterialsDescription::SpecialMaterial::Glass ) ];
+
+	foreach( &breaking_glass : breaking_glass_effects )
+	{
+		CreateBreakingGlassTriangles(
+			clusters,
+			quads,
+			room_clusters_hierarchy,
+			zmap_lam_data,
+			glass_texture_layer,
+			breaking_glass,
+			out_vertices );
+	}
+
+	// Since we use only triangles for glass shards, we can create indices for these triangles for all shards at once.
+	for( auto mut i= num_vertices_before; i < out_vertices.size(); ++i )
+	{
+		out_indices.push_back( u16( i ) );
+	}
+}
+
+fn CreateBreakingGlassTriangles(
+	ust::array_view_imut</ZvoxCluster/> clusters,
+	ust::array_view_imut</ZmapQuad/> quads,
+	RoomClustersHierarchy& room_clusters_hierarchy,
+	ZmapLamData& zmap_lam_data,
+	u32 glass_texture_layer,
+	WorldDrawingInfo::BreakingGlass& breaking_glass,
+	ust::vector</MapVertex/> &mut out_vertices )
+{
+	var ZvoxCluster& cluster= clusters[ size_type( breaking_glass.cluster_index ) ];
+	var ZmapQuad& quad= quads[ size_type( breaking_glass.quad_index ) ];
+
+	auto& center= cluster.c.center;
+	auto& in_vertices= quad.vertices;
+
+	auto [ u_vec, v_vec ]= CalculateMapQuadTextureBasis( quad, true );
+
+	var Vec2f tc_offset( f32( quad.tc_offset[0] ), f32( quad.tc_offset[1] ) );
+
+	// OpenGL uses normalized texture coordinates.
+	var f32 constexpr tc_scale= 1.0f / f32( MaterialsDescription::c_texture_size );
+
+	auto mut i= 0s;
+	auto calc_vertices=
+		lambda[&]() : GlassShardVertex
+		{
+			auto& v= in_vertices[i];
+			++i;
+
+			var Vec3f relative_shift(
+				f32( i32( v[0] ) - i32( in_vertices[0][0] ) ),
+				f32( i32( v[1] ) - i32( in_vertices[0][1] ) ),
+				f32( i32( v[2] ) - i32( in_vertices[0][2] ) )
+			);
+
+			return GlassShardVertex
+			{
+				.position(
+					f32( center[0] + i32( v[0] ) ),
+					f32( center[1] + i32( v[1] ) ),
+					f32( center[2] + i32( v[2] ) ) ),
+				.texture_coordinates(
+					tc_scale * ( relative_shift.Dot( u_vec ) + tc_offset.x ),
+					tc_scale * ( relative_shift.Dot( v_vec ) + tc_offset.y ) )
+			};
+		};
+
+	var [ GlassShardVertex, 4 ] vertices[ calc_vertices() ... ];
+
+	var Vec3f hit_position_relative_shift=
+		breaking_glass.hit_position -
+		Vec3f( f32( center[0] ), f32( center[1] ), f32( center[2] ) ) -
+		Vec3f( f32( in_vertices[0][0] ), f32( in_vertices[0][1] ), f32( in_vertices[0][2] ) );
+
+	var GlassShardVertex hit_vertex
+	{
+		.position= breaking_glass.hit_position,
+		.texture_coordinates(
+			tc_scale * ( hit_position_relative_shift.Dot( u_vec ) + tc_offset.x ),
+			tc_scale * ( hit_position_relative_shift.Dot( v_vec ) + tc_offset.y ) )
+	};
+
+	var u32 texture_layer=
+		( u32( quad.texture_id ) == MaterialsDescription::c_special_material_texture_indices[ size_type( MaterialsDescription::SpecialMaterial::Glass ) ]
+			? glass_texture_layer
+			: u32( quad.texture_id ) );
+
+	var Vec3f normal=
+		( vertices[0].position - vertices[1].position ).Cross( vertices[1].position - vertices[2].position ) +
+		( vertices[1].position - vertices[2].position ).Cross( vertices[2].position - vertices[3].position ) +
+		( vertices[2].position - vertices[3].position ).Cross( vertices[3].position - vertices[0].position ) +
+		( vertices[3].position - vertices[0].position ).Cross( vertices[0].position - vertices[1].position );
+
+	var f32 normal_length= normal.Length();
+	if( normal_length == 0.0f )
+	{
+		return;
+	}
+
+	var Vec3f normal_normalized= normal / normal_length;
+
+	// We can't perform proper collisions calculation for glass shards, since it would be too costly.
+	// Instead just use floor level of the room cluster where this breaking glass effect is located
+	// and stop movement of each shard when this level is reached.
+	var Vec3f cluster_sample_position= hit_vertex.position + normal_normalized * 16.0f;
+	var f32 floor_level= GetFloorLevel( clusters, room_clusters_hierarchy, cluster_sample_position );
+
+	var BreakingGlassContext context
+	{
+		.hit_position= breaking_glass.hit_position,
+		.age= breaking_glass.age,
+		.light=
+			AlphaFadeLight(
+				GetAverageQuadVerticesLight( breaking_glass.quad_index, zmap_lam_data ), breaking_glass.age ),
+		.texture_layer( texture_layer ),
+		.plane_normal_normalized= normal_normalized,
+		.floor_level= floor_level,
+	};
+
+	CreateShardBaseTriangles_r( context, hit_vertex, vertices[0], vertices[1], out_vertices );
+	CreateShardBaseTriangles_r( context, hit_vertex, vertices[1], vertices[2], out_vertices );
+	CreateShardBaseTriangles_r( context, hit_vertex, vertices[2], vertices[3], out_vertices );
+	CreateShardBaseTriangles_r( context, hit_vertex, vertices[3], vertices[0], out_vertices );
+}
+
+fn GetAverageQuadVerticesLight( u32 quad_index, ZmapLamData& zmap_lam_data ) : [ u8, 4 ]
+{
+	var ZmapLamTesselaltedQuad& tessellated_quad= zmap_lam_data.tessellated_quads[ size_type( quad_index ) ];
+
+	var size_type tessellated_vertex_count( tessellated_quad.vertex_count );
+	var size_type tessellatted_quad_data_offset( tessellated_quad.data_offset );
+
+	var [ u32, 3 ] mut light_sum[ 0u ... ];
+
+	var ust::array_view_imut</byte32/> vertex_data=
+		zmap_lam_data.tessellated_quads_data.range().subrange(
+			tessellatted_quad_data_offset,
+			tessellatted_quad_data_offset + tessellated_vertex_count * 6s );
+
+	for( var size_type mut i= 0s, i_end= tessellated_vertex_count * 6s; i < i_end; i+= 6s )
+	{
+		var u32 l( vertex_data[ i + 5s ] );
+
+		light_sum[0]+= ( l >> 16 ) & 255u;
+		light_sum[1]+= ( l >>  8 ) & 255u;
+		light_sum[2]+= ( l >>  0 ) & 255u;
+	}
+
+	if( tessellated_quad.vertex_count == 0u )
+	{
+		return ust::make_array( 255u8, 255u8, 255u8, 255u8 );
+	}
+
+	return
+		ust::make_array(
+			u8( light_sum[0] / tessellated_quad.vertex_count ),
+			u8( light_sum[1] / tessellated_quad.vertex_count ),
+			u8( light_sum[2] / tessellated_quad.vertex_count ),
+			255u8 );
+}
+
+fn AlphaFadeLight( [ u8, 4 ] light, f32 age ) : [ u8, 4 ]
+{
+	if( age < 0.8f )
+	{
+		return light;
+	}
+
+	// Since we use blending with premultiplied alpha, scale both alpha and light value.
+
+	var f32 scale= ( 1.0f - age ) * 4.99f;
+
+	return
+		ust::make_array(
+			u8( f32( light[0] ) * scale ),
+			u8( f32( light[1] ) * scale ),
+			u8( f32( light[2] ) * scale ),
+			u8( f32( light[3] ) * scale ) );
+}
+
+fn GetFloorLevel(
+	ust::array_view_imut</ZvoxCluster/> clusters,
+	RoomClustersHierarchy& room_clusters_hierarchy,
+	Vec3f& sample_position ) : f32
+{
+	var f32 mut floor_level= 9999999.0f;
+
+	VisitBoundingBoxesHierarchyForPoint(
+		room_clusters_hierarchy,
+		sample_position,
+		lambda[&]( ClusterIndexInHierarchy c )
+		{
+			var size_type cluster_index(c);
+			var BBox3f cluster_bbox= CreateClusterBBox( clusters[ cluster_index ] );
+			if( cluster_bbox.PointIsInsideOrOnFace( sample_position ) )
+			{
+				ust::min_assign( floor_level, cluster_bbox.max.z );
+			}
+		} );
+
+	return floor_level;
+}
+
+struct BreakingGlassContext
+{
+	Vec3f hit_position;
+	f32 age;
+	[ u8, 4 ] light;
+	f32 texture_layer;
+	Vec3f plane_normal_normalized;
+	f32 floor_level;
+}
+
+struct GlassShardVertex
+{
+	Vec3f position;
+	Vec2f texture_coordinates;
+}
+
+fn CreateShardBaseTriangles_r(
+	BreakingGlassContext& context,
+	GlassShardVertex& v0,
+	GlassShardVertex& v1,
+	GlassShardVertex& v2,
+	ust::vector</MapVertex/> &mut out_vertices )
+{
+	// Split base triangles recursively until we don't have pretty sharp angles.
+
+	var f32 constexpr c_min_length_to_split= 8.0f;
+	var f32 constexpr c_max_angle_cos= 0.75f;
+
+	if( ( v2.position - v1.position ).SquareLength() >= c_min_length_to_split * c_min_length_to_split )
+	{
+		var Vec3f edge1= v1.position - v0.position;
+		var Vec3f edge2= v2.position - v0.position;
+
+		var f32 edges_length_product= ust::sqrt( edge1.SquareLength() * edge2.SquareLength() );
+
+		if( edge1.Dot( edge2 ) <= c_max_angle_cos * edges_length_product )
+		{
+			var GlassShardVertex middle= MixGlassShardVertices( v1, v2, 0.5f );
+			CreateShardBaseTriangles_r( context, v0, v1, middle, out_vertices );
+			CreateShardBaseTriangles_r( context, v0, middle, v2, out_vertices );
+			return;
+		}
+	}
+
+	CreateShardTriangles_r( context, v0, v1, v2, out_vertices );
+}
+
+fn CreateShardTriangles_r(
+	BreakingGlassContext& context,
+	GlassShardVertex& v0,
+	GlassShardVertex& v1,
+	GlassShardVertex& v2,
+	ust::vector</MapVertex/> &mut out_vertices )
+{
+	// Split too large triangles recursively.
+	{
+		var f32 constexpr c_max_length= 32.0f;
+		var f32 constexpr c_max_square_length= c_max_length * c_max_length;
+
+		var f32 l0= ( v1.position - v2.position ).SquareLength();
+		var f32 l1= ( v0.position - v2.position ).SquareLength();
+		var f32 l2= ( v0.position - v1.position ).SquareLength();
+		if( l0 >= l1 && l0 >= l2 )
+		{
+			if( l0 > c_max_square_length )
+			{
+				var GlassShardVertex middle= MixGlassShardVertices( v1, v2, 0.6f );
+				CreateShardTriangles_r( context, v0, v1, middle, out_vertices );
+				CreateShardTriangles_r( context, v0, middle, v2, out_vertices );
+				return;
+			}
+		}
+		else if( l1 >= l0 && l1 >= l2 )
+		{
+			if( l1 > c_max_square_length )
+			{
+				var GlassShardVertex middle= MixGlassShardVertices( v0, v2, 0.55f );
+				CreateShardTriangles_r( context, v1, v0, middle, out_vertices );
+				CreateShardTriangles_r( context, v1, middle, v2, out_vertices );
+				return;
+			}
+		}
+		else
+		{
+			if( l2 > c_max_square_length )
+			{
+				var GlassShardVertex middle= MixGlassShardVertices( v0, v1, 0.35f );
+				CreateShardTriangles_r( context, v2, v0, middle, out_vertices );
+				CreateShardTriangles_r( context, v2, middle, v1, out_vertices );
+				return;
+			}
+		}
+	}
+
+	CreateShardTriangle( context, v0, v1, v2, out_vertices );
+}
+
+fn MixGlassShardVertices( GlassShardVertex& v0, GlassShardVertex& v1, f32 factor ) : GlassShardVertex
+{
+	var f32 one_minus_factor= 1.0f - factor;
+	return GlassShardVertex
+	{
+		.position= v0.position * factor + v1.position * one_minus_factor,
+		.texture_coordinates= v0.texture_coordinates * factor + v1.texture_coordinates * one_minus_factor,
+	};
+}
+
+fn CreateShardTriangle(
+	BreakingGlassContext& context,
+	GlassShardVertex& v0,
+	GlassShardVertex& v1,
+	GlassShardVertex& v2,
+	ust::vector</MapVertex/> &mut out_vertices )
+{
+	var Vec3f center= 0.333333333f * ( v0.position + v1.position + v2.position );
+	var Vec3f vec_to_center= center - context.hit_position;
+	var f32 distance_to_center= vec_to_center.Length();
+
+	var f32 constexpr c_delay_distance_scale= 1.0f / 2048.0f;
+	var f32 constexpr c_vertical_acceleration= 6144.0f;
+	var f32 constexpr c_horizontal_speed_base= 128.0f;
+	var f32 constexpr c_side_speed_scale= 1.0f;
+
+	var f32 max_translation= context.floor_level - center.z;
+	var f32 age_of_floor_contact= ust::sqrt( max_translation / ( c_vertical_acceleration / 2.0f ) );
+
+	var f32 delay= distance_to_center * c_delay_distance_scale;
+
+	var f32 relative_age= ust::max( 0.0f, ust::min( context.age - delay, age_of_floor_contact ) );
+
+	var f32 horizontal_speed= c_horizontal_speed_base + 8192.0f / ( distance_to_center + 32.0f );
+
+	var Vec3f offset=
+		// Move slightly forward.
+		Vec3f( ( relative_age * horizontal_speed ) * context.plane_normal_normalized.xy(), 0.0f ) +
+		Vec3f(
+			// Move slightly sideways from the hit point.
+			( relative_age * c_side_speed_scale ) * vec_to_center.xy(),
+			// Move down with gravity acceleration.
+			relative_age * relative_age * ( c_vertical_acceleration / 2.0f ) );
+
+	var f32 rotation_speed= 2048.0f / ( distance_to_center + 16.0f );
+	var f32 rotation_angle= relative_age * rotation_speed;
+
+	var Vec3f rotation_axis= vec_to_center.Cross( context.plane_normal_normalized );
+	var f32 rotation_axis_length= rotation_axis.Length();
+
+	var Mat4f mut rotation_matrix=
+		( rotation_axis_length == 0.0f
+			? Mat4f::MakeIdentity() :
+			Mat4f::MakeRotationAroundNormalizedAxis( rotation_axis / rotation_axis_length, rotation_angle ) );
+
+	var Mat4f matrix=
+		Mat4f::MakeTranslation( -center ) *
+		rotation_matrix *
+		Mat4f::MakeTranslation( offset + center );
+
+	var Vec3f v0_transformed= v0.position * matrix;
+	var Vec3f v1_transformed= v1.position * matrix;
+	var Vec3f v2_transformed= v2.position * matrix;
+
+	out_vertices.push_back(
+		MapVertex
+		{
+			.position[ v0_transformed.x, v0_transformed.y, v0_transformed.z ],
+			.light= context.light,
+			.tex_coordinates[ v0.texture_coordinates.x, v0.texture_coordinates.y, context.texture_layer ],
+			.padding31= zero_init,
+		} );
+
+	out_vertices.push_back(
+		MapVertex
+		{
+			.position[ v1_transformed.x, v1_transformed.y, v1_transformed.z ],
+			.light= context.light,
+			.tex_coordinates[ v1.texture_coordinates.x, v1.texture_coordinates.y, context.texture_layer ],
+			.padding31= zero_init,
+		} );
+
+	out_vertices.push_back(
+		MapVertex
+		{
+			.position[ v2_transformed.x, v2_transformed.y, v2_transformed.z ],
+			.light= context.light,
+			.tex_coordinates[ v2.texture_coordinates.x, v2.texture_coordinates.y, context.texture_layer ],
+			.padding31= zero_init,
+		} );
+}
+
+} // namespace PM
