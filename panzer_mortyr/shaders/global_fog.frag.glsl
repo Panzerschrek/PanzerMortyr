@@ -19,7 +19,7 @@ void main()
 	float linear_distance= length( view_space_position.xyz ) / view_space_position.w;
 
 	// Use exponential fog formula.
-	float distance_scale= 1.0 / 8192.0;
+	float distance_scale= 1.0 / 4096.0;
 	float fog_density= 1.0 - exp( -linear_distance * distance_scale );
 
 	color= vec4( fu_fog_color, fog_density );
