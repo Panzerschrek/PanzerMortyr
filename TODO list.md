@@ -16,7 +16,6 @@ Map format investigation:
 Textures/materials investigation:
 
 * Identify remaining special material kinds.
-* Investigate how sky works on quads with sky materials and on broken glasses.
 * Investigate how lava texture affects lighting of surrounding geometry.
 * Investigate how underwater caustics work.
 
@@ -68,9 +67,9 @@ PanzerMortyr general:
 * Consider allowing playing cooperative/multiplayer maps as usual singleplayer ones. Maybe add a main menu item for this.
 * Consider writing some kind of alternative installer - a tool, which depacks game data from the original game ISO or mdf/mds files.
 * Draw loading screen before performing transition to the next level in game code and corresponding game and rendering resource loading.
-* Add an executable icon (used on Windows).
 * Consider embedding git revision into the game executable and showing it somewhere in the game.
 * Display somewhere in the main menu a text explaining that it's PanzerMortyr and not the original game.
+* Allow turning off some costly effects via settings - breaking glass, fog, dynamic lighting, etc.
 
 PanzerMortyr game logic:
 
@@ -101,7 +100,8 @@ PanzerMortyr game logic:
 * Fix ugly injury-based entity state transitions, when an injury operation is changed while some other injury operation is already in process.
 * Implement pushing pushable entities.
 * Perform camera Z coordinate smoothing while climbing steps, so that camera movement doesn't look jaggy.
-* Perform separate collisions calculation with glass quads - to skip broken glass quads.
+* Memorize broken glass quads and quads with breakable material.
+* Don't perform projectile and (maybe) entity collisions with broken map quads.
 * Implement jetpack tool.
 * Implement flashlight tool.
 * Implement invisibility tool (false documents) and enemy properties allowing to uncover the player having invisibility.
@@ -156,7 +156,6 @@ PanzerMortyr rendering:
 * Draw some fullscreen burning effect if the player is burning.
 * Implement dynamic lights (gun flashes, explosions).
 * Draw weather effects (rain, snow).
-* Draw breaking window animation (with falling splinters).
 * Experiment with an algorithm for dynamic visible clusters search similar to one used in SquareWheel.
 * Add support for MSAA.
 * Somehow distort/colorize the whole image while swimming in water.
@@ -169,6 +168,7 @@ PanzerMortyr rendering:
 * Consider drawing some extra effects for the night vision mode, like fullscreen radial brightness gradient or something similar.
 * Draw entities having one or more attached flame object in flames. Consider implementing an effect similar to one used in RtCW for burning enemies.
 * Make sure clouds have proper scale and speed (similar to the original game).
+* Don't draw broken map quads (with glass special material and materials with breakable flag).
 
 PanzerMortyr menus and HUD:
 
