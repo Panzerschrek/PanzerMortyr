@@ -8,6 +8,7 @@ namespace PM
 fn CreateBreakingGlassShards(
 	ust::array_view_imut</ZvoxCluster/> clusters,
 	ust::array_view_imut</ZmapQuad/> quads,
+	ZmapLamData& zmap_lam_data,
 	MaterialsDescription::Block& materials_block,
 	WorldDrawingInfo::BreakingGlass& breaking_glass,
 	ust::vector</MapVertex/> &mut out_vertices,
@@ -87,7 +88,7 @@ fn CreateBreakingGlassShards(
 	{
 		.hit_position= breaking_glass.hit_position,
 		.age= breaking_glass.age,
-		.light[ 255u8 ... ],
+		.light= GetAverageQuadVerticesLight( breaking_glass.quad_index, zmap_lam_data ),
 		.texture_layer( texture_layer ),
 		.plane_normal_normalized= normal / normal_length,
 	};
@@ -96,6 +97,41 @@ fn CreateBreakingGlassShards(
 	MakeShardBaseTriangles_r( context, hit_vertex, vertices[1], vertices[2], out_vertices, out_indices );
 	MakeShardBaseTriangles_r( context, hit_vertex, vertices[2], vertices[3], out_vertices, out_indices );
 	MakeShardBaseTriangles_r( context, hit_vertex, vertices[3], vertices[0], out_vertices, out_indices );
+}
+
+fn GetAverageQuadVerticesLight( u32 quad_index, ZmapLamData& zmap_lam_data ) : [ u8, 3 ]
+{
+	var ZmapLamTesselaltedQuad& tessellated_quad= zmap_lam_data.tessellated_quads[ size_type( quad_index ) ];
+
+	var size_type tessellated_vertex_count( tessellated_quad.vertex_count );
+	var size_type tessellatted_quad_data_offset( tessellated_quad.data_offset );
+
+	var [ u32, 3 ] mut light_sum[ 0u ... ];
+
+	var ust::array_view_imut</byte32/> vertex_data=
+		zmap_lam_data.tessellated_quads_data.range().subrange(
+			tessellatted_quad_data_offset,
+			tessellatted_quad_data_offset + tessellated_vertex_count * 6s );
+
+	for( var size_type mut i= 0s, i_end= tessellated_vertex_count * 6s; i < i_end; i+= 6s )
+	{
+		var u32 l( vertex_data[ i + 5s ] );
+
+		light_sum[0]+= ( l >> 16 ) & 255u;
+		light_sum[1]+= ( l >>  8 ) & 255u;
+		light_sum[2]+= ( l >>  0 ) & 255u;
+	}
+
+	if( tessellated_quad.vertex_count == 0u )
+	{
+		return ust::make_array( 255u8, 255u8, 255u8 );
+	}
+
+	return
+		ust::make_array(
+			u8( light_sum[0] / tessellated_quad.vertex_count ),
+			u8( light_sum[1] / tessellated_quad.vertex_count ),
+			u8( light_sum[2] / tessellated_quad.vertex_count ) );
 }
 
 struct BreakingGlassContext
