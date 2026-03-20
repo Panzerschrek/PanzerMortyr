@@ -75,6 +75,7 @@ fn WorldDrawer::constructor(
 			embed</char8/>( "shaders/global_fog.vert.glsl" ),
 			embed</char8/>( "shaders/global_fog.frag.glsl" ) ),
 		stub_white_texture_= CreateStubWhiteTexture(),
+		depth_buffer_copy_texture_= CreateDepthBufferCopyTexture(),
 		semitransparent_polygons_buffer_
 		{
 			.vertex_buffer=
@@ -441,9 +442,25 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 	// Draw fog after all opaque geometry and before semitransparent geometry.
 
 	{
+		var u32 texture_slot= 0u;
+
+		unsafe( glActiveTexture( GLenum( GL_TEXTURE0 ) + GLenum(texture_slot) ) );
+		depth_buffer_copy_texture_.Bind();
+
+		unsafe( glCopyTexImage2D(
+			GLenum( GL_TEXTURE_2D ),
+			GLint(0),
+			GLenum( GL_DEPTH_COMPONENT ),
+			GLint(0),
+			GLint(0),
+			GLsizei( viewport_info.viewport_size[0] ),
+			GLsizei( viewport_info.viewport_size[1] ),
+			GLint(0) ) );
+
 		SetGLState( g_fog_gl_state );
 
 		global_fog_shader_.Bind();
+		global_fog_shader_.SetUniform( "fu_depth_texture", texture_slot );
 
 		unsafe( glDrawArrays( GLenum( GL_TRIANGLES ), GLint(0), GLsizei(3) ) );
 	}
@@ -1804,6 +1821,16 @@ fn CreateStubWhiteTexture() : Texture
 		GLenum( GL_RGBA ),
 		GLenum( GL_UNSIGNED_BYTE ),
 		ust::ptr_cast_to_byte8( $<( cast_mut( texture_data ) ) ) ) );
+
+	unsafe( glTexParameteri( GLenum( GL_TEXTURE_2D ), GLenum( GL_TEXTURE_MAG_FILTER ), GLint( GL_NEAREST ) ) );
+	unsafe( glTexParameteri( GLenum( GL_TEXTURE_2D ), GLenum( GL_TEXTURE_MIN_FILTER ), GLint( GL_NEAREST ) ) );
+
+	return texture;
+}
+
+fn CreateDepthBufferCopyTexture() : Texture
+{
+	var Texture texture= Texture::Create( GLenum( GL_TEXTURE_2D ) );
 
 	unsafe( glTexParameteri( GLenum( GL_TEXTURE_2D ), GLenum( GL_TEXTURE_MAG_FILTER ), GLint( GL_NEAREST ) ) );
 	unsafe( glTexParameteri( GLenum( GL_TEXTURE_2D ), GLenum( GL_TEXTURE_MIN_FILTER ), GLint( GL_NEAREST ) ) );
