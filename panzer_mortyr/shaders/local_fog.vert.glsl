@@ -28,8 +28,11 @@ uniform mat4 vu_matrix;
 uniform vec3 vu_fog_volume_scale;
 uniform vec3 vu_fog_volume_offset;
 
+out vec3 f_position;
+
 void main()
 {
 	vec3 pos= c_vertices[ c_indeces[ gl_VertexID ] ] * vu_fog_volume_scale + vu_fog_volume_offset;
 	gl_Position= vec4( pos, 1.0 ) * vu_matrix;
+	f_position= pos;
 }
