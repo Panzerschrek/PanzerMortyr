@@ -21,6 +21,7 @@ Fixed bugs:
 * Sun and moon billboards don't rotate together with camera.
 * Near Z plane clipping for first person weapon models is fixed.
 * First person weapon models aren't ugly distorted while zooming.
+* Fog density isn't affected by zooming.
 
 Changes:
 
@@ -33,6 +34,8 @@ Changes:
 * Lighting for models may be different from the original game, since lighting formulas are just guessed.
 * Many elevators/doors/buttons are no longer pitch-dark, but their lighting is also static (doesn't change with position change).
 * Glass breaking animation looks differently from the original game.
+* Fog looks a little bit darker (in the original game it is sometimes too bright) and its attenuation formula is likely different from the original.
+* Sky isn't affected by global fog at all.
 
 
 ### Gameplay

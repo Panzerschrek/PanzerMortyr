@@ -147,7 +147,7 @@ PanzerMortyr rendering:
 
 * Apply additional tessellation for tessellated polygons in order to perform smoother light values interpolation (naively triangulating them doesn't produce good result always).
 * Draw underwater caustics properly.
-* Draw fog where it should be.
+* Draw local fog volumes.
 * Draw reflections in reflective surfaces (usually floors).
 * Use smooth animation for animated models (with two or more frames interpolation).
 * Draw decals (bullet holes, blood).
