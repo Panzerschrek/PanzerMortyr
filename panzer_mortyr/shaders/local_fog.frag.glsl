@@ -4,6 +4,10 @@
 uniform vec3 vu_fog_volume_scale;
 uniform vec3 vu_fog_volume_offset;
 
+uniform vec2 fu_inverse_viewport_size;
+uniform sampler2D fu_depth_texture;
+uniform mat4 fu_inverse_projection_matrix;
+
 uniform vec3 fu_camera_position;
 uniform vec3 fu_fog_color;
 
@@ -133,6 +137,17 @@ vec2 CalculateRayBBoxIntersection( vec3 bbox_min, vec3 bbox_max, vec3 ray_start,
 
 void main()
 {
+	// Calculate linear distance to the fragment stored in the depth buffer.
+
+	vec2 screen_coords= gl_FragCoord.xy * fu_inverse_viewport_size;
+
+	float depth_buffer_value= texture( fu_depth_texture, screen_coords ).r;
+	float depth_value_symmetric= depth_buffer_value * 2.0 - 1.0; // in -1 to 1 range
+	vec4 clip_space_position= vec4( ( screen_coords * 2.0 - vec2( 1.0, 1.0 ) ), depth_value_symmetric, 1.0 );
+	vec4 view_space_position= clip_space_position * fu_inverse_projection_matrix;
+
+	float linear_fragment_distance= length( view_space_position.xyz ) / view_space_position.w;
+
 	vec3 view_ray_normalized= normalize( f_position - fu_camera_position );
 
 	vec3 bbox_min= vu_fog_volume_offset - vu_fog_volume_scale;
@@ -145,7 +160,8 @@ void main()
 		CalculateRayBBoxIntersection( bbox_min, bbox_max, fu_camera_position, view_ray_normalized );
 
 	float near_distance= max( ray_bbox_intersection.x, 0.0 );
-	float far_distance= max( ray_bbox_intersection.y, near_distance );
+	// Limit far distance to fragment depth.
+	float far_distance= max( min( ray_bbox_intersection.y, linear_fragment_distance ), near_distance );
 	float distance_in_fog_volume= far_distance - near_distance;
 
 	float distance_scale= 1.0 / 256.0;
