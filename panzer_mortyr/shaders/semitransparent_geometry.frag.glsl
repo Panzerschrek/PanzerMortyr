@@ -19,10 +19,7 @@ void main()
 	}
 
 	float alpha= texture_color.a * f_light.a;
-	vec3 self_color= texture_color.rgb * f_light.rgb;
+	vec3 own_color= texture_color.rgb * f_light.rgb;
 
-	color=
-		vec4(
-			self_color * ( 1.0 - f_fog_color.a ) + f_fog_color.rgb * ( f_fog_color.a * alpha ),
-			alpha );
+	color= vec4( own_color * ( 1.0 - f_fog_color.a ) + f_fog_color.rgb * ( f_fog_color.a * alpha ), alpha );
 }
