@@ -461,33 +461,11 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 
 	if_var( &c : fog_color )
 	{
-		var u32 texture_slot= 0u;
-
-		// Copy current depth buffer into a texture to be able to read depth values from it in the fog shader.
-		// It's necessary to perform such copy, since there is no way to read current depth in a fragment shader directly.
-
-		unsafe( glActiveTexture( GLenum( GL_TEXTURE0 ) + GLenum(texture_slot) ) );
-		depth_buffer_copy_texture_.Bind();
-
-		unsafe( glCopyTexImage2D(
-			GLenum( GL_TEXTURE_2D ),
-			GLint(0),
-			GLenum( GL_DEPTH_COMPONENT ),
-			GLint(0),
-			GLint(0),
-			GLsizei( viewport_info.viewport_size[0] ),
-			GLsizei( viewport_info.viewport_size[1] ),
-			GLint(0) ) );
-
-		SetGLState( g_fog_gl_state );
-
-		global_fog_shader_.Bind();
-		global_fog_shader_.SetUniform( "fu_depth_texture", texture_slot );
-		global_fog_shader_.SetUniform( "fu_inverse_projection_matrix", camera_inverse_projection_matrix );
-		global_fog_shader_.SetUniform( "fu_fog_color", Vec3f( c ) );
-
-		// Draw single triangle covering the entire screen.
-		unsafe( glDrawArrays( GLenum( GL_TRIANGLES ), GLint(0), GLsizei(3) ) );
+		DrawFullscreenFog(
+			viewport_info.viewport_size,
+			depth_buffer_copy_texture_,
+			global_fog_shader_,
+			camera_inverse_projection_matrix, c );
 	}
 
 	// Draw sky after fog.
@@ -2516,6 +2494,42 @@ fn CreateLightShaftsBoxPolygons(
 	indices.push_back( u16( base_vertex_index + 0s ) );
 	indices.push_back( u16( base_vertex_index + 7s ) );
 	indices.push_back( u16( base_vertex_index + 4s ) );
+}
+
+fn DrawFullscreenFog(
+	[ u32, 2 ] viewport_size,
+	Texture &mut depth_buffer_copy_texture,
+	ShaderProgram &mut shader,
+	Mat4f& camera_inverse_projection_matrix,
+	[ f32, 3 ]& fog_color )
+{
+	var u32 texture_slot= 0u;
+
+	// Copy current depth buffer into a texture to be able to read depth values from it in the fog shader.
+	// It's necessary to perform such copy, since there is no way to read current depth in a fragment shader directly.
+
+	unsafe( glActiveTexture( GLenum( GL_TEXTURE0 ) + GLenum(texture_slot) ) );
+	depth_buffer_copy_texture.Bind();
+
+	unsafe( glCopyTexImage2D(
+		GLenum( GL_TEXTURE_2D ),
+		GLint(0),
+		GLenum( GL_DEPTH_COMPONENT ),
+		GLint(0),
+		GLint(0),
+		GLsizei( viewport_size[0] ),
+		GLsizei( viewport_size[1] ),
+		GLint(0) ) );
+
+	SetGLState( g_fog_gl_state );
+
+	shader.Bind();
+	shader.SetUniform( "fu_depth_texture", texture_slot );
+	shader.SetUniform( "fu_inverse_projection_matrix", camera_inverse_projection_matrix );
+	shader.SetUniform( "fu_fog_color", Vec3f( fog_color ) );
+
+	// Draw single triangle covering the entire screen.
+	unsafe( glDrawArrays( GLenum( GL_TRIANGLES ), GLint(0), GLsizei(3) ) );
 }
 
 fn DrawSkyBackground(
