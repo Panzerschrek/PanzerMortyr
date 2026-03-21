@@ -8,6 +8,7 @@ import "/common_lib/materials_file.iu"
 import "bounding_boxes_hierarchy_visiting.iu"
 import "breaking_glass.iu"
 import "cluster_utils.iu"
+import "fog.iu"
 import "gl_functions.iu"
 import "gl_state.iu"
 import "image_loading.iu"
@@ -71,7 +72,11 @@ fn WorldDrawer::constructor(
 		test_primitive_shader_(
 			embed</char8/>( "shaders/test_primitive.vert.glsl" ),
 			embed</char8/>( "shaders/test_primitive.frag.glsl" ) ),
+		global_fog_shader_(
+			embed</char8/>( "shaders/global_fog.vert.glsl" ),
+			embed</char8/>( "shaders/global_fog.frag.glsl" ) ),
 		stub_white_texture_= CreateStubWhiteTexture(),
+		depth_buffer_copy_texture_= CreateDepthBufferCopyTexture(),
 		semitransparent_polygons_buffer_
 		{
 			.vertex_buffer=
@@ -191,6 +196,9 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 	var Mat4f camera_projection_matrix=
 		Mat4f::MakePerspective( viewport_info.view_aspect, drawing_info.camera_params.fov_x, c_z_near, c_z_far );
 
+	var Mat4f camera_inverse_projection_matrix=
+		Mat4f::MakeInversePerspective( viewport_info.view_aspect, drawing_info.camera_params.fov_x, c_z_near, c_z_far );
+
 	var Mat4f rotation_and_projection_matrix= rotation_matrix * camera_projection_matrix;
 
 	var Mat4f translation_matrix= Mat4f::MakeTranslation( -drawing_info.camera_params.position );
@@ -205,33 +213,6 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 
 	var CameraClipPlanes camera_clip_planes=
 		CreateCameraClipPlanes( drawing_info.camera_params, viewport_info.view_aspect );
-
-	DrawSkyBackground(
-		map_data.sky_background_buffer,
-		sky_background_shader_,
-		rotation_and_projection_matrix,
-		// Scale sky light but not add constant factor. Black sky should remain black.
-		global_light_params.light_scale );
-
-	if( !map_data.sky_clouds_params.empty() && map_data.clouds_texture_layer != ~0u )
-	{
-		DrawClouds(
-			map_data.sky_clouds_params.try_deref(),
-			clouds_shader_,
-			map_data.map_textures_array,
-			map_data.clouds_texture_layer,
-			rotation_and_projection_matrix,
-			drawing_info.game_time_s );
-	}
-
-	// Draw stars/moon AFTER clouds. This isn't fully correct, but this allows to draw sun/moon with proper brightness.
-	DrawStarsAndSun(
-		map_data.stars_buffer,
-		stars_shader_,
-		map_data.map_textures_array,
-		rotation_and_projection_matrix,
-		// Scale stars and sun light, but not add constant factor, since additive blending is used for them.
-		global_light_params.light_scale );
 
 	var ust::array_view_imut</ZvoxCluster/> clusters= map_data.zvox_data.deref().clusters;
 
@@ -462,6 +443,60 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 		test_primitive_shader_,
 		view_matrix );
 
+	// Draw fog after all opaque geometry and before semitransparent geometry.
+
+	var ust::optional</ [ f32, 3 ] /> mut fog_color;
+
+	if( settings_.lock_imut().deref().r_fog_enabled )
+	{
+		if_var( &c : map_data.fog_color )
+		{
+			fog_color=
+				ust::make_array(
+					c[0] * global_light_params.light_scale[0] + global_light_params.light_add[0],
+					c[1] * global_light_params.light_scale[1] + global_light_params.light_add[1],
+					c[2] * global_light_params.light_scale[2] + global_light_params.light_add[2] );
+		}
+	}
+
+	if_var( &c : fog_color )
+	{
+		DrawFullscreenFog(
+			viewport_info.viewport_size,
+			depth_buffer_copy_texture_,
+			global_fog_shader_,
+			camera_inverse_projection_matrix, c );
+	}
+
+	// Draw sky after fog.
+
+	DrawSkyBackground(
+		map_data.sky_background_buffer,
+		sky_background_shader_,
+		rotation_and_projection_matrix,
+		// Scale sky light but not add constant factor. Black sky should remain black.
+		global_light_params.light_scale );
+
+	if( !map_data.sky_clouds_params.empty() && map_data.clouds_texture_layer != ~0u )
+	{
+		DrawClouds(
+			map_data.sky_clouds_params.try_deref(),
+			clouds_shader_,
+			map_data.map_textures_array,
+			map_data.clouds_texture_layer,
+			rotation_and_projection_matrix,
+			drawing_info.game_time_s );
+	}
+
+	// Draw stars/moon AFTER clouds. This isn't fully correct, but this allows to draw sun/moon with proper brightness.
+	DrawStarsAndSun(
+		map_data.stars_buffer,
+		stars_shader_,
+		map_data.map_textures_array,
+		rotation_and_projection_matrix,
+		// Scale stars and sun light, but not add constant factor, since additive blending is used for them.
+		global_light_params.light_scale );
+
 	ResetDynamicPolygonsBuffer( semitransparent_polygons_buffer_ );
 
 	BuildBillboardPolygons(
@@ -503,6 +538,16 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 				drawing_info.breaking_glass_effects,
 				semitransparent_polygons_buffer_.vertices,
 				semitransparent_polygons_buffer_.indices );
+		}
+
+		// Calculate fog on per-vertex basis for semitransparent geometry.
+		// We can't apply fullscreen fog effects for semitransparent polygons,
+		// since the fullscreen fog shader reads single depth value,
+		// but many semitransparent polygons can overlap and have many different depth values.
+		if_var( &c : fog_color )
+		{
+			CalculateFogForSemitransparentGeometryVertices(
+				drawing_info.camera_params.position, c, semitransparent_polygons_buffer_.vertices );
 		}
 	}
 
@@ -717,7 +762,7 @@ fn WorldDrawer::SetMap( mut this, u32 map_index )
 								tc_scale * ( vertex_relative_shift.Dot( v_vec ) + tc_offset.y ),
 								texture_id,
 							],
-							.padding31= zero_init,
+							.fog_color= zero_init,
 						} );
 				}
 
@@ -926,6 +971,14 @@ fn WorldDrawer::SetMap( mut this, u32 map_index )
 			.sky_background_buffer= CreateSkyBackgroundBuffer( map_description ),
 			.stars_buffer= CreateStarsBuffer( map_description, billboards_description_ ),
 			.sky_clouds_params= CreateSkyCloudsParams( map_description ),
+			.fog_color=
+				( map_description.linear_fog_enabled
+					? ust::optional</ [ f32, 3 ] />(
+						ust::make_array(
+							f32( map_description.fog_color[2] ) / 255.0f,
+							f32( map_description.fog_color[1] ) / 255.0f,
+							f32( map_description.fog_color[0] ) / 255.0f ) )
+					: ust::optional</ [ f32, 3 ] />() )
 		} );
 }
 
@@ -1796,6 +1849,16 @@ fn CreateStubWhiteTexture() : Texture
 	return texture;
 }
 
+fn CreateDepthBufferCopyTexture() : Texture
+{
+	var Texture texture= Texture::Create( GLenum( GL_TEXTURE_2D ) );
+
+	unsafe( glTexParameteri( GLenum( GL_TEXTURE_2D ), GLenum( GL_TEXTURE_MAG_FILTER ), GLint( GL_NEAREST ) ) );
+	unsafe( glTexParameteri( GLenum( GL_TEXTURE_2D ), GLenum( GL_TEXTURE_MIN_FILTER ), GLint( GL_NEAREST ) ) );
+
+	return texture;
+}
+
 fn PrepareVertexArrayObjectWithMapVertexFormat(
 	VertexArrayObject &mut vertex_array_object, BufferObject &mut vertex_buffer )
 {
@@ -1805,6 +1868,7 @@ fn PrepareVertexArrayObjectWithMapVertexFormat(
 	var GLuint c_position_attrib= 0u;
 	var GLuint c_texture_coordinates_attrib= 1u;
 	var GLuint c_light_attrib= 2u;
+	var GLuint c_fog_color_attrib= 3u;
 
 	vertex_buffer.Bind();
 
@@ -1837,6 +1901,16 @@ fn PrepareVertexArrayObjectWithMapVertexFormat(
 		GLboolean(1),
 		GLsizei( typeinfo</MapVertex/>.size_of ),
 		ust::nullptr</byte8/>() + GetStructFieldOffset</MapVertex, "light"/>() ) );
+
+	unsafe( glEnableVertexAttribArray( c_fog_color_attrib ) );
+
+	unsafe( glVertexAttribPointer(
+		c_fog_color_attrib,
+		4,
+		GLenum( GL_UNSIGNED_BYTE ),
+		GLboolean(1),
+		GLsizei( typeinfo</MapVertex/>.size_of ),
+		ust::nullptr</byte8/>() + GetStructFieldOffset</MapVertex, "fog_color"/>() ) );
 }
 
 fn BuildBillboardPolygons(
@@ -1987,7 +2061,7 @@ fn BuildBillboardPolygons(
 				.position[ positions[0].x, positions[0].y, positions[0].z ],
 				.light= light,
 				.tex_coordinates[ tex_coords[0][0], tex_coords[0][1], texture_layer ],
-				.padding31= zero_init,
+				.fog_color= zero_init,
 			} );
 
 		vertices.push_back(
@@ -1996,7 +2070,7 @@ fn BuildBillboardPolygons(
 				.position[ positions[1].x, positions[1].y, positions[1].z ],
 				.light= light,
 				.tex_coordinates[ tex_coords[1][0], tex_coords[0][1], texture_layer ],
-				.padding31= zero_init,
+				.fog_color= zero_init,
 			} );
 
 		vertices.push_back(
@@ -2005,7 +2079,7 @@ fn BuildBillboardPolygons(
 				.position[ positions[2].x, positions[2].y, positions[2].z ],
 				.light= light,
 				.tex_coordinates[ tex_coords[0][0], tex_coords[1][1], texture_layer ],
-				.padding31= zero_init,
+				.fog_color= zero_init,
 			} );
 
 		vertices.push_back(
@@ -2014,7 +2088,7 @@ fn BuildBillboardPolygons(
 				.position[ positions[3].x, positions[3].y, positions[3].z ],
 				.light= light,
 				.tex_coordinates[ tex_coords[1][0], tex_coords[1][1], texture_layer ],
-				.padding31= zero_init,
+				.fog_color= zero_init,
 			} );
 
 		indices.push_back( u16( base_vertex + 2s ) );
@@ -2219,7 +2293,7 @@ fn CreateClusterGlassPolygons(
 							tc_scale * ( vertex_relative_shift.Dot( v_vec ) + tc_offset.y ),
 							texture_id,
 						],
-						.padding31= zero_init,
+						.fog_color= zero_init,
 					} );
 			}
 
@@ -2389,7 +2463,7 @@ fn CreateLightShaftsBoxPolygons(
 				],
 				.light= vertex_lights[i],
 				.tex_coordinates[ tc[0], tc[1], texture_layer ],
-				.padding31= zero_init,
+				.fog_color= zero_init,
 			} );
 	}
 
@@ -2420,6 +2494,42 @@ fn CreateLightShaftsBoxPolygons(
 	indices.push_back( u16( base_vertex_index + 0s ) );
 	indices.push_back( u16( base_vertex_index + 7s ) );
 	indices.push_back( u16( base_vertex_index + 4s ) );
+}
+
+fn DrawFullscreenFog(
+	[ u32, 2 ] viewport_size,
+	Texture &mut depth_buffer_copy_texture,
+	ShaderProgram &mut shader,
+	Mat4f& camera_inverse_projection_matrix,
+	[ f32, 3 ]& fog_color )
+{
+	var u32 texture_slot= 0u;
+
+	// Copy current depth buffer into a texture to be able to read depth values from it in the fog shader.
+	// It's necessary to perform such copy, since there is no way to read current depth in a fragment shader directly.
+
+	unsafe( glActiveTexture( GLenum( GL_TEXTURE0 ) + GLenum(texture_slot) ) );
+	depth_buffer_copy_texture.Bind();
+
+	unsafe( glCopyTexImage2D(
+		GLenum( GL_TEXTURE_2D ),
+		GLint(0),
+		GLenum( GL_DEPTH_COMPONENT ),
+		GLint(0),
+		GLint(0),
+		GLsizei( viewport_size[0] ),
+		GLsizei( viewport_size[1] ),
+		GLint(0) ) );
+
+	SetGLState( g_fog_gl_state );
+
+	shader.Bind();
+	shader.SetUniform( "fu_depth_texture", texture_slot );
+	shader.SetUniform( "fu_inverse_projection_matrix", camera_inverse_projection_matrix );
+	shader.SetUniform( "fu_fog_color", Vec3f( fog_color ) );
+
+	// Draw single triangle covering the entire screen.
+	unsafe( glDrawArrays( GLenum( GL_TRIANGLES ), GLint(0), GLsizei(3) ) );
 }
 
 fn DrawSkyBackground(
@@ -2929,8 +3039,8 @@ var GLState g_buffer_clear_gl_state
 var GLState g_sky_background_gl_state
 {
 	.color_write_enabled= true,
-	.depth_test_enabled= false,
-	.depth_test_func( GL_INVALID_ENUM ),
+	.depth_test_enabled= true,
+	.depth_test_func( GL_LESS ),
 	.depth_write_enabled= false,
 	.cull_face_enabled= false,
 	.cull_face( GL_INVALID_ENUM ),
@@ -2942,8 +3052,8 @@ var GLState g_sky_background_gl_state
 var GLState g_stars_gl_state
 {
 	.color_write_enabled= true,
-	.depth_test_enabled= false,
-	.depth_test_func( GL_INVALID_ENUM ),
+	.depth_test_enabled= true,
+	.depth_test_func( GL_LESS ),
 	.depth_write_enabled= false,
 	.cull_face_enabled= false,
 	.cull_face( GL_INVALID_ENUM ),
@@ -2955,8 +3065,8 @@ var GLState g_stars_gl_state
 var GLState g_clouds_single_blending_gl_state
 {
 	.color_write_enabled= true,
-	.depth_test_enabled= false,
-	.depth_test_func( GL_INVALID_ENUM ),
+	.depth_test_enabled= true,
+	.depth_test_func( GL_LESS ),
 	.depth_write_enabled= false,
 	.cull_face_enabled= false,
 	.cull_face( GL_INVALID_ENUM ),
@@ -2968,8 +3078,8 @@ var GLState g_clouds_single_blending_gl_state
 var GLState g_clouds_double_blending_gl_state
 {
 	.color_write_enabled= true,
-	.depth_test_enabled= false,
-	.depth_test_func( GL_INVALID_ENUM ),
+	.depth_test_enabled= true,
+	.depth_test_func( GL_LESS ),
 	.depth_write_enabled= false,
 	.cull_face_enabled= false,
 	.cull_face( GL_INVALID_ENUM ),
@@ -3052,6 +3162,19 @@ var GLState g_test_primitives_drawing_gl_state
 	.blending_enabled= false,
 	.blend_source_factor( GL_INVALID_ENUM ),
 	.blend_destination_factor( GL_INVALID_ENUM ),
+};
+
+var GLState g_fog_gl_state
+{
+	.color_write_enabled= true,
+	.depth_test_enabled= false,
+	.depth_test_func( GL_NONE ),
+	.depth_write_enabled= false,
+	.cull_face_enabled= false,
+	.cull_face( GL_INVALID_ENUM ),
+	.blending_enabled= true,
+	.blend_source_factor( GL_SRC_ALPHA ),
+	.blend_destination_factor( GL_ONE_MINUS_SRC_ALPHA ),
 };
 
 } // namespace PM

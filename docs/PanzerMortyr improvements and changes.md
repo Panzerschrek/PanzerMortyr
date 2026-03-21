@@ -21,6 +21,7 @@ Fixed bugs:
 * Sun and moon billboards don't rotate together with camera.
 * Near Z plane clipping for first person weapon models is fixed.
 * First person weapon models aren't ugly distorted while zooming.
+* Fog density isn't affected by zooming.
 
 Changes:
 
@@ -33,6 +34,8 @@ Changes:
 * Lighting for models may be different from the original game, since lighting formulas are just guessed.
 * Many elevators/doors/buttons are no longer pitch-dark, but their lighting is also static (doesn't change with position change).
 * Glass breaking animation looks differently from the original game.
+* Fog looks a little bit darker (in the original game it is sometimes too bright) and its attenuation formula is likely different from the original.
+* Sky isn't affected by global fog at all.
 
 
 ### Gameplay
@@ -53,6 +56,7 @@ Changes:
 * Zooming works differently - it requires holding the zoom button, maximum zoom is decreased and zooming speed is increased.
 * Fire damage is calculated in a different way, so that even a single flame can hurt its target sometimes.
 * Grenade throwing animation may look slightly different. The exact pattern of lowering animation in the original game is unclear.
+* Sky decorations (aircrafts) move differently from the original game. It's unclear how exactly their movement should work, so, it's just guessed.
 
 
 ### HUD and menus
