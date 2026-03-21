@@ -19,6 +19,7 @@ void main()
 	float linear_distance= length( view_space_position.xyz ) / view_space_position.w;
 
 	// Use exponential fog formula.
+	// This code (including the scale constant) should match code calculating fog for semitransparent geometry!
 	float distance_scale= 1.0 / 3072.0;
 	float fog_density= 1.0 - exp( -linear_distance * distance_scale );
 
