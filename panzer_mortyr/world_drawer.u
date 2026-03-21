@@ -446,32 +446,42 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 		test_primitive_shader_,
 		view_matrix );
 
-	// Draw fog after all opaque geometry and before semitransparent geometry.
+	var bool fog_enabled= settings_.lock_imut().deref().r_fog_enabled;
+	var ust::array_view_imut</ZvoxFogVolume/> local_fog_volumes= map_data.zvox_data.deref().fog_volumes;
 
-	var ust::optional</ [ f32, 3 ] /> mut fog_color;
-
-	if( settings_.lock_imut().deref().r_fog_enabled )
+	if( fog_enabled && ( map_data.global_fog_enabled || !local_fog_volumes.empty() ) )
 	{
-		if_var( &c : map_data.fog_color )
-		{
-			fog_color=
-				ust::make_array(
-					c[0] * global_light_params.light_scale[0] + global_light_params.light_add[0],
-					c[1] * global_light_params.light_scale[1] + global_light_params.light_add[1],
-					c[2] * global_light_params.light_scale[2] + global_light_params.light_add[2] );
-		}
+		// Copy current depth buffer into a texture to be able to read depth values from it in global/local fog shaders.
+		// It's necessary to perform such copy, since there is no way to read current depth in a fragment shader directly.
+
+		depth_buffer_copy_texture_.Bind();
+
+		unsafe( glCopyTexImage2D(
+			GLenum( GL_TEXTURE_2D ),
+			GLint(0),
+			GLenum( GL_DEPTH_COMPONENT ),
+			GLint(0),
+			GLint(0),
+			GLsizei( viewport_info.viewport_size[0] ),
+			GLsizei( viewport_info.viewport_size[1] ),
+			GLint(0) ) );
 	}
 
-	if_var( &c : fog_color )
+	// Draw global fog after all opaque geometry and before semitransparent geometry.
+
+	var [ f32, 3 ] fog_color
+	[
+		map_data.fog_color[0] * global_light_params.light_scale[0] + global_light_params.light_add[0],
+		map_data.fog_color[1] * global_light_params.light_scale[1] + global_light_params.light_add[1],
+		map_data.fog_color[2] * global_light_params.light_scale[2] + global_light_params.light_add[2],
+	];
+
+	if( fog_enabled && map_data.global_fog_enabled )
 	{
-		DrawFullscreenFog(
-			viewport_info.viewport_size,
-			depth_buffer_copy_texture_,
-			global_fog_shader_,
-			camera_inverse_projection_matrix, c );
+		DrawGlobalFog( depth_buffer_copy_texture_, global_fog_shader_, camera_inverse_projection_matrix, fog_color );
 	}
 
-	// Draw sky after fog.
+	// Draw sky after global fog.
 
 	DrawSkyBackground(
 		map_data.sky_background_buffer,
@@ -500,16 +510,16 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 		// Scale stars and sun light, but not add constant factor, since additive blending is used for them.
 		global_light_params.light_scale );
 
-	if_var( &c : fog_color )
+	if( fog_enabled && !local_fog_volumes.empty() )
 	{
 		SetGLState( g_local_fog_gl_state );
 
 		local_fog_shader_.Bind();
 		local_fog_shader_.SetUniform( "vu_matrix", view_matrix );
 		local_fog_shader_.SetUniform( "fu_camera_position", drawing_info.camera_params.position );
-		local_fog_shader_.SetUniform( "fu_fog_color", Vec3f( c ) );
+		local_fog_shader_.SetUniform( "fu_fog_color", Vec3f( fog_color ) );
 
-		foreach( &fog_volume : map_data.zvox_data.deref().fog_volumes )
+		foreach( &fog_volume : local_fog_volumes )
 		{
 			// TODO - reject fog volumes out of current view bounds (se visible room clusters test).
 
@@ -576,10 +586,10 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 		// We can't apply fullscreen fog effects for semitransparent polygons,
 		// since the fullscreen fog shader reads single depth value,
 		// but many semitransparent polygons can overlap and have many different depth values.
-		if_var( &c : fog_color )
+		if( fog_enabled && map_data.global_fog_enabled )
 		{
 			CalculateFogForSemitransparentGeometryVertices(
-				drawing_info.camera_params.position, c, semitransparent_polygons_buffer_.vertices );
+				drawing_info.camera_params.position, fog_color, semitransparent_polygons_buffer_.vertices );
 		}
 	}
 
@@ -1003,14 +1013,13 @@ fn WorldDrawer::SetMap( mut this, u32 map_index )
 			.sky_background_buffer= CreateSkyBackgroundBuffer( map_description ),
 			.stars_buffer= CreateStarsBuffer( map_description, billboards_description_ ),
 			.sky_clouds_params= CreateSkyCloudsParams( map_description ),
-			.fog_color=
-				( map_description.linear_fog_enabled
-					? ust::optional</ [ f32, 3 ] />(
-						ust::make_array(
-							f32( map_description.fog_color[2] ) / 255.0f,
-							f32( map_description.fog_color[1] ) / 255.0f,
-							f32( map_description.fog_color[0] ) / 255.0f ) )
-					: ust::optional</ [ f32, 3 ] />() )
+			.fog_color
+			[
+				f32( map_description.fog_color[2] ) / 255.0f,
+				f32( map_description.fog_color[1] ) / 255.0f,
+				f32( map_description.fog_color[0] ) / 255.0f
+			],
+			.global_fog_enabled= map_description.linear_fog_enabled,
 		} );
 }
 
@@ -2528,8 +2537,7 @@ fn CreateLightShaftsBoxPolygons(
 	indices.push_back( u16( base_vertex_index + 4s ) );
 }
 
-fn DrawFullscreenFog(
-	[ u32, 2 ] viewport_size,
+fn DrawGlobalFog(
 	Texture &mut depth_buffer_copy_texture,
 	ShaderProgram &mut shader,
 	Mat4f& camera_inverse_projection_matrix,
@@ -2537,21 +2545,8 @@ fn DrawFullscreenFog(
 {
 	var u32 texture_slot= 0u;
 
-	// Copy current depth buffer into a texture to be able to read depth values from it in the fog shader.
-	// It's necessary to perform such copy, since there is no way to read current depth in a fragment shader directly.
-
 	unsafe( glActiveTexture( GLenum( GL_TEXTURE0 ) + GLenum(texture_slot) ) );
 	depth_buffer_copy_texture.Bind();
-
-	unsafe( glCopyTexImage2D(
-		GLenum( GL_TEXTURE_2D ),
-		GLint(0),
-		GLenum( GL_DEPTH_COMPONENT ),
-		GLint(0),
-		GLint(0),
-		GLsizei( viewport_size[0] ),
-		GLsizei( viewport_size[1] ),
-		GLint(0) ) );
 
 	SetGLState( g_global_fog_gl_state );
 
