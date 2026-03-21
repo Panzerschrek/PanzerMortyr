@@ -445,40 +445,45 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 
 	// Draw fog after all opaque geometry and before semitransparent geometry.
 
+	var ust::optional</ [ f32, 3 ] /> mut fog_color;
+
 	if( settings_.lock_imut().deref().r_fog_enabled )
 	{
-		if_var( &fog_color : map_data.fog_color )
+		if_var( &c : map_data.fog_color )
 		{
-			var u32 texture_slot= 0u;
-
-			unsafe( glActiveTexture( GLenum( GL_TEXTURE0 ) + GLenum(texture_slot) ) );
-			depth_buffer_copy_texture_.Bind();
-
-			unsafe( glCopyTexImage2D(
-				GLenum( GL_TEXTURE_2D ),
-				GLint(0),
-				GLenum( GL_DEPTH_COMPONENT ),
-				GLint(0),
-				GLint(0),
-				GLsizei( viewport_info.viewport_size[0] ),
-				GLsizei( viewport_info.viewport_size[1] ),
-				GLint(0) ) );
-
-			SetGLState( g_fog_gl_state );
-
-			global_fog_shader_.Bind();
-			global_fog_shader_.SetUniform( "fu_depth_texture", texture_slot );
-			global_fog_shader_.SetUniform( "fu_inverse_projection_matrix", camera_inverse_projection_matrix );
-
-			global_fog_shader_.SetUniform(
-				"fu_fog_color",
-				Vec3f(
-					fog_color[0] * global_light_params.light_scale[0] + global_light_params.light_add[0],
-					fog_color[1] * global_light_params.light_scale[1] + global_light_params.light_add[1],
-					fog_color[2] * global_light_params.light_scale[2] + global_light_params.light_add[2] ) );
-
-			unsafe( glDrawArrays( GLenum( GL_TRIANGLES ), GLint(0), GLsizei(3) ) );
+			fog_color=
+				ust::make_array(
+					c[0] * global_light_params.light_scale[0] + global_light_params.light_add[0],
+					c[1] * global_light_params.light_scale[1] + global_light_params.light_add[1],
+					c[2] * global_light_params.light_scale[2] + global_light_params.light_add[2] );
 		}
+	}
+
+	if_var( &c : fog_color )
+	{
+		var u32 texture_slot= 0u;
+
+		unsafe( glActiveTexture( GLenum( GL_TEXTURE0 ) + GLenum(texture_slot) ) );
+		depth_buffer_copy_texture_.Bind();
+
+		unsafe( glCopyTexImage2D(
+			GLenum( GL_TEXTURE_2D ),
+			GLint(0),
+			GLenum( GL_DEPTH_COMPONENT ),
+			GLint(0),
+			GLint(0),
+			GLsizei( viewport_info.viewport_size[0] ),
+			GLsizei( viewport_info.viewport_size[1] ),
+			GLint(0) ) );
+
+		SetGLState( g_fog_gl_state );
+
+		global_fog_shader_.Bind();
+		global_fog_shader_.SetUniform( "fu_depth_texture", texture_slot );
+		global_fog_shader_.SetUniform( "fu_inverse_projection_matrix", camera_inverse_projection_matrix );
+		global_fog_shader_.SetUniform( "fu_fog_color", Vec3f( c ) );
+
+		unsafe( glDrawArrays( GLenum( GL_TRIANGLES ), GLint(0), GLsizei(3) ) );
 	}
 
 	// Draw sky after fog.
@@ -555,22 +560,10 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 
 		// Calculate fog on per-vertex basis for semitransparent geometry.
 		// We can't apply fullscreen fog effects for them.
-		if( settings_.lock_imut().deref().r_fog_enabled )
+		if_var( &c : fog_color )
 		{
-			if_var( &fog_color : map_data.fog_color )
-			{
-				var [ f32, 3 ] fog_color_corrected
-				[
-					fog_color[0] * global_light_params.light_scale[0] + global_light_params.light_add[0],
-					fog_color[1] * global_light_params.light_scale[1] + global_light_params.light_add[1],
-					fog_color[2] * global_light_params.light_scale[2] + global_light_params.light_add[2]
-				];
-
-				CalculateFogForSemitransparentGeometryVertices(
-					drawing_info.camera_params.position,
-					fog_color_corrected,
-					semitransparent_polygons_buffer_.vertices );
-			}
+			CalculateFogForSemitransparentGeometryVertices(
+				drawing_info.camera_params.position, c, semitransparent_polygons_buffer_.vertices );
 		}
 	}
 
