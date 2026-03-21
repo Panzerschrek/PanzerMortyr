@@ -79,7 +79,7 @@ PanzerMortyr game logic:
 * Implement multiplayer-specific game modes.
 * Make singleplayer mode tweaks for cooperative mode support.
 * Implement note items logic - show note text (it's actually an image) and pause the game while it's shown.
-* Implement sky decorations movement/turning logic (with mode=11).
+* Make sure sky decoration movement is as close to the original game as possible.
 * Implement collisions hack for the one-way passable wall on map 33.
 * Consider enabled step movement on collisions with slightly-inclined walls, which should fix movement in some tricky places on some maps.
 * Implement fall damage for player and for entities.

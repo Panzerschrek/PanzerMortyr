@@ -53,6 +53,7 @@ Changes:
 * Zooming works differently - it requires holding the zoom button, maximum zoom is decreased and zooming speed is increased.
 * Fire damage is calculated in a different way, so that even a single flame can hurt its target sometimes.
 * Grenade throwing animation may look slightly different. The exact pattern of lowering animation in the original game is unclear.
+* Sky decorations (aircrafts) move differently from the original game. It's unclear how exactly their movement should work, so, it's just guessed.
 
 
 ### HUD and menus
