@@ -447,9 +447,34 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 		view_matrix );
 
 	var bool fog_enabled= settings_.lock_imut().deref().r_fog_enabled;
-	var ust::array_view_imut</ZvoxFogVolume/> local_fog_volumes= map_data.zvox_data.deref().fog_volumes;
 
-	if( fog_enabled && ( map_data.global_fog_enabled || !local_fog_volumes.empty() ) )
+	visible_local_fog_volumes_.clear();
+	if( fog_enabled )
+	{
+		foreach( &fog_volume : map_data.zvox_data.deref().fog_volumes )
+		{
+			var Vec3f center( f32( fog_volume.center[0] ), f32( fog_volume.center[1] ), f32( fog_volume.center[2] ) );
+
+			var Vec3f half_size(
+				f32( fog_volume.bounding_box_half_size[0] ),
+				f32( fog_volume.bounding_box_half_size[1] ),
+				f32( fog_volume.bounding_box_half_size[2] ) );
+
+			var BBox3f bbox
+			{
+				.min= center - half_size,
+				.max= center + half_size,
+			};
+
+			if( IsBBoxWithinVisibleClusters( clusters, room_clusters_hierarchy, visible_room_cluster_flags, bbox ) )
+			{
+				// TODO - perform frustum rejecting too?
+				visible_local_fog_volumes_.push_back( fog_volume );
+			}
+		}
+	}
+
+	if( fog_enabled && ( map_data.global_fog_enabled || !visible_local_fog_volumes_.empty() ) )
 	{
 		// Copy current depth buffer into a texture to be able to read depth values from it in global/local fog shaders.
 		// It's necessary to perform such copy, since there is no way to read current depth in a fragment shader directly.
@@ -510,7 +535,7 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 		// Scale stars and sun light, but not add constant factor, since additive blending is used for them.
 		global_light_params.light_scale );
 
-	if( fog_enabled && !local_fog_volumes.empty() )
+	if( fog_enabled && !visible_local_fog_volumes_.empty() )
 	{
 		var u32 texture_slot= 0u;
 
@@ -529,7 +554,7 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 		local_fog_shader_.SetUniform( "fu_camera_position", drawing_info.camera_params.position );
 		local_fog_shader_.SetUniform( "fu_fog_color", Vec3f( fog_color ) );
 
-		foreach( &fog_volume : local_fog_volumes )
+		foreach( &fog_volume : visible_local_fog_volumes_ )
 		{
 			// TODO - reject fog volumes out of current view bounds (se visible room clusters test).
 
