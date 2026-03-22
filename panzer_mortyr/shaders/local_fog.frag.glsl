@@ -175,6 +175,7 @@ void main()
 	float box_space_fragment_distance= linear_fragment_distance * length( box_space_ray );
 
 	vec2 intersection_near_far_distances;
+	float fog_density_scale;
 
 	// HACK! In the original game all fog volumes are ellipsoids.
 	// But we use cubes for flat volumes, used on some maps. Ellipsoids for them look ugly.
@@ -184,11 +185,18 @@ void main()
 		// The difference between these two values is distance travveled within this fog volume.
 		intersection_near_far_distances=
 			CalculateRayIntersectionWithUnitBBox( box_space_camera_position, box_space_ray_normalized );
+
+		// For box-shaped fog use constant density scale.
+		fog_density_scale= 0.5;
 	}
 	else
 	{
 		intersection_near_far_distances=
 			CalculateRayUnitSphereIntersection( box_space_camera_position, box_space_ray_normalized );
+
+		// For elliptical fog make density depending on distance travelled within fog boundaries.
+		// Otherwise fog edges look too sharp.
+		fog_density_scale= 0.3 * ( intersection_near_far_distances.y - intersection_near_far_distances.x );
 	}
 
 	float near_distance= max( intersection_near_far_distances.x, 0.0 );
@@ -198,7 +206,7 @@ void main()
 
 	// Use linear density function (appropriate for emissive fog) and additive blending.
 	// It seems that the original game uses the same approach.
-	float fog_density= distance_in_fog_volume * 0.4;
+	float fog_density= distance_in_fog_volume * fog_density_scale;
 
 	color= vec4( fu_fog_color * fog_density, 0.0 );
 }
