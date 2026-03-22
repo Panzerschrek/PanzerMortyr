@@ -9,6 +9,7 @@ This documents describes various interesting facts about the original game.
   ... cadent a latere tuo mille et decem milia a dextris tuis, ad te autem non appropinquabit...
   The same quote can be seen on the first exit door on map 23 (the last campaign map).
 * Keycard items (future-stlye keys) have texts "Sven Mortyr" and "Corvin Software Studios" on them and a Mortyr logo.
+* On map 10 there is a corridor with several doors. They can't be opened, but each of them contains a name. These are actual names of the game developers, which can be also seen in the help menu.
 
 ### Non-obvious gameplay facts
 
@@ -19,13 +20,14 @@ This documents describes various interesting facts about the original game.
 * Enemies with health level below some threshold don't chase the player, but try to flee from him.
 * It looks like enemies have slightly different model scale from each other, which seems to be random.
 * Rudy-102 can be destroyed, but it has a lot of health - 4500 units.
-* There is a single dog enemy on some of future maps with unique dead animation - flying flies around the corpse.
+* There is a single dog enemy on map 19 with unique dead animation - flying flies around the corpse.
 * The original game has secret areas with a message "you have found a secret place" showed upon entering, but there are only a couple of such places.
 * The officer enemy drops the false documents item only if killed in some states, in other states he drops a pistol.
 * The player shots slightly right from the crosshair. There is an alternative behavior activated via a console command "aim on" - which moves crosshair if necessary.
 * Some decorations can be pushed (bottles, crates), but it's buggy if more than one decoration is pushed in the same time - it's possible to push a decoration into a wall.
 * Bullets spread for weapons is different for the player and for enemies - with different settings set for each weapon.
-* The voklkssturm enemy (with grenades) surrenders if has no ammo left, but it's a false surrender (a notable war crime), he continues fighting and searches for more ammunition as long as the player can't see him.
+* The volkssturm enemy (with grenades) surrenders if has no ammo left, but it's a false surrender (a notable war crime), he continues fighting and searches for more ammunition as long as the player can't see him.
+* Some maps can't be left until some condition is satisfied - necessary items (Quantum Receptor piece) are collected or a boss (the Tank) is killed.
 
 ### Technical aspects
 
@@ -43,9 +45,9 @@ This documents describes various interesting facts about the original game.
 ### Cut or unused content
 
 * MG-42 nest isn't used in the game, but it's listed in the manual. These enemies are placed on maps 8 and 24, but are disabled.
-* Gestapo officer is listed in the manual, but he isn't used in the singlplayer game. He is present only on cooperative map 36.
-* Nurse is listed in the manual, but she isn't used in the singlplayer game. Nurses are placed on maps 19, 24, 30, 37, but are disabled. Only on cooperative map 36 there are a couple of them.
-* Adolf Hitler isn't listed in the manual, he is missing in many versions of the game. He is present in the polish version. In english version he is still present in game resources. On map 13 he is placed, but disabled.
+* Gestapo officer is listed in the manual, but he isn't used in the singleplayer game. He is present only on cooperative map 36.
+* Nurse is listed in the manual, but she isn't used in the singleplayer game. Nurses are placed on maps 19, 24, 30, 37, but are disabled. Only on cooperative map 36 there are a couple of them.
+* Adolf Hitler isn't listed in the manual, he is missing in many versions of the game. He is present in the polish version. In English version he is still present in game resources. On map 13 he is placed, but disabled.
 * There is a model METRO.OBB with a variation of the WCZAPCE.OBB model with slightly different texture.
 * There are models KL0-47.OBB, KL48-63.OBB and KL64-87.OBB with some unused enemy type.
 * There is a model TROOPE2.OBB with some unfinished enemy.
