@@ -150,21 +150,31 @@ void main()
 
 	vec3 view_ray_normalized= normalize( f_position - fu_camera_position );
 
-	vec3 bbox_min= vu_fog_volume_offset - vu_fog_volume_scale;
-	vec3 bbox_max= vu_fog_volume_offset + vu_fog_volume_scale;
+	// Perform calculations in space of the box, so that it's assumed that we search for intersection with a cube with min/max dimensions equal to [-1;1].
+	// It seems like the original game does the same.
+	// Doing so allows reducing fog density while tracing alongest the long axis of a box and preserving density when tracing along the shortest axis.
+
+	vec3 box_space_ray= view_ray_normalized / vu_fog_volume_scale;
+	vec3 box_space_ray_normalized= normalize( box_space_ray );
+	vec3 box_space_camera_position= ( fu_camera_position - vu_fog_volume_offset ) / vu_fog_volume_scale;
+	float box_space_fragment_distance= linear_fragment_distance * length( box_space_ray );
 
 	// Find near/far distance of ray with box intersection.
 	// The difference between these two values is distance travveled within this fog volume.
 
 	vec2 ray_bbox_intersection=
-		CalculateRayBBoxIntersection( bbox_min, bbox_max, fu_camera_position, view_ray_normalized );
+		CalculateRayBBoxIntersection(
+			vec3( -1.0, -1.0, -1.0 ),
+			vec3(  1.0,  1.0,  1.0 ),
+			box_space_camera_position,
+			box_space_ray_normalized );
 
 	float near_distance= max( ray_bbox_intersection.x, 0.0 );
 	// Limit far distance to fragment depth.
-	float far_distance= max( min( ray_bbox_intersection.y, linear_fragment_distance ), near_distance );
+	float far_distance= max( min( ray_bbox_intersection.y, box_space_fragment_distance ), near_distance );
 	float distance_in_fog_volume= far_distance - near_distance;
 
-	float distance_scale= 1.0 / 256.0;
+	float distance_scale= 0.5;
 	float fog_density= 1.0 - exp( -distance_in_fog_volume * distance_scale );
 
 	// Use premultiplied alpha blending.
