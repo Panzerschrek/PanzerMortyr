@@ -75,6 +75,9 @@ fn WorldDrawer::constructor(
 		global_fog_shader_(
 			embed</char8/>( "shaders/global_fog.vert.glsl" ),
 			embed</char8/>( "shaders/global_fog.frag.glsl" ) ),
+		local_fog_shader_(
+			embed</char8/>( "shaders/local_fog.vert.glsl" ),
+			embed</char8/>( "shaders/local_fog.frag.glsl" ) ),
 		stub_white_texture_= CreateStubWhiteTexture(),
 		depth_buffer_copy_texture_= CreateDepthBufferCopyTexture(),
 		semitransparent_polygons_buffer_
@@ -443,32 +446,76 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 		test_primitive_shader_,
 		view_matrix );
 
-	// Draw fog after all opaque geometry and before semitransparent geometry.
+	var bool fog_enabled= settings_.lock_imut().deref().r_fog_enabled;
 
-	var ust::optional</ [ f32, 3 ] /> mut fog_color;
-
-	if( settings_.lock_imut().deref().r_fog_enabled )
+	visible_local_fog_volumes_.clear();
+	if( fog_enabled )
 	{
-		if_var( &c : map_data.fog_color )
+		foreach( &fog_volume : map_data.zvox_data.deref().fog_volumes )
 		{
-			fog_color=
-				ust::make_array(
-					c[0] * global_light_params.light_scale[0] + global_light_params.light_add[0],
-					c[1] * global_light_params.light_scale[1] + global_light_params.light_add[1],
-					c[2] * global_light_params.light_scale[2] + global_light_params.light_add[2] );
+			var Vec3f center( f32( fog_volume.center[0] ), f32( fog_volume.center[1] ), f32( fog_volume.center[2] ) );
+
+			var Vec3f half_size(
+				f32( fog_volume.bounding_box_half_size[0] ),
+				f32( fog_volume.bounding_box_half_size[1] ),
+				f32( fog_volume.bounding_box_half_size[2] ) );
+
+			var BBox3f bbox
+			{
+				.min= center - half_size,
+				.max= center + half_size,
+			};
+
+			if( !AreBoxVerticesClippedByAtLeastOneCameraClipPlane( camera_clip_planes, bbox.CreateCornerVertices() ) &&
+				IsBBoxWithinVisibleClusters( clusters, room_clusters_hierarchy, visible_room_cluster_flags, bbox ) )
+			{
+				visible_local_fog_volumes_.push_back( bbox );
+			}
 		}
+
+		drawing_stats.num_visible_local_fog_volumes= u32( visible_local_fog_volumes_.size() );
 	}
 
-	if_var( &c : fog_color )
+	if( fog_enabled && ( map_data.global_fog_enabled || !visible_local_fog_volumes_.empty() ) )
 	{
-		DrawFullscreenFog(
-			viewport_info.viewport_size,
-			depth_buffer_copy_texture_,
-			global_fog_shader_,
-			camera_inverse_projection_matrix, c );
+		// Copy current depth buffer into a texture to be able to read depth values from it in global/local fog shaders.
+		// It's necessary to perform such copy, since there is no way to read current depth in a fragment shader directly.
+
+		depth_buffer_copy_texture_.Bind();
+
+		unsafe( glCopyTexImage2D(
+			GLenum( GL_TEXTURE_2D ),
+			GLint(0),
+			GLenum( GL_DEPTH_COMPONENT ),
+			GLint(0),
+			GLint(0),
+			GLsizei( viewport_info.viewport_size[0] ),
+			GLsizei( viewport_info.viewport_size[1] ),
+			GLint(0) ) );
 	}
 
-	// Draw sky after fog.
+	// Draw global fog after all opaque geometry and before semitransparent geometry.
+
+	var [ f32, 3 ] fog_color
+	[
+		map_data.fog_color[0] * global_light_params.light_scale[0] + global_light_params.light_add[0],
+		map_data.fog_color[1] * global_light_params.light_scale[1] + global_light_params.light_add[1],
+		map_data.fog_color[2] * global_light_params.light_scale[2] + global_light_params.light_add[2],
+	];
+
+	var [ f32, 3 ] fog_color_additive
+	[
+		map_data.fog_color[0] * global_light_params.light_scale[0],
+		map_data.fog_color[1] * global_light_params.light_scale[1],
+		map_data.fog_color[2] * global_light_params.light_scale[2],
+	];
+
+	if( fog_enabled && map_data.global_fog_enabled )
+	{
+		DrawGlobalFog( depth_buffer_copy_texture_, global_fog_shader_, camera_inverse_projection_matrix, fog_color );
+	}
+
+	// Draw sky after global fog.
 
 	DrawSkyBackground(
 		map_data.sky_background_buffer,
@@ -496,6 +543,23 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 		rotation_and_projection_matrix,
 		// Scale stars and sun light, but not add constant factor, since additive blending is used for them.
 		global_light_params.light_scale );
+
+	// Draw local fog after sky and global fog.
+	// It's not fully correct, since a local fog volume can be far away and be partially covered by global fog.
+	// But ignore this, since it's too complicated to draw different fog kinds in correct order.
+	// On all maps of the original game local fog volumes look mostly fine even considering incorrect interaction with global fog.
+	if( fog_enabled && !visible_local_fog_volumes_.empty() )
+	{
+		DrawLocalFog(
+			depth_buffer_copy_texture_,
+			local_fog_shader_,
+			visible_local_fog_volumes_,
+			viewport_info.viewport_size,
+			drawing_info.camera_params.position,
+			view_matrix,
+			camera_inverse_projection_matrix,
+			fog_color_additive );
+	}
 
 	ResetDynamicPolygonsBuffer( semitransparent_polygons_buffer_ );
 
@@ -544,10 +608,21 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 		// We can't apply fullscreen fog effects for semitransparent polygons,
 		// since the fullscreen fog shader reads single depth value,
 		// but many semitransparent polygons can overlap and have many different depth values.
-		if_var( &c : fog_color )
+		if( fog_enabled )
 		{
-			CalculateFogForSemitransparentGeometryVertices(
-				drawing_info.camera_params.position, c, semitransparent_polygons_buffer_.vertices );
+			if( map_data.global_fog_enabled )
+			{
+				CalculateFogForSemitransparentGeometryVertices(
+					drawing_info.camera_params.position, semitransparent_polygons_buffer_.vertices );
+			}
+
+			if( !visible_local_fog_volumes_.empty() )
+			{
+				CalculateLocalFogForSemitransparentGeometryVertices(
+					drawing_info.camera_params.position,
+					visible_local_fog_volumes_,
+					semitransparent_polygons_buffer_.vertices );
+			}
 		}
 	}
 
@@ -567,7 +642,9 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 		map_data.map_textures_array,
 		view_matrix,
 		// Only scale light for semitransparent polygons, but not add it.
-		global_light_params.light_scale );
+		global_light_params.light_scale,
+		fog_color,
+		fog_color_additive );
 
 	drawing_stats.num_visible_semitransparent_triangles+= u32( semitransparent_polygons_buffer_.indices.size() ) / 3u;
 
@@ -767,7 +844,7 @@ fn WorldDrawer::SetMap( mut this, u32 map_index )
 								tc_scale * ( vertex_relative_shift.Dot( v_vec ) + tc_offset.y ),
 								texture_id,
 							],
-							.fog_color= zero_init,
+							.fog_params= zero_init,
 						} );
 				}
 
@@ -976,14 +1053,13 @@ fn WorldDrawer::SetMap( mut this, u32 map_index )
 			.sky_background_buffer= CreateSkyBackgroundBuffer( map_description ),
 			.stars_buffer= CreateStarsBuffer( map_description, billboards_description_ ),
 			.sky_clouds_params= CreateSkyCloudsParams( map_description ),
-			.fog_color=
-				( map_description.linear_fog_enabled
-					? ust::optional</ [ f32, 3 ] />(
-						ust::make_array(
-							f32( map_description.fog_color[2] ) / 255.0f,
-							f32( map_description.fog_color[1] ) / 255.0f,
-							f32( map_description.fog_color[0] ) / 255.0f ) )
-					: ust::optional</ [ f32, 3 ] />() )
+			.fog_color
+			[
+				f32( map_description.fog_color[2] ) / 255.0f,
+				f32( map_description.fog_color[1] ) / 255.0f,
+				f32( map_description.fog_color[0] ) / 255.0f
+			],
+			.global_fog_enabled= map_description.linear_fog_enabled,
 		} );
 }
 
@@ -1440,7 +1516,9 @@ fn WorldDrawer::DrawSemitransparentGeometry(
 	ShaderProgram &mut shader,
 	Texture& map_textures_array,
 	Mat4f& view_matrix,
-	[ f32, 3 ]& light_scale )
+	[ f32, 3 ]& light_scale,
+	[ f32, 3 ]& fog_color,
+	[ f32, 3 ]& fog_color_additive )
 {
 	var size_type num_indices=
 		ust::min( dynamic_polygons_buffer.indices.size(), dynamic_polygons_buffer.max_indices );
@@ -1457,9 +1535,10 @@ fn WorldDrawer::DrawSemitransparentGeometry(
 
 	shader.Bind();
 	shader.SetUniform( "vu_matrix", view_matrix );
-	shader.SetUniform( "fu_texture", texture_slot );
-
 	shader.SetUniform( "vu_light_scale", Vec3f( light_scale ) );
+	shader.SetUniform( "fu_texture", texture_slot );
+	shader.SetUniform( "fu_fog_color", Vec3f( fog_color ) );
+	shader.SetUniform( "fu_fog_color_additive", Vec3f( fog_color_additive ) );
 
 	unsafe( glDrawElements(
 		GLenum( GL_TRIANGLES ), GLsizei( num_indices ), GLenum( GL_UNSIGNED_SHORT ), ust::nullptr</byte8/>() ) );
@@ -1915,7 +1994,7 @@ fn PrepareVertexArrayObjectWithMapVertexFormat(
 		GLenum( GL_UNSIGNED_BYTE ),
 		GLboolean(1),
 		GLsizei( typeinfo</MapVertex/>.size_of ),
-		ust::nullptr</byte8/>() + GetStructFieldOffset</MapVertex, "fog_color"/>() ) );
+		ust::nullptr</byte8/>() + GetStructFieldOffset</MapVertex, "fog_params"/>() ) );
 }
 
 fn BuildBillboardPolygons(
@@ -2066,7 +2145,7 @@ fn BuildBillboardPolygons(
 				.position[ positions[0].x, positions[0].y, positions[0].z ],
 				.light= light,
 				.tex_coordinates[ tex_coords[0][0], tex_coords[0][1], texture_layer ],
-				.fog_color= zero_init,
+				.fog_params= zero_init,
 			} );
 
 		vertices.push_back(
@@ -2075,7 +2154,7 @@ fn BuildBillboardPolygons(
 				.position[ positions[1].x, positions[1].y, positions[1].z ],
 				.light= light,
 				.tex_coordinates[ tex_coords[1][0], tex_coords[0][1], texture_layer ],
-				.fog_color= zero_init,
+				.fog_params= zero_init,
 			} );
 
 		vertices.push_back(
@@ -2084,7 +2163,7 @@ fn BuildBillboardPolygons(
 				.position[ positions[2].x, positions[2].y, positions[2].z ],
 				.light= light,
 				.tex_coordinates[ tex_coords[0][0], tex_coords[1][1], texture_layer ],
-				.fog_color= zero_init,
+				.fog_params= zero_init,
 			} );
 
 		vertices.push_back(
@@ -2093,7 +2172,7 @@ fn BuildBillboardPolygons(
 				.position[ positions[3].x, positions[3].y, positions[3].z ],
 				.light= light,
 				.tex_coordinates[ tex_coords[1][0], tex_coords[1][1], texture_layer ],
-				.fog_color= zero_init,
+				.fog_params= zero_init,
 			} );
 
 		indices.push_back( u16( base_vertex + 2s ) );
@@ -2298,7 +2377,7 @@ fn CreateClusterGlassPolygons(
 							tc_scale * ( vertex_relative_shift.Dot( v_vec ) + tc_offset.y ),
 							texture_id,
 						],
-						.fog_color= zero_init,
+						.fog_params= zero_init,
 					} );
 			}
 
@@ -2468,7 +2547,7 @@ fn CreateLightShaftsBoxPolygons(
 				],
 				.light= vertex_lights[i],
 				.tex_coordinates[ tc[0], tc[1], texture_layer ],
-				.fog_color= zero_init,
+				.fog_params= zero_init,
 			} );
 	}
 
@@ -2501,8 +2580,7 @@ fn CreateLightShaftsBoxPolygons(
 	indices.push_back( u16( base_vertex_index + 4s ) );
 }
 
-fn DrawFullscreenFog(
-	[ u32, 2 ] viewport_size,
+fn DrawGlobalFog(
 	Texture &mut depth_buffer_copy_texture,
 	ShaderProgram &mut shader,
 	Mat4f& camera_inverse_projection_matrix,
@@ -2510,23 +2588,10 @@ fn DrawFullscreenFog(
 {
 	var u32 texture_slot= 0u;
 
-	// Copy current depth buffer into a texture to be able to read depth values from it in the fog shader.
-	// It's necessary to perform such copy, since there is no way to read current depth in a fragment shader directly.
-
 	unsafe( glActiveTexture( GLenum( GL_TEXTURE0 ) + GLenum(texture_slot) ) );
 	depth_buffer_copy_texture.Bind();
 
-	unsafe( glCopyTexImage2D(
-		GLenum( GL_TEXTURE_2D ),
-		GLint(0),
-		GLenum( GL_DEPTH_COMPONENT ),
-		GLint(0),
-		GLint(0),
-		GLsizei( viewport_size[0] ),
-		GLsizei( viewport_size[1] ),
-		GLint(0) ) );
-
-	SetGLState( g_fog_gl_state );
+	SetGLState( g_global_fog_gl_state );
 
 	shader.Bind();
 	shader.SetUniform( "fu_depth_texture", texture_slot );
@@ -2535,6 +2600,45 @@ fn DrawFullscreenFog(
 
 	// Draw single triangle covering the entire screen.
 	unsafe( glDrawArrays( GLenum( GL_TRIANGLES ), GLint(0), GLsizei(3) ) );
+}
+
+fn DrawLocalFog(
+	Texture &mut depth_buffer_copy_texture,
+	ShaderProgram &mut shader,
+	ust::array_view_imut</BBox3f/> local_fog_volumes,
+	[ u32, 2 ] viewport_size,
+	Vec3f& camera_position,
+	Mat4f& view_matrix,
+	Mat4f& camera_inverse_projection_matrix,
+	[ f32, 3 ]& fog_color_additive )
+{
+	var u32 texture_slot= 0u;
+
+	unsafe( glActiveTexture( GLenum( GL_TEXTURE0 ) + GLenum(texture_slot) ) );
+	depth_buffer_copy_texture.Bind();
+
+	SetGLState( g_local_fog_gl_state );
+
+	shader.Bind();
+	shader.SetUniform( "vu_matrix", view_matrix );
+	shader.SetUniform(
+		"fu_inverse_viewport_size", Vec2f( 1.0f / f32( viewport_size[0] ), 1.0f / f32( viewport_size[1] ) ) );
+	shader.SetUniform( "fu_depth_texture", texture_slot );
+	shader.SetUniform( "fu_inverse_projection_matrix", camera_inverse_projection_matrix );
+	shader.SetUniform( "fu_camera_position", camera_position );
+	shader.SetUniform( "fu_fog_color", Vec3f( fog_color_additive ) );
+
+	// No need to sort fog volumes, since additive blending is used for them (which doesn't depend on drawing order).
+
+	foreach( &fog_volume : local_fog_volumes )
+	{
+		shader.SetUniform( "vu_fog_volume_scale", fog_volume.GetDimensions() * 0.5f );
+		shader.SetUniform( "vu_fog_volume_offset", fog_volume.GetCenter() );
+
+		// Draw a cube - with 2 triangles for each side.
+		// No vertex/index buffer is required, box vertices are hardcoded in the shader and coordinates are calculated based on vertex ID.
+		unsafe( glDrawArrays( GLenum( GL_TRIANGLES ), GLint(0), GLsizei(36) ) );
+	}
 }
 
 fn DrawSkyBackground(
@@ -3169,7 +3273,7 @@ var GLState g_test_primitives_drawing_gl_state
 	.blend_destination_factor( GL_INVALID_ENUM ),
 };
 
-var GLState g_fog_gl_state
+var GLState g_global_fog_gl_state
 {
 	.color_write_enabled= true,
 	.depth_test_enabled= false,
@@ -3180,6 +3284,23 @@ var GLState g_fog_gl_state
 	.blending_enabled= true,
 	.blend_source_factor( GL_SRC_ALPHA ),
 	.blend_destination_factor( GL_ONE_MINUS_SRC_ALPHA ),
+};
+
+var GLState g_local_fog_gl_state
+{
+	.color_write_enabled= true,
+	// Don't perform depth test. Instead read depth in the local fog shader and use it to determine fog density.
+	.depth_test_enabled= false,
+	.depth_test_func( GL_NONE ),
+	.depth_write_enabled= false,
+	// Draw back faces of the local fog volume.
+	// Doing so we ensure the volume is drawn even if camera is inside it.
+	.cull_face_enabled= true,
+	.cull_face( GL_BACK ),
+	.blending_enabled= true,
+	// Use additive blending for local fog.
+	.blend_source_factor( GL_ONE ),
+	.blend_destination_factor( GL_ONE ),
 };
 
 } // namespace PM

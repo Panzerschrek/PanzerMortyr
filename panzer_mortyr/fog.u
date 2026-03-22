@@ -1,24 +1,17 @@
 import "/math.iu"
 import "fog.iu"
+import "geometry_utils.iu"
 
 namespace PM
 {
 
 fn CalculateFogForSemitransparentGeometryVertices(
 	Vec3f& camera_position,
-	[ f32, 3 ]& fog_color,
 	ust::array_view_mut</MapVertex/> vertices )
 {
-	// Calculate per-vertex fog.
+	// Calculate per-vertex fog density.
 	// It's strictly-speaking just an approximation for per-pixel fog, since fog formula isn't linear.
 	// Bit it's good enough approximation as long as triangles aren't huge.
-
-	var [ u8, 3 ] fog_color_integer
-	[
-		( ust::max( 0.0f, ust::min( fog_color[0] * 255.0f, 255.0f ) ) ),
-		( ust::max( 0.0f, ust::min( fog_color[1] * 255.0f, 255.0f ) ) ),
-		( ust::max( 0.0f, ust::min( fog_color[2] * 255.0f, 255.0f ) ) ),
-	];
 
 	foreach( &mut v : vertices )
 	{
@@ -28,10 +21,100 @@ fn CalculateFogForSemitransparentGeometryVertices(
 		var f32 distance_scale= 1.0f / 3072.0f;
 		var f32 fog_density= 1.0f - ust::exp( -distance_to_camera * distance_scale );
 
-		v.fog_color[0]= fog_color_integer[0];
-		v.fog_color[1]= fog_color_integer[1];
-		v.fog_color[2]= fog_color_integer[2];
-		v.fog_color[3]= u8( ust::max( 0.0f, ust::min( fog_density * 255.0f, 255.0f ) ) );
+		v.fog_params[0]= u8( ust::max( 0.0f, ust::min( fog_density * 255.0f, 255.0f ) ) );
+	}
+}
+
+fn CalculateLocalFogForSemitransparentGeometryVertices(
+	Vec3f& camera_position,
+	ust::array_view_imut</BBox3f/> local_fog_volumes,
+	ust::array_view_mut</MapVertex/> vertices )
+{
+	// Calculate per-vertex fog density.
+	// It's strictly-speaking just an approximation for per-pixel fog, since fog formula isn't linear.
+	// Bit it's good enough approximation as long as triangles aren't huge.
+
+	foreach( &mut v : vertices )
+	{
+		// Warning!
+		// This code should be kept synchronized with the local fog shader code!
+		//
+
+		var Vec3f view_ray= Vec3f( v.position ) - camera_position;
+		var f32 view_ray_length= view_ray.Length();
+		if( view_ray_length == 0.0f )
+		{
+			continue;
+		}
+
+		var Vec3f view_ray_normalized= view_ray / view_ray_length;
+
+		var f32 mut sum_fog_density= 0.0f;
+
+		foreach( &local_fog_volume : local_fog_volumes )
+		{
+			var Vec3f fog_volume_scale= 0.5f * local_fog_volume.GetDimensions();
+			var Vec3f fog_volume_center= local_fog_volume.GetCenter();
+
+			var Vec3f box_space_ray(
+				view_ray_normalized.x / fog_volume_scale.x,
+				view_ray_normalized.y / fog_volume_scale.y,
+				view_ray_normalized.z / fog_volume_scale.z );
+
+			var Vec3f box_space_ray_normalized= box_space_ray.GetNormalized();
+
+			var Vec3f box_space_camera_position(
+				( camera_position.x - fog_volume_center.x ) / fog_volume_scale.x,
+				( camera_position.y - fog_volume_center.y ) / fog_volume_scale.y,
+				( camera_position.z - fog_volume_center.z ) / fog_volume_scale.z );
+
+			var f32 box_space_vertex_distance= view_ray_length * box_space_ray.Length();
+
+			var f32 mut near_distance= 99999999.0f;
+			var f32 mut far_distance= -99999999.0f;
+			var f32 mut fog_density_scale= 0.0f;
+
+			if( fog_volume_scale.z * 2.0f < ust::min( fog_volume_scale.x, fog_volume_scale.y ) )
+			{
+				if_var( intersection_result :
+					FindRayBBoxIntersection(
+						box_space_camera_position,
+						box_space_ray_normalized,
+						BBox3f{ .min( -1.0f, -1.0f, -1.0f ), .max(  1.0f,  1.0f,  1.0f ) } ) )
+				{
+					near_distance= intersection_result.near_point_distance;
+					far_distance= intersection_result.far_point_distance;
+				}
+
+				fog_density_scale= 0.5f;
+			}
+			else
+			{
+				if_var( intersection_result :
+					FindRaySphereIntersectionResult(
+						box_space_camera_position,
+						box_space_ray_normalized,
+						Vec3f( 0.0f, 0.0f, 0.0f ),
+						1.0f ) )
+				{
+					near_distance= intersection_result.near_point_distance;
+					far_distance= intersection_result.far_point_distance;
+
+					fog_density_scale= 0.3f * ( far_distance - near_distance );
+				}
+			}
+
+			ust::max_assign( near_distance, 0.0f );
+			ust::min_assign( far_distance, box_space_vertex_distance );
+			ust::max_assign( far_distance, near_distance );
+			var f32 distance_in_fog_volume= far_distance - near_distance;
+
+			var f32 fog_density= distance_in_fog_volume * fog_density_scale;
+
+			sum_fog_density+= fog_density;
+		}
+
+		v.fog_params[1]= u8( ust::max( 0.0f, ust::min( sum_fog_density * 255.0f, 255.0f ) ) );
 	}
 }
 

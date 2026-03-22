@@ -147,7 +147,6 @@ PanzerMortyr rendering:
 
 * Apply additional tessellation for tessellated polygons in order to perform smoother light values interpolation (naively triangulating them doesn't produce good result always).
 * Draw underwater caustics properly.
-* Draw local fog volumes.
 * Draw reflections in reflective surfaces (usually floors).
 * Use smooth animation for animated models (with two or more frames interpolation).
 * Draw decals (bullet holes, blood).
@@ -155,10 +154,10 @@ PanzerMortyr rendering:
 * Draw burning entities with some kind of burning effect (like in RtCW).
 * Draw some fullscreen burning effect if the player is burning.
 * Implement dynamic lights (gun flashes, explosions).
-* Draw weather effects (rain, snow).
+* Draw weather effects (rain, snow). Don't forget applying global fog for them if needed.
 * Experiment with an algorithm for dynamic visible clusters search similar to one used in SquareWheel.
 * Add support for MSAA.
-* Somehow distort/colorize the whole image while swimming in water.
+* Somehow distort/colorize the whole image while swimming in water. Maybe even add or alter global fog if camera is in water volume.
 * Consider optimizing calculating light from point light sources for models - avoid enumerating all lights.
 * Consider drawing blob shadows under models (as some sort of decal?).
 * Allow changing brightness, maybe by tuning lights power.
