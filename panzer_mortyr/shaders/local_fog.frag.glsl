@@ -19,10 +19,13 @@ const float inf= 99999999.0;
 
 // Returns near/far distance (in units of given direction vector).
 // near <= far is has intersection.
-vec2 CalculateRayBBoxIntersection( vec3 bbox_min, vec3 bbox_max, vec3 ray_start, vec3 ray_direction )
+vec2 CalculateRayIntersectionWithUnitBBox( vec3 ray_start, vec3 ray_direction )
 {
 	float near_distance= -inf;
 	float far_distance =  inf;
+
+	const vec3 bbox_min= vec3( -1.0, -1.0, -1.0 );
+	const vec3 bbox_max= vec3(  1.0,  1.0,  1.0 );
 
 	if( ray_direction.x > 0.0 )
 	{
@@ -180,11 +183,7 @@ void main()
 		// Find near/far distance of ray with box intersection.
 		// The difference between these two values is distance travveled within this fog volume.
 		intersection_near_far_distances=
-			CalculateRayBBoxIntersection(
-				vec3( -1.0, -1.0, -1.0 ),
-				vec3(  1.0,  1.0,  1.0 ),
-				box_space_camera_position,
-				box_space_ray_normalized );
+			CalculateRayIntersectionWithUnitBBox( box_space_camera_position, box_space_ray_normalized );
 	}
 	else
 	{
