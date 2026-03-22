@@ -550,34 +550,15 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 	// On all maps of the original game local fog volumes look mostly fine even considering incorrect interaction with global fog.
 	if( fog_enabled && !visible_local_fog_volumes_.empty() )
 	{
-		var u32 texture_slot= 0u;
-
-		unsafe( glActiveTexture( GLenum( GL_TEXTURE0 ) + GLenum(texture_slot) ) );
-		depth_buffer_copy_texture_.Bind();
-
-		SetGLState( g_local_fog_gl_state );
-
-		local_fog_shader_.Bind();
-		local_fog_shader_.SetUniform( "vu_matrix", view_matrix );
-		local_fog_shader_.SetUniform(
-			"fu_inverse_viewport_size",
-			Vec2f( 1.0f / f32( viewport_info.viewport_size[0] ), 1.0f / f32( viewport_info.viewport_size[1] ) ) );
-		local_fog_shader_.SetUniform( "fu_depth_texture", texture_slot );
-		local_fog_shader_.SetUniform( "fu_inverse_projection_matrix", camera_inverse_projection_matrix );
-		local_fog_shader_.SetUniform( "fu_camera_position", drawing_info.camera_params.position );
-		local_fog_shader_.SetUniform( "fu_fog_color", Vec3f( fog_color_additive ) );
-
-		// No need to sort fog volumes, since additive blending is used for them (which doesn't depend on drawing order).
-
-		foreach( &fog_volume : visible_local_fog_volumes_ )
-		{
-			local_fog_shader_.SetUniform( "vu_fog_volume_scale", fog_volume.GetDimensions() * 0.5f );
-			local_fog_shader_.SetUniform( "vu_fog_volume_offset", fog_volume.GetCenter() );
-
-			// Draw a cube - with 2 triangles for each side.
-			// No vertex/index buffer is required, box vertices are hardcoded in the shader and coordinates are calculated based on vertex ID.
-			unsafe( glDrawArrays( GLenum( GL_TRIANGLES ), GLint(0), GLsizei(36) ) );
-		}
+		DrawLocalFog(
+			depth_buffer_copy_texture_,
+			local_fog_shader_,
+			visible_local_fog_volumes_,
+			viewport_info.viewport_size,
+			drawing_info.camera_params.position,
+			view_matrix,
+			camera_inverse_projection_matrix,
+			fog_color_additive );
 	}
 
 	ResetDynamicPolygonsBuffer( semitransparent_polygons_buffer_ );
@@ -2614,6 +2595,45 @@ fn DrawGlobalFog(
 
 	// Draw single triangle covering the entire screen.
 	unsafe( glDrawArrays( GLenum( GL_TRIANGLES ), GLint(0), GLsizei(3) ) );
+}
+
+fn DrawLocalFog(
+	Texture &mut depth_buffer_copy_texture,
+	ShaderProgram &mut shader,
+	ust::array_view_imut</BBox3f/> local_fog_volumes,
+	[ u32, 2 ] viewport_size,
+	Vec3f& camera_position,
+	Mat4f& view_matrix,
+	Mat4f& camera_inverse_projection_matrix,
+	[ f32, 3 ]& fog_color_additive )
+{
+	var u32 texture_slot= 0u;
+
+	unsafe( glActiveTexture( GLenum( GL_TEXTURE0 ) + GLenum(texture_slot) ) );
+	depth_buffer_copy_texture.Bind();
+
+	SetGLState( g_local_fog_gl_state );
+
+	shader.Bind();
+	shader.SetUniform( "vu_matrix", view_matrix );
+	shader.SetUniform(
+		"fu_inverse_viewport_size", Vec2f( 1.0f / f32( viewport_size[0] ), 1.0f / f32( viewport_size[1] ) ) );
+	shader.SetUniform( "fu_depth_texture", texture_slot );
+	shader.SetUniform( "fu_inverse_projection_matrix", camera_inverse_projection_matrix );
+	shader.SetUniform( "fu_camera_position", camera_position );
+	shader.SetUniform( "fu_fog_color", Vec3f( fog_color_additive ) );
+
+	// No need to sort fog volumes, since additive blending is used for them (which doesn't depend on drawing order).
+
+	foreach( &fog_volume : local_fog_volumes )
+	{
+		shader.SetUniform( "vu_fog_volume_scale", fog_volume.GetDimensions() * 0.5f );
+		shader.SetUniform( "vu_fog_volume_offset", fog_volume.GetCenter() );
+
+		// Draw a cube - with 2 triangles for each side.
+		// No vertex/index buffer is required, box vertices are hardcoded in the shader and coordinates are calculated based on vertex ID.
+		unsafe( glDrawArrays( GLenum( GL_TRIANGLES ), GLint(0), GLsizei(36) ) );
+	}
 }
 
 fn DrawSkyBackground(
