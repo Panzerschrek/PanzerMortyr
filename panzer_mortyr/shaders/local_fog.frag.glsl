@@ -197,9 +197,9 @@ void main()
 	float far_distance= max( min( intersection_near_far_distances.y, box_space_fragment_distance ), near_distance );
 	float distance_in_fog_volume= far_distance - near_distance;
 
-	float distance_scale= 0.5;
-	float fog_density= 1.0 - exp( -distance_in_fog_volume * distance_scale );
+	// Use linear density function (appropriate for emissive fog) and additive blending.
+	// It seems that the original game uses the same approach.
+	float fog_density= distance_in_fog_volume * 0.4;
 
-	// Use premultiplied alpha blending.
-	color= vec4( fu_fog_color * fog_density, fog_density );
+	color= vec4( fu_fog_color * fog_density, 0.0 );
 }
