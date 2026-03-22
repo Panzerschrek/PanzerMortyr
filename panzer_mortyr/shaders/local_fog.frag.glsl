@@ -15,12 +15,12 @@ in vec3 f_position;
 
 out vec4 color;
 
-// Return near/far distance (in units of given direction vector).
+const float inf= 99999999.0;
+
+// Returns near/far distance (in units of given direction vector).
 // near <= far is has intersection.
 vec2 CalculateRayBBoxIntersection( vec3 bbox_min, vec3 bbox_max, vec3 ray_start, vec3 ray_direction )
 {
-	const float inf= 99999999.0;
-
 	float near_distance= -inf;
 	float far_distance =  inf;
 
@@ -135,6 +135,18 @@ vec2 CalculateRayBBoxIntersection( vec3 bbox_min, vec3 bbox_max, vec3 ray_start,
 	return vec2( near_distance, far_distance );
 }
 
+// Returns near/far distance.
+vec2 CalculateRayUnitSphereIntersection( vec3 ray_start, vec3 ray_normalized_direction )
+{
+	vec3 vec_to_center= -ray_start;
+	float perpendicular_distance= length( cross( ray_normalized_direction, vec_to_center ) );
+
+	float side_step= sqrt( max( 0.0, 1.0 - perpendicular_distance * perpendicular_distance ) );
+
+	float dinstance_to_closest_point= dot( vec_to_center, ray_normalized_direction );
+	return vec2( dinstance_to_closest_point - side_step, dinstance_to_closest_point + side_step );
+}
+
 void main()
 {
 	// Calculate linear distance to the fragment stored in the depth buffer.
@@ -159,19 +171,30 @@ void main()
 	vec3 box_space_camera_position= ( fu_camera_position - vu_fog_volume_offset ) / vu_fog_volume_scale;
 	float box_space_fragment_distance= linear_fragment_distance * length( box_space_ray );
 
-	// Find near/far distance of ray with box intersection.
-	// The difference between these two values is distance travveled within this fog volume.
+	vec2 intersection_near_far_distances;
 
-	vec2 ray_bbox_intersection=
-		CalculateRayBBoxIntersection(
-			vec3( -1.0, -1.0, -1.0 ),
-			vec3(  1.0,  1.0,  1.0 ),
-			box_space_camera_position,
-			box_space_ray_normalized );
+	// HACK! In the original game all fog volumes are ellipsoids.
+	// But we use cubes for flat volumes, used on some maps. Ellipsoids for them look ugly.
+	if( vu_fog_volume_scale.z * 2.0 < min( vu_fog_volume_scale.x, vu_fog_volume_scale.y ) )
+	{
+		// Find near/far distance of ray with box intersection.
+		// The difference between these two values is distance travveled within this fog volume.
+		intersection_near_far_distances=
+			CalculateRayBBoxIntersection(
+				vec3( -1.0, -1.0, -1.0 ),
+				vec3(  1.0,  1.0,  1.0 ),
+				box_space_camera_position,
+				box_space_ray_normalized );
+	}
+	else
+	{
+		intersection_near_far_distances=
+			CalculateRayUnitSphereIntersection( box_space_camera_position, box_space_ray_normalized );
+	}
 
-	float near_distance= max( ray_bbox_intersection.x, 0.0 );
+	float near_distance= max( intersection_near_far_distances.x, 0.0 );
 	// Limit far distance to fragment depth.
-	float far_distance= max( min( ray_bbox_intersection.y, box_space_fragment_distance ), near_distance );
+	float far_distance= max( min( intersection_near_far_distances.y, box_space_fragment_distance ), near_distance );
 	float distance_in_fog_volume= far_distance - near_distance;
 
 	float distance_scale= 0.5;
