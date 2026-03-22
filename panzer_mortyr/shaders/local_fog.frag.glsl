@@ -152,6 +152,10 @@ vec2 CalculateRayUnitSphereIntersection( vec3 ray_start, vec3 ray_normalized_dir
 
 void main()
 {
+	// Warning!
+	// This code should be kept synchronized with code calculating local fog for semitransparent geometry!
+	//
+
 	// Calculate linear distance to the fragment stored in the depth buffer.
 
 	vec2 screen_coords= gl_FragCoord.xy * fu_inverse_viewport_size;
