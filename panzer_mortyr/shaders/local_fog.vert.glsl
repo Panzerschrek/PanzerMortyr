@@ -1,5 +1,8 @@
 #version 330
 
+// Don't bother with vertex/index buffer for local fog volumes.
+// Just use hardcoded vertex coordinates and indices for a cube.
+
 const vec3 c_vertices[8]= vec3[8]
 (
 	vec3( -1.0, -1.0, -1.0 ),

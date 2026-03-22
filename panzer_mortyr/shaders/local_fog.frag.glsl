@@ -169,9 +169,9 @@ void main()
 
 	vec3 view_ray_normalized= normalize( f_position - fu_camera_position );
 
-	// Perform calculations in space of the box, so that it's assumed that we search for intersection with a cube with min/max dimensions equal to [-1;1].
+	// Perform calculations in space of the box, so that it's assumed that we search for intersection with a cube or sphere with min/max dimensions equal to [-1;1].
 	// It seems like the original game does the same.
-	// Doing so allows reducing fog density while tracing alongest the long axis of a box and preserving density when tracing along the shortest axis.
+	// Doing so allows reducing fog density while tracing along the longest axis of a box and preserving density when tracing along the shortest axis.
 
 	vec3 box_space_ray= view_ray_normalized / vu_fog_volume_scale;
 	vec3 box_space_ray_normalized= normalize( box_space_ray );
@@ -186,7 +186,7 @@ void main()
 	if( vu_fog_volume_scale.z * 2.0 < min( vu_fog_volume_scale.x, vu_fog_volume_scale.y ) )
 	{
 		// Find near/far distance of ray with box intersection.
-		// The difference between these two values is distance travveled within this fog volume.
+		// The difference between these two values is distance travelled within this fog volume.
 		intersection_near_far_distances=
 			CalculateRayIntersectionWithUnitBBox( box_space_camera_position, box_space_ray_normalized );
 
