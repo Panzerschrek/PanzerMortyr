@@ -4,7 +4,6 @@
 const vec2 vertices[3]= vec2[3]( vec2( -1.1, -1.1 ), vec2( 3.1, -1.1 ), vec2( -1.0, 3.1 ) );
 
 out vec2 f_tex_coord;
-flat out mat4 f_inverse_projection_matrix;
 
 void main()
 {
