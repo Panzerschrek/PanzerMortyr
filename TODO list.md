@@ -55,6 +55,7 @@ Gameplay investigation:
 * Investigate whether super armor is ever used in the original game.
 * Investigate how the ability for entities to be covered with blood is stored.
 * Investigate whether armor absorbs flame damage.
+* Investigate what kinds of entities are affected by gravity (what in an entity description turns gravity on and off).
 
 PanzerMortyr general:
 
@@ -109,8 +110,7 @@ PanzerMortyr game logic:
 * Spawn bullet holes on walls, including holes attached to dynamic (movable) clusters.
 * Leave blood makrs on walls.
 * Leave footsteps where they should be.
-* Implement remaining projectile hit effects (smoke, sparkles, blood).
-* Use bullet hit smoke effects for the Volkssturm enemy (via "dymek" property).
+* Implement remaining projectile hit effects (sparkles, blood).
 * Rework code doing first person weapon idle/walking animations. Consider adding states where no animation is played at all.
 * Switch to a new weapon when picking it up (investigate when such switchinh takes place in the original game).
 * Implement weapon switching in case of out of ammo.
