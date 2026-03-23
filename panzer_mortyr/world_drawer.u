@@ -259,6 +259,13 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 		global_light_params,
 		drawing_stats );
 
+	DrawMapPolygonsWithDynamicLights(
+		map_data,
+		visible_room_cluster_flags,
+		map_dynamic_light_shader_,
+		view_matrix,
+		drawing_info.dynamic_light_sources );
+
 	// Prepare list of models to draw.
 
 	var bool fullbright= settings_.lock_imut().deref().r_fullbright;
@@ -1330,6 +1337,86 @@ fn WorldDrawer::DrawMapPolygons(
 			GLint( cluster_draw_data.first_vertex_index ) ) );
 
 		drawing_stats.num_visible_map_triangles+= u32( cluster_draw_data.num_indices ) / 3u;
+	}
+}
+
+fn WorldDrawer::DrawMapPolygonsWithDynamicLights(
+	MapDrawData& map_data,
+	ust::array_view_imut</bool/> visible_room_cluster_flags,
+	ShaderProgram &mut shader,
+	Mat4f& view_matrix,
+	ust::array_view_imut</WorldDrawingInfo::DynamicLightSource/> dynamic_light_sources )
+{
+	if( dynamic_light_sources.empty() )
+	{
+		return;
+	}
+
+	var ust::array_view_imut</ZvoxCluster/> clusters= map_data.zvox_data.deref().clusters.range();
+
+	SetGLState( g_map_dynamic_lights_drawing_gl_state );
+
+	shader.Bind();
+	shader.SetUniform( "vu_matrix", view_matrix );
+
+	var u32 texture_slot= 0u;
+
+	unsafe( glActiveTexture( GLenum( GL_TEXTURE0 ) + GLenum(texture_slot) ) );
+	map_data.map_textures_array.Bind();
+
+	shader.Bind();
+	shader.SetUniform( "vu_matrix", view_matrix );
+	shader.SetUniform( "fu_texture", texture_slot );
+
+	map_data.vertex_array_object.Bind();
+	map_data.index_buffer.Bind();
+
+	foreach( &light_source : dynamic_light_sources )
+	{
+		ust::ignore_unused(light_source); // TODO - use it.
+
+		for( auto mut i= 0s; i < clusters.size(); )
+		{
+			var ZvoxCluster& room_cluster= clusters[i];
+			if( room_cluster.c.num_children_clusters < 0 )
+			{
+				++i;
+				continue;
+			}
+
+			// TODO - reject clusters out of light source boundaries.
+
+			// This room cluster and all his children.
+			var size_type num_clusters_in_group= size_type( room_cluster.c.num_children_clusters ) + 1s;
+
+			if( visible_room_cluster_flags[i] )
+			{
+				for( auto mut j= 0s; j < num_clusters_in_group; ++j )
+				{
+					var size_type cluster_index= i + j;
+
+					var u8 cluster_type= clusters[ cluster_index ].cluster_type;
+					if( !(
+						cluster_type == ZvoxCluster::c_cluster_type_regular |
+						cluster_type == ZvoxCluster::c_cluster_type_notes ) )
+					{
+						// Draw dynamic clusters later.
+						continue;
+					}
+
+					auto& cluster_draw_data= map_data.clusters_draw_data[ cluster_index ];
+
+					unsafe( glDrawElementsBaseVertex(
+						GLenum( GL_TRIANGLES ),
+						GLsizei( cluster_draw_data.num_indices ),
+						GLenum( GL_UNSIGNED_SHORT ),
+						ust::nullptr</byte8/>() + typeinfo</u16/>.size_of * cluster_draw_data.first_index,
+						GLint( cluster_draw_data.first_vertex_index ) ) );
+				}
+			}
+
+			i+= num_clusters_in_group;
+		}
 	}
 }
 
@@ -3211,6 +3298,21 @@ var GLState g_map_drawing_gl_state
 	.blending_enabled= false,
 	.blend_source_factor( GL_INVALID_ENUM ),
 	.blend_destination_factor( GL_INVALID_ENUM ),
+};
+
+var GLState g_map_dynamic_lights_drawing_gl_state
+{
+	.color_write_enabled= true,
+	.depth_test_enabled= true,
+	// Draw with equal depth test only - to draw dynamic lights atop of previosly drawn map polygons.
+	.depth_test_func( GL_EQUAL ),
+	.depth_write_enabled= true,
+	.cull_face_enabled= true,
+	.cull_face( GL_FRONT ),
+	// Use additive blending for dynamic lights.
+	.blending_enabled= true,
+	.blend_source_factor( GL_ONE ),
+	.blend_destination_factor( GL_ONE ),
 };
 
 var GLState g_semitransparent_geometry_drawing_gl_state
