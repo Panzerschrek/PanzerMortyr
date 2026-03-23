@@ -26,7 +26,9 @@ void main()
 
 	if( light_power_unbiased <= light_bias )
 	{
+		// Hope that both discard/return prevent further calculations and increase overall performance.
 		discard;
+		return;
 	}
 
 	vec3 light= ( light_power_unbiased - light_bias ) * fu_light_color;
