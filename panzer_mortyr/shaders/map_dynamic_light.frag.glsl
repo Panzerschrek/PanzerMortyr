@@ -11,23 +11,24 @@ flat in float f_texture_layer;
 
 out vec4 color;
 
+// Use pretty aggressive bias factor to reduce light source sizes and thus fill less pixels with dynamic lights.
+const float light_bias= 1.0 / 8.0;
+const float min_square_distance= 1.0 * 1.0;
+const float max_intensity= 2.0;
+
 void main()
 {
-	vec3 vec_to_light= fu_light_position - f_position;
-
-	// Use pretty aggressive bias factor to reduce light source sizes and thus fill less pixels with dynamic lights.
-	const float light_bias= 1.0 / 8.0;
-	const float min_distance= 1.0;
-
 	// Use quadratic attenuation.
-	float light_power_unbiased= fu_light_power / max( min_distance, dot( vec_to_light, vec_to_light ) );
+	vec3 vec_to_light= fu_light_position - f_position;
+	float distance_to_light= dot( vec_to_light, vec_to_light );
+	float light_power_unbiased= fu_light_power / max( min_square_distance, distance_to_light );
 
 	if( light_power_unbiased <= light_bias )
 	{
 		discard;
 	}
 
-	float light= light_power_unbiased - light_bias;
+	float light= min( max_intensity, light_power_unbiased - light_bias );
 
 	vec3 texture_color= texture( fu_texture, vec3( f_texture_coordinates, f_texture_layer ) ).rgb;
 
