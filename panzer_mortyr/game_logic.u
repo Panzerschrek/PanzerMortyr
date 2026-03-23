@@ -314,6 +314,10 @@ fn nodiscard ProcessGameLogicStep(
 		game_state.entities,
 		game_state.player );
 
+	ProcessProjectileHitSmokeEmittersLogicStep( game_state );
+
+	ProcessProjectileHitSmokeParticlesLogicStep( game_state.projectile_hit_smoke_particles );
+
 	ProcessBreakingGlassLogicStep( game_state.breaking_glass_effects );
 
 	ProcessMuzzleFlashesLogicStep( game_state.muzzle_flashes );
@@ -1828,29 +1832,19 @@ fn ProcessEntitiesLogicStep( GameGlobalData& game_global_data, GameMapData& map_
 				{
 					if( entity.num_steps_since_operation_start >= smoke.time && smoke.delta > 0u )
 					{
-						// TODO - rework this, since it's incorrect.
-						// Use the same code as for bullet hole smoke effects.
-
-						var u32 relative_time= entity.num_steps_since_operation_start - smoke.time;
-
-						var u32 emission_index= relative_time / smoke.delta;
-
-						if( emission_index < smoke.amount && emission_index * smoke.delta == relative_time )
+						// Just ignore all parameters and spawn the same smoke effect as for projectile hits.
+						if( entity.num_steps_since_operation_start == smoke.time )
 						{
+							var Mat4f rotation_matrix= Mat4f::MakeRotationZ( entity.azimuth );
 							var Vec3f offset=
 								Vec3f( f32( smoke.position_x ), f32( smoke.position_y ), f32( smoke.position_z ) ) *
-								Mat4f::MakeRotationZ( entity.azimuth );
+								rotation_matrix;
 
-							var Vec3f start_position= entity.position + offset;
-
-							game_state.smoke_particles.push_back(
-								SmokeParticle
+							game_state.projectile_hit_smoke_emitters.push_back(
+								ProjectileHitSmokeEmitter
 								{
-									.smoke_model= 0u,
-									.center= start_position,
-									.position= start_position,
-									.velocity( 0.0f, 0.0f, -0.5f ),
-									.sequential_index= emission_index,
+									.position= entity.position + offset,
+									.hit_point_normal= Vec3f( 0.0f, 1.0f, 0.0f ) * rotation_matrix,
 									.age_steps= 0u,
 								} );
 						}
@@ -2906,6 +2900,45 @@ fn ProcessProjectileHitEventsLogicStep( GameMapData& map_data, GameState &mut ga
 				game_state.explosion_particles.push_back(
 					ExplosionParticle{ .large= true, .position= projectile_hit_event.position, .age_steps= 0u, } );
 			},
+			EntitiesDescription::Tool::c_projectile_collision_effect_smoke_source ->
+			{
+				var Vec3f mut smoke_emitter_normal( 0.0f, 0.0f, -1.0f );
+
+				if( size_type( projectile_hit_event.hit_quad_index ) < quads.size() )
+				{
+					var Vec3f normal= CalculateQuadNormal( quads[ size_type( projectile_hit_event.hit_quad_index ) ] );
+					var f32 normal_length= normal.Length();
+					if( normal_length > 0.0f )
+					{
+						smoke_emitter_normal= normal / normal_length;
+					}
+				}
+				else if( size_type( projectile_hit_event.hit_entity_index ) < game_state.entities.size() )
+				{
+					// For entities approximate smoke emitter normal using direction towards entity bbox center.
+					if_var( &entity : game_state.entities[ size_type( projectile_hit_event.hit_entity_index ) ] )
+					{
+						if( size_type( entity.collider_index ) < game_state.colliders.size() )
+						{
+							var BBox3f& collider_bbox= game_state.colliders[ size_type( entity.collider_index ) ].bbox;
+							var Vec3f vec_from_center= projectile_hit_event.position - collider_bbox.GetCenter();
+							var f32 vec_from_center_length= vec_from_center.Length();
+							if( vec_from_center_length > 0.0f )
+							{
+								smoke_emitter_normal= vec_from_center / vec_from_center_length;
+							}
+						}
+					}
+				}
+
+				game_state.projectile_hit_smoke_emitters.push_back(
+					ProjectileHitSmokeEmitter
+					{
+						.position= projectile_hit_event.position,
+						.hit_point_normal= smoke_emitter_normal,
+						.age_steps= 0u,
+					} );
+			},
 			// TODO - handle other known kinds.
 			default -> {},
 		}
@@ -2992,6 +3025,90 @@ fn ProcessDamagingFlamesLogicStep(
 			var size_type last_index= damaging_flames.size() - 1s;
 			damaging_flames.swap( i, last_index );
 			damaging_flames.drop_back();
+		}
+		else
+		{
+			++i;
+		}
+	}
+}
+
+fn ProcessProjectileHitSmokeEmittersLogicStep( GameState& mut game_state )
+{
+	for( auto mut i= 0s; i < game_state.projectile_hit_smoke_emitters.size(); )
+	{
+		var bool mut need_to_remove= false;
+
+		{
+			var ProjectileHitSmokeEmitter &mut smoke_emitter= game_state.projectile_hit_smoke_emitters[i];
+
+			game_state.projectile_hit_smoke_particles.push_back(
+				ProjectileHitSmokeParticle
+				{
+					.position= smoke_emitter.position,
+					.initial_direction= smoke_emitter.hit_point_normal,
+					.age_steps= 0u,
+				} );
+
+			++smoke_emitter.age_steps;
+
+			if( smoke_emitter.age_steps >= c_projectile_hit_smoke_emitter_max_age )
+			{
+				need_to_remove= true;
+			}
+		}
+
+		if( need_to_remove )
+		{
+			var size_type last_index= game_state.projectile_hit_smoke_emitters.size() - 1s;
+			game_state.projectile_hit_smoke_emitters.swap( i, last_index );
+			game_state.projectile_hit_smoke_emitters.drop_back();
+		}
+		else
+		{
+			++i;
+		}
+	}
+}
+
+fn ProcessProjectileHitSmokeParticlesLogicStep(
+	ust::vector</ProjectileHitSmokeParticle/> &mut projectile_hit_smoke_particles )
+{
+	for( auto mut i= 0s; i < projectile_hit_smoke_particles.size(); )
+	{
+		var bool mut need_to_remove= false;
+
+		{
+			var ProjectileHitSmokeParticle &mut smoke_particle= projectile_hit_smoke_particles[i];
+
+			var f32 constexpr speed= 1.0f;
+			var f32 constexpr vertical_acceleration= -0.5f;
+
+			// Apply only horizontal speed as usual.
+			smoke_particle.position.x+= smoke_particle.initial_direction.x * speed;
+			smoke_particle.position.y+= smoke_particle.initial_direction.y * speed;
+
+			// Apply vertical speed only if it's directed down.
+			if( smoke_particle.initial_direction.z > 0.0f )
+			{
+				smoke_particle.position.z+= smoke_particle.initial_direction.z * speed;
+			}
+
+			smoke_particle.position.z+= f32( smoke_particle.age_steps ) * ( vertical_acceleration * 0.5f );
+
+			++smoke_particle.age_steps;
+
+			if( smoke_particle.age_steps >= c_projectile_hit_smoke_particle_max_age )
+			{
+				need_to_remove= true;
+			}
+		}
+
+		if( need_to_remove )
+		{
+			var size_type last_index= projectile_hit_smoke_particles.size() - 1s;
+			projectile_hit_smoke_particles.swap( i, last_index );
+			projectile_hit_smoke_particles.drop_back();
 		}
 		else
 		{
