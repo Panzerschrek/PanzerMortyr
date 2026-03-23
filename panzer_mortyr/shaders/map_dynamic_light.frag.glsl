@@ -4,6 +4,7 @@ uniform sampler2DArray fu_texture;
 
 uniform vec3 fu_light_position;
 uniform float fu_light_power;
+uniform vec3 fu_light_color;
 
 in vec3 f_position;
 in vec2 f_texture_coordinates;
@@ -28,7 +29,13 @@ void main()
 		discard;
 	}
 
-	float light= min( max_intensity, light_power_unbiased - light_bias );
+	vec3 light= ( light_power_unbiased - light_bias ) * fu_light_color;
+
+	float max_component= max( max( light.r, light.g ), light.b ) ;
+	if( max_component > max_intensity )
+	{
+		light *= max_intensity / max_component;
+	}
 
 	vec3 texture_color= texture( fu_texture, vec3( f_texture_coordinates, f_texture_layer ) ).rgb;
 
