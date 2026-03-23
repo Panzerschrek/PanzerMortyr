@@ -15,7 +15,8 @@ void main()
 {
 	vec3 vec_to_light= fu_light_position - f_position;
 
-	const float light_bias= 1.0 / 255.0;
+	// Use pretty aggressive bias factor to reduce light source sizes and thus fill less pixels with dynamic lights.
+	const float light_bias= 1.0 / 8.0;
 	const float min_distance= 1.0;
 
 	// Use quadratic attenuation.

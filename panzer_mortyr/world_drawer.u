@@ -1378,6 +1378,17 @@ fn WorldDrawer::DrawMapPolygonsWithDynamicLights(
 
 		// TODO - provide color.
 
+		// Assuming light formula is
+		// .. power / ( distance * distance ) - bias
+		var f32 bias= 1.0f / 8.0f; // This constant should match the same value in the shader!
+		var f32 radius= ust::sqrt( light_source.power / bias );
+
+		var BBox3f light_bbox
+		{
+			.min= light_source.position - Vec3f( radius, radius, radius ),
+			.max= light_source.position + Vec3f( radius, radius, radius ),
+		};
+
 		for( auto mut i= 0s; i < clusters.size(); )
 		{
 			var ZvoxCluster& room_cluster= clusters[i];
@@ -1387,10 +1398,14 @@ fn WorldDrawer::DrawMapPolygonsWithDynamicLights(
 				continue;
 			}
 
-			// TODO - reject clusters out of light source boundaries.
-
 			// This room cluster and all his children.
 			var size_type num_clusters_in_group= size_type( room_cluster.c.num_children_clusters ) + 1s;
+
+			if( !CreateClusterBBox( room_cluster ).Instersects( light_bbox ) )
+			{
+				i+= num_clusters_in_group;
+				continue;
+			}
 
 			if( visible_room_cluster_flags[i] )
 			{
@@ -1398,12 +1413,18 @@ fn WorldDrawer::DrawMapPolygonsWithDynamicLights(
 				{
 					var size_type cluster_index= i + j;
 
-					var u8 cluster_type= clusters[ cluster_index ].cluster_type;
+					var ZvoxCluster& cluster= clusters[ cluster_index ];
+
 					if( !(
-						cluster_type == ZvoxCluster::c_cluster_type_regular |
-						cluster_type == ZvoxCluster::c_cluster_type_notes ) )
+						cluster.cluster_type == ZvoxCluster::c_cluster_type_regular |
+						cluster.cluster_type == ZvoxCluster::c_cluster_type_notes ) )
 					{
 						// Draw dynamic clusters later.
+						continue;
+					}
+
+					if( !CreateClusterBBox( cluster ).Instersects( light_bbox ) )
+					{
 						continue;
 					}
 
