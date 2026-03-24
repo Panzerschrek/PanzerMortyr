@@ -209,6 +209,8 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 
 	var Mat4f translation_matrix= Mat4f::MakeTranslation( -drawing_info.camera_params.position );
 
+	var Mat4f camera_space_matrix= translation_matrix * rotation_matrix;
+
 	var Mat4f view_matrix= translation_matrix * rotation_and_projection_matrix;
 
 	var Mat4f firt_person_weapon_view_matrix=
@@ -259,17 +261,35 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 		global_light_params,
 		drawing_stats );
 
-	DrawMapPolygonsWithDynamicLights(
-		game_params_.deref(),
-		map_data,
-		visible_room_cluster_flags,
-		visible_clusters_bbox,
-		drawing_info.dynamic_cluster_objects,
-		map_dynamic_light_shader_,
-		view_matrix,
-		drawing_info.game_time_s,
-		drawing_info.dynamic_light_sources,
-		global_light_params.light_scale );
+	{
+		scoped_array ScissorRect dynamic_light_scissor_rects[ drawing_info.dynamic_light_sources.size() ](
+			drawing_info.dynamic_light_sources.iter().map(
+				lambda[&]( WorldDrawingInfo::DynamicLightSource& dynamic_light_source ) : ScissorRect
+				{
+					return
+						CalculateScissorRectForSphere(
+							camera_space_matrix,
+							camera_projection_matrix,
+							viewport_info.viewport_size,
+							dynamic_light_source.position,
+							GetDynamicLightRadius( dynamic_light_source ) );
+				} ) );
+
+		DrawMapPolygonsWithDynamicLights(
+			game_params_.deref(),
+			map_data,
+			visible_room_cluster_flags,
+			visible_clusters_bbox,
+			drawing_info.dynamic_cluster_objects,
+			map_dynamic_light_shader_,
+			view_matrix,
+			drawing_info.game_time_s,
+			drawing_info.dynamic_light_sources,
+			dynamic_light_scissor_rects,
+			global_light_params.light_scale );
+	}
+
+	unsafe( glDisable( GLenum( GL_SCISSOR_TEST ) ) );
 
 	// Prepare list of models to draw.
 
@@ -1328,6 +1348,7 @@ fn WorldDrawer::DrawMapPolygonsWithDynamicLights(
 	Mat4f& view_matrix,
 	f32 time_s,
 	ust::array_view_imut</WorldDrawingInfo::DynamicLightSource/> dynamic_light_sources,
+	ust::array_view_imut</ScissorRect/> dynamic_light_scissor_rects,
 	[ f32, 3 ]& light_scale )
 {
 	if( dynamic_light_sources.empty() )
@@ -1339,6 +1360,8 @@ fn WorldDrawer::DrawMapPolygonsWithDynamicLights(
 	var RoomClustersHierarchy& room_clusters_hierarchy= map_data.room_clusters_hierarchy.deref();
 
 	SetGLState( g_map_dynamic_lights_drawing_gl_state );
+
+	unsafe( glEnable( GLenum( GL_SCISSOR_TEST ) ) );
 
 	shader.Bind();
 	shader.SetUniform( "vu_matrix", view_matrix );
@@ -1354,8 +1377,24 @@ fn WorldDrawer::DrawMapPolygonsWithDynamicLights(
 	map_data.vertex_array_object.Bind();
 	map_data.index_buffer.Bind();
 
-	foreach( &light_source : dynamic_light_sources )
+	foreach( pair : dynamic_light_sources.iter().zip( dynamic_light_scissor_rects.iter() ) )
 	{
+		var WorldDrawingInfo::DynamicLightSource& light_source= pair.first;
+
+		var ScissorRect& scissor_rect= pair.second;
+
+		if( scissor_rect.size[0] == 0u | scissor_rect.size[1] == 0u )
+		{
+			continue;
+		}
+
+		// Use scissor test for dynamic lights to reduce fillrate.
+		unsafe( glScissor(
+			GLint( scissor_rect.start[0] ),
+			GLint( scissor_rect.start[1] ),
+			GLsizei( scissor_rect.size[0] ),
+			GLsizei( scissor_rect.size[1] ) ) );
+
 		shader.SetUniform( "vu_matrix", view_matrix );
 
 		shader.SetUniform( "fu_light_position", light_source.position );
@@ -1458,6 +1497,8 @@ fn WorldDrawer::DrawMapPolygonsWithDynamicLights(
 			ExecuteClusterMeshDrawing( map_data.clusters_draw_data[ cluster_index ] );
 		}
 	}
+
+	unsafe( glDisable( GLenum( GL_SCISSOR_TEST ) ) );
 }
 
 fn WorldDrawer::ExecuteClusterMeshDrawing( ClusterDrawData& cluster_draw_data )
@@ -3494,5 +3535,109 @@ var GLState g_local_fog_gl_state
 	.blend_source_factor( GL_ONE ),
 	.blend_destination_factor( GL_ONE ),
 };
+
+fn CalculateScissorRectForSphere(
+	Mat4f& camera_space_matrix,
+	Mat4f& camera_projection_matrix,
+	[ u32, 2 ]& viewport_size,
+	Vec3f& sphere_center,
+	f32 sphere_radius ) : ScissorRect
+{
+	var Vec3f projected_sphere_center= sphere_center * camera_space_matrix;
+
+	var [ f32, 2 ] bounds_x= GetSphereAxisBounds( Vec2f( projected_sphere_center.x, projected_sphere_center.z ), sphere_radius );
+	var [ f32, 2 ] bounds_y= GetSphereAxisBounds( Vec2f( projected_sphere_center.y, projected_sphere_center.z ), sphere_radius );
+
+	var f32 scale_x= camera_projection_matrix.values[0][0];
+	var f32 scale_y= camera_projection_matrix.values[1][1];
+	var [ f32, 2 ] bounds_x_scaled[ bounds_x[0] * scale_x, bounds_x[1] * scale_x ];
+	var [ f32, 2 ] bounds_y_scaled[ bounds_y[0] * scale_y, bounds_y[1] * scale_y ];
+
+	var i32 min_x( ust::floor( f32( viewport_size[0] ) * ( bounds_x_scaled[0] * 0.5f + 0.5f ) ) );
+	var i32 max_x( ust::floor( f32( viewport_size[0] ) * ( bounds_x_scaled[1] * 0.5f + 0.5f ) ) );
+	var i32 min_y( ust::ceil( f32( viewport_size[1] ) * ( bounds_y_scaled[0] * 0.5f + 0.5f ) ) );
+	var i32 max_y( ust::ceil( f32( viewport_size[1] ) * ( bounds_y_scaled[1] * 0.5f + 0.5f ) ) );
+
+	return ScissorRect
+	{
+		.start[ min_x, min_y ],
+		.size[ ( ust::max( 0, max_x - min_x ) ), ( ust::max( 0, max_y - min_y ) ) ],
+	};
+}
+
+// Use method mentioned in the article "2D Polyhedral Bounds of a Clipped, Perspective-Projected 3D Sphere"
+//  by Michael Mara, Morgan McGuire.
+//
+// Returns a pair of near and far values.
+// Returns valid huge bounds if is inside the sphere.
+// Returns invalid bounds if the sphere is invisible.
+fn GetSphereAxisBounds( Vec2f& sphere_center, f32 sphere_radius ) : [ f32, 2 ]
+{
+	var f32 inf= 999999.0f;
+
+	var f32 singned_distance_to_z_near= sphere_center.y - c_z_near;
+
+	if( singned_distance_to_z_near <= -sphere_radius )
+	{
+		// The sphere is behind the camera - return empty bounds.
+		return ust::make_array( inf, -inf );
+	}
+
+	var f32 radius_squared= sphere_radius * sphere_radius;
+	var f32 distance_to_center_squared= sphere_center.SquareLength();
+	var f32 tangent_length_squared= distance_to_center_squared - radius_squared;
+
+	if( tangent_length_squared <= 0.0f )
+	{
+		// The sphere is within camera - return the whole range.
+		return ust::make_array( -inf, inf );
+	}
+
+	var f32 tangent_length= ust::sqrt( tangent_length_squared );
+
+	var Vec2f scaled_direction_to_center= sphere_center * ( tangent_length / distance_to_center_squared );
+
+	var Vec2f near_intersection_point(
+		scaled_direction_to_center.x * tangent_length - scaled_direction_to_center.y * sphere_radius,
+		scaled_direction_to_center.y * tangent_length + scaled_direction_to_center.x * sphere_radius );
+
+	var Vec2f far_intersection_point(
+		scaled_direction_to_center.x * tangent_length + scaled_direction_to_center.y * sphere_radius,
+		scaled_direction_to_center.y * tangent_length - scaled_direction_to_center.x * sphere_radius );
+
+	var [ f32, 2 ] mut bounds= zero_init; // Set later
+
+	var f32 side_step_squared= radius_squared - singned_distance_to_z_near * singned_distance_to_z_near;
+
+	if( side_step_squared >= 0.0f )
+	{
+		var f32 side_step= ust::sqrt( side_step_squared );
+
+		if( near_intersection_point.y < c_z_near )
+		{
+			bounds[0]= ( sphere_center.x - side_step ) / c_z_near;
+		}
+		else
+		{
+			bounds[0]= near_intersection_point.x / near_intersection_point.y;
+		}
+
+		if( far_intersection_point.y < c_z_near )
+		{
+			bounds[1]= ( sphere_center.x + side_step ) / c_z_near;
+		}
+		else
+		{
+			bounds[1]= far_intersection_point.x / far_intersection_point.y;
+		}
+	}
+	else
+	{
+		bounds[0]= near_intersection_point.x / near_intersection_point.y;
+		bounds[1]= far_intersection_point.x / far_intersection_point.y;
+	}
+
+	return bounds;
+}
 
 } // namespace PM
