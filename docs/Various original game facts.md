@@ -28,6 +28,7 @@ This documents describes various interesting facts about the original game.
 * Bullets spread for weapons is different for the player and for enemies - with different settings set for each weapon.
 * The volkssturm enemy (with grenades) surrenders if has no ammo left, but it's a false surrender (a notable war crime), he continues fighting and searches for more ammunition as long as the player can't see him.
 * Some maps can't be left until some condition is satisfied - necessary items (Quantum Receptor piece) are collected or a boss (the Tank) is killed.
+* The jetpack item is present only at one place in the whole game - on the last level just before boss battle.
 
 ### Technical aspects
 
@@ -41,6 +42,7 @@ This documents describes various interesting facts about the original game.
 * Sky is a little bit strange - clouds texture is projected on sky polygons, but scale isn't tweaked. This projection is also broken on vertical sky polygons.
 * Any map quad with destructible material property can be destroyed. Sky is drawn in place of destroyed quads.
 * First-person weapon models use different perspective from the rest of the frame, tangent of half field of view for them is divided by 2.
+* Many maps contain a hidden room with some items placed in it. These items are usually items which can be dropped by enemies present on this map.
 
 ### Cut or unused content
 
@@ -60,6 +62,7 @@ This documents describes various interesting facts about the original game.
 
 ### Bugs
 
+* It's possible to shoot through walls via some weapons by staying too close to a wall.
 * The movable shuttle model on map 29 has missing glass quads. They are there, but they are not displayed properly.
 * On map 23 at the final room there is a glass box miss-placed right at top of the spinning eagle logo.
 * Pre-recorded player inputs in a played demo (at game start) are applied shortly after starting a new game.
