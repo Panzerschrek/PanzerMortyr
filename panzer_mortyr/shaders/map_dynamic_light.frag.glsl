@@ -13,9 +13,9 @@ flat in float f_texture_layer;
 out vec4 color;
 
 // Use pretty aggressive bias factor to reduce light source sizes and thus fill less pixels with dynamic lights.
-const float light_bias= 1.0 / 8.0; // This constant must match the same value used in the code calculating dynamic light for models!
+const float light_bias= 1.0 / 2.0; // This constant must match the same value used in the code calculating dynamic light for models!
 const float min_square_distance= 1.0 * 1.0;
-const float max_intensity= 2.0;
+const float max_intensity= 3.0;
 
 void main()
 {
