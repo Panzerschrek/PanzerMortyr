@@ -10,7 +10,6 @@ import "breaking_glass.iu"
 import "cluster_utils.iu"
 import "fog.iu"
 import "gl_functions.iu"
-import "gl_state.iu"
 import "image_loading.iu"
 import "map_quad_utils.iu"
 import "math_constants.iu"
@@ -54,6 +53,9 @@ fn WorldDrawer::constructor(
 		map_shader_(
 			embed</char8/>( "shaders/map.vert.glsl" ),
 			embed</char8/>( "shaders/map.frag.glsl" ) ),
+		map_dynamic_light_shader_(
+			embed</char8/>( "shaders/map_dynamic_light.vert.glsl" ),
+			embed</char8/>( "shaders/map_dynamic_light.frag.glsl" ) ),
 		model_shader_(
 			embed</char8/>( "shaders/model.vert.glsl" ),
 			embed</char8/>( "shaders/model.frag.glsl" ) ),
@@ -206,6 +208,8 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 
 	var Mat4f translation_matrix= Mat4f::MakeTranslation( -drawing_info.camera_params.position );
 
+	var Mat4f camera_space_matrix= translation_matrix * rotation_matrix;
+
 	var Mat4f view_matrix= translation_matrix * rotation_and_projection_matrix;
 
 	var Mat4f firt_person_weapon_distortion_matrix= CalculateFirstPersonWeaponProjectionDistortionMatrix();
@@ -251,6 +255,38 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 		drawing_info.game_time_s,
 		global_light_params,
 		drawing_stats );
+
+	var bool dynamic_lights_enabled= settings_.lock_imut().deref().r_dynamic_lights_enabled;
+
+	if( dynamic_lights_enabled )
+	{
+		scoped_array ScissorRect dynamic_light_scissor_rects[ drawing_info.dynamic_light_sources.size() ](
+			drawing_info.dynamic_light_sources.iter().map(
+				lambda[&]( WorldDrawingInfo::DynamicLightSource& dynamic_light_source ) : ScissorRect
+				{
+					return
+						CalculateScissorRectForSphere(
+							camera_space_matrix,
+							camera_projection_matrix,
+							viewport_info.viewport_size,
+							dynamic_light_source.position,
+							GetDynamicLightRadius( dynamic_light_source ) );
+				} ) );
+
+		DrawMapPolygonsWithDynamicLights(
+			game_params_.deref(),
+			map_data,
+			visible_room_cluster_flags,
+			visible_clusters_bbox,
+			drawing_info.dynamic_cluster_objects,
+			map_dynamic_light_shader_,
+			view_matrix,
+			drawing_info.game_time_s,
+			drawing_info.dynamic_light_sources,
+			dynamic_light_scissor_rects,
+			global_light_params.light_scale,
+			drawing_stats );
+	}
 
 	// Prepare list of models to draw.
 
@@ -372,6 +408,25 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 					bbox_center,
 					radius,
 					inverse_model_rotation_matrix );
+
+			if( dynamic_lights_enabled )
+			{
+				var SphericalHarmonicsRGB dynamic_light=
+					GetLightForPointFromDynamicLightSources(
+						game_params_.deref(),
+						drawing_info.dynamic_light_sources,
+						bbox_center,
+						radius,
+						inverse_model_rotation_matrix );
+
+				for( auto mut i= 0s; i < 3s; ++i )
+				{
+					var SphericalHarmonics &mut dst= light[i];
+					var SphericalHarmonics& src= dynamic_light[i];
+					dst.constant_component+= src.constant_component;
+					dst.directional_components+= src.directional_components;
+				}
+			}
 
 			if( model_object.first_person_weapon )
 			{
@@ -1230,12 +1285,7 @@ fn WorldDrawer::DrawMapPolygons(
 
 				auto& cluster_draw_data= map_data.clusters_draw_data[ cluster_index ];
 
-				unsafe( glDrawElementsBaseVertex(
-					GLenum( GL_TRIANGLES ),
-					GLsizei( cluster_draw_data.num_indices ),
-					GLenum( GL_UNSIGNED_SHORT ),
-					ust::nullptr</byte8/>() + typeinfo</u16/>.size_of * cluster_draw_data.first_index,
-					GLint( cluster_draw_data.first_vertex_index ) ) );
+				ExecuteClusterMeshDrawing( cluster_draw_data );
 
 				drawing_stats.num_visible_map_triangles+= u32( cluster_draw_data.num_indices ) / 3u;
 			}
@@ -1249,46 +1299,13 @@ fn WorldDrawer::DrawMapPolygons(
 
 	// Draw all geometry with animated special material "valve" in single draw call.
 	// It's fine to draw all quads with such muterials at once, since usually they are not so many.
-	{
-		var u32 constexpr num_frames( typeinfo</ typeof( map_data.special_material_valve_meshes ) />.element_count );
-		var u32 frame= u32( time_s * 16.0f ) % num_frames;
-
-		var SpecialMaterialQuadsMesh& mesh= map_data.special_material_valve_meshes[ frame ];
-
-		unsafe( glDrawElementsBaseVertex(
-			GLenum( GL_TRIANGLES ),
-			GLsizei( mesh.num_indices ),
-			GLenum( GL_UNSIGNED_SHORT ),
-			ust::nullptr</byte8/>() + typeinfo</u16/>.size_of * mesh.first_index,
-			GLint( mesh.first_vertex_index ) ) );
-
-		drawing_stats.num_visible_map_triangles+= u32( mesh.num_indices ) / 3u;
-	}
+	ExecuteDrawingMeshesWithValveSpecialMaterial( map_data.special_material_valve_meshes, time_s );
+	drawing_stats.num_visible_map_triangles+= u32( map_data.special_material_valve_meshes[0].num_indices ) / 3u;
 
 	// Draw all geometry with animated special material "film".
 	// It's fine to draw all quads with such muterials at once, since usually they are not so many.
-	{
-		// Perform mirrored animation. It seems like the original does exactly this.
-		var u32 constexpr num_frames( typeinfo</ typeof( map_data.special_material_film_meshes ) />.element_count );
-		var u32 raw_frame= u32( time_s * 8.0f );
-		var u32 repetition= raw_frame / num_frames;
-		var u32 mut frame= raw_frame % num_frames;
-		if( ( repetition & 1u ) != 0u )
-		{
-			frame= num_frames - 1u - frame;
-		}
-
-		var SpecialMaterialQuadsMesh& mesh= map_data.special_material_film_meshes[ frame ];
-
-		unsafe( glDrawElementsBaseVertex(
-			GLenum( GL_TRIANGLES ),
-			GLsizei( mesh.num_indices ),
-			GLenum( GL_UNSIGNED_SHORT ),
-			ust::nullptr</byte8/>() + typeinfo</u16/>.size_of * mesh.first_index,
-			GLint( mesh.first_vertex_index ) ) );
-
-		drawing_stats.num_visible_map_triangles+= u32( mesh.num_indices ) / 3u;
-	}
+	ExecuteDrawingMeshesWithFilmSpecialMaterial( map_data.special_material_film_meshes, time_s );
+	drawing_stats.num_visible_map_triangles+= u32( map_data.special_material_film_meshes[0].num_indices ) / 3u;
 
 	var RoomClustersHierarchy& room_clusters_hierarchy= map_data.room_clusters_hierarchy.deref();
 
@@ -1319,15 +1336,220 @@ fn WorldDrawer::DrawMapPolygons(
 
 		auto& cluster_draw_data= map_data.clusters_draw_data[ cluster_index ];
 
-		unsafe( glDrawElementsBaseVertex(
-			GLenum( GL_TRIANGLES ),
-			GLsizei( cluster_draw_data.num_indices ),
-			GLenum( GL_UNSIGNED_SHORT ),
-			ust::nullptr</byte8/>() + typeinfo</u16/>.size_of * cluster_draw_data.first_index,
-			GLint( cluster_draw_data.first_vertex_index ) ) );
+		ExecuteClusterMeshDrawing( cluster_draw_data );
 
 		drawing_stats.num_visible_map_triangles+= u32( cluster_draw_data.num_indices ) / 3u;
 	}
+}
+
+fn WorldDrawer::DrawMapPolygonsWithDynamicLights(
+	GameParams& game_params,
+	MapDrawData& map_data,
+	ust::array_view_imut</bool/> visible_room_cluster_flags,
+	BBox3f& visible_clusters_bbox,
+	ust::array_view_imut</WorldDrawingInfo::DynamicClusterObject/> dynamic_cluster_objects,
+	ShaderProgram &mut shader,
+	Mat4f& view_matrix,
+	f32 time_s,
+	ust::array_view_imut</WorldDrawingInfo::DynamicLightSource/> dynamic_light_sources,
+	ust::array_view_imut</ScissorRect/> dynamic_light_scissor_rects,
+	[ f32, 3 ]& light_scale,
+	DrawingStats &mut drawing_stats )
+{
+	if( dynamic_light_sources.empty() )
+	{
+		return;
+	}
+
+	var ust::array_view_imut</ZvoxCluster/> clusters= map_data.zvox_data.deref().clusters.range();
+	var RoomClustersHierarchy& room_clusters_hierarchy= map_data.room_clusters_hierarchy.deref();
+
+	shader.Bind();
+	shader.SetUniform( "vu_matrix", view_matrix );
+
+	var u32 texture_slot= 0u;
+
+	unsafe( glActiveTexture( GLenum( GL_TEXTURE0 ) + GLenum(texture_slot) ) );
+	map_data.map_textures_array.Bind();
+
+	shader.Bind();
+	shader.SetUniform( "fu_texture", texture_slot );
+
+	map_data.vertex_array_object.Bind();
+	map_data.index_buffer.Bind();
+
+	foreach( pair : dynamic_light_sources.iter().zip( dynamic_light_scissor_rects.iter() ) )
+	{
+		var WorldDrawingInfo::DynamicLightSource& light_source= pair.first;
+
+		var ScissorRect& scissor_rect= pair.second;
+
+		if( scissor_rect.size[0] == 0u | scissor_rect.size[1] == 0u )
+		{
+			continue;
+		}
+
+		// Use scissor test for dynamic lights to reduce fillrate.
+		var GLState mut gl_state= g_map_dynamic_lights_drawing_gl_state;
+		gl_state.scissor_test_enabled= true;
+		gl_state.scissor_rect= scissor_rect;
+
+		SetGLState( gl_state );
+
+		shader.SetUniform( "vu_matrix", view_matrix );
+
+		shader.SetUniform( "fu_light_position", light_source.position );
+		shader.SetUniform( "fu_light_power", light_source.power );
+
+		// Swap BGR to RGB here.
+		auto& in_color= game_params.light_colors[ light_source.color_index & 31u ];
+		var Vec3f color(
+			f32( in_color[2] ) / 255.0f * light_scale[0],
+			f32( in_color[1] ) / 255.0f * light_scale[1],
+			f32( in_color[0] ) / 255.0f * light_scale[2] );
+
+		shader.SetUniform( "fu_light_color", color );
+
+		var BBox3f light_bbox= GetDynamicLightBBox( light_source );
+
+		for( auto mut i= 0s; i < clusters.size(); )
+		{
+			var ZvoxCluster& room_cluster= clusters[i];
+			if( room_cluster.c.num_children_clusters < 0 )
+			{
+				++i;
+				continue;
+			}
+
+			// This room cluster and all his children.
+			var size_type num_clusters_in_group= size_type( room_cluster.c.num_children_clusters ) + 1s;
+
+			if( !CreateClusterBBox( room_cluster ).Instersects( light_bbox ) )
+			{
+				i+= num_clusters_in_group;
+				continue;
+			}
+
+			if( visible_room_cluster_flags[i] )
+			{
+				for( auto mut j= 0s; j < num_clusters_in_group; ++j )
+				{
+					var size_type cluster_index= i + j;
+
+					var ZvoxCluster& cluster= clusters[ cluster_index ];
+
+					if( !(
+						cluster.cluster_type == ZvoxCluster::c_cluster_type_regular |
+						cluster.cluster_type == ZvoxCluster::c_cluster_type_notes ) )
+					{
+						// Draw dynamic clusters later.
+						continue;
+					}
+
+					if( !CreateClusterBBox( cluster ).Instersects( light_bbox ) )
+					{
+						continue;
+					}
+
+					ExecuteClusterMeshDrawing( map_data.clusters_draw_data[ cluster_index ] );
+				}
+			}
+
+			i+= num_clusters_in_group;
+		}
+
+		// Geometry with frame-animated textures is combined into single mesh (per-material).
+		// We can't discard such meshes, so, draw them always for each dynamic light.
+		ExecuteDrawingMeshesWithValveSpecialMaterial( map_data.special_material_valve_meshes, time_s );
+		ExecuteDrawingMeshesWithFilmSpecialMaterial( map_data.special_material_film_meshes, time_s );
+
+		// Draw dynamic clusters with individual matrices.
+		foreach( &dynamic_cluster_object : dynamic_cluster_objects )
+		{
+			var size_type cluster_index( dynamic_cluster_object.cluster_index );
+
+			var ZvoxCluster& cluster= clusters[ cluster_index ];
+
+			var BBox3f mut bbox= CreateClusterBBox( cluster );
+			bbox.min+= dynamic_cluster_object.translation;
+			bbox.max+= dynamic_cluster_object.translation;
+
+			if( !bbox.Instersects( light_bbox ) )
+			{
+				continue;
+			}
+
+			// First perform fast check if this dynamic cluster is within the bbox containing all visible clusters.
+			if( !visible_clusters_bbox.InstersectsOrTouches( bbox ) )
+			{
+				continue;
+			}
+
+			// Then check if this dynamic cluster is within at least one visible room cluster.
+			if( !IsBBoxWithinVisibleClusters( clusters, room_clusters_hierarchy, visible_room_cluster_flags, bbox ) )
+			{
+				continue;
+			}
+
+			shader.SetUniform( "vu_matrix", Mat4f::MakeTranslation( dynamic_cluster_object.translation ) * view_matrix );
+
+			// Move light position relative to this cluster.
+			shader.SetUniform( "fu_light_position", light_source.position - dynamic_cluster_object.translation );
+
+			ExecuteClusterMeshDrawing( map_data.clusters_draw_data[ cluster_index ] );
+		}
+
+		++drawing_stats.num_visible_dynamic_lights;
+	}
+
+	unsafe( glDisable( GLenum( GL_SCISSOR_TEST ) ) );
+}
+
+fn WorldDrawer::ExecuteClusterMeshDrawing( ClusterDrawData& cluster_draw_data )
+{
+	unsafe( glDrawElementsBaseVertex(
+		GLenum( GL_TRIANGLES ),
+		GLsizei( cluster_draw_data.num_indices ),
+		GLenum( GL_UNSIGNED_SHORT ),
+		ust::nullptr</byte8/>() + typeinfo</u16/>.size_of * cluster_draw_data.first_index,
+		GLint( cluster_draw_data.first_vertex_index ) ) );
+}
+
+fn WorldDrawer::ExecuteDrawingMeshesWithValveSpecialMaterial( [ SpecialMaterialQuadsMesh, 4 ]& meshes, f32 time_s )
+{
+	var u32 constexpr num_frames( typeinfo</ typeof( meshes ) />.element_count );
+	var u32 frame= u32( time_s * 16.0f ) % num_frames;
+
+	var SpecialMaterialQuadsMesh& mesh= meshes[ frame ];
+
+	unsafe( glDrawElementsBaseVertex(
+		GLenum( GL_TRIANGLES ),
+		GLsizei( mesh.num_indices ),
+		GLenum( GL_UNSIGNED_SHORT ),
+		ust::nullptr</byte8/>() + typeinfo</u16/>.size_of * mesh.first_index,
+		GLint( mesh.first_vertex_index ) ) );
+}
+
+fn WorldDrawer::ExecuteDrawingMeshesWithFilmSpecialMaterial( [ SpecialMaterialQuadsMesh, 8 ]& meshes, f32 time_s )
+{
+	// Perform mirrored animation. It seems like the original does exactly this.
+	var u32 constexpr num_frames( typeinfo</ typeof( meshes ) />.element_count );
+	var u32 raw_frame= u32( time_s * 8.0f );
+	var u32 repetition= raw_frame / num_frames;
+	var u32 mut frame= raw_frame % num_frames;
+	if( ( repetition & 1u ) != 0u )
+	{
+		frame= num_frames - 1u - frame;
+	}
+
+	var SpecialMaterialQuadsMesh& mesh= meshes[ frame ];
+
+	unsafe( glDrawElementsBaseVertex(
+		GLenum( GL_TRIANGLES ),
+		GLsizei( mesh.num_indices ),
+		GLenum( GL_UNSIGNED_SHORT ),
+		ust::nullptr</byte8/>() + typeinfo</u16/>.size_of * mesh.first_index,
+		GLint( mesh.first_vertex_index ) ) );
 }
 
 fn WorldDrawer::DrawModels(
@@ -3211,6 +3433,21 @@ var GLState g_map_drawing_gl_state
 	.blend_destination_factor( GL_INVALID_ENUM ),
 };
 
+var GLState g_map_dynamic_lights_drawing_gl_state
+{
+	.color_write_enabled= true,
+	.depth_test_enabled= true,
+	// Draw with equal depth test only - to draw dynamic lights atop of previosly drawn map polygons.
+	.depth_test_func( GL_EQUAL ),
+	.depth_write_enabled= true,
+	.cull_face_enabled= true,
+	.cull_face( GL_FRONT ),
+	// Use additive blending for dynamic lights.
+	.blending_enabled= true,
+	.blend_source_factor( GL_ONE ),
+	.blend_destination_factor( GL_ONE ),
+};
+
 var GLState g_semitransparent_geometry_drawing_gl_state
 {
 	.color_write_enabled= true,
@@ -3303,5 +3540,109 @@ var GLState g_local_fog_gl_state
 	.blend_source_factor( GL_ONE ),
 	.blend_destination_factor( GL_ONE ),
 };
+
+fn CalculateScissorRectForSphere(
+	Mat4f& camera_space_matrix,
+	Mat4f& camera_projection_matrix,
+	[ u32, 2 ]& viewport_size,
+	Vec3f& sphere_center,
+	f32 sphere_radius ) : ScissorRect
+{
+	var Vec3f projected_sphere_center= sphere_center * camera_space_matrix;
+
+	var [ f32, 2 ] bounds_x= GetSphereAxisBounds( Vec2f( projected_sphere_center.x, projected_sphere_center.z ), sphere_radius );
+	var [ f32, 2 ] bounds_y= GetSphereAxisBounds( Vec2f( projected_sphere_center.y, projected_sphere_center.z ), sphere_radius );
+
+	var f32 scale_x= camera_projection_matrix.values[0][0];
+	var f32 scale_y= camera_projection_matrix.values[1][1];
+	var [ f32, 2 ] bounds_x_scaled[ bounds_x[0] * scale_x, bounds_x[1] * scale_x ];
+	var [ f32, 2 ] bounds_y_scaled[ bounds_y[0] * scale_y, bounds_y[1] * scale_y ];
+
+	var i32 min_x( ust::floor( f32( viewport_size[0] ) * ( bounds_x_scaled[0] * 0.5f + 0.5f ) ) );
+	var i32 max_x( ust::ceil ( f32( viewport_size[0] ) * ( bounds_x_scaled[1] * 0.5f + 0.5f ) ) );
+	var i32 min_y( ust::floor( f32( viewport_size[1] ) * ( bounds_y_scaled[0] * 0.5f + 0.5f ) ) );
+	var i32 max_y( ust::ceil ( f32( viewport_size[1] ) * ( bounds_y_scaled[1] * 0.5f + 0.5f ) ) );
+
+	return ScissorRect
+	{
+		.start[ min_x, min_y ],
+		.size[ ( ust::max( 0, max_x - min_x ) ), ( ust::max( 0, max_y - min_y ) ) ],
+	};
+}
+
+// Use method mentioned in the article "2D Polyhedral Bounds of a Clipped, Perspective-Projected 3D Sphere"
+//  by Michael Mara, Morgan McGuire.
+//
+// Returns a pair of near and far values.
+// Returns valid huge bounds if is inside the sphere.
+// Returns invalid bounds if the sphere is invisible.
+fn GetSphereAxisBounds( Vec2f& sphere_center, f32 sphere_radius ) : [ f32, 2 ]
+{
+	var f32 inf= 999999.0f;
+
+	var f32 singned_distance_to_z_near= sphere_center.y - c_z_near;
+
+	if( singned_distance_to_z_near <= -sphere_radius )
+	{
+		// The sphere is behind the camera - return empty bounds.
+		return ust::make_array( inf, -inf );
+	}
+
+	var f32 radius_squared= sphere_radius * sphere_radius;
+	var f32 distance_to_center_squared= sphere_center.SquareLength();
+	var f32 tangent_length_squared= distance_to_center_squared - radius_squared;
+
+	if( tangent_length_squared <= 0.0f )
+	{
+		// The sphere is within camera - return the whole range.
+		return ust::make_array( -inf, inf );
+	}
+
+	var f32 tangent_length= ust::sqrt( tangent_length_squared );
+
+	var Vec2f scaled_direction_to_center= sphere_center * ( tangent_length / distance_to_center_squared );
+
+	var Vec2f near_intersection_point(
+		scaled_direction_to_center.x * tangent_length - scaled_direction_to_center.y * sphere_radius,
+		scaled_direction_to_center.y * tangent_length + scaled_direction_to_center.x * sphere_radius );
+
+	var Vec2f far_intersection_point(
+		scaled_direction_to_center.x * tangent_length + scaled_direction_to_center.y * sphere_radius,
+		scaled_direction_to_center.y * tangent_length - scaled_direction_to_center.x * sphere_radius );
+
+	var [ f32, 2 ] mut bounds= zero_init; // Set later
+
+	var f32 side_step_squared= radius_squared - singned_distance_to_z_near * singned_distance_to_z_near;
+
+	if( side_step_squared >= 0.0f )
+	{
+		var f32 side_step= ust::sqrt( side_step_squared );
+
+		if( near_intersection_point.y < c_z_near )
+		{
+			bounds[0]= ( sphere_center.x - side_step ) / c_z_near;
+		}
+		else
+		{
+			bounds[0]= near_intersection_point.x / near_intersection_point.y;
+		}
+
+		if( far_intersection_point.y < c_z_near )
+		{
+			bounds[1]= ( sphere_center.x + side_step ) / c_z_near;
+		}
+		else
+		{
+			bounds[1]= far_intersection_point.x / far_intersection_point.y;
+		}
+	}
+	else
+	{
+		bounds[0]= near_intersection_point.x / near_intersection_point.y;
+		bounds[1]= far_intersection_point.x / far_intersection_point.y;
+	}
+
+	return bounds;
+}
 
 } // namespace PM

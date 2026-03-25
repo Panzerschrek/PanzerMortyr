@@ -227,4 +227,80 @@ fn GetLightForPoint(
 	return result_light;
 }
 
+fn GetLightForPointFromDynamicLightSources(
+	GameParams& game_params,
+	ust::array_view_imut</WorldDrawingInfo::DynamicLightSource/> dynamic_light_sources,
+	Vec3f& point,
+	f32 radius,
+	Mat4f& inverse_rotation_matrix ) : SphericalHarmonicsRGB
+{
+	var SphericalHarmonicsRGB mut result_light
+	[
+		{ .directional_components= Vec3f::MakeZero(), .constant_component= 0.0f } ...
+	];
+
+	var f32 constexpr c_min_light_square_distance= 1.0f;
+	var f32 constexpr c_max_source_light_power= 3.0f;
+
+	foreach( &light_source : dynamic_light_sources )
+	{
+		// This code should (roughly) match the same code in the dynamic lighting shader!
+
+		var Vec3f vector_to_light= light_source.position - point;
+
+		var f32 square_distance= ust::max( vector_to_light.SquareLength(), c_min_light_square_distance );
+
+		var f32 power_at_given_distance=
+			ust::min( c_max_source_light_power, light_source.power / square_distance - c_dynamic_lights_power_bias );
+
+		if( power_at_given_distance <= 0.0f )
+		{
+			// Too far away and thus contribution of this light source is negligible.
+			continue;
+		}
+
+		var f32 distance= ust::sqrt( square_distance );
+
+		var Vec3f normalized_light_direction= ( vector_to_light / distance ) * inverse_rotation_matrix;
+
+		// If distance is less than object radius, reduce directional component weight,
+		// since now this light shines from within.
+		var f32 directional_component_weight= ust::min( distance / radius, 1.0f );
+
+		auto& in_color= game_params.light_colors[ light_source.color_index & 31u ];
+
+		for( auto mut c= 0u; c < 3u; ++c )
+		{
+			var f32 component_value= power_at_given_distance * ( f32( in_color[ 2u - c ] ) / 255.0f );
+
+			result_light[c].directional_components+=
+				( component_value * directional_component_weight ) * normalized_light_direction;
+
+			result_light[c].constant_component+= component_value;
+		}
+	}
+
+	return result_light;
+}
+
+var f32 c_dynamic_lights_power_bias= 1.0f / 2.0f; // This constant should match the same value in the shader!
+
+fn GetDynamicLightRadius( WorldDrawingInfo::DynamicLightSource& dynamic_light_source ) : f32
+{
+	// Assuming light formula is
+	// .. power / ( distance * distance ) - bias
+	return ust::sqrt( dynamic_light_source.power / c_dynamic_lights_power_bias );
+}
+
+fn GetDynamicLightBBox( WorldDrawingInfo::DynamicLightSource& dynamic_light_source ) : BBox3f
+{
+	var f32 radius= GetDynamicLightRadius( dynamic_light_source );
+
+	return BBox3f
+	{
+		.min= dynamic_light_source.position - Vec3f( radius, radius, radius ),
+		.max= dynamic_light_source.position + Vec3f( radius, radius, radius ),
+	};
+}
+
 } // namespace PM
