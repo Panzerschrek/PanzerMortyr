@@ -5,15 +5,14 @@ import "/string_conversions.iu"
 
 import "/common_lib/materials_file.iu"
 
-import "bounding_boxes_hierarchy_visiting.iu"
+import "billboards.iu"
 import "breaking_glass.iu"
 import "cluster_utils.iu"
 import "fog.iu"
 import "gl_functions.iu"
 import "image_loading.iu"
 import "map_quad_utils.iu"
-import "math_constants.iu"
-import "plane.iu"
+import "visibility_calculation.iu"
 import "world_drawer.iu"
 
 namespace PM
@@ -133,9 +132,9 @@ fn WorldDrawer::constructor(
 		ust::nullptr</byte8/>() + GetStructFieldOffset</ TestPrimitiveVertex, "color" />() ) );
 }
 
-fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingViewportInfo& viewport_info ) : DrawingStats
+fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingViewportInfo& viewport_info ) : WorldDrawingStats
 {
-	var DrawingStats mut drawing_stats= zero_init;
+	var WorldDrawingStats mut drawing_stats= zero_init;
 
 	if( map_index_ != drawing_info.map_index )
 	{
@@ -212,7 +211,7 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 
 	var Mat4f view_matrix= translation_matrix * rotation_and_projection_matrix;
 
-	var Mat4f firt_person_weapon_distortion_matrix= CalculateFirstPersonWeaponProjectionDistortionMatrix();
+	var Mat4f firt_person_weapon_distortion_matrix= CalculateFirstPersonWeaponDistortionMatrix();
 
 	var CameraClipPlanes camera_clip_planes=
 		CreateCameraClipPlanes( drawing_info.camera_params, viewport_info.view_aspect );
@@ -322,10 +321,9 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 
 		// It looks like frame numbers above maximum are replaced with zeros.
 		// This seems to be used by weapon shot animations.
-		var size_type in_frame( model_object.frame );
-		var size_type frame= ( in_frame < model.num_frames ? in_frame : 0s );
+		var u32 frame= ( model_object.frame < model.num_frames ? model_object.frame : 0u );
 
-		var BBox3f& frame_bbox= model.frame_bboxes[ frame ];
+		var BBox3f& frame_bbox= model.frame_bboxes[ size_type( frame ) ];
 
 		if( !model_object.first_person_weapon )
 		{
@@ -461,7 +459,7 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 			ModelToDraw
 			{
 				.file_name= model_object.model_file_name,
-				.frame( frame ),
+				.frame= frame,
 				.matrix= model_full_matrix,
 				.light= light,
 			} );
@@ -618,15 +616,15 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 
 	ResetDynamicPolygonsBuffer( semitransparent_polygons_buffer_ );
 
-	BuildBillboardPolygons(
-		drawing_info.billboards,
-		billboards_description_,
-		drawing_info.camera_params,
-		camera_clip_planes,
-		visible_clusters_bbox,
-		semitransparent_polygons_buffer_.vertices,
-		semitransparent_polygons_buffer_.indices,
-		drawing_stats );
+	drawing_stats.num_visible_billboards+=
+		BuildBillboardPolygons(
+			drawing_info.billboards,
+			billboards_description_,
+			drawing_info.camera_params,
+			camera_clip_planes,
+			visible_clusters_bbox,
+			semitransparent_polygons_buffer_.vertices,
+			semitransparent_polygons_buffer_.indices );
 
 	{
 		var MapsDescription& maps_description= maps_description_.deref();
@@ -788,9 +786,7 @@ fn WorldDrawer::SetMap( mut this, u32 map_index )
 		zvox_data.clusters.size(),
 		ClusterDrawData
 		{
-			.first_vertex_index= 0s, // Set later.
-			.first_index= 0s, // Set later.
-			.num_indices= 0s, // Set later.
+			.geometry_buffer_chunk= zero_init, // Set later.
 			.has_glass_quads= false, // Set later.
 			.has_liquid_quads= false, // Set later.
 		} );
@@ -937,9 +933,13 @@ fn WorldDrawer::SetMap( mut this, u32 map_index )
 
 		var ClusterDrawData &mut cluster_draw_data= pair.second;
 
-		cluster_draw_data.first_vertex_index= cluser_first_vertex_index;
-		cluster_draw_data.first_index= cluster_first_index;
-		cluster_draw_data.num_indices= indices.size() - cluster_first_index;
+		cluster_draw_data.geometry_buffer_chunk=
+			GeometryBufferChunk
+			{
+				.first_vertex_index( cluser_first_vertex_index ),
+				.first_index( cluster_first_index ),
+				.num_indices( indices.size() - cluster_first_index ),
+			};
 
 		cluster_draw_data.has_glass_quads= has_glass_quads;
 		cluster_draw_data.has_liquid_quads= has_liquid_quads;
@@ -948,7 +948,7 @@ fn WorldDrawer::SetMap( mut this, u32 map_index )
 	// Combine all map quads with special material "valve" into a single mesh for each animation frame,
 	// in order to be able to draw all quads at once.
 	// It's fine, sice we have not so many such quads.
-	var [ SpecialMaterialQuadsMesh, 4 ] mut special_material_valve_meshes= zero_init;
+	var [ GeometryBufferChunk, 4 ] mut special_material_valve_meshes= zero_init;
 	for( auto mut i= 0u; i < 4u; ++i )
 	{
 		var size_type first_vertex_index= vertices.size();
@@ -991,18 +991,18 @@ fn WorldDrawer::SetMap( mut this, u32 map_index )
 		}
 
 		special_material_valve_meshes[i]=
-			SpecialMaterialQuadsMesh
+			GeometryBufferChunk
 			{
-				.first_vertex_index= first_vertex_index,
-				.first_index= first_index,
-				.num_indices= indices.size() - first_index,
+				.first_vertex_index( first_vertex_index ),
+				.first_index( first_index ),
+				.num_indices( indices.size() - first_index ),
 			};
 	}
 
 	// Combine all map quads with special material "film" into a single mesh for each animation frame,
 	// in order to be able to draw all quads at once.
 	// It's fine, sice we have not so many such quads.
-	var [ SpecialMaterialQuadsMesh, 8 ] mut special_material_film_meshes= zero_init;
+	var [ GeometryBufferChunk, 8 ] mut special_material_film_meshes= zero_init;
 	for( auto mut i= 0u; i < 8u; ++i )
 	{
 		var size_type first_vertex_index= vertices.size();
@@ -1048,11 +1048,11 @@ fn WorldDrawer::SetMap( mut this, u32 map_index )
 		}
 
 		special_material_film_meshes[i]=
-			SpecialMaterialQuadsMesh
+			GeometryBufferChunk
 			{
-				.first_vertex_index= first_vertex_index,
-				.first_index= first_index,
-				.num_indices= indices.size() - first_index,
+				.first_vertex_index( first_vertex_index ),
+				.first_index( first_index ),
+				.num_indices( indices.size() - first_index ),
 			};
 	}
 
@@ -1118,10 +1118,10 @@ fn WorldDrawer::SetMap( mut this, u32 map_index )
 		} );
 }
 
-fn WorldDrawer::CreateSemitransparentMapPolygons(
+fn CreateSemitransparentMapPolygons(
 	MapDrawData& map_data,
 	MaterialsDescription::Block& materials_block,
-	ust::array_view_imut</bool/> visible_room_cluster_flags,
+	VisibleRoomClusterFlagsImut visible_room_cluster_flags,
 	ust::array_view_imut</WorldDrawingInfo::DynamicClusterObject/> dynamic_cluster_objects,
 	f32 time_s,
 	ust::vector</MapVertex/> &mut vertices,
@@ -1226,16 +1226,16 @@ fn WorldDrawer::CreateSemitransparentMapPolygons(
 	}
 }
 
-fn WorldDrawer::DrawMapPolygons(
+fn DrawMapPolygons(
 	MapDrawData& map_data,
-	ust::array_view_imut</bool/> visible_room_cluster_flags,
+	VisibleRoomClusterFlagsImut visible_room_cluster_flags,
 	BBox3f& visible_clusters_bbox,
 	ust::array_view_imut</WorldDrawingInfo::DynamicClusterObject/> dynamic_cluster_objects,
 	ShaderProgram &mut shader,
 	Mat4f& view_matrix,
 	f32 time_s,
 	GlobalLightParams& global_light_params,
-	DrawingStats &mut drawing_stats )
+	WorldDrawingStats &mut drawing_stats )
 {
 	var ust::array_view_imut</ZvoxCluster/> clusters= map_data.zvox_data.deref().clusters.range();
 
@@ -1283,11 +1283,11 @@ fn WorldDrawer::DrawMapPolygons(
 					continue;
 				}
 
-				auto& cluster_draw_data= map_data.clusters_draw_data[ cluster_index ];
+				var GeometryBufferChunk& geometry_buffer_chunk= map_data.clusters_draw_data[ cluster_index ].geometry_buffer_chunk;
 
-				ExecuteClusterMeshDrawing( cluster_draw_data );
+				ExecuteClusterMeshDrawing( geometry_buffer_chunk );
 
-				drawing_stats.num_visible_map_triangles+= u32( cluster_draw_data.num_indices ) / 3u;
+				drawing_stats.num_visible_map_triangles+= geometry_buffer_chunk.num_indices / 3u;
 			}
 
 			++drawing_stats.num_room_visible_clusters;
@@ -1300,12 +1300,12 @@ fn WorldDrawer::DrawMapPolygons(
 	// Draw all geometry with animated special material "valve" in single draw call.
 	// It's fine to draw all quads with such muterials at once, since usually they are not so many.
 	ExecuteDrawingMeshesWithValveSpecialMaterial( map_data.special_material_valve_meshes, time_s );
-	drawing_stats.num_visible_map_triangles+= u32( map_data.special_material_valve_meshes[0].num_indices ) / 3u;
+	drawing_stats.num_visible_map_triangles+= map_data.special_material_valve_meshes[0].num_indices / 3u;
 
 	// Draw all geometry with animated special material "film".
 	// It's fine to draw all quads with such muterials at once, since usually they are not so many.
 	ExecuteDrawingMeshesWithFilmSpecialMaterial( map_data.special_material_film_meshes, time_s );
-	drawing_stats.num_visible_map_triangles+= u32( map_data.special_material_film_meshes[0].num_indices ) / 3u;
+	drawing_stats.num_visible_map_triangles+= map_data.special_material_film_meshes[0].num_indices / 3u;
 
 	var RoomClustersHierarchy& room_clusters_hierarchy= map_data.room_clusters_hierarchy.deref();
 
@@ -1334,18 +1334,18 @@ fn WorldDrawer::DrawMapPolygons(
 
 		shader.SetUniform( "vu_matrix", Mat4f::MakeTranslation( dynamic_cluster_object.translation ) * view_matrix );
 
-		auto& cluster_draw_data= map_data.clusters_draw_data[ cluster_index ];
+		var GeometryBufferChunk& geometry_buffer_chunk= map_data.clusters_draw_data[ cluster_index ].geometry_buffer_chunk;
 
-		ExecuteClusterMeshDrawing( cluster_draw_data );
+		ExecuteClusterMeshDrawing( geometry_buffer_chunk );
 
-		drawing_stats.num_visible_map_triangles+= u32( cluster_draw_data.num_indices ) / 3u;
+		drawing_stats.num_visible_map_triangles+= geometry_buffer_chunk.num_indices / 3u;
 	}
 }
 
-fn WorldDrawer::DrawMapPolygonsWithDynamicLights(
+fn DrawMapPolygonsWithDynamicLights(
 	GameParams& game_params,
 	MapDrawData& map_data,
-	ust::array_view_imut</bool/> visible_room_cluster_flags,
+	VisibleRoomClusterFlagsImut visible_room_cluster_flags,
 	BBox3f& visible_clusters_bbox,
 	ust::array_view_imut</WorldDrawingInfo::DynamicClusterObject/> dynamic_cluster_objects,
 	ShaderProgram &mut shader,
@@ -1354,7 +1354,7 @@ fn WorldDrawer::DrawMapPolygonsWithDynamicLights(
 	ust::array_view_imut</WorldDrawingInfo::DynamicLightSource/> dynamic_light_sources,
 	ust::array_view_imut</ScissorRect/> dynamic_light_scissor_rects,
 	[ f32, 3 ]& light_scale,
-	DrawingStats &mut drawing_stats )
+	WorldDrawingStats &mut drawing_stats )
 {
 	if( dynamic_light_sources.empty() )
 	{
@@ -1451,7 +1451,7 @@ fn WorldDrawer::DrawMapPolygonsWithDynamicLights(
 						continue;
 					}
 
-					ExecuteClusterMeshDrawing( map_data.clusters_draw_data[ cluster_index ] );
+					ExecuteClusterMeshDrawing( map_data.clusters_draw_data[ cluster_index ].geometry_buffer_chunk );
 				}
 			}
 
@@ -1496,7 +1496,7 @@ fn WorldDrawer::DrawMapPolygonsWithDynamicLights(
 			// Move light position relative to this cluster.
 			shader.SetUniform( "fu_light_position", light_source.position - dynamic_cluster_object.translation );
 
-			ExecuteClusterMeshDrawing( map_data.clusters_draw_data[ cluster_index ] );
+			ExecuteClusterMeshDrawing( map_data.clusters_draw_data[ cluster_index ].geometry_buffer_chunk );
 		}
 
 		++drawing_stats.num_visible_dynamic_lights;
@@ -1505,32 +1505,25 @@ fn WorldDrawer::DrawMapPolygonsWithDynamicLights(
 	unsafe( glDisable( GLenum( GL_SCISSOR_TEST ) ) );
 }
 
-fn WorldDrawer::ExecuteClusterMeshDrawing( ClusterDrawData& cluster_draw_data )
+fn ExecuteClusterMeshDrawing( GeometryBufferChunk& geometry_buffer_chunk )
 {
 	unsafe( glDrawElementsBaseVertex(
 		GLenum( GL_TRIANGLES ),
-		GLsizei( cluster_draw_data.num_indices ),
+		GLsizei( geometry_buffer_chunk.num_indices ),
 		GLenum( GL_UNSIGNED_SHORT ),
-		ust::nullptr</byte8/>() + typeinfo</u16/>.size_of * cluster_draw_data.first_index,
-		GLint( cluster_draw_data.first_vertex_index ) ) );
+		ust::nullptr</byte8/>() + typeinfo</u16/>.size_of * size_type( geometry_buffer_chunk.first_index ),
+		GLint( geometry_buffer_chunk.first_vertex_index ) ) );
 }
 
-fn WorldDrawer::ExecuteDrawingMeshesWithValveSpecialMaterial( [ SpecialMaterialQuadsMesh, 4 ]& meshes, f32 time_s )
+fn ExecuteDrawingMeshesWithValveSpecialMaterial( [ GeometryBufferChunk, 4 ]& meshes, f32 time_s )
 {
 	var u32 constexpr num_frames( typeinfo</ typeof( meshes ) />.element_count );
 	var u32 frame= u32( time_s * 16.0f ) % num_frames;
 
-	var SpecialMaterialQuadsMesh& mesh= meshes[ frame ];
-
-	unsafe( glDrawElementsBaseVertex(
-		GLenum( GL_TRIANGLES ),
-		GLsizei( mesh.num_indices ),
-		GLenum( GL_UNSIGNED_SHORT ),
-		ust::nullptr</byte8/>() + typeinfo</u16/>.size_of * mesh.first_index,
-		GLint( mesh.first_vertex_index ) ) );
+	ExecuteClusterMeshDrawing( meshes[ frame ] );
 }
 
-fn WorldDrawer::ExecuteDrawingMeshesWithFilmSpecialMaterial( [ SpecialMaterialQuadsMesh, 8 ]& meshes, f32 time_s )
+fn ExecuteDrawingMeshesWithFilmSpecialMaterial( [ GeometryBufferChunk, 8 ]& meshes, f32 time_s )
 {
 	// Perform mirrored animation. It seems like the original does exactly this.
 	var u32 constexpr num_frames( typeinfo</ typeof( meshes ) />.element_count );
@@ -1542,22 +1535,15 @@ fn WorldDrawer::ExecuteDrawingMeshesWithFilmSpecialMaterial( [ SpecialMaterialQu
 		frame= num_frames - 1u - frame;
 	}
 
-	var SpecialMaterialQuadsMesh& mesh= meshes[ frame ];
-
-	unsafe( glDrawElementsBaseVertex(
-		GLenum( GL_TRIANGLES ),
-		GLsizei( mesh.num_indices ),
-		GLenum( GL_UNSIGNED_SHORT ),
-		ust::nullptr</byte8/>() + typeinfo</u16/>.size_of * mesh.first_index,
-		GLint( mesh.first_vertex_index ) ) );
+	ExecuteClusterMeshDrawing( meshes[ frame ] );
 }
 
-fn WorldDrawer::DrawModels(
+fn DrawModels(
 	ModelsMap& models_map,
 	ust::array_view_imut</ModelToDraw/> models_to_draw,
 	ShaderProgram &mut shader,
 	ust::optional_ref_imut</Texture/> stub_texture,
-	DrawingStats &mut drawing_stats )
+	WorldDrawingStats &mut drawing_stats )
 {
 	var ResourceString mut prev_model_file_name= zero_init;
 
@@ -1608,7 +1594,7 @@ fn WorldDrawer::DrawModels(
 			model.index_buffer.Bind();
 		}
 
-		if( model.num_frames > 1s )
+		if( model.num_frames > 1u )
 		{
 			// Change vertex attrib pointer for positions to draw requirest frame.
 			// TODO - move this code into a separate function?
@@ -1620,7 +1606,7 @@ fn WorldDrawer::DrawModels(
 				GLenum( GL_FLOAT ),
 				GLboolean(0),
 				GLsizei( typeinfo</ObbVertexPosition/>.size_of ),
-				ust::nullptr</byte8/>() + size_type( model_to_draw.frame ) * model.num_vertices * typeinfo</ObbVertexPosition/>.size_of ) );
+				ust::nullptr</byte8/>() + size_type( model_to_draw.frame * model.num_vertices ) * typeinfo</ObbVertexPosition/>.size_of ) );
 		}
 
 		shader.SetUniform( "vu_matrix", model_to_draw.matrix );
@@ -1648,20 +1634,20 @@ fn WorldDrawer::DrawModels(
 
 		unsafe( glDrawElements(
 			GLenum( GL_TRIANGLES ),
-			GLsizei( model.num_triangles * 3s ),
+			GLsizei( model.num_triangles * 3u ),
 			GLenum( GL_UNSIGNED_SHORT ),
 			ust::nullptr</byte8/>() ) );
 
 		++drawing_stats.num_visible_models;
-		drawing_stats.num_visivle_model_triangles+= u32( model.num_triangles );
+		drawing_stats.num_visivle_model_triangles+= model.num_triangles;
 	}
 }
 
-fn WorldDrawer::DrawFirstPersonWeaponModels(
+fn DrawFirstPersonWeaponModels(
 	ModelsMap& models_map,
 	ust::array_view_imut</ModelToDraw/> models_to_draw,
 	ShaderProgram &mut shader,
-	DrawingStats &mut drawing_stats )
+	WorldDrawingStats &mut drawing_stats )
 {
 	// First draw all models with depth test disabled.
 	// This clears depth buffer with model depth values.
@@ -1704,7 +1690,7 @@ fn WorldDrawer::DrawFirstPersonWeaponModels(
 
 		model.index_buffer.Bind();
 
-		if( model.num_frames > 1s )
+		if( model.num_frames > 1u )
 		{
 			// Change vertex attrib pointer for positions to draw requirest frame.
 			// TODO - move this code into a separate function?
@@ -1716,14 +1702,14 @@ fn WorldDrawer::DrawFirstPersonWeaponModels(
 				GLenum( GL_FLOAT ),
 				GLboolean(0),
 				GLsizei( typeinfo</ObbVertexPosition/>.size_of ),
-				ust::nullptr</byte8/>() + size_type( model_to_draw.frame ) * model.num_vertices * typeinfo</ObbVertexPosition/>.size_of ) );
+				ust::nullptr</byte8/>() + size_type( model_to_draw.frame * model.num_vertices ) * typeinfo</ObbVertexPosition/>.size_of ) );
 		}
 
 		shader.SetUniform( "vu_matrix", model_to_draw.matrix );
 
 		unsafe( glDrawElements(
 			GLenum( GL_TRIANGLES ),
-			GLsizei( model.num_triangles * 3s ),
+			GLsizei( model.num_triangles * 3u ),
 			GLenum( GL_UNSIGNED_SHORT ),
 			ust::nullptr</byte8/>() ) );
 	}
@@ -1733,7 +1719,7 @@ fn WorldDrawer::DrawFirstPersonWeaponModels(
 	DrawModels( models_map, models_to_draw, shader, ust::null_optional_ref, drawing_stats );
 }
 
-fn WorldDrawer::DrawSemitransparentGeometry(
+fn DrawSemitransparentGeometry(
 	DynamicPolygonsBuffer& dynamic_polygons_buffer,
 	ShaderProgram &mut shader,
 	Texture& map_textures_array,
@@ -1766,7 +1752,7 @@ fn WorldDrawer::DrawSemitransparentGeometry(
 		GLenum( GL_TRIANGLES ), GLsizei( num_indices ), GLenum( GL_UNSIGNED_SHORT ), ust::nullptr</byte8/>() ) );
 }
 
-fn WorldDrawer::UploadDynamicPolygonsBuffer( DynamicPolygonsBuffer &mut dynamic_polygons_buffer )
+fn UploadDynamicPolygonsBuffer( DynamicPolygonsBuffer &mut dynamic_polygons_buffer )
 {
 	var size_type num_vertices=
 		ust::min( dynamic_polygons_buffer.vertices.size(), dynamic_polygons_buffer.max_vertices );
@@ -1783,7 +1769,7 @@ fn WorldDrawer::UploadDynamicPolygonsBuffer( DynamicPolygonsBuffer &mut dynamic_
 	unsafe( glBufferSubData( GLenum( GL_ELEMENT_ARRAY_BUFFER ), GLintptr(0), GLsizeiptr( indices_range.size() ), indices_range.data() ) );
 }
 
-fn WorldDrawer::ResetDynamicPolygonsBuffer( DynamicPolygonsBuffer &mut dynamic_polygons_buffer )
+fn ResetDynamicPolygonsBuffer( DynamicPolygonsBuffer &mut dynamic_polygons_buffer )
 {
 	dynamic_polygons_buffer.vertices.clear();
 	dynamic_polygons_buffer.indices.clear();
@@ -1817,16 +1803,8 @@ fn LoadMapTextures(
 	GLCapabilities& gl_capabilities ) : Texture
 {
 	auto mut lock= game_filesystem_ptr.lock_mut();
-	return LoadMapTextures( materials_block, lock.deref(), console_out, settings, gl_capabilities );
-}
+	var GameFilesystem &mut game_filesystem= lock.deref();
 
-fn LoadMapTextures(
-	MaterialsDescription::Block& materials_block,
-	GameFilesystem &mut game_filesystem,
-	ConsoleOutPtr& console_out,
-	Settings& settings,
-	GLCapabilities& gl_capabilities ) : Texture
-{
 	var Texture texture= Texture::Create( GLenum( GL_TEXTURE_2D_ARRAY ) );
 	texture.Bind();
 
@@ -2219,589 +2197,6 @@ fn PrepareVertexArrayObjectWithMapVertexFormat(
 		ust::nullptr</byte8/>() + GetStructFieldOffset</MapVertex, "fog_params"/>() ) );
 }
 
-fn BuildBillboardPolygons(
-	ust::array_view_imut</WorldDrawingInfo::Billboard/> billboards,
-	ust::array_view_imut</BillboardDescription/> billboards_description,
-	WorldDrawingInfo::CameraParams& camera_params,
-	CameraClipPlanes& camera_clip_planes,
-	BBox3f& visible_clusters_bbox,
-	ust::vector</MapVertex/> &mut vertices,
-	ust::vector</u16/> &mut indices,
-	WorldDrawer::DrawingStats &mut drawing_stats )
-{
-	// This scale was tuned so that fixed-size billboards look properly.
-	var f32 scale_for_constant_screen_size_billboards= ust::tan( camera_params.fov_x * 0.5f ) / 512.0f;
-
-	foreach( &billboard : billboards ) label billboards_loop
-	{
-		var size_type billboard_index( billboard.billboard_index );
-		if( billboard_index >= billboards_description.size() )
-		{
-			continue;
-		}
-
-		var BillboardDescription& billboard_description= billboards_description[ billboard_index ];
-
-		var f32 mut radius=
-			billboard.scale *
-				ust::sqrt(
-					f32(
-						billboard_description.dx * billboard_description.dx +
-						billboard_description.dy * billboard_description.dy ) );
-
-		if( billboard.alignment == WorldDrawingInfo::Billboard::Alignment::ToCameraWithConstantScreenSize )
-		{
-			radius*=
-				( billboard.position - camera_params.position ).Length() * scale_for_constant_screen_size_billboards;
-		}
-
-		// Perform clipping by camera planes (reject billboards outside view).
-		foreach( &clip_plane : camera_clip_planes )
-		{
-			var f32 distance= clip_plane.GetDistanceForPoint( billboard.position );
-			if( distance > radius )
-			{
-				continue label billboards_loop;
-			}
-		}
-
-		var BBox3f billboard_bbox
-		{
-			.min= billboard.position - Vec3f( radius, radius, radius ),
-			.max= billboard.position + Vec3f( radius, radius, radius ),
-		};
-
-		// Perform check with visible clusters bbox in order to reject billboards located in another rooms.
-		// Such rough check is mostly fine.
-		// Performing more compicated check against all visible room clusters is too expensice for billboards.
-		if( !visible_clusters_bbox.Instersects( billboard_bbox ) )
-		{
-			continue;
-		}
-
-		var u32 constexpr num_tiles_in_texture=
-			MaterialsDescription::c_texture_file_num_tiles_x * MaterialsDescription::c_texture_file_num_tiles_y;
-
-		var f32 mut texture_layer= 0.0f;
-		var u32 mut extra_tc_scale_log2= 0u;
-
-		if( billboard_description.tek >= BillboardConstants::c_texture2_first_tile &&
-			billboard_description.tek <= BillboardConstants::c_texture2_last_tile )
-		{
-			var u32 base_texture_index= 37u * num_tiles_in_texture;
-			if( billboard_description.tek < BillboardConstants::c_texture2_first_tile + 4u )
-			{
-				// Upper 4 subtiles.
-				texture_layer= f32( base_texture_index + billboard_description.tek - BillboardConstants::c_texture2_first_tile );
-			}
-			else if( billboard_description.tek >= BillboardConstants::c_texture2_first_tile + 12u )
-			{
-				// Lower 4 subtiles.
-				texture_layer= f32( base_texture_index + 4u + billboard_description.tek - BillboardConstants::c_texture2_first_tile - 12u );
-			}
-
-			extra_tc_scale_log2= 2u;
-		}
-		else
-		{
-			var u32 mut base_texture_index= 0u;
-			switch( billboard_description.tek )
-			{
-				BillboardConstants::c_texture0 -> { base_texture_index= 30u; },
-				BillboardConstants::c_texture1 -> { base_texture_index= 31u; },
-				// Alpha-tested version of ZBRA001*.BMP - textures.
-				BillboardConstants::c_texture1_alpha_test -> { base_texture_index= 35u; },
-				// Black version of ZBRA001*.BMP - textures.
-				BillboardConstants::c_texture1_black -> { base_texture_index= 36u; },
-				BillboardConstants::c_texture4 -> { base_texture_index= 34u; },
-				default -> {},
-			}
-
-			texture_layer=
-				f32(
-					base_texture_index * num_tiles_in_texture +
-					billboard_description.xp / MaterialsDescription::c_texture_size +
-					billboard_description.yp / MaterialsDescription::c_texture_size * MaterialsDescription::c_texture_file_num_tiles_x );
-		}
-
-		var size_type base_vertex= vertices.size();
-
-		auto [ mut u_vec, mut v_vec ]=
-			GetBillboardAxes( billboard, camera_params.position, scale_for_constant_screen_size_billboards );
-
-		u_vec*= f32( billboard_description.dx );
-		v_vec*= f32( billboard_description.dy );
-
-		var [ Vec3f, 4 ] positions
-		[
-			billboard.position - u_vec - v_vec,
-			billboard.position + u_vec - v_vec,
-			billboard.position - u_vec + v_vec,
-			billboard.position + u_vec + v_vec,
-		];
-
-		var [ u32, 2 ] tc_base
-		[
-			billboard_description.xp % MaterialsDescription::c_texture_size,
-			billboard_description.yp % MaterialsDescription::c_texture_size
-		];
-
-		var [ [ f32, 2 ], 2 ] tex_coords
-		[
-			[
-				f32( tc_base[0] ) / f32( MaterialsDescription::c_texture_size ),
-				f32( tc_base[1] ) / f32( MaterialsDescription::c_texture_size ),
-			],
-			[
-				f32( tc_base[0] + ( ( billboard_description.xk - billboard_description.xp ) >> extra_tc_scale_log2 ) ) / f32( MaterialsDescription::c_texture_size ),
-				f32( tc_base[1] + ( ( billboard_description.yk - billboard_description.yp ) >> extra_tc_scale_log2 ) ) / f32( MaterialsDescription::c_texture_size ),
-			],
-		];
-
-		var u8 brightness( ust::max( 0.0f, ust::min( billboard.brightness * 255.0f, 255.0f ) ) );
-		var [ u8, 4 ] light[ brightness ... ];
-
-		vertices.push_back(
-			MapVertex
-			{
-				.position[ positions[0].x, positions[0].y, positions[0].z ],
-				.light= light,
-				.tex_coordinates[ tex_coords[0][0], tex_coords[0][1], texture_layer ],
-				.fog_params= zero_init,
-			} );
-
-		vertices.push_back(
-			MapVertex
-			{
-				.position[ positions[1].x, positions[1].y, positions[1].z ],
-				.light= light,
-				.tex_coordinates[ tex_coords[1][0], tex_coords[0][1], texture_layer ],
-				.fog_params= zero_init,
-			} );
-
-		vertices.push_back(
-			MapVertex
-			{
-				.position[ positions[2].x, positions[2].y, positions[2].z ],
-				.light= light,
-				.tex_coordinates[ tex_coords[0][0], tex_coords[1][1], texture_layer ],
-				.fog_params= zero_init,
-			} );
-
-		vertices.push_back(
-			MapVertex
-			{
-				.position[ positions[3].x, positions[3].y, positions[3].z ],
-				.light= light,
-				.tex_coordinates[ tex_coords[1][0], tex_coords[1][1], texture_layer ],
-				.fog_params= zero_init,
-			} );
-
-		indices.push_back( u16( base_vertex + 2s ) );
-		indices.push_back( u16( base_vertex + 1s ) );
-		indices.push_back( u16( base_vertex + 0s ) );
-		indices.push_back( u16( base_vertex + 1s ) );
-		indices.push_back( u16( base_vertex + 2s ) );
-		indices.push_back( u16( base_vertex + 3s ) );
-
-		++drawing_stats.num_visible_billboards;
-	}
-}
-
-fn GetBillboardAxes(
-	WorldDrawingInfo::Billboard& billboard,
-	Vec3f& camera_position,
-	f32 scale_for_constant_screen_size_billboards ) : [ Vec3f, 2 ]
-{
-	var Vec3f vec_to_camera= billboard.position - camera_position;
-
-	type Alignment= WorldDrawingInfo::Billboard::Alignment;
-
-	switch( billboard.alignment )
-	{
-		Alignment::ZAxis ->
-		{
-			var Vec3f mut v_vec( 0.0f, 0.0f, 1.0f );
-			var Vec3f mut u_vec= vec_to_camera.Cross( v_vec );
-
-			var f32 u_vec_length= u_vec.Length();
-			if( u_vec_length == 0.0f )
-			{
-				u_vec= Vec3f( 0.0f, 1.0f, 0.0f );
-			}
-			else
-			{
-				u_vec /= u_vec_length;
-			}
-
-			return ust::make_array( billboard.scale * u_vec, billboard.scale * v_vec );
-		},
-		Alignment::ToCamera ->
-		{
-			var Vec3f mut u_vec= vec_to_camera.Cross( Vec3f( 0.0f, 0.0f, 1.0f ) );
-			var f32 u_vec_length= u_vec.Length();
-
-			if( u_vec_length == 0.0f )
-			{
-				u_vec= Vec3f( 0.0f, 1.0f, 0.0f );
-			}
-			else
-			{
-				u_vec /= u_vec_length;
-			}
-
-			var Vec3f mut v_vec= u_vec.Cross( vec_to_camera );
-			var f32 v_vec_length= v_vec.Length();
-
-			if( v_vec_length == 0.0f )
-			{
-				v_vec= Vec3f( 1.0f, 0.0f, 0.0f );
-			}
-			else
-			{
-				v_vec /= v_vec_length;
-			}
-
-			return ust::make_array( billboard.scale * u_vec, billboard.scale * v_vec );
-		},
-		Alignment::ToCameraWithConstantScreenSize ->
-		{
-			var Vec3f mut u_vec= vec_to_camera.Cross( Vec3f( 0.0f, 0.0f, 1.0f ) );
-			var f32 u_vec_length= u_vec.Length();
-
-			if( u_vec_length == 0.0f )
-			{
-				u_vec= Vec3f( 0.0f, 1.0f, 0.0f );
-			}
-			else
-			{
-				u_vec /= u_vec_length;
-			}
-
-			var Vec3f mut v_vec= u_vec.Cross( vec_to_camera );
-			var f32 v_vec_length= v_vec.Length();
-
-			if( v_vec_length == 0.0f )
-			{
-				v_vec= Vec3f( 1.0f, 0.0f, 0.0f );
-			}
-			else
-			{
-				v_vec /= v_vec_length;
-			}
-
-			var f32 scale= billboard.scale * vec_to_camera.Length() * scale_for_constant_screen_size_billboards;
-
-			return ust::make_array( u_vec * scale, v_vec * scale );
-		},
-		Alignment::ToCustomAxis ->
-		{
-			var Vec3f mut v_vec= billboard.custom_axis;
-			var f32 v_vec_length= v_vec.Length();
-
-			if( v_vec_length == 0.0f )
-			{
-				v_vec= Vec3f( 1.0f, 0.0f, 0.0f );
-			}
-			else
-			{
-				v_vec /= v_vec_length;
-			}
-
-			var Vec3f mut u_vec= vec_to_camera.Cross( v_vec );
-			var f32 u_vec_length= u_vec.Length();
-
-			if( u_vec_length == 0.0f )
-			{
-				u_vec= Vec3f( 0.0f, 1.0f, 0.0f );
-			}
-			else
-			{
-				u_vec /= u_vec_length;
-			}
-
-			return ust::make_array( billboard.scale * u_vec, billboard.scale * v_vec );
-		},
-	}
-}
-
-fn CreateClusterGlassPolygons(
-	ZvoxCluster& cluster,
-	ust::array_view_imut</ZmapQuad/> quads,
-	ZmapLamData& zmap_lam_data,
-	MaterialsDescription::Block& materials_block,
-	ust::vector</MapVertex/> &mut vertices,
-	ust::vector</u16/> &mut indices )
-{
-	var bool is_regular_cluster=
-		cluster.cluster_type == ZvoxCluster::c_cluster_type_regular |
-		cluster.cluster_type == ZvoxCluster::c_cluster_type_notes;
-
-	for( auto mut q= size_type( cluster.c.first_quad_index );
-		q < size_type( cluster.c.first_quad_index ) + size_type( cluster.num_quads );
-		++q )
-	{
-		var ZmapQuad& quad= quads[q];
-
-		var f32 mut texture_id= 0.0f;
-
-		switch( u32( quad.texture_id ) )
-		{
-			MaterialsDescription::c_special_material_texture_indices[ size_type( MaterialsDescription::SpecialMaterial::Glass ) ] ->
-			{
-				texture_id= f32( materials_block.special_material_indices[ size_type( MaterialsDescription::SpecialMaterial::Glass ) ] );
-			},
-			MaterialsDescription::c_special_material_texture_indices[ size_type( MaterialsDescription::SpecialMaterial::ArmoredGlass ) ] ->
-			{
-				texture_id= f32( materials_block.special_material_indices[ size_type( MaterialsDescription::SpecialMaterial::ArmoredGlass ) ] );
-			},
-			default -> { continue; }
-		}
-
-		var size_type base_vertex_index= vertices.size();
-
-		if( q >= zmap_lam_data.tessellated_quads.size() || zmap_lam_data.tessellated_quads[q].vertex_count == 0u )
-		{
-			// Fallback for cases where tessellated data isn't available - like for dynamic polygons (doors, elevators, buttons).
-
-			auto [ u_vec, v_vec ]= CalculateMapQuadTextureBasis( quad, is_regular_cluster );
-
-			var Vec2f tc_offset( f32( quad.tc_offset[0] ), f32( quad.tc_offset[1] ) );
-
-			// OpenGL uses normalized texture coordinates.
-			var f32 constexpr tc_scale= 1.0f / f32( MaterialsDescription::c_texture_size );
-
-			foreach( &vertex_shift : quad.vertices )
-			{
-				// Texture coordinates are calculated relative to vertex #0.
-				var Vec3f vertex_relative_shift
-				(
-					f32( i32( vertex_shift[0] ) - i32( quad.vertices[0][0] ) ),
-					f32( i32( vertex_shift[1] ) - i32( quad.vertices[0][1] ) ),
-					f32( i32( vertex_shift[2] ) - i32( quad.vertices[0][2] ) )
-				);
-
-				vertices.push_back(
-					MapVertex
-					{
-						.position
-						[
-							f32( cluster.c.center[0] + i32( vertex_shift[0] ) ),
-							f32( cluster.c.center[1] + i32( vertex_shift[1] ) ),
-							f32( cluster.c.center[2] + i32( vertex_shift[2] ) ),
-						],
-						// Stub light for dynamic glass polygons.
-						// It's fine to use it, since there are only a couple of such polygons in the whole game.
-						.light[ 48u8, 48u8, 48u8, 255u8 ],
-						.tex_coordinates
-						[
-							tc_scale * ( vertex_relative_shift.Dot( u_vec ) + tc_offset.x ),
-							tc_scale * ( vertex_relative_shift.Dot( v_vec ) + tc_offset.y ),
-							texture_id,
-						],
-						.fog_params= zero_init,
-					} );
-			}
-
-			PushQuadIndices( indices, base_vertex_index );
-		}
-		else
-		{
-			CreateTessellatedQuadGeometry(
-				zmap_lam_data, cluster, q, texture_id, base_vertex_index, vertices, indices );
-		}
-	}
-}
-
-fn CreateClusterLiquidPolygons(
-	ZvoxCluster& cluster,
-	ust::array_view_imut</ZmapQuad/> quads,
-	ZmapLamData& zmap_lam_data,
-	MaterialsDescription::Block& materials_block,
-	f32 time_s,
-	ust::vector</MapVertex/> &mut vertices,
-	ust::vector</u16/> &mut indices )
-{
-	 // Use such irrational wave length to avoid synchronous per-vertex animation for evenly-tesselated liquid quads.
-	var f32 constexpr wave_length= c_golden_ratio;
-	var f32 constexpr amplitude= 1.0f / 8.0f;
-	var f32 constexpr frequency= 1.0f / 4.0f;
-
-	var f32 phase= time_s * ( frequency * c_tau );
-
-	var f32 constexpr texture_scale= 1.0f / f32( MaterialsDescription::c_texture_size );
-
-	for( auto mut q= size_type( cluster.c.first_quad_index );
-		q < size_type( cluster.c.first_quad_index ) + size_type( cluster.num_quads );
-		++q )
-	{
-		var ZmapQuad& quad= quads[q];
-
-		var f32 mut texture_id= 0.0f;
-
-		switch( u32( quad.texture_id ) )
-		{
-			MaterialsDescription::c_special_material_texture_indices[ size_type( MaterialsDescription::SpecialMaterial::Water ) ] ->
-			{
-				texture_id= f32( materials_block.special_material_indices[ size_type( MaterialsDescription::SpecialMaterial::Water ) ] );
-			},
-			MaterialsDescription::c_special_material_texture_indices[ size_type( MaterialsDescription::SpecialMaterial::Acid ) ] ->
-			{
-				texture_id= f32( materials_block.special_material_indices[ size_type( MaterialsDescription::SpecialMaterial::Acid ) ] );
-			},
-			MaterialsDescription::c_special_material_texture_indices[ size_type( MaterialsDescription::SpecialMaterial::AcidAlternative ) ] ->
-			{
-				texture_id= f32( materials_block.special_material_indices[ size_type( MaterialsDescription::SpecialMaterial::AcidAlternative ) ] );
-			},
-			MaterialsDescription::c_special_material_texture_indices[ size_type( MaterialsDescription::SpecialMaterial::Lava ) ] ->
-			{
-				texture_id= f32( materials_block.special_material_indices[ size_type( MaterialsDescription::SpecialMaterial::Lava ) ] );
-			},
-			default -> { continue; }
-		}
-
-		var size_type base_vertex_index= vertices.size();
-
-		if( q < zmap_lam_data.tessellated_quads.size() && zmap_lam_data.tessellated_quads[q].vertex_count != 0u )
-		{
-			var size_type num_vertices_before= vertices.size();
-
-			CreateTessellatedQuadGeometry(
-				zmap_lam_data, cluster, q, texture_id, base_vertex_index, vertices, indices );
-
-			auto [ mut u_vec, mut v_vec ]= CalculateMapQuadTextureBasis( quad, false );
-
-			u_vec*= texture_scale;
-			v_vec*= texture_scale;
-
-			foreach( &mut v : vertices.range().subrange_start( num_vertices_before ) )
-			{
-				// The original polygon data for liquids contains some sort or green-blue values instead of lighting.
-				// So, use constant fullbright lighting.
-				// It's fine, such all liquid textures in the original game are pretty dark.
-				v.light[0]= 255u8;
-				v.light[1]= 255u8;
-				v.light[2]= 255u8;
-
-				// Recalculate texture coordinates using a pair of axis.
-				// Do this to fix some problems in misaligned liquid textures and allow seemless sinwave-animation.
-				var Vec3f position( v.position[0], v.position[1], v.position[2] );
-				v.tex_coordinates[0]= u_vec.Dot( position );
-				v.tex_coordinates[1]= v_vec.Dot( position );
-
-				// Perform some sinwave-based animation.
-				var [ f32, 2 ] tc_offset
-				[
-					amplitude * ust::sin( phase + ( v.tex_coordinates[1] ) * ( c_tau / wave_length ) ),
-					amplitude * ust::sin( phase + ( v.tex_coordinates[0] ) * ( c_tau / wave_length ) ),
-				];
-
-				v.tex_coordinates[0]+= tc_offset[0];
-				v.tex_coordinates[1]+= tc_offset[1];
-			}
-		}
-	}
-}
-
-fn CreateLightShaftsBoxPolygons(
-	ZmapLightShaftsBox& light_shafts_box, ust::vector</MapVertex/> &mut vertices, ust::vector</u16/> &mut indices )
-{
-	// Use slightly less than the whole tile containing light shafts texture, since this texture is not tileable.
-	var f32 constexpr tc_eps= 1.0f / f32( MaterialsDescription::c_texture_size );
-
-	var [ [ f32, 2 ], 8 ] constexpr vertex_tex_coords
-	[
-		[ 0.0f + tc_eps, 0.0f + tc_eps ],
-		[ 0.0f + tc_eps, 0.5f - tc_eps ],
-		[ 0.0f + tc_eps, 0.0f + tc_eps ],
-		[ 0.0f + tc_eps, 0.5f - tc_eps ],
-		[ 0.5f - tc_eps, 0.0f + tc_eps ],
-		[ 0.5f - tc_eps, 0.5f - tc_eps ],
-		[ 0.5f - tc_eps, 0.0f + tc_eps ],
-		[ 0.5f - tc_eps, 0.5f - tc_eps ],
-	];
-
-	var f32 constexpr texture_layer= 152.0f;
-
-	var [ u8, 4 ] color_top
-	[
-		( light_shafts_box.color_top >> 16u ),
-		( light_shafts_box.color_top >>  8u ),
-		( light_shafts_box.color_top >>  0u ),
-		255u8,
-	];
-
-	var [ u8, 4 ] color_bottom
-	[
-		( light_shafts_box.color_bottom >> 16u ),
-		( light_shafts_box.color_bottom >>  8u ),
-		( light_shafts_box.color_bottom >>  0u ),
-		255u8,
-	];
-
-	var [ [ u8, 4 ], 8 ] vertex_lights
-	[
-		color_top,
-		color_top,
-		color_top,
-		color_top,
-		color_bottom,
-		color_bottom,
-		color_bottom,
-		color_bottom,
-	];
-
-	var size_type base_vertex_index= vertices.size();
-
-	for( auto mut i= 0u; i < 8u; ++i )
-	{
-		auto& in_vertex= light_shafts_box.vertices[i];
-		auto& tc= vertex_tex_coords[i];
-
-		vertices.push_back(
-			MapVertex
-			{
-				.position
-				[
-					f32( light_shafts_box.center[0] + i32( in_vertex[0] ) ),
-					f32( light_shafts_box.center[1] + i32( in_vertex[1] ) ),
-					f32( light_shafts_box.center[2] + i32( in_vertex[2] ) ),
-				],
-				.light= vertex_lights[i],
-				.tex_coordinates[ tc[0], tc[1], texture_layer ],
-				.fog_params= zero_init,
-			} );
-	}
-
-	indices.push_back( u16( base_vertex_index + 1s ) );
-	indices.push_back( u16( base_vertex_index + 0s ) );
-	indices.push_back( u16( base_vertex_index + 4s ) );
-	indices.push_back( u16( base_vertex_index + 5s ) );
-	indices.push_back( u16( base_vertex_index + 1s ) );
-	indices.push_back( u16( base_vertex_index + 4s ) );
-
-	indices.push_back( u16( base_vertex_index + 3s ) );
-	indices.push_back( u16( base_vertex_index + 2s ) );
-	indices.push_back( u16( base_vertex_index + 6s ) );
-	indices.push_back( u16( base_vertex_index + 7s ) );
-	indices.push_back( u16( base_vertex_index + 3s ) );
-	indices.push_back( u16( base_vertex_index + 6s ) );
-
-	indices.push_back( u16( base_vertex_index + 2s ) );
-	indices.push_back( u16( base_vertex_index + 1s ) );
-	indices.push_back( u16( base_vertex_index + 5s ) );
-	indices.push_back( u16( base_vertex_index + 2s ) );
-	indices.push_back( u16( base_vertex_index + 5s ) );
-	indices.push_back( u16( base_vertex_index + 6s ) );
-
-	indices.push_back( u16( base_vertex_index + 0s ) );
-	indices.push_back( u16( base_vertex_index + 3s ) );
-	indices.push_back( u16( base_vertex_index + 7s ) );
-	indices.push_back( u16( base_vertex_index + 0s ) );
-	indices.push_back( u16( base_vertex_index + 7s ) );
-	indices.push_back( u16( base_vertex_index + 4s ) );
-}
-
 fn DrawGlobalFog(
 	Texture &mut depth_buffer_copy_texture,
 	ShaderProgram &mut shader,
@@ -2871,14 +2266,8 @@ fn DrawSkyBackground(
 {
 	SetGLState( g_sky_background_gl_state );
 
-	var Mat4f sky_background_matrix=
-		Mat4f::MakeRotationX( c_tau * 0.25f ) *
-		Mat4f::MakeRotationZ( -c_tau * 0.125f ) * // TODO - check this angle is correct.
-		Mat4f::MakeScale( c_sky_scale ) *
-		rotation_and_projection_matrix;
-
 	shader.Bind();
-	shader.SetUniform( "vu_matrix", sky_background_matrix );
+	shader.SetUniform( "vu_matrix", Mat4f::MakeScale( c_sky_scale ) * rotation_and_projection_matrix );
 
 	shader.SetUniform( "vu_light_scale", Vec3f( light_scale ) );
 
@@ -3069,11 +2458,11 @@ fn LoadModels(
 	ConsoleOutPtr& console_out_ptr,
 	SettingsPtr& settings_ptr,
 	GLCapabilities& gl_capabilities,
-	ust::hash_map</ ResourceString, ust::optional</GPUModel/> /> &mut models )
+	ModelsMap &mut models )
 {
 	// Populate new models table and take existing models from the old one (if can).
 	// Doing so we avoid loading models which are already loaded and also unload no longer used models.
-	var ust::hash_map</ ResourceString, ust::optional</GPUModel/> /> mut new_models;
+	var ModelsMap mut new_models;
 
 	auto mut fs_lock= game_filesystem_ptr.lock_mut();
 	var ( fn( ust::file_readable &mut f ) : ust::io_result</ModelData/> ) load_model_fn( LoadModel );
@@ -3113,237 +2502,6 @@ fn LoadModels(
 	models= move( new_models );
 }
 
-fn MarkVisibleRoomClusters(
-	RoomClustersHierarchy& room_clusters_hierarchy,
-	ust::array_view_imut</ZvoxCluster/> clusters,
-	ZpozData& zpoz_data,
-	Vec3f& camera_position,
-	ust::array_view_mut</bool/> visible_room_cluster_flags )
-{
-	if_var( camera_cluster_index : GetCameraRoomCluster( room_clusters_hierarchy, clusters, camera_position ) )
-	{
-		// Mark as visible current cluster.
-		visible_room_cluster_flags[ camera_cluster_index ]= true;
-
-		var i32 bias= i32( clusters.size() ) * 4;
-
-		var ZpozClusterVisibilityData& visibility_data= zpoz_data.clusters_visibility_data[ camera_cluster_index ];
-
-		// TODO - check if we should use data[2] and not data[0] or even both.
-		var i32 data_start= visibility_data.data[2];
-
-		if( data_start != -1 )
-		{
-			var size_type visibility_data_offset( data_start - bias );
-
-			// We have 2 subranges for both offsets.
-			// Since we don't know which is correct, use both of them.
-			var size_type subrange0_size( zpoz_data.cluster_indices[ visibility_data_offset  ] );
-			var size_type subrange0_start= visibility_data_offset + 8s;
-			var size_type subrange1_size( zpoz_data.cluster_indices[ subrange0_start + subrange0_size ] );
-			var size_type subrange1_start= subrange0_start + size_type(subrange0_size) + 8s;
-
-			var [ ust::array_view_imut</i32/>, 2 ] ranges
-			[
-				zpoz_data.cluster_indices.range().subrange( subrange0_start, subrange0_start + subrange0_size ),
-				zpoz_data.cluster_indices.range().subrange( subrange1_start, subrange1_start + subrange1_size )
-			];
-
-			foreach( range : ranges )
-			{
-				foreach( visible_cluster_index : range )
-				{
-					// Mark cluster listed in visibility data as visible.
-					visible_room_cluster_flags[ size_type( visible_cluster_index ) ]= true;
-				}
-			}
-		}
-	}
-	else
-	{
-		// Assume all room clusters are visible if we failed to find current cluster (like in noclip mode).
-		for( auto mut i= 0s; i < clusters.size(); ++i )
-		{
-			if( clusters[i].c.num_children_clusters >= 0 )
-			{
-				visible_room_cluster_flags[i]= true;
-			}
-		}
-	}
-}
-
-fn GetCameraRoomCluster(
-	RoomClustersHierarchy& room_clusters_hierarchy,
-	ust::array_view_imut</ZvoxCluster/> clusters,
-	Vec3f& camera_position ) : ust::optional</size_type/>
-{
-	var ust::optional</size_type/> mut camera_cluster_index_opt;
-
-	VisitBoundingBoxesHierarchyForPoint(
-		room_clusters_hierarchy,
-		camera_position,
-		lambda[&]( ClusterIndexInHierarchy c )
-		{
-			var size_type cluster_index(c);
-			if( CreateClusterBBox( clusters[ cluster_index ] ).PointIsInsideOrOnFace( camera_position ) )
-			{
-				camera_cluster_index_opt= cluster_index;
-			}
-		} );
-
-	return camera_cluster_index_opt;
-}
-
-fn RejectVisibleRoomClustersUsingCameraPlanes(
-	ust::array_view_imut</ZvoxCluster/> clusters,
-	CameraClipPlanes& camera_clip_planes,
-	ust::array_view_mut</bool/> visible_room_cluster_flags )
-{
-	for( auto mut i= 0s; i < clusters.size(); ++i )
-	{
-		if( !visible_room_cluster_flags[i] )
-		{
-			continue;
-		}
-
-		var ZvoxCluster& cluster= clusters[i];
-
-		if( AreBoxVerticesClippedByAtLeastOneCameraClipPlane(
-				camera_clip_planes,
-				CreateClusterBBox(cluster).CreateCornerVertices() ) )
-		{
-			visible_room_cluster_flags[i]= false;
-			continue;
-		}
-	}
-}
-
-fn CalculateVisibleClustersBBox(
-	ust::array_view_imut</ZvoxCluster/> clusters,
-	ust::array_view_imut</bool/> visible_room_cluster_flags,
-	Vec3f& camera_position ) : BBox3f
-{
-	var BBox3f mut visible_clusters_bbox
-	{
-		.min= camera_position,
-		.max= camera_position,
-	};
-
-	for( auto mut i= 0s; i < clusters.size(); ++i )
-	{
-		if( !visible_room_cluster_flags[i] )
-		{
-			continue;
-		}
-
-		var ZvoxCluster& cluster= clusters[i];
-
-		var BBox3f cluster_bbox= CreateClusterBBox( cluster );
-
-		ust::min_assign( visible_clusters_bbox.min.x, cluster_bbox.min.x );
-		ust::min_assign( visible_clusters_bbox.min.y, cluster_bbox.min.y );
-		ust::min_assign( visible_clusters_bbox.min.z, cluster_bbox.min.z );
-		ust::max_assign( visible_clusters_bbox.max.x, cluster_bbox.max.x );
-		ust::max_assign( visible_clusters_bbox.max.y, cluster_bbox.max.y );
-		ust::max_assign( visible_clusters_bbox.max.z, cluster_bbox.max.z );
-	}
-
-	return visible_clusters_bbox;
-}
-
-fn IsBBoxWithinVisibleClusters(
-	ust::array_view_imut</ZvoxCluster/> clusters,
-	RoomClustersHierarchy& room_clusters_hierarchy,
-	ust::array_view_imut</bool/> visible_room_cluster_flags,
-	BBox3f& bbox ) : bool
-{
-	var bool mut is_within_visible_clusters= false;
-
-	VisitBoundingBoxesHierarchyForBBox(
-		room_clusters_hierarchy,
-		bbox,
-		lambda[&]( ClusterIndexInHierarchy c )
-		{
-			var size_type cluster_index(c);
-			if( visible_room_cluster_flags[ cluster_index ] &&
-				CreateClusterBBox( clusters[ cluster_index ] ).InstersectsOrTouches( bbox ) )
-			{
-				is_within_visible_clusters= true;
-			}
-		} );
-
-	return is_within_visible_clusters;
-}
-
-type CameraClipPlanes= [ Planef, 5 ];
-
-fn CreateCameraClipPlanes( WorldDrawingInfo::CameraParams& camera_params, f32 aspect ) : CameraClipPlanes
-{
-	var Mat4f rotation_matrix_x= Mat4f::MakeRotationX( camera_params.elevation - c_tau / 4.0f );
-	var Mat4f rotation_matrix_z= Mat4f::MakeRotationZ( camera_params.azimuth );
-	var Mat4f rotation_matrix= rotation_matrix_x * rotation_matrix_z;
-
-	var Vec3f front_plane_normal= Vec3f( 0.0f, 0.0f, -1.0f );
-
-	var f32 half_fov_x= camera_params.fov_x * 0.5f;
-	var f32 half_fov_x_cos= ust::cos( half_fov_x );
-	var f32 half_fov_x_sin= ust::sin( half_fov_x );
-
-	var Vec3f left_plane_normal = Vec3f( -half_fov_x_cos, 0.0f, -half_fov_x_sin );
-	var Vec3f right_plane_normal= Vec3f(  half_fov_x_cos, 0.0f, -half_fov_x_sin );
-
-	var f32 half_fov_y= ust::atan( ust::tan( half_fov_x ) / aspect );
-	var f32 half_fov_y_cos= ust::cos( half_fov_y );
-	var f32 half_fov_y_sin= ust::sin( half_fov_y );
-
-	var Vec3f upper_plane_normal= Vec3f( 0.0f, -half_fov_y_cos, -half_fov_y_sin );
-	var Vec3f lower_plane_normal= Vec3f( 0.0f,  half_fov_y_cos, -half_fov_y_sin );
-
-	return ust::make_array(
-		// First plane is front plane - in order to reject stuff behind the back first.
-		Planef::CreateFromNormalAndPoint( front_plane_normal * rotation_matrix, camera_params.position + Vec3f( 0.0f, 0.0f, c_z_near ) * rotation_matrix ),
-		Planef::CreateFromNormalAndPoint( left_plane_normal  * rotation_matrix, camera_params.position ),
-		Planef::CreateFromNormalAndPoint( right_plane_normal * rotation_matrix, camera_params.position ),
-		Planef::CreateFromNormalAndPoint( upper_plane_normal * rotation_matrix, camera_params.position ),
-		Planef::CreateFromNormalAndPoint( lower_plane_normal * rotation_matrix, camera_params.position ) );
-}
-
-fn AreBoxVerticesClippedByAtLeastOneCameraClipPlane( CameraClipPlanes& clip_planes, [ Vec3f, 8 ]& vertices ) : bool
-{
-	foreach( &clip_plane : clip_planes )
-	{
-		var f32 mut min_distance= ust::plus_inf</f32/>();
-		foreach( &v : vertices )
-		{
-			ust::min_assign( min_distance, clip_plane.GetDistanceForPoint( v ) );
-		}
-
-		if( min_distance >= 0.0f )
-		{
-			return true;
-		}
-	}
-
-	return false;
-}
-
-fn CalculateCameraRotationMatrix( f32 camera_azimuth, f32 camera_elevation ) : Mat4f
-{
-	var Mat4f rotation_matrix_z= Mat4f::MakeRotationZ( -camera_azimuth );
-	var Mat4f rotation_matrix_x= Mat4f::MakeRotationX( -camera_elevation + c_tau / 4.0f );
-	return rotation_matrix_z * rotation_matrix_x;
-}
-
-fn CalculateFirstPersonWeaponProjectionDistortionMatrix()  : Mat4f
-{
-	// The original game distorts first-weapon model a bit.
-	// These parameters are experimentally found.
-	// TODO - improve this. It seems like this distortion is specified in the "IC.STD" file via "deformacja_ogniskowej" param.
-	return Mat4f::MakeScale( Vec3f( 1.0f, 0.5f, 1.0f ) );
-}
-
-var f32 c_z_near= 4.0f;
-var f32 c_z_far= 32768.0f;
 var f32 c_sky_scale= c_z_far / 2.0f;
 var f32 c_stars_scale= c_sky_scale;
 var f32 c_clouds_scale= c_sky_scale;
@@ -3540,109 +2698,5 @@ var GLState g_local_fog_gl_state
 	.blend_source_factor( GL_ONE ),
 	.blend_destination_factor( GL_ONE ),
 };
-
-fn CalculateScissorRectForSphere(
-	Mat4f& camera_space_matrix,
-	Mat4f& camera_projection_matrix,
-	[ u32, 2 ]& viewport_size,
-	Vec3f& sphere_center,
-	f32 sphere_radius ) : ScissorRect
-{
-	var Vec3f projected_sphere_center= sphere_center * camera_space_matrix;
-
-	var [ f32, 2 ] bounds_x= GetSphereAxisBounds( Vec2f( projected_sphere_center.x, projected_sphere_center.z ), sphere_radius );
-	var [ f32, 2 ] bounds_y= GetSphereAxisBounds( Vec2f( projected_sphere_center.y, projected_sphere_center.z ), sphere_radius );
-
-	var f32 scale_x= camera_projection_matrix.values[0][0];
-	var f32 scale_y= camera_projection_matrix.values[1][1];
-	var [ f32, 2 ] bounds_x_scaled[ bounds_x[0] * scale_x, bounds_x[1] * scale_x ];
-	var [ f32, 2 ] bounds_y_scaled[ bounds_y[0] * scale_y, bounds_y[1] * scale_y ];
-
-	var i32 min_x( ust::floor( f32( viewport_size[0] ) * ( bounds_x_scaled[0] * 0.5f + 0.5f ) ) );
-	var i32 max_x( ust::ceil ( f32( viewport_size[0] ) * ( bounds_x_scaled[1] * 0.5f + 0.5f ) ) );
-	var i32 min_y( ust::floor( f32( viewport_size[1] ) * ( bounds_y_scaled[0] * 0.5f + 0.5f ) ) );
-	var i32 max_y( ust::ceil ( f32( viewport_size[1] ) * ( bounds_y_scaled[1] * 0.5f + 0.5f ) ) );
-
-	return ScissorRect
-	{
-		.start[ min_x, min_y ],
-		.size[ ( ust::max( 0, max_x - min_x ) ), ( ust::max( 0, max_y - min_y ) ) ],
-	};
-}
-
-// Use method mentioned in the article "2D Polyhedral Bounds of a Clipped, Perspective-Projected 3D Sphere"
-//  by Michael Mara, Morgan McGuire.
-//
-// Returns a pair of near and far values.
-// Returns valid huge bounds if is inside the sphere.
-// Returns invalid bounds if the sphere is invisible.
-fn GetSphereAxisBounds( Vec2f& sphere_center, f32 sphere_radius ) : [ f32, 2 ]
-{
-	var f32 inf= 999999.0f;
-
-	var f32 singned_distance_to_z_near= sphere_center.y - c_z_near;
-
-	if( singned_distance_to_z_near <= -sphere_radius )
-	{
-		// The sphere is behind the camera - return empty bounds.
-		return ust::make_array( inf, -inf );
-	}
-
-	var f32 radius_squared= sphere_radius * sphere_radius;
-	var f32 distance_to_center_squared= sphere_center.SquareLength();
-	var f32 tangent_length_squared= distance_to_center_squared - radius_squared;
-
-	if( tangent_length_squared <= 0.0f )
-	{
-		// The sphere is within camera - return the whole range.
-		return ust::make_array( -inf, inf );
-	}
-
-	var f32 tangent_length= ust::sqrt( tangent_length_squared );
-
-	var Vec2f scaled_direction_to_center= sphere_center * ( tangent_length / distance_to_center_squared );
-
-	var Vec2f near_intersection_point(
-		scaled_direction_to_center.x * tangent_length - scaled_direction_to_center.y * sphere_radius,
-		scaled_direction_to_center.y * tangent_length + scaled_direction_to_center.x * sphere_radius );
-
-	var Vec2f far_intersection_point(
-		scaled_direction_to_center.x * tangent_length + scaled_direction_to_center.y * sphere_radius,
-		scaled_direction_to_center.y * tangent_length - scaled_direction_to_center.x * sphere_radius );
-
-	var [ f32, 2 ] mut bounds= zero_init; // Set later
-
-	var f32 side_step_squared= radius_squared - singned_distance_to_z_near * singned_distance_to_z_near;
-
-	if( side_step_squared >= 0.0f )
-	{
-		var f32 side_step= ust::sqrt( side_step_squared );
-
-		if( near_intersection_point.y < c_z_near )
-		{
-			bounds[0]= ( sphere_center.x - side_step ) / c_z_near;
-		}
-		else
-		{
-			bounds[0]= near_intersection_point.x / near_intersection_point.y;
-		}
-
-		if( far_intersection_point.y < c_z_near )
-		{
-			bounds[1]= ( sphere_center.x + side_step ) / c_z_near;
-		}
-		else
-		{
-			bounds[1]= far_intersection_point.x / far_intersection_point.y;
-		}
-	}
-	else
-	{
-		bounds[0]= near_intersection_point.x / near_intersection_point.y;
-		bounds[1]= far_intersection_point.x / far_intersection_point.y;
-	}
-
-	return bounds;
-}
 
 } // namespace PM

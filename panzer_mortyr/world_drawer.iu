@@ -1,41 +1,15 @@
 import "/common_lib/billboards_description_file.iu"
-import "/common_lib/map_loading.iu"
-import "/common_lib/materials_file.iu"
 
-import "buffer_object.iu"
-import "caching_game_resources_loader.iu"
 import "gl_capabilities.iu"
-import "gl_state.iu"
-import "gpu_model.iu"
-import "lighting.iu"
-import "settings.iu"
-import "sky.iu"
 import "shader_program.iu"
-import "texture.iu"
 import "triangles_sorting.iu"
-import "vertex_array_object.iu"
-import "vertex_formats.iu"
-import "world_drawing_info.iu"
+import "world_drawer_structs.iu"
 
 namespace PM
 {
 
 class WorldDrawer
 {
-public:
-	struct DrawingStats
-	{
-		u32 num_room_visible_clusters;
-		u32 num_total_visible_clusters;
-		u32 num_visible_map_triangles;
-		u32 num_visible_models;
-		u32 num_visivle_model_triangles;
-		u32 num_visible_billboards;
-		u32 num_visible_semitransparent_triangles;
-		u32 num_visible_dynamic_lights;
-		u32 num_visible_local_fog_volumes;
-	}
-
 public:
 	fn constructor(
 		SettingsPtr settings,
@@ -44,165 +18,10 @@ public:
 		ConsoleOutPtr console_out,
 		GLCapabilities& gl_capabilities );
 
-	fn Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingViewportInfo& viewport_info ) : DrawingStats;
+	fn Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingViewportInfo& viewport_info ) : WorldDrawingStats;
 
 private:
 	fn SetMap( mut this, u32 map_index );
-
-	fn CreateSemitransparentMapPolygons(
-		MapDrawData& map_data,
-		MaterialsDescription::Block& materials_block,
-		ust::array_view_imut</bool/> visible_room_cluster_flags,
-		ust::array_view_imut</WorldDrawingInfo::DynamicClusterObject/> dynamic_cluster_objects,
-		f32 time_s,
-		ust::vector</MapVertex/> &mut vertices,
-		ust::vector</u16/> &mut indices );
-
-	fn DrawMapPolygons(
-		MapDrawData& map_data,
-		ust::array_view_imut</bool/> visible_room_cluster_flags,
-		BBox3f& visible_clusters_bbox,
-		ust::array_view_imut</WorldDrawingInfo::DynamicClusterObject/> dynamic_cluster_objects,
-		ShaderProgram &mut shader,
-		Mat4f& view_matrix,
-		f32 time_s,
-		GlobalLightParams& global_light_params,
-		DrawingStats &mut drawing_stats );
-
-	fn DrawMapPolygonsWithDynamicLights(
-		GameParams& game_params,
-		MapDrawData& map_data,
-		ust::array_view_imut</bool/> visible_room_cluster_flags,
-		BBox3f& visible_clusters_bbox,
-		ust::array_view_imut</WorldDrawingInfo::DynamicClusterObject/> dynamic_cluster_objects,
-		ShaderProgram &mut shader,
-		Mat4f& view_matrix,
-		f32 time_s,
-		ust::array_view_imut</WorldDrawingInfo::DynamicLightSource/> dynamic_light_sources,
-		ust::array_view_imut</ScissorRect/> dynamic_light_scissor_rects,
-		[ f32, 3 ]& light_scale,
-		DrawingStats &mut drawing_stats );
-
-	fn ExecuteClusterMeshDrawing( ClusterDrawData& cluster_draw_data );
-
-	fn ExecuteDrawingMeshesWithValveSpecialMaterial( [ SpecialMaterialQuadsMesh, 4 ]& meshes, f32 time_s );
-
-	fn ExecuteDrawingMeshesWithFilmSpecialMaterial( [ SpecialMaterialQuadsMesh, 8 ]& meshes, f32 time_s );
-
-	fn DrawModels(
-		ModelsMap& models_map,
-		ust::array_view_imut</ModelToDraw/> models_to_draw, // Models should be grouped by model file name.
-		ShaderProgram &mut shader,
-		ust::optional_ref_imut</Texture/> stub_texture, // If non-empty, it's used instead of proper model textures.
-		DrawingStats &mut drawing_stats );
-
-	fn DrawFirstPersonWeaponModels(
-		ModelsMap& models_map,
-		ust::array_view_imut</ModelToDraw/> models_to_draw,
-		ShaderProgram &mut shader,
-		DrawingStats &mut drawing_stats );
-
-	fn DrawSemitransparentGeometry(
-		DynamicPolygonsBuffer& dynamic_polygons_buffer,
-		ShaderProgram &mut shader,
-		Texture& map_textures_array,
-		Mat4f& view_matrix,
-		[ f32, 3 ]& light_scale,
-		[ f32, 3 ]& fog_color,
-		[ f32, 3 ]& fog_color_additive );
-
-	fn UploadDynamicPolygonsBuffer( DynamicPolygonsBuffer &mut dynamic_polygons_buffer );
-	fn ResetDynamicPolygonsBuffer( DynamicPolygonsBuffer &mut dynamic_polygons_buffer );
-
-private:
-	struct DynamicPolygonsBuffer
-	{
-		ust::vector</MapVertex/> vertices;
-		BufferObject vertex_buffer;
-		size_type imut max_vertices;
-
-		ust::vector</u16/> indices;
-		BufferObject index_buffer;
-		size_type imut max_indices;
-
-		VertexArrayObject vertex_array_object;
-	}
-
-	struct MapDrawData
-	{
-		GameResourcePtr</ZmapData/> zmap_data;
-		GameResourcePtr</ZvoxData/> zvox_data;
-		GameResourcePtr</ZpozData/> zpoz_data;
-		GameResourcePtr</ZmapLamData/> zmap_lam_data;
-		GameResourcePtr</ZmapLemData/> zmap_lem_data;
-		GameResourcePtr</RoomClustersHierarchy/> room_clusters_hierarchy;
-
-		ust::vector</PointLightSource/> imut light_sources;
-
-		VertexArrayObject vertex_array_object;
-
-		// Store all vertices in single buffer.
-		BufferObject vertex_buffer;
-
-		// Store all indices in single buffer.
-		BufferObject index_buffer;
-
-		// Store all map textures in single textures array - we can do this, since all map textrures have identical size.
-		Texture map_textures_array;
-		u32 clouds_texture_layer;
-
-		// Has size equal to number of map clusters.
-		ust::vector</ClusterDrawData/> clusters_draw_data;
-
-		[ SpecialMaterialQuadsMesh, 4 ] special_material_valve_meshes;
-		[ SpecialMaterialQuadsMesh, 8 ] special_material_film_meshes;
-
-		SkyBackgroundBuffer sky_background_buffer;
-		StarsBuffer stars_buffer;
-		ust::optional</SkyCloudsParams/> sky_clouds_params;
-
-		[ f32, 3 ] fog_color;
-		bool global_fog_enabled;
-	}
-
-	struct SpecialMaterialQuadsMesh
-	{
-		// Offset into vertex array.
-		size_type first_vertex_index;
-		// Offset into index array.
-		size_type first_index;
-		// Number of indices is equal to number of triangles multiplied by 3.
-		size_type num_indices;
-	}
-
-	struct ClusterDrawData
-	{
-		// Offset into vertex array.
-		size_type first_vertex_index;
-		// Offset into index array.
-		size_type first_index;
-		// Number of indices is equal to number of triangles multiplied by 3.
-		size_type num_indices;
-
-		bool has_glass_quads;
-		bool has_liquid_quads;
-	}
-
-	struct ModelToDraw
-	{
-		ResourceString file_name;
-		u32 frame;
-		Mat4f matrix;
-		SphericalHarmonicsRGB light;
-	}
-
-	struct GlobalLightParams
-	{
-		[ f32, 3 ] light_add;
-		[ f32, 3 ] light_scale;
-	}
-
-	type ModelsMap= ust::hash_map</ ResourceString, ust::optional</GPUModel/> />;
 
 private:
 	SettingsPtr imut settings_;
