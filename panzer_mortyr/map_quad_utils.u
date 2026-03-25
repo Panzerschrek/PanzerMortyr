@@ -134,6 +134,183 @@ fn PushQuadIndices( ust::vector</u16/> &mut indices, size_type base_vertex_index
 	indices.push_back( u16( base_vertex_index + 3s ) );
 }
 
+fn CreateClusterGlassPolygons(
+	ZvoxCluster& cluster,
+	ust::array_view_imut</ZmapQuad/> quads,
+	ZmapLamData& zmap_lam_data,
+	MaterialsDescription::Block& materials_block,
+	ust::vector</MapVertex/> &mut vertices,
+	ust::vector</u16/> &mut indices )
+{
+	var bool is_regular_cluster=
+		cluster.cluster_type == ZvoxCluster::c_cluster_type_regular |
+		cluster.cluster_type == ZvoxCluster::c_cluster_type_notes;
+
+	for( auto mut q= size_type( cluster.c.first_quad_index );
+		q < size_type( cluster.c.first_quad_index ) + size_type( cluster.num_quads );
+		++q )
+	{
+		var ZmapQuad& quad= quads[q];
+
+		var f32 mut texture_id= 0.0f;
+
+		switch( u32( quad.texture_id ) )
+		{
+			MaterialsDescription::c_special_material_texture_indices[ size_type( MaterialsDescription::SpecialMaterial::Glass ) ] ->
+			{
+				texture_id= f32( materials_block.special_material_indices[ size_type( MaterialsDescription::SpecialMaterial::Glass ) ] );
+			},
+			MaterialsDescription::c_special_material_texture_indices[ size_type( MaterialsDescription::SpecialMaterial::ArmoredGlass ) ] ->
+			{
+				texture_id= f32( materials_block.special_material_indices[ size_type( MaterialsDescription::SpecialMaterial::ArmoredGlass ) ] );
+			},
+			default -> { continue; }
+		}
+
+		var size_type base_vertex_index= vertices.size();
+
+		if( q >= zmap_lam_data.tessellated_quads.size() || zmap_lam_data.tessellated_quads[q].vertex_count == 0u )
+		{
+			// Fallback for cases where tessellated data isn't available - like for dynamic polygons (doors, elevators, buttons).
+
+			auto [ u_vec, v_vec ]= CalculateMapQuadTextureBasis( quad, is_regular_cluster );
+
+			var Vec2f tc_offset( f32( quad.tc_offset[0] ), f32( quad.tc_offset[1] ) );
+
+			// OpenGL uses normalized texture coordinates.
+			var f32 constexpr tc_scale= 1.0f / f32( MaterialsDescription::c_texture_size );
+
+			foreach( &vertex_shift : quad.vertices )
+			{
+				// Texture coordinates are calculated relative to vertex #0.
+				var Vec3f vertex_relative_shift
+				(
+					f32( i32( vertex_shift[0] ) - i32( quad.vertices[0][0] ) ),
+					f32( i32( vertex_shift[1] ) - i32( quad.vertices[0][1] ) ),
+					f32( i32( vertex_shift[2] ) - i32( quad.vertices[0][2] ) )
+				);
+
+				vertices.push_back(
+					MapVertex
+					{
+						.position
+						[
+							f32( cluster.c.center[0] + i32( vertex_shift[0] ) ),
+							f32( cluster.c.center[1] + i32( vertex_shift[1] ) ),
+							f32( cluster.c.center[2] + i32( vertex_shift[2] ) ),
+						],
+						// Stub light for dynamic glass polygons.
+						// It's fine to use it, since there are only a couple of such polygons in the whole game.
+						.light[ 48u8, 48u8, 48u8, 255u8 ],
+						.tex_coordinates
+						[
+							tc_scale * ( vertex_relative_shift.Dot( u_vec ) + tc_offset.x ),
+							tc_scale * ( vertex_relative_shift.Dot( v_vec ) + tc_offset.y ),
+							texture_id,
+						],
+						.fog_params= zero_init,
+					} );
+			}
+
+			PushQuadIndices( indices, base_vertex_index );
+		}
+		else
+		{
+			CreateTessellatedQuadGeometry(
+				zmap_lam_data, cluster, q, texture_id, base_vertex_index, vertices, indices );
+		}
+	}
+}
+
+fn CreateClusterLiquidPolygons(
+	ZvoxCluster& cluster,
+	ust::array_view_imut</ZmapQuad/> quads,
+	ZmapLamData& zmap_lam_data,
+	MaterialsDescription::Block& materials_block,
+	f32 time_s,
+	ust::vector</MapVertex/> &mut vertices,
+	ust::vector</u16/> &mut indices )
+{
+	 // Use such irrational wave length to avoid synchronous per-vertex animation for evenly-tesselated liquid quads.
+	var f32 constexpr wave_length= c_golden_ratio;
+	var f32 constexpr amplitude= 1.0f / 8.0f;
+	var f32 constexpr frequency= 1.0f / 4.0f;
+
+	var f32 phase= time_s * ( frequency * c_tau );
+
+	var f32 constexpr texture_scale= 1.0f / f32( MaterialsDescription::c_texture_size );
+
+	for( auto mut q= size_type( cluster.c.first_quad_index );
+		q < size_type( cluster.c.first_quad_index ) + size_type( cluster.num_quads );
+		++q )
+	{
+		var ZmapQuad& quad= quads[q];
+
+		var f32 mut texture_id= 0.0f;
+
+		switch( u32( quad.texture_id ) )
+		{
+			MaterialsDescription::c_special_material_texture_indices[ size_type( MaterialsDescription::SpecialMaterial::Water ) ] ->
+			{
+				texture_id= f32( materials_block.special_material_indices[ size_type( MaterialsDescription::SpecialMaterial::Water ) ] );
+			},
+			MaterialsDescription::c_special_material_texture_indices[ size_type( MaterialsDescription::SpecialMaterial::Acid ) ] ->
+			{
+				texture_id= f32( materials_block.special_material_indices[ size_type( MaterialsDescription::SpecialMaterial::Acid ) ] );
+			},
+			MaterialsDescription::c_special_material_texture_indices[ size_type( MaterialsDescription::SpecialMaterial::AcidAlternative ) ] ->
+			{
+				texture_id= f32( materials_block.special_material_indices[ size_type( MaterialsDescription::SpecialMaterial::AcidAlternative ) ] );
+			},
+			MaterialsDescription::c_special_material_texture_indices[ size_type( MaterialsDescription::SpecialMaterial::Lava ) ] ->
+			{
+				texture_id= f32( materials_block.special_material_indices[ size_type( MaterialsDescription::SpecialMaterial::Lava ) ] );
+			},
+			default -> { continue; }
+		}
+
+		var size_type base_vertex_index= vertices.size();
+
+		if( q < zmap_lam_data.tessellated_quads.size() && zmap_lam_data.tessellated_quads[q].vertex_count != 0u )
+		{
+			var size_type num_vertices_before= vertices.size();
+
+			CreateTessellatedQuadGeometry(
+				zmap_lam_data, cluster, q, texture_id, base_vertex_index, vertices, indices );
+
+			auto [ mut u_vec, mut v_vec ]= CalculateMapQuadTextureBasis( quad, false );
+
+			u_vec*= texture_scale;
+			v_vec*= texture_scale;
+
+			foreach( &mut v : vertices.range().subrange_start( num_vertices_before ) )
+			{
+				// The original polygon data for liquids contains some sort or green-blue values instead of lighting.
+				// So, use constant fullbright lighting.
+				// It's fine, such all liquid textures in the original game are pretty dark.
+				v.light[0]= 255u8;
+				v.light[1]= 255u8;
+				v.light[2]= 255u8;
+
+				// Recalculate texture coordinates using a pair of axis.
+				// Do this to fix some problems in misaligned liquid textures and allow seemless sinwave-animation.
+				var Vec3f position( v.position[0], v.position[1], v.position[2] );
+				v.tex_coordinates[0]= u_vec.Dot( position );
+				v.tex_coordinates[1]= v_vec.Dot( position );
+
+				// Perform some sinwave-based animation.
+				var [ f32, 2 ] tc_offset
+				[
+					amplitude * ust::sin( phase + ( v.tex_coordinates[1] ) * ( c_tau / wave_length ) ),
+					amplitude * ust::sin( phase + ( v.tex_coordinates[0] ) * ( c_tau / wave_length ) ),
+				];
+
+				v.tex_coordinates[0]+= tc_offset[0];
+				v.tex_coordinates[1]+= tc_offset[1];
+			}
+		}
+	}
+}
 
 fn CreateLightShaftsBoxPolygons(
 	ZmapLightShaftsBox& light_shafts_box, ust::vector</MapVertex/> &mut vertices, ust::vector</u16/> &mut indices )
