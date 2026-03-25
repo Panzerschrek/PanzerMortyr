@@ -7,6 +7,7 @@ import "/common_lib/materials_file.iu"
 
 import "bounding_boxes_hierarchy_visiting.iu"
 import "breaking_glass.iu"
+import "camera_utils.iu"
 import "cluster_utils.iu"
 import "fog.iu"
 import "gl_functions.iu"
@@ -3275,75 +3276,6 @@ fn IsBBoxWithinVisibleClusters(
 	return is_within_visible_clusters;
 }
 
-type CameraClipPlanes= [ Planef, 5 ];
-
-fn CreateCameraClipPlanes( WorldDrawingInfo::CameraParams& camera_params, f32 aspect ) : CameraClipPlanes
-{
-	var Mat4f rotation_matrix_x= Mat4f::MakeRotationX( camera_params.elevation - c_tau / 4.0f );
-	var Mat4f rotation_matrix_z= Mat4f::MakeRotationZ( camera_params.azimuth );
-	var Mat4f rotation_matrix= rotation_matrix_x * rotation_matrix_z;
-
-	var Vec3f front_plane_normal= Vec3f( 0.0f, 0.0f, -1.0f );
-
-	var f32 half_fov_x= camera_params.fov_x * 0.5f;
-	var f32 half_fov_x_cos= ust::cos( half_fov_x );
-	var f32 half_fov_x_sin= ust::sin( half_fov_x );
-
-	var Vec3f left_plane_normal = Vec3f( -half_fov_x_cos, 0.0f, -half_fov_x_sin );
-	var Vec3f right_plane_normal= Vec3f(  half_fov_x_cos, 0.0f, -half_fov_x_sin );
-
-	var f32 half_fov_y= ust::atan( ust::tan( half_fov_x ) / aspect );
-	var f32 half_fov_y_cos= ust::cos( half_fov_y );
-	var f32 half_fov_y_sin= ust::sin( half_fov_y );
-
-	var Vec3f upper_plane_normal= Vec3f( 0.0f, -half_fov_y_cos, -half_fov_y_sin );
-	var Vec3f lower_plane_normal= Vec3f( 0.0f,  half_fov_y_cos, -half_fov_y_sin );
-
-	return ust::make_array(
-		// First plane is front plane - in order to reject stuff behind the back first.
-		Planef::CreateFromNormalAndPoint( front_plane_normal * rotation_matrix, camera_params.position + Vec3f( 0.0f, 0.0f, c_z_near ) * rotation_matrix ),
-		Planef::CreateFromNormalAndPoint( left_plane_normal  * rotation_matrix, camera_params.position ),
-		Planef::CreateFromNormalAndPoint( right_plane_normal * rotation_matrix, camera_params.position ),
-		Planef::CreateFromNormalAndPoint( upper_plane_normal * rotation_matrix, camera_params.position ),
-		Planef::CreateFromNormalAndPoint( lower_plane_normal * rotation_matrix, camera_params.position ) );
-}
-
-fn AreBoxVerticesClippedByAtLeastOneCameraClipPlane( CameraClipPlanes& clip_planes, [ Vec3f, 8 ]& vertices ) : bool
-{
-	foreach( &clip_plane : clip_planes )
-	{
-		var f32 mut min_distance= ust::plus_inf</f32/>();
-		foreach( &v : vertices )
-		{
-			ust::min_assign( min_distance, clip_plane.GetDistanceForPoint( v ) );
-		}
-
-		if( min_distance >= 0.0f )
-		{
-			return true;
-		}
-	}
-
-	return false;
-}
-
-fn CalculateCameraRotationMatrix( f32 camera_azimuth, f32 camera_elevation ) : Mat4f
-{
-	var Mat4f rotation_matrix_z= Mat4f::MakeRotationZ( -camera_azimuth );
-	var Mat4f rotation_matrix_x= Mat4f::MakeRotationX( -camera_elevation + c_tau / 4.0f );
-	return rotation_matrix_z * rotation_matrix_x;
-}
-
-fn CalculateFirstPersonWeaponDistortionMatrix()  : Mat4f
-{
-	// The original game distorts first-weapon model a bit.
-	// These parameters are experimentally found.
-	// TODO - improve this. It seems like this distortion is specified in the "IC.STD" file via "deformacja_ogniskowej" param.
-	return Mat4f::MakeScale( Vec3f( 1.0f, 0.5f, 1.0f ) );
-}
-
-var f32 c_z_near= 4.0f;
-var f32 c_z_far= 32768.0f;
 var f32 c_sky_scale= c_z_far / 2.0f;
 var f32 c_stars_scale= c_sky_scale;
 var f32 c_clouds_scale= c_sky_scale;
