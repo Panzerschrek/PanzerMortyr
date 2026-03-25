@@ -115,8 +115,10 @@ PanzerMortyr game logic:
 * Switch to a new weapon when picking it up (investigate when such switchinh takes place in the original game).
 * Implement weapon switching in case of out of ammo.
 * Implement kick as separate "weapon" which can be fired when some other weapon is active (including kicking leg animation shown).
+* Create dynamic lights for burning entities.
+* Create dynamic lights for some entities where such light should be (like alarm, explosions).
 * Spawn light flashes while shooting.
-* Attach dynamic light sources to projectiles (where they should be).
+* Spawn light flashes at projectile hit points.
 * Spawn bubble sprites while swimming in water.
 * Spawn bubble sprites for projectiles moving in water.
 * Do something with unconditional entity state transition "w_zasiegu_strzalu_b" - try making it somewhat random.
@@ -153,7 +155,6 @@ PanzerMortyr rendering:
 * Draw injured enemies covered with blood.
 * Draw burning entities with some kind of burning effect (like in RtCW).
 * Draw some fullscreen burning effect if the player is burning.
-* Implement dynamic lights (gun flashes, explosions).
 * Draw weather effects (rain, snow). Don't forget applying global fog for them if needed.
 * Experiment with an algorithm for dynamic visible clusters search similar to one used in SquareWheel.
 * Add support for MSAA.
@@ -168,6 +169,9 @@ PanzerMortyr rendering:
 * Draw entities having one or more attached flame object in flames. Consider implementing an effect similar to one used in RtCW for burning enemies.
 * Make sure clouds have proper scale and speed (similar to the original game).
 * Don't draw broken map quads (with glass special material and materials with breakable flag).
+* Consider optimizing dynamic lighting even more by using stencil test for them.
+* Consider limiting the number of active dynamic light sources - to avoid huge performance drops.
+* Consider applying dynamic light to glass quads.
 
 PanzerMortyr menus and HUD:
 
