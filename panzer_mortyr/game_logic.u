@@ -432,7 +432,7 @@ fn PerformPlayerWeaponLogic( GameMapData& map_data, PlayerInput& player_input, G
 						var Vec3f direction_with_random_spread=
 							RandomOffsetShotVector( direction, tool.player_weapon_accuracy, game_state.random );
 
-						game_state.projectiles.push_back(
+						game_state.projectiles.Insert(
 							Projectile
 							{
 								.weapon_tool_index( weapon_tool_index ),
@@ -2317,7 +2317,7 @@ fn PushMoveDynamicCluster(
 	ust::array_view_mut</ ust::optional</EntityState/> /> entities,
 	ust::array_view_imut</DynamicClusterCollider/> dynamic_cluster_colliders,
 	PlayerState &mut player_state,
-	ust::vector</Projectile/> &mut projectiles,
+	ProjectilesContainer &mut projectiles,
 	ust::vector</ProjectileHitEvent/> &mut projectile_hit_events ) : bool
 {
 	var f32 movement_vector_length= in_movement_vector.Length();
@@ -2436,13 +2436,9 @@ fn PushMoveDynamicCluster(
 	}
 
 	// Hit projectiles by moving this dynamc cluster.
-	for( auto mut i= 0s; i < projectiles.size(); )
-	{
-		var bool mut need_to_remove= false;
-
+	projectiles.Retain(
+		lambda[&]( Projectile &mut projectile ) : bool
 		{
-			var Projectile &mut projectile= projectiles[i];
-
 			if_var( &intersection_result :
 				LineTraceSingleDynamicCluster(
 					map_data, dynamic_cluster_collider, projectile.position, opposite_movement_vector ) )
@@ -2502,23 +2498,13 @@ fn PushMoveDynamicCluster(
 								.hit_entity_index= ~0u,
 							} );
 
-						need_to_remove= true;
+						return false; // Destroy.
 					}
 				}
 			}
-		}
 
-		if( need_to_remove )
-		{
-			var size_type last_index= projectiles.size() - 1s;
-			projectiles.swap( i, last_index );
-			projectiles.drop_back();
-		}
-		else
-		{
-			++i;
-		}
-	}
+			return true; // Preserve.
+		} );
 
 	return true;
 }
@@ -2527,13 +2513,14 @@ fn ProcessProjectilesLogicStep( GameMapData& map_data, GameState &mut game_state
 {
 	var EntitiesDescription& entities_description= map_data.entities_description.deref();
 
-	for( auto mut i= 0s; i < game_state.projectiles.size(); )
-	{
-		var bool mut need_to_remove= false;
+	auto &mut smoke_trail_particles= game_state.smoke_trail_particles;
+	auto &mut projectile_hit_events= game_state.projectile_hit_events;
+	auto& dynamic_cluster_colliders= game_state.dynamic_cluster_colliders;
+	auto& colliders= game_state.colliders;
 
+	game_state.projectiles.Retain(
+		lambda[&]( Projectile& mut projectile ) : bool
 		{
-			var Projectile &mut projectile= game_state.projectiles[i];
-
 			var EntitiesDescription::Tool& weapon_tool=
 				entities_description.tools[ size_type( projectile.weapon_tool_index ) ];
 
@@ -2541,7 +2528,7 @@ fn ProcessProjectilesLogicStep( GameMapData& map_data, GameState &mut game_state
 			// This will create a particle at shot start point, which is needed for better look for weapons like flamethrower.
 			if( weapon_tool.smoke_trail_kind != EntitiesDescription::Tool::c_smoke_trail_kind_none )
 			{
-				game_state.smoke_trail_particles.push_back(
+				smoke_trail_particles.push_back(
 					SmokeTrailParticle
 					{
 						.kind= weapon_tool.smoke_trail_kind,
@@ -2574,7 +2561,7 @@ fn ProcessProjectilesLogicStep( GameMapData& map_data, GameState &mut game_state
 				var u32 mut hit_entity_index= ~0u;
 
 				if_var( &line_trace_result : LineTrace(
-					map_data, game_state.dynamic_cluster_colliders, projectile.position, velocity_slightly_elongated ) )
+					map_data, dynamic_cluster_colliders, projectile.position, velocity_slightly_elongated ) )
 				{
 					if( line_trace_result.distance < 1.0f )
 					{
@@ -2584,7 +2571,7 @@ fn ProcessProjectilesLogicStep( GameMapData& map_data, GameState &mut game_state
 					}
 				}
 
-				foreach( &collider : game_state.colliders )
+				foreach( &collider : colliders )
 				{
 					if( collider.entity_index == projectile.owner_entity_index )
 					{
@@ -2652,7 +2639,7 @@ fn ProcessProjectilesLogicStep( GameMapData& map_data, GameState &mut game_state
 						}
 					}
 
-					game_state.projectile_hit_events.push_back(
+					projectile_hit_events.push_back(
 						ProjectileHitEvent
 						{
 							.weapon_tool_index= projectile.weapon_tool_index,
@@ -2662,7 +2649,7 @@ fn ProcessProjectilesLogicStep( GameMapData& map_data, GameState &mut game_state
 							.hit_entity_index= hit_entity_index,
 						} );
 
-					need_to_remove= true;
+					return false; // Remove.
 				}
 
 				// If has no collision or has a collision with an entity or player or if it's not a bouncing projectile - don't perform more bounces.
@@ -2684,24 +2671,21 @@ fn ProcessProjectilesLogicStep( GameMapData& map_data, GameState &mut game_state
 
 			if( projectile.age_steps >= c_max_projectile_age )
 			{
-				need_to_remove= true;
+				return false; // Remove.
 			}
 			if( weapon_tool.projectile_kind == EntitiesDescription::Tool::c_projectile_kind_melee )
 			{
 				// Melee projectiles live only single step.
 				// Their effective distance is equal to their speed per step.
-				need_to_remove= true;
+				return false; // Remove.
 			}
 
-			if( !need_to_remove &
-				weapon_tool.projectile_kind == EntitiesDescription::Tool::c_projectile_kind_grenade &
+			if( weapon_tool.projectile_kind == EntitiesDescription::Tool::c_projectile_kind_grenade &
 				projectile.age_steps >= c_grenade_explosion_delay )
 			{
 				// Explode grenades after some delay.
 
-				need_to_remove= true;
-
-				game_state.projectile_hit_events.push_back(
+				projectile_hit_events.push_back(
 					ProjectileHitEvent
 					{
 						.weapon_tool_index= projectile.weapon_tool_index,
@@ -2710,20 +2694,12 @@ fn ProcessProjectilesLogicStep( GameMapData& map_data, GameState &mut game_state
 						.hit_quad_index= ~0u,
 						.hit_entity_index= ~0u,
 					} );
-			}
-		}
 
-		if( need_to_remove )
-		{
-			var size_type last_index= game_state.projectiles.size() - 1s;
-			game_state.projectiles.swap( i, last_index );
-			game_state.projectiles.drop_back();
-		}
-		else
-		{
-			++i;
-		}
-	}
+				return false; // Remove.
+			}
+
+			return true; // Preserve.
+		} );
 }
 
 fn SlowDownProjectileAfterBouncing( Vec3f &mut velocity, EntitiesDescription::Tool& weapon_tool )
@@ -3668,13 +3644,14 @@ fn CollideMovedEntityWithProjectiles(
 	Vec3f& new_position,
 	BBox3f& bbox,
 	u32 entity_index,
-	ust::vector</Projectile/> &mut projectiles,
+	ProjectilesContainer &mut projectiles,
 	ust::vector</ProjectileHitEvent/> &mut projectile_hit_events )
 {
-	if( projectiles.empty() )
-	{
-		return;
-	}
+	// TODO - return empty check back.
+	//if( projectiles.empty() )
+	//{
+	//	return;
+	//}
 
 	if( old_position == new_position )
 	{
@@ -3692,13 +3669,9 @@ fn CollideMovedEntityWithProjectiles(
 		.max= bbox.max + old_position,
 	};
 
-	for( auto mut i= 0s; i < projectiles.size(); )
-	{
-		var bool mut need_to_remove= false;
-
+	projectiles.Retain(
+		lambda[&]( Projectile& projectile ) : bool
 		{
-			var Projectile& projectile= projectiles[i];
-
 			if( projectile.owner_entity_index != entity_index ) // Don't collide with owner.
 			{
 				if_var( &intersection_result :
@@ -3716,23 +3689,13 @@ fn CollideMovedEntityWithProjectiles(
 								.hit_entity_index= entity_index,
 							} );
 
-						need_to_remove= true;
+						return false; // Remove.
 					}
 				}
 			}
-		}
 
-		if( need_to_remove )
-		{
-			var size_type last_index= projectiles.size() - 1s;
-			projectiles.swap( i, last_index );
-			projectiles.drop_back();
-		}
-		else
-		{
-			++i;
-		}
-	}
+			return true; // Preserve.
+		} );
 }
 
 fn AddPlayerCollider( EntitiesDescription& entities_description, GameState &mut game_state )
@@ -4404,7 +4367,7 @@ fn EntityShoot(
 	u32 entity_index,
 	f32 player_crouching_phase, // Assume an entity knows player's crouching phase if it can see him right now.
 	PseudoRandomGenerator &mut rand,
-	ust::vector</Projectile/> &mut projectiles,
+	ProjectilesContainer &mut projectiles,
 	ust::vector</MuzzleFlash/> &mut muzzle_flashes )
 {
 	if( entity.ammo == 0u )
@@ -4450,7 +4413,7 @@ fn EntityShoot(
 	var Vec3f direction_with_random_spread=
 		RandomOffsetShotVector( vec_to_target, accuracy, rand );
 
-	projectiles.push_back(
+	projectiles.Insert(
 		Projectile
 		{
 			.weapon_tool_index( weapon_tool_index ),
@@ -4481,7 +4444,7 @@ fn EntityDirectionalShot(
 	EntityState& entity,
 	u32 entity_index,
 	PseudoRandomGenerator &mut rand,
-	ust::vector</Projectile/> &mut projectiles )
+	ProjectilesContainer &mut projectiles )
 {
 	// No ammo is consumed for directional shots.
 
@@ -4509,7 +4472,7 @@ fn EntityDirectionalShot(
 
 	var Vec3f direction_with_random_spread= RandomOffsetShotVector( direction, accuracy, rand );
 
-	projectiles.push_back(
+	projectiles.Insert(
 		Projectile
 		{
 			.weapon_tool_index( weapon_tool_index ),
@@ -4524,7 +4487,7 @@ fn MoveEntity(
 	GameMapData& map_data,
 	ust::array_view_imut</DynamicClusterCollider/> dynamic_cluster_colliders,
 	ust::array_view_imut</Collider/> extra_colliders,
-	ust::vector</Projectile/> &mut projectiles,
+	ProjectilesContainer &mut projectiles,
 	ust::vector</ProjectileHitEvent/> &mut projectile_hit_events,
 	EntityState &mut entity,
 	u32 entity_index,

@@ -198,77 +198,78 @@ fn ConstructWorldDrawingInfo(
 			// For now ignore characher animation - it seems to be unused.
 		}
 
-		foreach( &projectile : game_state.projectiles )
-		{
-			var EntitiesDescription::Tool& weapon_tool=
-				entities_description.tools[ size_type( projectile.weapon_tool_index ) ];
-
-			if( weapon_tool.projectile_model >= EntitiesDescription::Tool::c_projectile_model_first_mesh_model )
+		game_state.projectiles.Iterate(
+			lambda[&]( Projectile& projectile )
 			{
-				// Projectiles for this weapon are drawn via a model.
-				var size_type animation_index(
-					weapon_tool.projectile_model - EntitiesDescription::Tool::c_projectile_model_first_mesh_model );
-				if( animation_index < entities_description.animations.size() )
+				var EntitiesDescription::Tool& weapon_tool=
+					entities_description.tools[ size_type( projectile.weapon_tool_index ) ];
+
+				if( weapon_tool.projectile_model >= EntitiesDescription::Tool::c_projectile_model_first_mesh_model )
 				{
-					var EntitiesDescription::AnimationDescription& animation= entities_description.animations[ animation_index ];
-
-					// Calculate orientation based on velocity vector.
-					// It isn't ideal, but fine enough.
-					var f32 mut azimuth= 0.0f;
-					var f32 mut elevation= 0.0f;
-					var f32 velocity_xy_square_length= projectile.velocity.xy().SquareLength();
-					if( velocity_xy_square_length > 0.0f )
+					// Projectiles for this weapon are drawn via a model.
+					var size_type animation_index(
+						weapon_tool.projectile_model - EntitiesDescription::Tool::c_projectile_model_first_mesh_model );
+					if( animation_index < entities_description.animations.size() )
 					{
-						 azimuth= -ust::atan2( projectile.velocity.x, projectile.velocity.y );
-						 elevation= ust::atan2( projectile.velocity.z, ust::sqrt( velocity_xy_square_length ) );
-					}
-					else
-					{
-						elevation= ( projectile.velocity.z > 0.0f ? c_tau * 0.25f : -c_tau * 0.25f );
-					}
+						var EntitiesDescription::AnimationDescription& animation= entities_description.animations[ animation_index ];
 
-					drawing_info.model_objects.push_back(
-						WorldDrawingInfo::ModelObject
+						// Calculate orientation based on velocity vector.
+						// It isn't ideal, but fine enough.
+						var f32 mut azimuth= 0.0f;
+						var f32 mut elevation= 0.0f;
+						var f32 velocity_xy_square_length= projectile.velocity.xy().SquareLength();
+						if( velocity_xy_square_length > 0.0f )
 						{
-							.model_file_name= animation.model_file_name,
+							 azimuth= -ust::atan2( projectile.velocity.x, projectile.velocity.y );
+							 elevation= ust::atan2( projectile.velocity.z, ust::sqrt( velocity_xy_square_length ) );
+						}
+						else
+						{
+							elevation= ( projectile.velocity.z > 0.0f ? c_tau * 0.25f : -c_tau * 0.25f );
+						}
+
+						drawing_info.model_objects.push_back(
+							WorldDrawingInfo::ModelObject
+							{
+								.model_file_name= animation.model_file_name,
+								.position= projectile.position,
+								.azimuth= azimuth,
+								.elevation= elevation,
+								.frame= 0u,
+								// Disable culling for projectiles - allow drawing them in skies.
+								.disable_culling= true,
+								.first_person_weapon= false,
+								.constant_lighting= false,
+							} );
+					}
+				}
+				else if(
+					weapon_tool.projectile_model >= 0 &&
+					weapon_tool.projectile_model < i32( typeinfo</ typeof( BillboardConstants::c_shot_ids ) />.element_count ) )
+				{
+					drawing_info.billboards.push_back(
+						WorldDrawingInfo::Billboard
+						{
+							.alignment= WorldDrawingInfo::Billboard::Alignment::ToCustomAxis,
 							.position= projectile.position,
-							.azimuth= azimuth,
-							.elevation= elevation,
-							.frame= 0u,
-							// Disable culling for projectiles - allow drawing them in skies.
-							.disable_culling= true,
-							.first_person_weapon= false,
-							.constant_lighting= false,
+							// Make projectiles slighly bigger than unit scale, since otherwise they are barely visible.
+							.scale= 2.0f,
+							.custom_axis= projectile.velocity,
+							.billboard_index( BillboardConstants::c_shot_ids[ size_type( weapon_tool.projectile_model ) ] ),
 						} );
 				}
-			}
-			else if(
-				weapon_tool.projectile_model >= 0 &&
-				weapon_tool.projectile_model < i32( typeinfo</ typeof( BillboardConstants::c_shot_ids ) />.element_count ) )
-			{
-				drawing_info.billboards.push_back(
-					WorldDrawingInfo::Billboard
-					{
-						.alignment= WorldDrawingInfo::Billboard::Alignment::ToCustomAxis,
-						.position= projectile.position,
-						// Make projectiles slighly bigger than unit scale, since otherwise they are barely visible.
-						.scale= 2.0f,
-						.custom_axis= projectile.velocity,
-						.billboard_index( BillboardConstants::c_shot_ids[ size_type( weapon_tool.projectile_model ) ] ),
-					} );
-			}
 
-			if( weapon_tool.projectile_light[1] > 0u )
-			{
-				drawing_info.dynamic_light_sources.push_back(
-					WorldDrawingInfo::DynamicLightSource
-					{
-						.position= projectile.position,
-						.power= f32( weapon_tool.projectile_light[1] ) * c_light_power_scale,
-						.color_index= weapon_tool.projectile_light[0],
-					} );
-			}
-		}
+				if( weapon_tool.projectile_light[1] > 0u )
+				{
+					drawing_info.dynamic_light_sources.push_back(
+						WorldDrawingInfo::DynamicLightSource
+						{
+							.position= projectile.position,
+							.power= f32( weapon_tool.projectile_light[1] ) * c_light_power_scale,
+							.color_index= weapon_tool.projectile_light[0],
+						} );
+				}
+			} );
 
 		// Temporary visualisation of damaging flames.
 		// TODO - replace it with proper flame effects applied to the model of a damaged entity.
