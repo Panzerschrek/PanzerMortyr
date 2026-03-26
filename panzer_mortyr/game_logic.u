@@ -1420,13 +1420,6 @@ struct DelayedExplosionSplashDamage
 
 fn ProcessEntitiesLogicStep( GameGlobalData& game_global_data, GameMapData& map_data, GameState &mut game_state )
 {
-	// Accumulate explosion damage events to apply them later.
-	// It's needed, since we can't iterate over entities and apply damage for other entities in the same time.
-	var size_type max_delayed_explosion_damage_events= 8s;
-	var size_type mut num_delayed_explosion_damage_events= 0s;
-	var [ DelayedExplosionSplashDamage, max_delayed_explosion_damage_events ] mut delayed_explosion_splash_damage
-		[ { .center= Vec3f::MakeZero(), .radius= 0.0f, .splash_base_damage= 0.0f  } ... ];
-
 	var GameParams& game_params= game_global_data.game_params.deref();
 	var EntitiesDescription& entities_description= map_data.entities_description.deref();
 
@@ -1443,6 +1436,10 @@ fn ProcessEntitiesLogicStep( GameGlobalData& game_global_data, GameMapData& map_
 
 		var bool mut need_to_remove_entity= false;
 		var ust::optional</EntityState/> mut new_spawned_entity;
+
+		// Accumulate explosion damage events to apply them later.
+		// It's needed, since we can't iterate over entities and apply damage for other entities in the same time.
+		var ust::optional</DelayedExplosionSplashDamage/> mut delayed_explosion_splash_damage;
 
 		{
 			var EntityState &mut entity= game_state.entities[entity_index].try_deref();
@@ -1836,19 +1833,14 @@ fn ProcessEntitiesLogicStep( GameGlobalData& game_global_data, GameMapData& map_
 						//
 						// It's not clear, how exactly this damage is dealed, so, use the same approach as for splash damage of projectiles.
 
-						if( num_delayed_explosion_damage_events < max_delayed_explosion_damage_events )
-						{
-							delayed_explosion_splash_damage[ num_delayed_explosion_damage_events ]=
-								DelayedExplosionSplashDamage
-								{
-									.center= entity.position,
-									.radius= f32( gasoline_explosion.damage_area[0] ),
-									// Scale damage somewhat down. Its' too high without this.
-									.splash_base_damage= f32( gasoline_explosion.damage_area[1] ) / 2.0f,
-								};
-
-							++num_delayed_explosion_damage_events;
-						}
+						delayed_explosion_splash_damage=
+							DelayedExplosionSplashDamage
+							{
+								.center= entity.position,
+								.radius= f32( gasoline_explosion.damage_area[0] ),
+								// Scale damage somewhat down. Its' too high without this.
+								.splash_base_damage= f32( gasoline_explosion.damage_area[1] ) / 2.0f,
+							};
 					}
 				}
 
@@ -1977,20 +1969,18 @@ fn ProcessEntitiesLogicStep( GameGlobalData& game_global_data, GameMapData& map_
 			game_state.entities.push_back( new_spawned_entity.try_take() );
 			AddEntityCollider( entities_description, new_entity_index, game_state );
 		}
-	}
 
-	for( auto mut i= 0s; i < num_delayed_explosion_damage_events; ++i )
-	{
-		var DelayedExplosionSplashDamage& d= delayed_explosion_splash_damage[i];
-
-		ApplySplashDamage(
-			d.center,
-			d.radius,
-			d.splash_base_damage,
-			game_state.random,
-			game_state.colliders,
-			game_state.entities,
-			game_state.player );
+		if_var( &d : delayed_explosion_splash_damage )
+		{
+			ApplySplashDamage(
+				d.center,
+				d.radius,
+				d.splash_base_damage,
+				game_state.random,
+				game_state.colliders,
+				game_state.entities,
+				game_state.player );
+		}
 	}
 }
 
