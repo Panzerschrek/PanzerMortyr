@@ -1411,8 +1411,22 @@ fn TriggerEntitiesSpawn( GameMapData& map_data, GameState &mut game_state )
 	}
 }
 
+struct DelayedExplosionSplashDamage
+{
+	Vec3f center;
+	f32 radius;
+	f32 splash_base_damage;
+}
+
 fn ProcessEntitiesLogicStep( GameGlobalData& game_global_data, GameMapData& map_data, GameState &mut game_state )
 {
+	// Accumulate explosion damage events to apply them later.
+	// It's needed, since we can't iterate over entities and apply damage for other entities in the same time.
+	var size_type max_delayed_explosion_damage_events= 8s;
+	var size_type mut num_delayed_explosion_damage_events= 0s;
+	var [ DelayedExplosionSplashDamage, max_delayed_explosion_damage_events ] mut delayed_explosion_splash_damage
+		[ { .center= Vec3f::MakeZero(), .radius= 0.0f, .splash_base_damage= 0.0f  } ... ];
+
 	var GameParams& game_params= game_global_data.game_params.deref();
 	var EntitiesDescription& entities_description= map_data.entities_description.deref();
 
@@ -1814,6 +1828,27 @@ fn ProcessEntitiesLogicStep( GameGlobalData& game_global_data, GameMapData& map_
 								} );
 						}
 					}
+
+					if( gasoline_explosion.damage_area[0] > 0u && gasoline_explosion.damage_area[1] > 0u )
+					{
+						// Explosion damage in the original works a little bit strange.
+						// Investigations have shown, that it's applied each game step if current operation contains "wybuch_benzyny".
+						//
+						// It's not clear, how exactly this damage is dealed, so, use the same approach as for splash damage of projectiles.
+
+						if( num_delayed_explosion_damage_events < max_delayed_explosion_damage_events )
+						{
+							delayed_explosion_splash_damage[ num_delayed_explosion_damage_events ]=
+								DelayedExplosionSplashDamage
+								{
+									.center= entity.position,
+									.radius= f32( gasoline_explosion.damage_area[0] ),
+									.splash_base_damage= f32( gasoline_explosion.damage_area[1] )
+								};
+
+							++num_delayed_explosion_damage_events;
+						}
+					}
 				}
 
 				if_var( &smoke_emission : operation.smoke_emission )
@@ -1941,6 +1976,20 @@ fn ProcessEntitiesLogicStep( GameGlobalData& game_global_data, GameMapData& map_
 			game_state.entities.push_back( new_spawned_entity.try_take() );
 			AddEntityCollider( entities_description, new_entity_index, game_state );
 		}
+	}
+
+	for( auto mut i= 0s; i < num_delayed_explosion_damage_events; ++i )
+	{
+		var DelayedExplosionSplashDamage& d= delayed_explosion_splash_damage[i];
+
+		ApplySplashDamage(
+			d.center,
+			d.radius,
+			d.splash_base_damage,
+			game_state.random,
+			game_state.colliders,
+			game_state.entities,
+			game_state.player );
 	}
 }
 
