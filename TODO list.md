@@ -106,7 +106,7 @@ PanzerMortyr game logic:
 * Implement jetpack tool.
 * Implement flashlight tool.
 * Implement invisibility tool (false documents) and enemy properties allowing to uncover the player having invisibility.
-* Implement logic elements used by explosive decorations - with splash damage, flame billboards, (maybe) smoke, etc.
+* Implement flame particles emitted by explosive decorations ("wybuch_benzyny"/"plomienie").
 * Spawn bullet holes on walls, including holes attached to dynamic (movable) clusters.
 * Leave blood makrs on walls.
 * Leave footsteps where they should be.
@@ -116,7 +116,7 @@ PanzerMortyr game logic:
 * Implement weapon switching in case of out of ammo.
 * Implement kick as separate "weapon" which can be fired when some other weapon is active (including kicking leg animation shown).
 * Create dynamic lights for burning entities.
-* Create dynamic lights for some entities where such light should be (like alarm, explosions).
+* Create dynamic lights for some entities where such light should be (like alarm, explosions). It's specified via properties "zarowka", "zarowka_gasnaca", "swiatlo".
 * Spawn light flashes while shooting.
 * Spawn light flashes at projectile hit points.
 * Spawn bubble sprites while swimming in water.
