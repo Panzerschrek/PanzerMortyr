@@ -56,6 +56,7 @@ Gameplay investigation:
 * Investigate how the ability for entities to be covered with blood is stored.
 * Investigate whether armor absorbs flame damage.
 * Investigate what kinds of entities are affected by gravity (what in an entity description turns gravity on and off).
+* Investigate what "zarowka" entity property is and whether it's actually used.
 
 PanzerMortyr general:
 
@@ -115,8 +116,6 @@ PanzerMortyr game logic:
 * Switch to a new weapon when picking it up (investigate when such switchinh takes place in the original game).
 * Implement weapon switching in case of out of ammo.
 * Implement kick as separate "weapon" which can be fired when some other weapon is active (including kicking leg animation shown).
-* Create dynamic lights for burning entities.
-* Create dynamic lights for some entities where such light should be (like alarm, explosions). It's specified via properties "zarowka", "zarowka_gasnaca", "swiatlo".
 * Spawn light flashes while shooting.
 * Spawn bubble sprites while swimming in water.
 * Spawn bubble sprites for projectiles moving in water.
@@ -142,7 +141,9 @@ PanzerMortyr game logic:
 * Make sure muzzle flashes are drawn as close to the original game as possible (their position is correct).
 * Consider displaying some sort of billboards indicating places with notes - so that players don't miss notes, which are used for storytelling.
 * Consider disabling all or at least some weapons of the player if weapon shot start position is in water or other liquid.
-* Consider extinguish damaging flames on entities located inside liquids.
+* Consider extinguishing damaging flames on entities located inside liquids.
+* Consider reducing brightness of Volkssturm smoking lights - they are way to bright.
+* Consider performing pseudo-random time-based brightness variation for flame lights.
 
 PanzerMortyr rendering:
 

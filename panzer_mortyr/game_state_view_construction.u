@@ -1,3 +1,4 @@
+import "/scoped_array.iu"
 import "/common_lib/billboards_description_file.iu"
 import "bounding_boxes_hierarchy_debug_visualization.iu"
 import "game_constants.iu"
@@ -46,16 +47,32 @@ fn ConstructWorldDrawingInfo(
 		drawing_info.camera_params.position=
 			camera_position_without_depth_shift + GetCameraDepthShift( camera_controller );
 
+		// Count how many damaging flames are attached to each entity.
+		scoped_array u8 mut num_entity_damaging_flames[ game_state.entities.size() ] ( 0u8 );
+		game_state.damaging_flames.Iterate(
+			lambda[&]( DamagingFlame& damaging_flame )
+			{
+				var size_type index( damaging_flame.entity_index );
+				if( index < num_entity_damaging_flames.size() )
+				{
+					++num_entity_damaging_flames[index];
+				}
+			} );
+
 		var EntitiesDescription& entities_description= map_data.entities_description.deref();
 
-		foreach( &entity_opt : game_state.entities )
+		foreach( pair : game_state.entities.iter().zip( num_entity_damaging_flames.iter() ) )
 		{
+			auto& entity_opt= pair.first;
+
 			if( entity_opt.empty() )
 			{
 				continue;
 			}
 
 			var EntityState& entity= entity_opt.try_deref();
+
+			var u8 num_damaging_flames= pair.second;
 
 			var EntitiesDescription::EntityDescription& entity_description= entities_description.entities[ size_type( entity.kind ) ];
 
@@ -66,52 +83,67 @@ fn ConstructWorldDrawingInfo(
 
 			var EntitiesDescription::Operation& operation= entity_description.operations[ size_type( entity.current_operation ) ];
 
-			// PanzerMortyr addition - add dynamic light sources for explosions.
-			// TODO - remove it after "zarowka_gasnaca" is implemented.
-			if_var( &gasoline_explosion : operation.gasoline_explosion )
+			if_var( &explosion_light : operation.explosion_light )
 			{
-				var u32 mut min_explosion_step= 0xFFFFFFFFu;
-
-				foreach( &explosion : gasoline_explosion.explosions )
+				if( i32( entity.num_steps_since_operation_start ) >= explosion_light.params[0] &&
+					i32( entity.num_steps_since_operation_start ) < explosion_light.params[1] )
 				{
-					if( explosion[2] > 0 )
-					{
-						ust::min_assign( min_explosion_step, u32( explosion[0] ) );
-					}
-				}
+					// Investigations have shown, that light power of this effect is always the same and can't be changed.
+					var f32 light_power= 75.0f;
 
-				if( entity.num_steps_since_operation_start >= min_explosion_step )
+					drawing_info.dynamic_light_sources.push_back(
+						WorldDrawingInfo::DynamicLightSource
+						{
+							.position( entity.position.xy(), entity.position.z + f32( explosion_light.params[4] ) ),
+							.power= light_power * c_light_power_scale,
+							.color_index( explosion_light.params[3] ),
+						} );
+				}
+			}
+
+			if_var( &light : operation.light )
+			{
+				if( entity.num_steps_since_operation_start >= light.time &&
+					entity.num_steps_since_operation_start < light.time + light.delta )
 				{
-					// We don't calculate here exact duration of explosion state.
-					// For simplicity assume it's no shorter than 10 steps.
-					var u32 relative_time= entity.num_steps_since_operation_start - min_explosion_step;
-					var u32 up_duration= 3u;
-					var u32 down_duration= 7u;
+					var f32 fade=
+						( f32( light.time + light.delta - entity.num_steps_since_operation_start ) - f32( time_steps_fraction ) ) /
+						f32( light.delta );
 
-					var f32 mut fade= 0.0f;
+					var Vec3f offset_transformed=
+						Vec3f( f32( light.offset_x ), f32( light.offset_y ), f32( light.offset_z ) ) *
+						Mat4f::MakeRotationZ( entity.azimuth );
 
-					if( relative_time < up_duration )
-					{
-						fade= ( f32( relative_time ) + f32( time_steps_fraction ) ) / f32( up_duration );
-					}
-					else if( relative_time < up_duration + down_duration )
-					{
-						fade= ( f32( down_duration + up_duration - relative_time ) - time_steps_fraction ) / f32( up_duration );
-					}
-
-					if( fade > 0.0f )
-					{
-						var f32 max_power= f32( gasoline_explosion.damage_area[0] ) * 0.4f;
-
-						drawing_info.dynamic_light_sources.push_back(
-							WorldDrawingInfo::DynamicLightSource
-							{
-								.position( entity.position.xy(), entity.position.z + f32( gasoline_explosion.explosions[0][1] ) ),
-								.color_index= c_flame_color_index,
-								.power= max_power * c_light_power_scale * fade,
-							} );
-					}
+					drawing_info.dynamic_light_sources.push_back(
+						WorldDrawingInfo::DynamicLightSource
+						{
+							.position= entity.position + offset_transformed,
+							.power= f32(light.power) * fade * c_light_power_scale,
+							.color_index( light.color ),
+						} );
 				}
+			}
+
+			if( num_damaging_flames > 0u8 )
+			{
+				// PanzerMortyr addition - add lights for burning entities.
+				var f32 flame_power= 6.0f;
+
+				var EntitiesDescription::OperationAnimationDescription& a=
+					operation.animations[ size_type( EntitiesDescription::Operation::AnimationKind::Forward ) ];
+
+				drawing_info.dynamic_light_sources.push_back(
+					WorldDrawingInfo::DynamicLightSource
+					{
+						.position=
+							entity.position +
+							Vec3f(
+								f32( a.bounding_box_center_x ),
+								f32( a.bounding_box_center_y ),
+								f32( a.bounding_box_center_z ) ),
+						.power= f32( num_damaging_flames ) * flame_power * c_light_power_scale,
+						.color_index= c_flame_color_index,
+					} );
 			}
 
 			auto add_animation_model=
