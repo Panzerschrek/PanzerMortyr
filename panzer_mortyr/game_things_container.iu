@@ -13,14 +13,30 @@ public:
 	// Returns true if managed to insert and false if has no space left.
 	fn Insert( mut this, T mut val ) : bool
 	{
-		// TODO - speed-up this search of an empty slot.
-		for( auto mut i= 0u; i < N; ++i )
+		for( auto mut word= 0u; word < c_num_words; ++word )
 		{
-			var Entry &mut entry= entries_[i];
-			if( entry.value_opt.empty() )
+			var u32 &mut word_bits= occopied_slot_bits_[word];
+			if( word_bits == 0xFFFFFFFFu )
 			{
-				entry.value_opt.reset( move(val) );
-				return true;
+				continue; // The whole block is occupied.
+			}
+
+			for( auto mut bit= 0u; bit < 32u; ++bit )
+			{
+				var u32 mask= 1u << bit;
+
+				if( ( word_bits & mask ) == 0u )
+				{
+					// Found an empty slot.
+					// Mark it as non-empty.
+					word_bits |= mask;
+
+					var Entry &mut entry= entries_[ word * 32u + bit ];
+					entry.value_opt.reset( move(val) );
+					++entry.generational_index;
+
+					return true;
+				}
 			}
 		}
 
@@ -31,12 +47,28 @@ public:
 	template</type Func/>
 	fn Iterate( this, Func& func )
 	{
-		for( auto mut i= 0u; i < N; ++i )
+		for( auto mut word= 0u; word < c_num_words; ++word )
 		{
-			var Entry& entry= entries_[i];
-			if( !entry.value_opt.empty() )
+			var u32 word_bits= occopied_slot_bits_[word];
+			if( word_bits == 0u )
 			{
-				func( entry.value_opt.try_deref() );
+				continue; // The whole block is empty.
+			}
+
+			for( auto mut bit= 0u; bit < 32u; ++bit )
+			{
+				var u32 mask= 1u << bit;
+
+				if( ( word_bits & mask ) != 0u )
+				{
+					// Found non-empty slot.
+
+					var Entry& entry= entries_[ word * 32u + bit ];
+					if( !entry.value_opt.empty() )
+					{
+						func( entry.value_opt.try_deref() );
+					}
+				}
 			}
 		}
 	}
@@ -45,12 +77,29 @@ public:
 	template</type Func/>
 	fn IterateWithIndex( this, Func& func )
 	{
-		for( auto mut i= 0u; i < N; ++i )
+		for( auto mut word= 0u; word < c_num_words; ++word )
 		{
-			var Entry& entry= entries_[i];
-			if( !entry.value_opt.empty() )
+			var u32 word_bits= occopied_slot_bits_[word];
+			if( word_bits == 0u )
 			{
-				func( entry.value_opt.try_deref(), i );
+				continue; // The whole block is empty.
+			}
+
+			for( auto mut bit= 0u; bit < 32u; ++bit )
+			{
+				var u32 mask= 1u << bit;
+
+				if( ( word_bits & mask ) != 0u )
+				{
+					// Found non-empty slot.
+
+					var u32 index= word * 32u + bit;
+					var Entry& entry= entries_[ index ];
+					if( !entry.value_opt.empty() )
+					{
+						func( entry.value_opt.try_deref(), index );
+					}
+				}
 			}
 		}
 	}
@@ -72,15 +121,31 @@ public:
 	template</type Func/>
 	fn Retain( mut this, Func& func )
 	{
-		// TODO - optimize iteration, speed-up skipping empty slots.
-		for( auto mut i= 0u; i < N; ++i )
+		for( auto mut word= 0u; word < c_num_words; ++word )
 		{
-			var Entry &mut entry= entries_[i];
-			if( !entry.value_opt.empty() )
+			var u32 &mut word_bits= occopied_slot_bits_[word];
+			if( word_bits == 0u )
 			{
-				if( !func( entry.value_opt.try_deref() ) )
+				continue; // The whole block is empty.
+			}
+
+			for( auto mut bit= 0u; bit < 32u; ++bit )
+			{
+				var u32 mask= 1u << bit;
+
+				if( ( word_bits & mask ) != 0u )
 				{
-					entry.value_opt.reset();
+					// Found non-empty slot.
+
+					var Entry &mut entry= entries_[ word * 32u + bit ];
+					if( !entry.value_opt.empty() )
+					{
+						if( !func( entry.value_opt.try_deref() ) )
+						{
+							entry.value_opt.reset();
+							word_bits &= ~mask; // Mark the slot as empty.
+						}
+					}
 				}
 			}
 		}
@@ -93,7 +158,13 @@ private:
 		u32 generational_index= 0u; // Increment it each time new entry is constructed.
 	}
 
+	var u32 constexpr c_num_words= N / 32u;
+
 private:
+	// Store occopied flag for slots in a bit array.
+	// Using it allows speeding-up insertion and iteration by skipping whole chunks of 32 occupied or empty elements.
+	[ u32, c_num_words ] occopied_slot_bits_= zero_init;
+
 	[ Entry, N ] entries_;
 }
 
