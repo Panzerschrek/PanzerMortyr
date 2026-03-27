@@ -15,6 +15,7 @@ Improvements:
 * Optional nearest texture filtering.
 * Models are always drawn in full quality.
 * Fog has higher quality - it's calculated per-pixel, not per-vertex. Only for semitransparent polygons it's calculated per-vertex (as in the original game).
+* Dynamic light is calculated per-pixel (for world geometry).
 
 Fixed bugs:
 
@@ -39,6 +40,7 @@ Changes:
 * Local fog volumes use slightly different attenuation formula.
 * Flat local fog volumes are box-shaped. In the original game they are always elliptical.
 * Sky isn't affected by global fog at all.
+* Light effects of projectile hits stay shorter for dim lights (compared to the original game).
 
 
 ### Gameplay
@@ -58,6 +60,7 @@ Changes:
 * Door/elevator/button movement speed may be different - it's just guessed.
 * Zooming works differently - it requires holding the zoom button, maximum zoom is decreased and zooming speed is increased.
 * Fire damage is calculated in a different way, so that even a single flame can hurt its target sometimes.
+* Damage from explosive entities is calculated in a different way.
 * Grenade throwing animation may look slightly different. The exact pattern of lowering animation in the original game is unclear.
 * Sky decorations (aircrafts) move differently from the original game. It's unclear how exactly their movement should work, so, it's just guessed.
 
