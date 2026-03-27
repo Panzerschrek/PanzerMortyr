@@ -118,7 +118,6 @@ PanzerMortyr game logic:
 * Create dynamic lights for burning entities.
 * Create dynamic lights for some entities where such light should be (like alarm, explosions). It's specified via properties "zarowka", "zarowka_gasnaca", "swiatlo".
 * Spawn light flashes while shooting.
-* Spawn light flashes at projectile hit points.
 * Spawn bubble sprites while swimming in water.
 * Spawn bubble sprites for projectiles moving in water.
 * Do something with unconditional entity state transition "w_zasiegu_strzalu_b" - try making it somewhat random.

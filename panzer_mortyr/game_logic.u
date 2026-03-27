@@ -330,6 +330,8 @@ fn nodiscard ProcessGameLogicStep(
 
 	ProcessSmokeTrailParticlesLogicStep( game_state.smoke_trail_particles );
 
+	ProcessProjectileHitLightsLogicStep( game_state.projectile_hit_lights );
+
 	PickUpItems( map_data, game_state );
 
 	DealPlayerEnvironmentalDamage( map_data, game_state );
@@ -432,7 +434,7 @@ fn PerformPlayerWeaponLogic( GameMapData& map_data, PlayerInput& player_input, G
 						var Vec3f direction_with_random_spread=
 							RandomOffsetShotVector( direction, tool.player_weapon_accuracy, game_state.random );
 
-						game_state.projectiles.push_back(
+						game_state.projectiles.Insert(
 							Projectile
 							{
 								.weapon_tool_index( weapon_tool_index ),
@@ -444,7 +446,7 @@ fn PerformPlayerWeaponLogic( GameMapData& map_data, PlayerInput& player_input, G
 
 						if( tool.muzzle_flash_model >= 0 )
 						{
-							game_state.muzzle_flashes.push_back(
+							game_state.muzzle_flashes.Insert(
 								MuzzleFlash
 								{
 									.model( tool.muzzle_flash_model ),
@@ -1816,7 +1818,7 @@ fn ProcessEntitiesLogicStep( GameGlobalData& game_global_data, GameMapData& map_
 					{
 						if( explosion[2] != 0 && entity.num_steps_since_operation_start == u32( explosion[0] ) )
 						{
-							game_state.explosion_particles.push_back(
+							game_state.explosion_particles.Insert(
 								ExplosionParticle
 								{
 									.large= true,
@@ -1858,7 +1860,7 @@ fn ProcessEntitiesLogicStep( GameGlobalData& game_global_data, GameMapData& map_
 								f32( smoke_emission.pos_y ),
 								f32( smoke_emission.pos_z ) );
 
-						game_state.smoke_particles.push_back(
+						game_state.smoke_particles.Insert(
 							SmokeParticle
 							{
 								.smoke_model= smoke_emission.smoke_model,
@@ -1887,7 +1889,7 @@ fn ProcessEntitiesLogicStep( GameGlobalData& game_global_data, GameMapData& map_
 								Vec3f( f32( smoke.position_x ), f32( smoke.position_y ), f32( smoke.position_z ) ) *
 								rotation_matrix;
 
-							game_state.projectile_hit_smoke_emitters.push_back(
+							game_state.projectile_hit_smoke_emitters.Insert(
 								ProjectileHitSmokeEmitter
 								{
 									.position= entity.position + offset,
@@ -2320,7 +2322,7 @@ fn PushMoveDynamicCluster(
 	ust::array_view_mut</ ust::optional</EntityState/> /> entities,
 	ust::array_view_imut</DynamicClusterCollider/> dynamic_cluster_colliders,
 	PlayerState &mut player_state,
-	ust::vector</Projectile/> &mut projectiles,
+	ProjectilesContainer &mut projectiles,
 	ust::vector</ProjectileHitEvent/> &mut projectile_hit_events ) : bool
 {
 	var f32 movement_vector_length= in_movement_vector.Length();
@@ -2439,13 +2441,9 @@ fn PushMoveDynamicCluster(
 	}
 
 	// Hit projectiles by moving this dynamc cluster.
-	for( auto mut i= 0s; i < projectiles.size(); )
-	{
-		var bool mut need_to_remove= false;
-
+	projectiles.Retain(
+		lambda[&]( Projectile &mut projectile ) : bool
 		{
-			var Projectile &mut projectile= projectiles[i];
-
 			if_var( &intersection_result :
 				LineTraceSingleDynamicCluster(
 					map_data, dynamic_cluster_collider, projectile.position, opposite_movement_vector ) )
@@ -2505,23 +2503,13 @@ fn PushMoveDynamicCluster(
 								.hit_entity_index= ~0u,
 							} );
 
-						need_to_remove= true;
+						return false; // Destroy.
 					}
 				}
 			}
-		}
 
-		if( need_to_remove )
-		{
-			var size_type last_index= projectiles.size() - 1s;
-			projectiles.swap( i, last_index );
-			projectiles.drop_back();
-		}
-		else
-		{
-			++i;
-		}
-	}
+			return true; // Preserve.
+		} );
 
 	return true;
 }
@@ -2530,13 +2518,14 @@ fn ProcessProjectilesLogicStep( GameMapData& map_data, GameState &mut game_state
 {
 	var EntitiesDescription& entities_description= map_data.entities_description.deref();
 
-	for( auto mut i= 0s; i < game_state.projectiles.size(); )
-	{
-		var bool mut need_to_remove= false;
+	auto &mut smoke_trail_particles= game_state.smoke_trail_particles;
+	auto &mut projectile_hit_events= game_state.projectile_hit_events;
+	auto& dynamic_cluster_colliders= game_state.dynamic_cluster_colliders;
+	auto& colliders= game_state.colliders;
 
+	game_state.projectiles.Retain(
+		lambda[&]( Projectile& mut projectile ) : bool
 		{
-			var Projectile &mut projectile= game_state.projectiles[i];
-
 			var EntitiesDescription::Tool& weapon_tool=
 				entities_description.tools[ size_type( projectile.weapon_tool_index ) ];
 
@@ -2544,7 +2533,7 @@ fn ProcessProjectilesLogicStep( GameMapData& map_data, GameState &mut game_state
 			// This will create a particle at shot start point, which is needed for better look for weapons like flamethrower.
 			if( weapon_tool.smoke_trail_kind != EntitiesDescription::Tool::c_smoke_trail_kind_none )
 			{
-				game_state.smoke_trail_particles.push_back(
+				smoke_trail_particles.Insert(
 					SmokeTrailParticle
 					{
 						.kind= weapon_tool.smoke_trail_kind,
@@ -2577,7 +2566,7 @@ fn ProcessProjectilesLogicStep( GameMapData& map_data, GameState &mut game_state
 				var u32 mut hit_entity_index= ~0u;
 
 				if_var( &line_trace_result : LineTrace(
-					map_data, game_state.dynamic_cluster_colliders, projectile.position, velocity_slightly_elongated ) )
+					map_data, dynamic_cluster_colliders, projectile.position, velocity_slightly_elongated ) )
 				{
 					if( line_trace_result.distance < 1.0f )
 					{
@@ -2587,7 +2576,7 @@ fn ProcessProjectilesLogicStep( GameMapData& map_data, GameState &mut game_state
 					}
 				}
 
-				foreach( &collider : game_state.colliders )
+				foreach( &collider : colliders )
 				{
 					if( collider.entity_index == projectile.owner_entity_index )
 					{
@@ -2655,7 +2644,7 @@ fn ProcessProjectilesLogicStep( GameMapData& map_data, GameState &mut game_state
 						}
 					}
 
-					game_state.projectile_hit_events.push_back(
+					projectile_hit_events.push_back(
 						ProjectileHitEvent
 						{
 							.weapon_tool_index= projectile.weapon_tool_index,
@@ -2665,7 +2654,7 @@ fn ProcessProjectilesLogicStep( GameMapData& map_data, GameState &mut game_state
 							.hit_entity_index= hit_entity_index,
 						} );
 
-					need_to_remove= true;
+					return false; // Remove.
 				}
 
 				// If has no collision or has a collision with an entity or player or if it's not a bouncing projectile - don't perform more bounces.
@@ -2687,24 +2676,21 @@ fn ProcessProjectilesLogicStep( GameMapData& map_data, GameState &mut game_state
 
 			if( projectile.age_steps >= c_max_projectile_age )
 			{
-				need_to_remove= true;
+				return false; // Remove.
 			}
 			if( weapon_tool.projectile_kind == EntitiesDescription::Tool::c_projectile_kind_melee )
 			{
 				// Melee projectiles live only single step.
 				// Their effective distance is equal to their speed per step.
-				need_to_remove= true;
+				return false; // Remove.
 			}
 
-			if( !need_to_remove &
-				weapon_tool.projectile_kind == EntitiesDescription::Tool::c_projectile_kind_grenade &
+			if( weapon_tool.projectile_kind == EntitiesDescription::Tool::c_projectile_kind_grenade &
 				projectile.age_steps >= c_grenade_explosion_delay )
 			{
 				// Explode grenades after some delay.
 
-				need_to_remove= true;
-
-				game_state.projectile_hit_events.push_back(
+				projectile_hit_events.push_back(
 					ProjectileHitEvent
 					{
 						.weapon_tool_index= projectile.weapon_tool_index,
@@ -2713,20 +2699,12 @@ fn ProcessProjectilesLogicStep( GameMapData& map_data, GameState &mut game_state
 						.hit_quad_index= ~0u,
 						.hit_entity_index= ~0u,
 					} );
-			}
-		}
 
-		if( need_to_remove )
-		{
-			var size_type last_index= game_state.projectiles.size() - 1s;
-			game_state.projectiles.swap( i, last_index );
-			game_state.projectiles.drop_back();
-		}
-		else
-		{
-			++i;
-		}
-	}
+				return false; // Remove.
+			}
+
+			return true; // Preserve.
+		} );
 }
 
 fn SlowDownProjectileAfterBouncing( Vec3f &mut velocity, EntitiesDescription::Tool& weapon_tool )
@@ -2853,7 +2831,7 @@ fn ProcessProjectileHitEventsLogicStep( GameMapData& map_data, GameState &mut ga
 
 			if( weapon_tool.napalm != 0u )
 			{
-				game_state.damaging_flames.push_back(
+				game_state.damaging_flames.Insert(
 					DamagingFlame{ .entity_index= projectile_hit_event.hit_entity_index, .age_steps= 0u } );
 			}
 		}
@@ -2928,7 +2906,7 @@ fn ProcessProjectileHitEventsLogicStep( GameMapData& map_data, GameState &mut ga
 						}
 					}
 
-					game_state.flame_particles.push_back(
+					game_state.flame_particles.Insert(
 						FlameParticle
 						{
 							.position= flame_position,
@@ -2940,12 +2918,12 @@ fn ProcessProjectileHitEventsLogicStep( GameMapData& map_data, GameState &mut ga
 			},
 			EntitiesDescription::Tool::c_projectile_collision_effect_small_explosion ->
 			{
-				game_state.explosion_particles.push_back(
+				game_state.explosion_particles.Insert(
 					ExplosionParticle{ .large= false, .position= projectile_hit_event.position, .age_steps= 0u, } );
 			},
 			EntitiesDescription::Tool::c_projectile_collision_effect_large_explosion ->
 			{
-				game_state.explosion_particles.push_back(
+				game_state.explosion_particles.Insert(
 					ExplosionParticle{ .large= true, .position= projectile_hit_event.position, .age_steps= 0u, } );
 			},
 			EntitiesDescription::Tool::c_projectile_collision_effect_smoke_source ->
@@ -2979,7 +2957,7 @@ fn ProcessProjectileHitEventsLogicStep( GameMapData& map_data, GameState &mut ga
 					}
 				}
 
-				game_state.projectile_hit_smoke_emitters.push_back(
+				game_state.projectile_hit_smoke_emitters.Insert(
 					ProjectileHitSmokeEmitter
 					{
 						.position= projectile_hit_event.position,
@@ -2999,7 +2977,7 @@ fn ProcessProjectileHitEventsLogicStep( GameMapData& map_data, GameState &mut ga
 			if( u32( quad.texture_id ) ==
 				MaterialsDescription::c_special_material_texture_indices[ size_type( MaterialsDescription::SpecialMaterial::Glass ) ] )
 			{
-				game_state.breaking_glass_effects.push_back(
+				game_state.breaking_glass_effects.Insert(
 					BreakingGlassEffect
 					{
 						.hit_position= projectile_hit_event.position,
@@ -3015,7 +2993,17 @@ fn ProcessProjectileHitEventsLogicStep( GameMapData& map_data, GameState &mut ga
 			// TODO - add a bullet hole.
 		}
 
-		// TODO - leave a light source if necessary.
+		if( weapon_tool.light_at_hit_point[1] > 0u )
+		{
+			game_state.projectile_hit_lights.push_back(
+				ProjectileHitLight
+				{
+					.position= projectile_hit_event.position,
+					.power( weapon_tool.light_at_hit_point[1] ),
+					.color_index( weapon_tool.light_at_hit_point[0] ),
+					.age_steps= 0u,
+				} );
+		}
 	}
 
 	game_state.projectile_hit_events.clear();
@@ -3066,7 +3054,7 @@ fn ApplySplashDamage(
 
 fn ProcessDamagingFlamesLogicStep(
 	GameParams& game_params,
-	ust::vector</DamagingFlame/> &mut damaging_flames,
+	DamagingFlamesContainer &mut damaging_flames,
 	PseudoRandomGenerator &mut rand,
 	ust::array_view_mut</ ust::optional</EntityState /> /> entities,
 	PlayerState &mut player )
@@ -3087,13 +3075,9 @@ fn ProcessDamagingFlamesLogicStep(
 	var u32 base_flame_damage= game_params.fire_damage[1];
 	var u32 constexpr c_flame_damage_divisor= 16u;
 
-	for( auto mut i= 0s; i < damaging_flames.size(); )
-	{
-		var bool mut need_to_remove= false;
-
+	damaging_flames.Retain(
+		lambda[&]( DamagingFlame &mut damaging_flame ) : bool
 		{
-			var DamagingFlame &mut damaging_flame= damaging_flames[i];
-
 			if( ( damaging_flame.age_steps & damage_step_mask ) == 0u )
 			{
 				var u32 damage= ( base_flame_damage + rand.Next() % c_flame_damage_divisor ) / c_flame_damage_divisor;
@@ -3105,35 +3089,18 @@ fn ProcessDamagingFlamesLogicStep(
 
 			++damaging_flame.age_steps;
 
-			if( damaging_flame.age_steps >= c_damaging_flame_max_age )
-			{
-				need_to_remove= true;
-			}
-		}
-
-		if( need_to_remove )
-		{
-			var size_type last_index= damaging_flames.size() - 1s;
-			damaging_flames.swap( i, last_index );
-			damaging_flames.drop_back();
-		}
-		else
-		{
-			++i;
-		}
-	}
+			return damaging_flame.age_steps < c_damaging_flame_max_age;
+		} );
 }
 
 fn ProcessProjectileHitSmokeEmittersLogicStep( GameState& mut game_state )
 {
-	for( auto mut i= 0s; i < game_state.projectile_hit_smoke_emitters.size(); )
-	{
-		var bool mut need_to_remove= false;
+	auto &mut projectile_hit_smoke_particles= game_state.projectile_hit_smoke_particles;
 
+	game_state.projectile_hit_smoke_emitters.Retain(
+		lambda[&]( ProjectileHitSmokeEmitter &mut smoke_emitter ) : bool
 		{
-			var ProjectileHitSmokeEmitter &mut smoke_emitter= game_state.projectile_hit_smoke_emitters[i];
-
-			game_state.projectile_hit_smoke_particles.push_back(
+			projectile_hit_smoke_particles.Insert(
 				ProjectileHitSmokeParticle
 				{
 					.position= smoke_emitter.position,
@@ -3143,35 +3110,16 @@ fn ProcessProjectileHitSmokeEmittersLogicStep( GameState& mut game_state )
 
 			++smoke_emitter.age_steps;
 
-			if( smoke_emitter.age_steps >= c_projectile_hit_smoke_emitter_max_age )
-			{
-				need_to_remove= true;
-			}
-		}
-
-		if( need_to_remove )
-		{
-			var size_type last_index= game_state.projectile_hit_smoke_emitters.size() - 1s;
-			game_state.projectile_hit_smoke_emitters.swap( i, last_index );
-			game_state.projectile_hit_smoke_emitters.drop_back();
-		}
-		else
-		{
-			++i;
-		}
-	}
+			return smoke_emitter.age_steps < c_projectile_hit_smoke_emitter_max_age;
+		} );
 }
 
 fn ProcessProjectileHitSmokeParticlesLogicStep(
-	ust::vector</ProjectileHitSmokeParticle/> &mut projectile_hit_smoke_particles )
+	ProjectileHitSmokeParticlesContainer &mut projectile_hit_smoke_particles )
 {
-	for( auto mut i= 0s; i < projectile_hit_smoke_particles.size(); )
-	{
-		var bool mut need_to_remove= false;
-
+	projectile_hit_smoke_particles.Retain(
+		lambda( ProjectileHitSmokeParticle &mut smoke_particle ) : bool
 		{
-			var ProjectileHitSmokeParticle &mut smoke_particle= projectile_hit_smoke_particles[i];
-
 			var f32 constexpr speed= 1.0f;
 			var f32 constexpr vertical_acceleration= -0.5f;
 
@@ -3189,161 +3137,65 @@ fn ProcessProjectileHitSmokeParticlesLogicStep(
 
 			++smoke_particle.age_steps;
 
-			if( smoke_particle.age_steps >= c_projectile_hit_smoke_particle_max_age )
-			{
-				need_to_remove= true;
-			}
-		}
-
-		if( need_to_remove )
-		{
-			var size_type last_index= projectile_hit_smoke_particles.size() - 1s;
-			projectile_hit_smoke_particles.swap( i, last_index );
-			projectile_hit_smoke_particles.drop_back();
-		}
-		else
-		{
-			++i;
-		}
-	}
+			return smoke_particle.age_steps < c_projectile_hit_smoke_particle_max_age;
+		} );
 }
 
-fn ProcessBreakingGlassLogicStep( ust::vector</BreakingGlassEffect/> &mut breaking_glass_effects )
+fn ProcessBreakingGlassLogicStep( BreakingGlassEffectsContainer &mut breaking_glass_effects )
 {
-	for( auto mut i= 0s; i < breaking_glass_effects.size(); )
-	{
-		var bool mut need_to_remove= false;
-
+	breaking_glass_effects.Retain(
+		lambda( BreakingGlassEffect &mut breaking_glass_effect ) : bool
 		{
-			var BreakingGlassEffect &mut breaking_glass_effect= breaking_glass_effects[i];
-
 			++breaking_glass_effect.age_steps;
-
-			if( breaking_glass_effect.age_steps >= c_breaking_glass_max_age )
-			{
-				need_to_remove= true;
-			}
-		}
-
-		if( need_to_remove )
-		{
-			var size_type last_index= breaking_glass_effects.size() - 1s;
-			breaking_glass_effects.swap( i, last_index );
-			breaking_glass_effects.drop_back();
-		}
-		else
-		{
-			++i;
-		}
-	}
+			return breaking_glass_effect.age_steps < c_breaking_glass_max_age;
+		} );
 }
 
-fn ProcessMuzzleFlashesLogicStep( ust::vector</MuzzleFlash/> &mut muzzle_flashes )
+fn ProcessMuzzleFlashesLogicStep( MuzzleFlashesContainer &mut muzzle_flashes )
 {
-	for( auto mut i= 0s; i < muzzle_flashes.size(); )
-	{
-		var bool mut need_to_remove= false;
-
+	muzzle_flashes.Retain(
+		lambda( MuzzleFlash &mut muzzle_flash ) : bool
 		{
-			var MuzzleFlash &mut muzzle_flash= muzzle_flashes[i];
-
 			++muzzle_flash.age_steps;
-
-			if( muzzle_flash.age_steps >= c_muzzle_flash_max_age )
-			{
-				need_to_remove= true;
-			}
-		}
-
-		if( need_to_remove )
-		{
-			var size_type last_index= muzzle_flashes.size() - 1s;
-			muzzle_flashes.swap( i, last_index );
-			muzzle_flashes.drop_back();
-		}
-		else
-		{
-			++i;
-		}
-	}
+			return muzzle_flash.age_steps < c_muzzle_flash_max_age;
+		} );
 }
 
-fn ProcessExplosionParticlesLogicStep( ust::vector</ExplosionParticle/> &mut explosion_particles )
+fn ProcessExplosionParticlesLogicStep( ExplosionParticlesContainer &mut explosion_particles )
 {
-	for( auto mut i= 0s; i < explosion_particles.size(); )
-	{
-		var bool mut need_to_remove= false;
-
+	explosion_particles.Retain(
+		lambda( ExplosionParticle &mut explosion_particle ) : bool
 		{
-			var ExplosionParticle &mut explosion_particle= explosion_particles[i];
-
 			++explosion_particle.age_steps;
-
-			if( explosion_particle.age_steps >= c_explosion_particle_max_age )
-			{
-				need_to_remove= true;
-			}
-		}
-
-		if( need_to_remove )
-		{
-			var size_type last_index= explosion_particles.size() - 1s;
-			explosion_particles.swap( i, last_index );
-			explosion_particles.drop_back();
-		}
-		else
-		{
-			++i;
-		}
-	}
+			return explosion_particle.age_steps < c_explosion_particle_max_age;
+		} );
 }
 
 fn ProcessFlameParticlesLogicStep( GameState &mut game_state )
 {
-	for( auto mut i= 0s; i < game_state.flame_particles.size(); )
-	{
-		var bool mut need_to_remove= false;
+	auto& dynamic_cluster_colliders= game_state.dynamic_cluster_colliders;
 
+	game_state.flame_particles.Retain(
+		lambda[&]( FlameParticle &mut flame_particle ) : bool
 		{
-			var FlameParticle &mut flame_particle= game_state.flame_particles[i];
-
-			if( size_type( flame_particle.dynamic_cluster_object_index ) < game_state.dynamic_cluster_colliders.size() )
+			if( size_type( flame_particle.dynamic_cluster_object_index ) < dynamic_cluster_colliders.size() )
 			{
 				var DynamicClusterCollider& collider=
-					game_state.dynamic_cluster_colliders[ size_type( flame_particle.dynamic_cluster_object_index ) ];
+					dynamic_cluster_colliders[ size_type( flame_particle.dynamic_cluster_object_index ) ];
 				flame_particle.position= flame_particle.relative_position + collider.bbox.GetCenter();
 			}
 
 			++flame_particle.age_steps;
 
-			if( flame_particle.age_steps >= c_flame_particle_max_age )
-			{
-				need_to_remove= true;
-			}
-		}
-
-		if( need_to_remove )
-		{
-			var size_type last_index= game_state.flame_particles.size() - 1s;
-			game_state.flame_particles.swap( i, last_index );
-			game_state.flame_particles.drop_back();
-		}
-		else
-		{
-			++i;
-		}
-	}
+			return flame_particle.age_steps < c_flame_particle_max_age;
+		} );
 }
 
-fn ProcessSmokeParticlesLogicStep( ust::vector</SmokeParticle/> &mut smoke_particles )
+fn ProcessSmokeParticlesLogicStep( SmokeParticlesContainer &mut smoke_particles )
 {
-	for( auto mut i= 0s; i < smoke_particles.size(); )
-	{
-		var bool mut need_to_remove= false;
-
+	smoke_particles.Retain(
+		lambda( SmokeParticle &mut smoke_particle ) : bool
 		{
-			var SmokeParticle &mut smoke_particle= smoke_particles[i];
-
 			smoke_particle.center+= smoke_particle.velocity;
 
 			// The original game animates smoke particles, so that their way is a conical spiral.
@@ -3364,34 +3216,15 @@ fn ProcessSmokeParticlesLogicStep( ust::vector</SmokeParticle/> &mut smoke_parti
 
 			++smoke_particle.age_steps;
 
-			if( smoke_particle.age_steps >= c_smoke_particle_max_age )
-			{
-				need_to_remove= true;
-			}
-		}
-
-		if( need_to_remove )
-		{
-			var size_type last_index= smoke_particles.size() - 1s;
-			smoke_particles.swap( i, last_index );
-			smoke_particles.drop_back();
-		}
-		else
-		{
-			++i;
-		}
-	}
+			return smoke_particle.age_steps < c_smoke_particle_max_age;
+		} );
 }
 
-fn ProcessSmokeTrailParticlesLogicStep( ust::vector</SmokeTrailParticle/> &mut smoke_trail_particles )
+fn ProcessSmokeTrailParticlesLogicStep( SmokeTrailParticlesContainer &mut smoke_trail_particles )
 {
-	for( auto mut i= 0s; i < smoke_trail_particles.size(); )
-	{
-		var bool mut need_to_remove= false;
-
+	smoke_trail_particles.Retain(
+		lambda( SmokeTrailParticle &mut smoke_trail_particle ) : bool
 		{
-			var SmokeTrailParticle &mut smoke_trail_particle= smoke_trail_particles[i];
-
 			if( smoke_trail_particle.kind == EntitiesDescription::Tool::c_smoke_trail_kind_rocket )
 			{
 				// Rocket trail particles move slightly upwards.
@@ -3405,7 +3238,23 @@ fn ProcessSmokeTrailParticlesLogicStep( ust::vector</SmokeTrailParticle/> &mut s
 
 			++smoke_trail_particle.age_steps;
 
-			if( smoke_trail_particle.age_steps >= c_smoke_trail_particle_max_age )
+			return smoke_trail_particle.age_steps < c_smoke_trail_particle_max_age;
+
+		} );
+}
+
+fn ProcessProjectileHitLightsLogicStep( ust::vector</ProjectileHitLight/> &mut projectile_hit_lights )
+{
+	for( auto mut i= 0s; i < projectile_hit_lights.size(); )
+	{
+		var bool mut need_to_remove= false;
+
+		{
+			var ProjectileHitLight &mut projectile_hit_light= projectile_hit_lights[i];
+
+			++projectile_hit_light.age_steps;
+
+			if( projectile_hit_light.age_steps >= c_projectile_hit_light_max_age )
 			{
 				need_to_remove= true;
 			}
@@ -3413,9 +3262,9 @@ fn ProcessSmokeTrailParticlesLogicStep( ust::vector</SmokeTrailParticle/> &mut s
 
 		if( need_to_remove )
 		{
-			var size_type last_index= smoke_trail_particles.size() - 1s;
-			smoke_trail_particles.swap( i, last_index );
-			smoke_trail_particles.drop_back();
+			var size_type last_index= projectile_hit_lights.size() - 1s;
+			projectile_hit_lights.swap( i, last_index );
+			projectile_hit_lights.drop_back();
 		}
 		else
 		{
@@ -3678,14 +3527,9 @@ fn CollideMovedEntityWithProjectiles(
 	Vec3f& new_position,
 	BBox3f& bbox,
 	u32 entity_index,
-	ust::vector</Projectile/> &mut projectiles,
+	ProjectilesContainer &mut projectiles,
 	ust::vector</ProjectileHitEvent/> &mut projectile_hit_events )
 {
-	if( projectiles.empty() )
-	{
-		return;
-	}
-
 	if( old_position == new_position )
 	{
 		return;
@@ -3702,13 +3546,9 @@ fn CollideMovedEntityWithProjectiles(
 		.max= bbox.max + old_position,
 	};
 
-	for( auto mut i= 0s; i < projectiles.size(); )
-	{
-		var bool mut need_to_remove= false;
-
+	projectiles.Retain(
+		lambda[&]( Projectile& projectile ) : bool
 		{
-			var Projectile& projectile= projectiles[i];
-
 			if( projectile.owner_entity_index != entity_index ) // Don't collide with owner.
 			{
 				if_var( &intersection_result :
@@ -3726,23 +3566,13 @@ fn CollideMovedEntityWithProjectiles(
 								.hit_entity_index= entity_index,
 							} );
 
-						need_to_remove= true;
+						return false; // Remove.
 					}
 				}
 			}
-		}
 
-		if( need_to_remove )
-		{
-			var size_type last_index= projectiles.size() - 1s;
-			projectiles.swap( i, last_index );
-			projectiles.drop_back();
-		}
-		else
-		{
-			++i;
-		}
-	}
+			return true; // Preserve.
+		} );
 }
 
 fn AddPlayerCollider( EntitiesDescription& entities_description, GameState &mut game_state )
@@ -4414,8 +4244,8 @@ fn EntityShoot(
 	u32 entity_index,
 	f32 player_crouching_phase, // Assume an entity knows player's crouching phase if it can see him right now.
 	PseudoRandomGenerator &mut rand,
-	ust::vector</Projectile/> &mut projectiles,
-	ust::vector</MuzzleFlash/> &mut muzzle_flashes )
+	ProjectilesContainer &mut projectiles,
+	MuzzleFlashesContainer &mut muzzle_flashes )
 {
 	if( entity.ammo == 0u )
 	{
@@ -4460,7 +4290,7 @@ fn EntityShoot(
 	var Vec3f direction_with_random_spread=
 		RandomOffsetShotVector( vec_to_target, accuracy, rand );
 
-	projectiles.push_back(
+	projectiles.Insert(
 		Projectile
 		{
 			.weapon_tool_index( weapon_tool_index ),
@@ -4474,7 +4304,7 @@ fn EntityShoot(
 
 	if( weapon_tool.muzzle_flash_model >= 0 )
 	{
-		muzzle_flashes.push_back(
+		muzzle_flashes.Insert(
 			MuzzleFlash
 			{
 				.model( weapon_tool.muzzle_flash_model ),
@@ -4491,7 +4321,7 @@ fn EntityDirectionalShot(
 	EntityState& entity,
 	u32 entity_index,
 	PseudoRandomGenerator &mut rand,
-	ust::vector</Projectile/> &mut projectiles )
+	ProjectilesContainer &mut projectiles )
 {
 	// No ammo is consumed for directional shots.
 
@@ -4519,7 +4349,7 @@ fn EntityDirectionalShot(
 
 	var Vec3f direction_with_random_spread= RandomOffsetShotVector( direction, accuracy, rand );
 
-	projectiles.push_back(
+	projectiles.Insert(
 		Projectile
 		{
 			.weapon_tool_index( weapon_tool_index ),
@@ -4534,7 +4364,7 @@ fn MoveEntity(
 	GameMapData& map_data,
 	ust::array_view_imut</DynamicClusterCollider/> dynamic_cluster_colliders,
 	ust::array_view_imut</Collider/> extra_colliders,
-	ust::vector</Projectile/> &mut projectiles,
+	ProjectilesContainer &mut projectiles,
 	ust::vector</ProjectileHitEvent/> &mut projectile_hit_events,
 	EntityState &mut entity,
 	u32 entity_index,

@@ -1,0 +1,199 @@
+import "/optional.iu"
+
+namespace PM
+{
+
+// Container with fixed capacity storing things at fixed indices.
+// Having stable indices is important to be able to find the same thing in two versions of the same container (which have common previous state).
+//
+// A bit-math-based optimization is used for insertion and iteration speed-up,
+// but it's still pretty costly for containers with large capacity to insert and iterate.
+// So, avoid having too many elements (more than 1024).
+//
+template</type T, u32 N/>
+class GameThingsContainer
+{
+	static_assert( N <= 1024u, "Too big large for this container! Use something more performant!" );
+	static_assert( N % 32u == 0u, "The number of elements should be divisible by 32!" );
+
+	static_assert( typeinfo</T/>.is_copy_constructible );
+	static_assert( typeinfo</T/>.is_copy_assignable );
+
+public:
+	type ThisType= GameThingsContainer</T, N/>;
+
+	fn constructor()= default;
+	fn constructor( mut this, ThisType& other )= default;
+	op=( mut this, ThisType& other )= default;
+
+public:
+	// Returns true if managed to insert and false if has no space left.
+	fn Insert( mut this, T mut val ) : bool
+	{
+		for( auto mut word= 0u; word < c_num_words; ++word )
+		{
+			var u32 &mut word_bits= occupied_slot_bits_[word];
+			if( word_bits == 0xFFFFFFFFu )
+			{
+				continue; // The whole block is occupied.
+			}
+
+			for( auto mut bit= 0u; bit < 32u; ++bit )
+			{
+				var u32 mask= 1u << bit;
+
+				if( ( word_bits & mask ) == 0u )
+				{
+					// Found an empty slot.
+					// Mark it as non-empty.
+					word_bits |= mask;
+
+					var Entry &mut entry= entries_[ word * 32u + bit ];
+					entry.value_opt.reset( move(val) );
+					++entry.generation_index;
+
+					return true;
+				}
+			}
+		}
+
+		return false;
+	}
+
+	// Iterate over all elements without changing them.
+	// Use such method instead of traditional iterator class approach,
+	// since it's (presumably) more performant to perform such kind of iteration,
+	// considering two internal nesting loops.
+	template</type Func/>
+	fn Iterate( this, Func& func )
+	{
+		for( auto mut word= 0u; word < c_num_words; ++word )
+		{
+			var u32 word_bits= occupied_slot_bits_[word];
+			if( word_bits == 0u )
+			{
+				continue; // The whole block is empty.
+			}
+
+			for( auto mut bit= 0u; bit < 32u; ++bit )
+			{
+				var u32 mask= 1u << bit;
+
+				if( ( word_bits & mask ) != 0u )
+				{
+					// Found non-empty slot.
+
+					var Entry& entry= entries_[ word * 32u + bit ];
+					if( !entry.value_opt.empty() )
+					{
+						func( entry.value_opt.try_deref() );
+					}
+				}
+			}
+		}
+	}
+
+	// Iterate over all elements without changing them.
+	// Given function should accept index as second argument.
+	// TODO - provide also generation index.
+	template</type Func/>
+	fn IterateWithIndex( this, Func& func )
+	{
+		for( auto mut word= 0u; word < c_num_words; ++word )
+		{
+			var u32 word_bits= occupied_slot_bits_[word];
+			if( word_bits == 0u )
+			{
+				continue; // The whole block is empty.
+			}
+
+			for( auto mut bit= 0u; bit < 32u; ++bit )
+			{
+				var u32 mask= 1u << bit;
+
+				if( ( word_bits & mask ) != 0u )
+				{
+					// Found non-empty slot.
+
+					var u32 index= word * 32u + bit;
+					var Entry& entry= entries_[ index ];
+					if( !entry.value_opt.empty() )
+					{
+						func( entry.value_opt.try_deref(), index );
+					}
+				}
+			}
+		}
+	}
+
+	// TODO - pass also generation index.
+	fn GetByIndex( this, u32 index )
+		: ust::optional_ref_imut</T/> @ ( ust::reference_notation::return_inner_references::param0 )
+	{
+		if( index >= N )
+		{
+			return ust::null_optional_ref;
+		}
+		var Entry& entry= entries_[index];
+		return entry.value_opt.as_ref();
+	}
+
+	// Run given function for all present elements.
+	// Given function should have single argument - mutable reference to value.
+	// Elements for which given function returned "false" are removed.
+	template</type Func/>
+	fn Retain( mut this, Func& func )
+	{
+		for( auto mut word= 0u; word < c_num_words; ++word )
+		{
+			var u32 &mut word_bits= occupied_slot_bits_[word];
+			if( word_bits == 0u )
+			{
+				continue; // The whole block is empty.
+			}
+
+			for( auto mut bit= 0u; bit < 32u; ++bit )
+			{
+				var u32 mask= 1u << bit;
+
+				if( ( word_bits & mask ) != 0u )
+				{
+					// Found non-empty slot.
+
+					var Entry &mut entry= entries_[ word * 32u + bit ];
+					if( !entry.value_opt.empty() )
+					{
+						if( !func( entry.value_opt.try_deref() ) )
+						{
+							entry.value_opt.reset();
+							word_bits &= ~mask; // Mark the slot as empty.
+						}
+					}
+				}
+			}
+		}
+	}
+
+private:
+	struct Entry
+	{
+		// TODO - consider using unsafe and raw aligned storage.
+		// Having optional creates additional boolean field, which isn't necessary, since occupied flag is stored in the bit array.
+		ust::optional</T/> value_opt;
+
+		// Used to distinguish between two entries existing at different time points but occupying the same slot.
+		// Increment it each time new entry is constructed.
+		u32 generation_index= 0u;
+	}
+
+	var u32 constexpr c_num_words= N / 32u;
+
+private:
+	// Store occupied flag for slots in a bit array.
+	// Using it allows speeding-up insertion and iteration by skipping whole chunks of 32 occupied or empty elements.
+	[ u32, c_num_words ] occupied_slot_bits_= zero_init;
+
+	[ Entry, N ] entries_;
+}
+
+} // namespace PM
