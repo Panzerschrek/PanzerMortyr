@@ -1,3 +1,4 @@
+import "/scoped_array.iu"
 import "/common_lib/billboards_description_file.iu"
 import "bounding_boxes_hierarchy_debug_visualization.iu"
 import "game_constants.iu"
@@ -46,16 +47,32 @@ fn ConstructWorldDrawingInfo(
 		drawing_info.camera_params.position=
 			camera_position_without_depth_shift + GetCameraDepthShift( camera_controller );
 
+		// Count how many damaging flames are attached to each entity.
+		scoped_array u8 mut num_entity_damaging_flames[ game_state.entities.size() ] ( 0u8 );
+		game_state.damaging_flames.Iterate(
+			lambda[&]( DamagingFlame& damaging_flame )
+			{
+				var size_type index( damaging_flame.entity_index );
+				if( index < num_entity_damaging_flames.size() )
+				{
+					++num_entity_damaging_flames[index];
+				}
+			} );
+
 		var EntitiesDescription& entities_description= map_data.entities_description.deref();
 
-		foreach( &entity_opt : game_state.entities )
+		foreach( pair : game_state.entities.iter().zip( num_entity_damaging_flames.iter() ) )
 		{
+			auto& entity_opt= pair.first;
+
 			if( entity_opt.empty() )
 			{
 				continue;
 			}
 
 			var EntityState& entity= entity_opt.try_deref();
+
+			var u8 num_damaging_flames= pair.second;
 
 			var EntitiesDescription::EntityDescription& entity_description= entities_description.entities[ size_type( entity.kind ) ];
 
@@ -105,6 +122,28 @@ fn ConstructWorldDrawingInfo(
 							.color_index( light.color ),
 						} );
 				}
+			}
+
+			if( num_damaging_flames > 0u8 )
+			{
+				// PanzerMortyr addition - add lights for burning entities.
+				var f32 flame_power= 6.0f;
+
+				var EntitiesDescription::OperationAnimationDescription& a=
+					operation.animations[ size_type( EntitiesDescription::Operation::AnimationKind::Forward ) ];
+
+				drawing_info.dynamic_light_sources.push_back(
+					WorldDrawingInfo::DynamicLightSource
+					{
+						.position=
+							entity.position +
+							Vec3f(
+								f32( a.bounding_box_center_x ),
+								f32( a.bounding_box_center_y ),
+								f32( a.bounding_box_center_z ) ),
+						.power= f32( num_damaging_flames ) * flame_power * c_light_power_scale,
+						.color_index= c_flame_color_index,
+					} );
 			}
 
 			auto add_animation_model=
