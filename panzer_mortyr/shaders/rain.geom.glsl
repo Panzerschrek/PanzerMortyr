@@ -13,6 +13,7 @@ uniform vec3 gu_light_scale;
 
 in vec3 g_position[];
 in float g_movement_distance[];
+in float g_max_movement_distance[];
 
 out vec2 f_texture_coordinates;
 out vec4 f_light;
@@ -27,7 +28,13 @@ const float c_max_distance_to_camera= 1536.0;
 
 void main()
 {
-	vec3 position= g_position[0] + c_move_vector * g_movement_distance[0];
+	float movement_distance= g_movement_distance[0];
+	if( movement_distance > g_max_movement_distance[0] )
+	{
+		return;
+	}
+
+	vec3 position= g_position[0] + c_move_vector * movement_distance;
 
 	// Rotate rain triangle to always face towards the camera.
 
