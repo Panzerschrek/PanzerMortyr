@@ -6,7 +6,8 @@ layout( triangle_strip, max_vertices = 3 ) out;
 uniform mat4 gu_matrix;
 uniform vec3 gu_camera_position;
 uniform float gu_rain_droplet_size;
-uniform vec2 gu_texture_coordinates;
+uniform vec2 gu_texture_coordinates_start;
+uniform vec2 gu_texture_coordinates_end;
 uniform float gu_texture_layer;
 uniform vec3 gu_light_scale;
 
@@ -42,7 +43,7 @@ void main()
 	vec3 side_vector= cross( vec_to_camera, c_move_vector );
 	vec3 side_vector_scaled= side_vector * ( gu_rain_droplet_size / max( 0.00001, length( side_vector ) ) );
 
-	vec3 v0= position + c_move_vector * (-40.0);
+	vec3 v0= position + c_move_vector * (-40.0 * gu_rain_droplet_size);
 	vec3 v1= position + side_vector_scaled;
 	vec3 v2= position - side_vector_scaled;
 
@@ -51,16 +52,18 @@ void main()
 
 	f_fog_density= 0.0;
 	f_additive_fog_density= 0.0;
-	f_texture_coordinates= gu_texture_coordinates;
 	f_texture_layer= gu_texture_layer;
 
 	gl_Position= vec4( v0, 1.0 ) * gu_matrix;
+	f_texture_coordinates= vec2( ( gu_texture_coordinates_start.x + gu_texture_coordinates_end.x ) * 0.5, gu_texture_coordinates_end.y );
 	EmitVertex();
 
 	gl_Position= vec4( v1, 1.0 ) * gu_matrix;
+	f_texture_coordinates= vec2( gu_texture_coordinates_start.x, gu_texture_coordinates_start.y );
 	EmitVertex();
 
 	gl_Position= vec4( v2, 1.0 ) * gu_matrix;
+	f_texture_coordinates= vec2( gu_texture_coordinates_end.x, gu_texture_coordinates_start.y );
 	EmitVertex();
 
 	EndPrimitive();
