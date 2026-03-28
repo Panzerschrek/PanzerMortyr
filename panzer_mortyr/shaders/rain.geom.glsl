@@ -50,8 +50,13 @@ void main()
 	float fade= 1.0 - smoothstep( c_max_distance_to_camera * 2.0 / 3.0, c_max_distance_to_camera, distance_to_camera );
 	f_light= vec4( gu_light_scale, 1.0 ) * fade;
 
-	f_fog_density= 0.0;
-	f_additive_fog_density= 0.0;
+	// Use exponential fog formula.
+	// This code (including the scale constant) should match code calculating fog in other places!
+	float fog_distance_scale= 1.0 / 3072.0;
+	f_fog_density= 1.0 - exp( -distance_to_camera * fog_distance_scale );
+
+	f_additive_fog_density= 0.0; // Don't use additive fog. It's too complex.
+
 	f_texture_layer= gu_texture_layer;
 
 	gl_Position= vec4( v0, 1.0 ) * gu_matrix;
