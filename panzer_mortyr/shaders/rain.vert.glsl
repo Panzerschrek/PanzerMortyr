@@ -18,11 +18,7 @@ void main()
 	// It should be big enough to ensure rain can flow into the deepest places and small enough to avoid reducing rain density too much.
 	const float c_max_path_length= 1536.0;
 
-	// Calculate normalized distance phase.
-	// It's needed to distribute rain droplets along the whole path (with maximum length).
-	float individual_phase= v_movement_distance_phase / v_max_movement_distance;
-
-	g_movement_distance= mod( vu_movement_distance + individual_phase * c_max_path_length, c_max_path_length );
+	g_movement_distance= mod( vu_movement_distance + v_movement_distance_phase * c_max_path_length, c_max_path_length );
 
 	g_max_movement_distance= v_max_movement_distance;
 }
