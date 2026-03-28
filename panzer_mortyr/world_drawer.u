@@ -639,32 +639,22 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 		}
 
 		var f32 c_movement_speed= 384.0f;
+		var f32 movement_distance= drawing_info.game_time_s * c_movement_speed;
 
-		var f32 movement_distnace= drawing_info.game_time_s * c_movement_speed;
-
-		SetGLState( g_semitransparent_geometry_drawing_gl_state );
-
-		map_data.rain_buffer.vertex_array_object.Bind();
-
-		var u32 texture_slot= 0u;
-		unsafe( glActiveTexture( GLenum( GL_TEXTURE0 ) + GLenum(texture_slot) ) );
-		map_data.map_textures_array.Bind();
-
-		rain_shader_.Bind();
-		rain_shader_.SetUniform( "vu_movement_distance", movement_distnace );
-		rain_shader_.SetUniform( "gu_matrix", view_matrix );
-		rain_shader_.SetUniform( "gu_camera_position", drawing_info.camera_params.position );
-		rain_shader_.SetUniform( "gu_rain_droplet_size", rain_droplet_size );
-		rain_shader_.SetUniform( "gu_texture_coordinates", texture_coordinates );
-		rain_shader_.SetUniform( "gu_texture_layer", textrure_layer );
-		rain_shader_.SetUniform( "fu_texture", texture_slot );
-		rain_shader_.SetUniform( "fu_fog_color", Vec3f( fog_color ) );
-		rain_shader_.SetUniform( "fu_fog_color_additive", Vec3f( fog_color_additive ) );
-
-		unsafe( glDrawArrays(
-			GLenum( GL_POINTS ),
-			GLint(0),
-			GLsizei( map_data.zmap_lam_data.deref().rain_droplets.size() ) ) );
+		DrawRain(
+			map_data.zmap_lam_data.deref(),
+			map_data.rain_buffer,
+			rain_shader_,
+			map_data.map_textures_array,
+			view_matrix,
+			drawing_info.camera_params.position,
+			movement_distance,
+			rain_droplet_size,
+			texture_coordinates,
+			textrure_layer,
+			global_light_params.light_scale,
+			fog_color,
+			fog_color_additive );
 	}
 
 	ResetDynamicPolygonsBuffer( semitransparent_polygons_buffer_ );
@@ -1771,6 +1761,48 @@ fn DrawFirstPersonWeaponModels(
 	// Then draw all models as usual.
 
 	DrawModels( models_map, models_to_draw, shader, ust::null_optional_ref, drawing_stats );
+}
+
+fn DrawRain(
+	ZmapLamData& zmap_lam_data,
+	RainBuffer& rain_buffer,
+	ShaderProgram &mut shader,
+	Texture& map_textures_array,
+	Mat4f& view_matrix,
+	Vec3f& camera_position,
+	f32 movement_distance,
+	f32 rain_droplet_size,
+	Vec2f& texture_coordinates,
+	f32 textrure_layer,
+	[ f32, 3 ]& light_scale,
+	[ f32, 3 ]& fog_color,
+	[ f32, 3 ]& fog_color_additive )
+{
+	ust::ignore_unused(light_scale); // TODO - use it.
+
+	SetGLState( g_semitransparent_geometry_drawing_gl_state );
+
+	rain_buffer.vertex_array_object.Bind();
+
+	var u32 texture_slot= 0u;
+	unsafe( glActiveTexture( GLenum( GL_TEXTURE0 ) + GLenum(texture_slot) ) );
+	map_textures_array.Bind();
+
+	shader.Bind();
+	shader.SetUniform( "vu_movement_distance", movement_distance );
+	shader.SetUniform( "gu_matrix", view_matrix );
+	shader.SetUniform( "gu_camera_position", camera_position );
+	shader.SetUniform( "gu_rain_droplet_size", rain_droplet_size );
+	shader.SetUniform( "gu_texture_coordinates", texture_coordinates );
+	shader.SetUniform( "gu_texture_layer", textrure_layer );
+	shader.SetUniform( "fu_texture", texture_slot );
+	shader.SetUniform( "fu_fog_color", Vec3f( fog_color ) );
+	shader.SetUniform( "fu_fog_color_additive", Vec3f( fog_color_additive ) );
+
+	unsafe( glDrawArrays(
+		GLenum( GL_POINTS ),
+		GLint(0),
+		GLsizei( zmap_lam_data.rain_droplets.size() ) ) );
 }
 
 fn DrawSemitransparentGeometry(
