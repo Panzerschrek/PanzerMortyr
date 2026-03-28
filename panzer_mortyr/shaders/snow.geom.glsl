@@ -5,7 +5,7 @@ layout( triangle_strip, max_vertices = 6 ) out;
 
 uniform mat4 gu_matrix;
 uniform vec3 gu_camera_position;
-uniform vec2 gu_rain_droplet_size;
+uniform vec2 gu_droplet_size;
 uniform vec2 gu_texture_coordinates_start;
 uniform vec2 gu_texture_coordinates_end;
 uniform float gu_texture_layer;
@@ -57,10 +57,10 @@ void main()
 	}
 
 	vec3 u_vector= vec3( -vec_to_camera.y, vec_to_camera.x, 0.0 );
-	vec3 u_vector_scaled= u_vector * ( gu_rain_droplet_size.x / max( 0.00001, length( u_vector ) ) );
+	vec3 u_vector_scaled= u_vector * ( gu_droplet_size.x / max( 0.00001, length( u_vector ) ) );
 
 	vec3 v_vector= cross( u_vector, vec_to_camera );
-	vec3 v_vector_scaled= v_vector * ( gu_rain_droplet_size.y / max( 0.00001, length( v_vector ) ) );
+	vec3 v_vector_scaled= v_vector * ( gu_droplet_size.y / max( 0.00001, length( v_vector ) ) );
 
 	vec4 v0= vec4( position + u_vector_scaled - v_vector_scaled, 1.0 ) * gu_matrix;
 	vec4 v1= vec4( position + u_vector_scaled + v_vector_scaled, 1.0 ) * gu_matrix;
