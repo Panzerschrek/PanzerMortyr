@@ -16,12 +16,10 @@ const vec3 c_move_vector= vec3( 0.235, 0.235, 0.943 );
 
 void main()
 {
-	float movement_distance= gu_movement_distance + g_movement_distance_phase[0];
-	if( movement_distance >= g_max_movement_distance[0] )
-	{
-		// Discard rain droples below ground level.
-		return;
-	}
+	// Make looping movement within allowed movement distance.
+	// It's not fully correct, since it results in greater rain density in regions with small movement distance,
+	// but doing otherway isn't possible due to limitations of the precaulculated rain data of the original game.
+	float movement_distance= mod( gu_movement_distance + g_movement_distance_phase[0], g_max_movement_distance[0] );
 
 	vec3 position= g_position[0] + c_move_vector * movement_distance;
 
