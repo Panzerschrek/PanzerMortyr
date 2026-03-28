@@ -9,19 +9,21 @@ uniform float gu_movement_distance;
 
 in vec3 g_position[];
 in float g_max_movement_distance[];
+in float g_movement_distance_phase[];
 
 // Experimentally-found value.
 const vec3 c_move_vector= vec3( 0.235, 0.235, 0.943 );
 
 void main()
 {
-	if( gu_movement_distance >= g_max_movement_distance[0] )
+	float movement_distance= gu_movement_distance + g_movement_distance_phase[0];
+	if( movement_distance >= g_max_movement_distance[0] )
 	{
 		// Discard rain droples below ground level.
 		return;
 	}
 
-	vec3 position= g_position[0] + c_move_vector * gu_movement_distance;
+	vec3 position= g_position[0] + c_move_vector * movement_distance;
 
 	// Rotate rain triangle to always face towards the camera.
 
