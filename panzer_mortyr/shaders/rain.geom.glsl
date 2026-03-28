@@ -5,12 +5,16 @@ layout( triangle_strip, max_vertices = 3 ) out;
 
 uniform mat4 gu_matrix;
 uniform vec3 gu_camera_position;
+uniform float gu_movement_distance;
 
 in vec3 g_position[];
 
+// Experimentally-found value.
+const vec3 c_move_vector= vec3( 0.235, 0.235, 0.943 );
+
 void main()
 {
-	vec3 position= g_position[0];
+	vec3 position= g_position[0] + c_move_vector * gu_movement_distance;
 
 	// Rotate rain triangle to always face towards the camera.
 
