@@ -26,6 +26,9 @@ const vec3 c_move_vector= vec3( 0.235, 0.235, 0.943 );
 
 const float c_max_distance_to_camera= 1536.0;
 
+const vec3 c_spiral_movement_spatial_frequency= vec3( -0.01, 0.02, 0.03 );
+const float c_spiral_movement_amplitude= 8.0;
+
 void main()
 {
 	float movement_distance= g_movement_distance[0];
@@ -34,7 +37,13 @@ void main()
 		return;
 	}
 
-	vec3 position= g_position[0] + c_move_vector * movement_distance;
+	vec3 base_position= g_position[0] + c_move_vector * movement_distance;
+
+	// Add spiral side movement.
+	float spiral_movement_phase= dot( base_position, c_spiral_movement_spatial_frequency );
+	vec3 position=
+		base_position +
+		c_spiral_movement_amplitude * vec3( cos( spiral_movement_phase ), sin( spiral_movement_phase ), 0.0 );
 
 	// Rotate snow quad to always face towards the camera.
 
