@@ -8,6 +8,7 @@ uniform vec3 gu_camera_position;
 uniform float gu_rain_droplet_size;
 uniform vec2 gu_texture_coordinates;
 uniform float gu_texture_layer;
+uniform vec3 gu_light_scale;
 
 in vec3 g_position[];
 in float g_movement_distance[];
@@ -46,8 +47,7 @@ void main()
 	vec3 v2= position - side_vector_scaled;
 
 	float fade= 1.0 - smoothstep( c_max_distance_to_camera * 2.0 / 3.0, c_max_distance_to_camera, distance_to_camera );
-	vec4 base_color= vec4( 0.165, 0.513, 0.431, 1.0 ) * 0.5; // TODO - use texture fetch instead.
-	f_light= base_color * fade;
+	f_light= vec4( gu_light_scale, 1.0 ) * fade;
 
 	f_fog_density= 0.0;
 	f_additive_fog_density= 0.0;
