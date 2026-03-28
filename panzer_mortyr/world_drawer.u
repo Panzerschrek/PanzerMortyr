@@ -82,7 +82,7 @@ fn WorldDrawer::constructor(
 		rain_shader_(
 			embed</char8/>( "shaders/rain.vert.glsl" ),
 			embed</char8/>( "shaders/rain.geom.glsl" ),
-			embed</char8/>( "shaders/rain.frag.glsl" ) ),
+			embed</char8/>( "shaders/semitransparent_geometry.frag.glsl" ) ),
 		stub_white_texture_= CreateStubWhiteTexture(),
 		depth_buffer_copy_texture_= CreateDepthBufferCopyTexture(),
 		semitransparent_polygons_buffer_
@@ -620,27 +620,46 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 
 	{
 		var f32 mut rain_droplet_size= 1.0f;
+		var f32 mut textrure_layer= 0.0f;
+		var Vec2f mut texture_coordinates= Vec2f::MakeZero();
 		if( size_type( BillboardConstants::c_id_rain ) < billboards_description_.size() )
 		{
 			var BillboardDescription& billboard_description=
 				billboards_description_[ size_type( BillboardConstants::c_id_rain ) ];
 
 			rain_droplet_size= f32( billboard_description.dx );
+
+			textrure_layer= GetBillboardTextureLayer( billboard_description );
+
+			texture_coordinates=
+				Vec2f(
+					f32( billboard_description.xp % MaterialsDescription::c_texture_size ),
+					f32( billboard_description.yp % MaterialsDescription::c_texture_size ) );
+			texture_coordinates/= f32( MaterialsDescription::c_texture_size );
 		}
+
+		var f32 c_movement_speed= 384.0f;
+
+		var f32 movement_distnace= drawing_info.game_time_s * c_movement_speed;
 
 		SetGLState( g_rain_drawing_gl_state );
 
 		map_data.rain_buffer.vertex_array_object.Bind();
 
-		var f32 c_movement_speed= 384.0f;
-
-		var f32 movement_distnace= drawing_info.game_time_s * c_movement_speed;
+		var u32 texture_slot= 0u;
+		unsafe( glActiveTexture( GLenum( GL_TEXTURE0 ) + GLenum(texture_slot) ) );
+		map_data.map_textures_array.Bind();
 
 		rain_shader_.Bind();
 		rain_shader_.SetUniform( "vu_movement_distance", movement_distnace );
 		rain_shader_.SetUniform( "gu_matrix", view_matrix );
 		rain_shader_.SetUniform( "gu_camera_position", drawing_info.camera_params.position );
 		rain_shader_.SetUniform( "gu_rain_droplet_size", rain_droplet_size );
+		rain_shader_.SetUniform( "gu_texture_coordinates", texture_coordinates );
+		rain_shader_.SetUniform( "gu_texture_layer", textrure_layer );
+		rain_shader_.SetUniform( "fu_texture", texture_slot );
+		rain_shader_.SetUniform( "fu_fog_color", Vec3f( fog_color ) );
+		rain_shader_.SetUniform( "fu_fog_color_additive", Vec3f( fog_color_additive ) );
 
 		unsafe( glDrawArrays(
 			GLenum( GL_POINTS ),
