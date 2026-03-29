@@ -1,7 +1,10 @@
 #version 330
 
+// This shader should be interchangable with the rain shader (including the same uniforms, inputs and outputs)!
+//
+
 layout( points ) in;
-layout( triangle_strip, max_vertices = 6 ) out;
+layout( triangle_strip, max_vertices = 6 ) out;  // Emit two triangles for a quad (or nothing).
 
 uniform mat4 gu_matrix;
 uniform vec3 gu_camera_position;
@@ -21,7 +24,8 @@ out float f_fog_density;
 out float f_additive_fog_density;
 flat out float f_texture_layer;
 
-// Experimentally-found value.
+// Experimentally-found value, which matches snowflake paths observable in the original game.
+// It should match the same constant in the rain shader!
 const vec3 c_move_vector= vec3( 0.235, 0.235, 0.943 );
 
 const float c_max_distance_to_camera= 1536.0;
@@ -45,7 +49,7 @@ void main()
 		base_position +
 		c_spiral_movement_amplitude * vec3( cos( spiral_movement_phase ), sin( spiral_movement_phase ), 0.0 );
 
-	// Rotate snow quad to always face towards the camera.
+	// Rotate snow quad to always face the camera.
 
 	vec3 vec_to_camera= position - gu_camera_position;
 
@@ -72,9 +76,11 @@ void main()
 	vec2 tc2= vec2( gu_texture_coordinates_start.x, gu_texture_coordinates_start.y );
 	vec2 tc3= vec2( gu_texture_coordinates_start.x, gu_texture_coordinates_end.y );
 
+	// Smoothly make snowflakes dimmer at distances close to the max draw distance.
 	float fade= 1.0 - smoothstep( c_max_distance_to_camera * 2.0 / 3.0, c_max_distance_to_camera, distance_to_camera );
 	f_light= vec4( gu_light_scale, 1.0 ) * fade;
 
+	// TODO - allow turning fog off.
 	// Use exponential fog formula.
 	// This code (including the scale constant) should match code calculating fog in other places!
 	float fog_distance_scale= 1.0 / 3072.0;

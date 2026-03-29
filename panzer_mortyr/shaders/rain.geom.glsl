@@ -1,7 +1,10 @@
 #version 330
 
+// This shader should be interchangable with the snow shader (including the same uniforms, inputs and outputs)!
+//
+
 layout( points ) in;
-layout( triangle_strip, max_vertices = 3 ) out;
+layout( triangle_strip, max_vertices = 3 ) out; // Emit single triangle (or nothing).
 
 uniform mat4 gu_matrix;
 uniform vec3 gu_camera_position;
@@ -21,7 +24,8 @@ out float f_fog_density;
 out float f_additive_fog_density;
 flat out float f_texture_layer;
 
-// Experimentally-found value.
+// Experimentally-found value, which matches rain droplet paths observable in the original game.
+// It should match the same constant in the snow shader!
 const vec3 c_move_vector= vec3( 0.235, 0.235, 0.943 );
 
 const float c_max_distance_to_camera= 1536.0;
@@ -36,7 +40,7 @@ void main()
 
 	vec3 position= g_position[0] + c_move_vector * movement_distance;
 
-	// Rotate rain triangle to always face towards the camera.
+	// Rotate rain triangle around its movement axis to always face the camera.
 
 	vec3 vec_to_camera= position - gu_camera_position;
 
@@ -54,9 +58,11 @@ void main()
 	vec3 v1= position + side_vector_scaled;
 	vec3 v2= position - side_vector_scaled;
 
+	// Smoothly make rain droplets dimmer at distances close to the max draw distance.
 	float fade= 1.0 - smoothstep( c_max_distance_to_camera * 2.0 / 3.0, c_max_distance_to_camera, distance_to_camera );
 	f_light= vec4( gu_light_scale, 1.0 ) * fade;
 
+	// TODO - allow turning fog off.
 	// Use exponential fog formula.
 	// This code (including the scale constant) should match code calculating fog in other places!
 	float fog_distance_scale= 1.0 / 3072.0;
