@@ -10,6 +10,7 @@ out vec4 color;
 
 void main()
 {
+	vec4 cc= vec4( 0.0, 0.0, 0.0, 0.0 );
 	for( int i= 0; i < 4; ++i )
 	{
 		float depth_buffer_value= texelFetch( fu_depth_texture, ivec2( gl_FragCoord.xy ), i ).r;
@@ -25,8 +26,8 @@ void main()
 		float distance_scale= 1.0 / 3072.0;
 		float fog_density= 1.0 - exp( -linear_distance * distance_scale );
 
-		color= vec4( fu_fog_color, fog_density );
+		cc+= vec4( fu_fog_color, fog_density );
 	}
 
-	color /= 4.0;
+	color = cc / 4.0;
 }
