@@ -269,6 +269,14 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 		global_light_params,
 		drawing_stats );
 
+	DrawMapPolygonsWithCaustics(
+		map_data,
+		visible_room_cluster_flags,
+		map_shader_,
+		view_matrix,
+		global_light_params,
+		drawing_stats );
+
 	var bool dynamic_lights_enabled= settings_.lock_imut().deref().r_dynamic_lights_enabled;
 
 	if( dynamic_lights_enabled )
@@ -1426,6 +1434,76 @@ fn DrawMapPolygons(
 		ExecuteClusterMeshDrawing( geometry_buffer_chunk );
 
 		drawing_stats.num_visible_map_triangles+= geometry_buffer_chunk.num_indices / 3u;
+	}
+}
+
+fn DrawMapPolygonsWithCaustics(
+	MapDrawData& map_data,
+	VisibleRoomClusterFlagsImut visible_room_cluster_flags,
+	ShaderProgram &mut shader,
+	Mat4f& view_matrix,
+	GlobalLightParams& global_light_params,
+	WorldDrawingStats &mut drawing_stats )
+{
+	var ust::array_view_imut</ZvoxCluster/> clusters= map_data.zvox_data.deref().clusters.range();
+
+	SetGLState( g_map_drawing_gl_state );
+
+	var u32 texture_slot= 0u;
+
+	unsafe( glActiveTexture( GLenum( GL_TEXTURE0 ) + GLenum(texture_slot) ) );
+	map_data.map_textures_array.Bind();
+
+	shader.Bind();
+	shader.SetUniform( "vu_matrix", view_matrix );
+	shader.SetUniform( "fu_texture", texture_slot );
+
+	shader.SetUniform( "vu_light_add", Vec3f( global_light_params.light_add ) );
+	shader.SetUniform( "vu_light_scale", Vec3f( global_light_params.light_scale ) );
+
+	map_data.vertex_array_object.Bind();
+	map_data.index_buffer.Bind();
+
+	for( auto mut i= 0s; i < clusters.size(); )
+	{
+		var ZvoxCluster& room_cluster= clusters[i];
+		if( room_cluster.c.num_children_clusters < 0 )
+		{
+			++i;
+			continue;
+		}
+
+		// This room cluster and all his children.
+		var size_type num_clusters_in_group= size_type( room_cluster.c.num_children_clusters ) + 1s;
+
+		if( visible_room_cluster_flags[i] &&
+			room_cluster.contents == ZvoxCluster::c_contents_water /* draw only clusters with caustics */ )
+		{
+			for( auto mut j= 0s; j < num_clusters_in_group; ++j )
+			{
+				var size_type cluster_index= i + j;
+
+				var u8 cluster_type= clusters[ cluster_index ].cluster_type;
+				if( !(
+					cluster_type == ZvoxCluster::c_cluster_type_regular |
+					cluster_type == ZvoxCluster::c_cluster_type_notes ) )
+				{
+					// Draw dynamic clusters later.
+					continue;
+				}
+
+				var GeometryBufferChunk& geometry_buffer_chunk= map_data.clusters_draw_data[ cluster_index ].geometry_buffer_chunk;
+
+				ExecuteClusterMeshDrawing( geometry_buffer_chunk );
+
+				drawing_stats.num_visible_map_triangles+= geometry_buffer_chunk.num_indices / 3u;
+			}
+
+			++drawing_stats.num_room_visible_clusters;
+			drawing_stats.num_total_visible_clusters+= u32( num_clusters_in_group );
+		}
+
+		i+= num_clusters_in_group;
 	}
 }
 
