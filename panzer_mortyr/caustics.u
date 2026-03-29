@@ -1,5 +1,6 @@
 import "/math.iu"
 import "/scoped_array.iu"
+import "random.iu"
 import "caustics.iu"
 import "gl_functions.iu"
 import "math_constants.iu"
@@ -17,11 +18,16 @@ fn CreateCausticsTexture() : Texture
 	var f32 spatial_frequency_scale= c_tau / f32( size );
 	var f32 temporal_frequency_scale= c_tau / f32( num_layers );
 
-	var CausticWave wave
+	var PseudoRandomGenerator mut rand;
+
+	var [ CausticWave, 32 ] mut waves= zero_init;
+
+	foreach( &mut wave : waves )
 	{
-		.spatial_frequency[ 3, 5 ],
-		.amplitude= 0.25f,
-	};
+		wave.spatial_frequency[0]= i32( rand.Next() % 17u ) - 8;
+		wave.spatial_frequency[1]= i32( rand.Next() % 17u ) - 8;
+		wave.amplitude= f32( rand.Next() ) * ( 0.03f / f32( PseudoRandomGenerator::c_max_plus_one ) );
+	}
 
 	for( auto mut t= 0u; t < num_layers; ++t )
 	{
@@ -33,12 +39,19 @@ fn CreateCausticsTexture() : Texture
 
 			for( auto mut x= 0u; x < size; ++x )
 			{
-				var f32 val=
-					wave.amplitude *
-					ust::sin(
-						f32( i32(x) * wave.spatial_frequency[0] ) * spatial_frequency_scale +
-						f32( i32(y) * wave.spatial_frequency[1] ) * spatial_frequency_scale +
-						f32(t) * 2.0f * temporal_frequency_scale );
+				var f32 mut val= 0.0f;
+
+				foreach( &wave : waves )
+				{
+					var f32 temporal_frequency= 2.0f; // TODO - make it dependent on spatial frequency.
+
+					val+=
+						wave.amplitude *
+						ust::sin(
+							f32( i32(x) * wave.spatial_frequency[0] ) * spatial_frequency_scale +
+							f32( i32(y) * wave.spatial_frequency[1] ) * spatial_frequency_scale +
+							f32(t) * temporal_frequency * temporal_frequency_scale );
+				}
 
 				dst_line[ size_type(x) ]= u8( ust::max( 0.0f, ust::min( ( val + 0.5f ) * 255.0f, 255.0f ) ) );
 			}
