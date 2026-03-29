@@ -41,6 +41,7 @@ Changes:
 * Flat local fog volumes are box-shaped. In the original game they are always elliptical.
 * Sky isn't affected by global fog at all.
 * Light effects of projectile hits stay shorter for dim lights (compared to the original game).
+* Snow/rain drawing params may be slightly different - this includes moving speed, density, particle size, drawing distance. But these params are generally close enough to the original game.
 
 
 ### Gameplay
