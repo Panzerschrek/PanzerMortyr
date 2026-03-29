@@ -151,13 +151,13 @@ PanzerMortyr rendering:
 * Draw underwater caustics properly.
 * Draw reflections in reflective surfaces (usually floors).
 * Use smooth animation for animated models (with two or more frames interpolation).
-* Draw decals (bullet holes, blood).
+* Draw decals (bullet holes, blood, footsteps).
+* Draw animated water circle decals on map quads with "wet" property enabled in points where a rain particle hits such quad.
 * Draw injured enemies covered with blood.
 * Draw burning entities with some kind of burning effect (like in RtCW).
 * Draw some fullscreen burning effect if the player is burning.
-* Draw weather effects (rain, snow). Don't forget applying global fog for them if needed.
 * Experiment with an algorithm for dynamic visible clusters search similar to one used in SquareWheel.
-* Add support for MSAA.
+* Add support for MSAA (with proper support of fullscreen effects like fog).
 * Somehow distort/colorize the whole image while swimming in water. Maybe even add or alter global fog if camera is in water volume.
 * Consider optimizing calculating light from point light sources for models - avoid enumerating all lights.
 * Consider drawing blob shadows under models (as some sort of decal?).
@@ -166,12 +166,13 @@ PanzerMortyr rendering:
 * Consider drawing some sort of fullscreen frame-like image of the acid protection suit mask if this powerup is active.
 * Consider colorizing the whole image while the acid protection suit is active.
 * Consider drawing some extra effects for the night vision mode, like fullscreen radial brightness gradient or something similar.
-* Draw entities having one or more attached flame object in flames. Consider implementing an effect similar to one used in RtCW for burning enemies.
 * Make sure clouds have proper scale and speed (similar to the original game).
 * Don't draw broken map quads (with glass special material and materials with breakable flag).
 * Consider optimizing dynamic lighting even more by using stencil test for them.
 * Consider limiting the number of active dynamic light sources - to avoid huge performance drops.
 * Consider applying dynamic light to glass quads.
+* Consider optimizing drawing snow/rain - reject snow/rain particles for non-visible clusters and clusters located far away.
+* Allow turning global fog for snow/rain off.
 
 PanzerMortyr menus and HUD:
 

@@ -26,53 +26,42 @@ fn ShaderProgram::constructor( ust::string_view8 vertex_text, ust::string_view8 
 		glAttachShader( program_, fragment_shader_ );
 	}
 
+	unsafe( LinkProgram( program_ ) );
+
+	uniform_locations_= unsafe( RetrieveUniforms( program_ ) );
+}
+
+fn ShaderProgram::constructor(
+	ust::string_view8 vertex_text, ust::string_view8 geometry_text, ust::string_view8 fragment_text )
+	(
+		program_= unsafe( glCreateProgram() ),
+		vertex_shader_= unsafe( glCreateShader( GLenum( GL_VERTEX_SHADER ) ) ),
+		geometry_shader_= unsafe( glCreateShader( GLenum( GL_GEOMETRY_SHADER ) ) ),
+		fragment_shader_= unsafe( glCreateShader( GLenum( GL_FRAGMENT_SHADER ) ) )
+	)
+{
 	unsafe
 	{
-		glLinkProgram( program_ );
-
-		var GLint mut log_length= zero_init;
-		glGetProgramiv( program_, GLenum( GL_INFO_LOG_LENGTH ), $<( log_length ) );
-		if( log_length > 0 )
-		{
-			scoped_array char8 mut log[ size_type(log_length) ]( '\0' );
-			glGetProgramInfoLog( program_, log_length, $<(log_length), log.data() );
-
-			ust::stderr_print( ust::concat( "Shader program linking note:\n", log, "\n\n" ) );
-		}
+		CompileShader( vertex_shader_, vertex_text );
+		glAttachShader( program_, vertex_shader_ );
 	}
 
 	unsafe
 	{
-		var GLint mut uniform_count= zero_init;
-		glGetProgramiv( program_, GLenum( GL_ACTIVE_UNIFORMS ), $<( uniform_count ) );
-
-		var GLint mut max_uniform_length= zero_init;
-		glGetProgramiv( program_, GLenum( GL_ACTIVE_UNIFORM_MAX_LENGTH ), $<( max_uniform_length ) );
-
-		scoped_array char8 mut buff[ size_type(max_uniform_length) + 1s ]( '\0' );
-
-		for( var GLint mut i(0); i < uniform_count; ++i )
-		{
-			var GLsizei mut uniform_name_length= zero_init;
-			var GLint mut uniform_size= zero_init;
-			var GLenum mut uniform_type= zero_init;
-
-			glGetActiveUniform(
-				program_,
-				GLuint(i),
-				GLsizei(buff.size()),
-				$<(uniform_name_length),
-				$<(uniform_size),
-				$<(uniform_type),
-				buff.data() );
-
-
-			buff[ size_type(uniform_name_length) ]= '\0'; // Ensure we have null-terminator.
-			var GLint location= glGetUniformLocation( program_, buff.data() );
-
-			uniform_locations_.insert_new( buff.subrange_end( size_type( uniform_name_length ) ), location );
-		}
+		var GLuint geometry_shader= geometry_shader_.try_deref();
+		CompileShader( geometry_shader, geometry_text );
+		glAttachShader( program_, geometry_shader );
 	}
+
+	unsafe
+	{
+		CompileShader( fragment_shader_, fragment_text );
+		glAttachShader( program_, fragment_shader_ );
+	}
+
+	unsafe( LinkProgram( program_ ) );
+
+	uniform_locations_= unsafe( RetrieveUniforms( program_ ) );
 }
 
 fn ShaderProgram::destructor()
@@ -80,6 +69,11 @@ fn ShaderProgram::destructor()
 	unsafe( glDeleteProgram( program_ ) );
 	unsafe( glDeleteShader( vertex_shader_ ) );
 	unsafe( glDeleteShader( fragment_shader_ ) );
+
+	if_var( geometry_shader : geometry_shader_ )
+	{
+		unsafe( glDeleteShader( geometry_shader ) );
+	}
 }
 
 fn ShaderProgram::Bind( this )
@@ -155,6 +149,64 @@ fn CompileShader( GLuint shader, ust::string_view8 text ) unsafe
 			ust::stderr_print( ust::concat( "Shader compilation note:\n", log, "\n\n" ) );
 		}
 	}
+}
+
+fn LinkProgram( GLuint program ) unsafe
+{
+	unsafe
+	{
+		glLinkProgram( program );
+
+		var GLint mut log_length= zero_init;
+		glGetProgramiv( program, GLenum( GL_INFO_LOG_LENGTH ), $<( log_length ) );
+		if( log_length > 0 )
+		{
+			scoped_array char8 mut log[ size_type(log_length) ]( '\0' );
+			glGetProgramInfoLog( program, log_length, $<(log_length), log.data() );
+
+			ust::stderr_print( ust::concat( "Shader program linking note:\n", log, "\n\n" ) );
+		}
+	}
+}
+
+fn RetrieveUniforms( GLuint program ) unsafe : ust::hash_map</ust::string8, GLint/>
+{
+	var ust::hash_map</ust::string8, GLint/> mut uniform_locations;
+
+	unsafe
+	{
+		var GLint mut uniform_count= zero_init;
+		glGetProgramiv( program, GLenum( GL_ACTIVE_UNIFORMS ), $<( uniform_count ) );
+
+		var GLint mut max_uniform_length= zero_init;
+		glGetProgramiv( program, GLenum( GL_ACTIVE_UNIFORM_MAX_LENGTH ), $<( max_uniform_length ) );
+
+		scoped_array char8 mut buff[ size_type(max_uniform_length) + 1s ]( '\0' );
+
+		for( var GLint mut i(0); i < uniform_count; ++i )
+		{
+			var GLsizei mut uniform_name_length= zero_init;
+			var GLint mut uniform_size= zero_init;
+			var GLenum mut uniform_type= zero_init;
+
+			glGetActiveUniform(
+				program,
+				GLuint(i),
+				GLsizei(buff.size()),
+				$<(uniform_name_length),
+				$<(uniform_size),
+				$<(uniform_type),
+				buff.data() );
+
+
+			buff[ size_type(uniform_name_length) ]= '\0'; // Ensure we have null-terminator.
+			var GLint location= glGetUniformLocation( program, buff.data() );
+
+			uniform_locations.insert_new( buff.subrange_end( size_type( uniform_name_length ) ), location );
+		}
+	}
+
+	return uniform_locations;
 }
 
 } // namespace PM

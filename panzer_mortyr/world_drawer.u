@@ -79,6 +79,18 @@ fn WorldDrawer::constructor(
 		local_fog_shader_(
 			embed</char8/>( "shaders/local_fog.vert.glsl" ),
 			embed</char8/>( "shaders/local_fog.frag.glsl" ) ),
+		snow_shader_(
+			// Use the same vertex shader for snow and rain.
+			embed</char8/>( "shaders/snow_rain.vert.glsl" ),
+			embed</char8/>( "shaders/snow.geom.glsl" ),
+			// Reuse fragment shader used for semitransparent geometry for snow.
+			embed</char8/>( "shaders/semitransparent_geometry.frag.glsl" ) ),
+		rain_shader_(
+			// Use the same vertex shader for snow and rain.
+			embed</char8/>( "shaders/snow_rain.vert.glsl" ),
+			embed</char8/>( "shaders/rain.geom.glsl" ),
+			// Reuse fragment shader used for semitransparent geometry for rain.
+			embed</char8/>( "shaders/semitransparent_geometry.frag.glsl" ) ),
 		stub_white_texture_= CreateStubWhiteTexture(),
 		depth_buffer_copy_texture_= CreateDepthBufferCopyTexture(),
 		semitransparent_polygons_buffer_
@@ -215,6 +227,8 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 
 	var CameraClipPlanes camera_clip_planes=
 		CreateCameraClipPlanes( drawing_info.camera_params, viewport_info.view_aspect );
+
+	var MapsDescription& maps_description= maps_description_.deref();
 
 	var ust::array_view_imut</ZvoxCluster/> clusters= map_data.zvox_data.deref().clusters;
 
@@ -614,6 +628,80 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 			fog_color_additive );
 	}
 
+	// Draw snow/rain before other simitransparent geometry.
+	// It's not fully correct, since it may produce wrong polygons order (not strick back-to-front order).
+	// But we have no other way of doing this.
+	// There are too many snow/rain particles to process and sort them on CPU.
+	// So, process them (generate geometry) on GPU and draw them.
+	if( size_type( map_index_ ) < maps_description.maps.size() )
+	{
+		var MapsDescription::MapDescription& map_description= maps_description.maps[ size_type( map_index_ ) ];
+
+		switch( map_description.precipitation_kind )
+		{
+			MapsDescription::MapDescription::c_precipitation_kind_none -> {},
+			MapsDescription::MapDescription::c_precipitation_kind_snow ->
+			{
+				var ZmapLamData& zmap_lam_data= map_data.zmap_lam_data.deref();
+
+				var f32 c_movement_speed= 64.0f;
+				var f32 movement_distance= drawing_info.game_time_s * c_movement_speed;
+
+				// For some reason the billboards description file doesn't contain a description for snowflake billboard.
+				// So, just hardcode it.
+				var BillboardDescription billboard_description
+					{ .dx= 2u, .dy= 2u, .xp= 0u, .yp= 32u, .xk= 16u, .yk= 48u, .tek= 998u };
+
+				DrawSnowOrRain(
+					zmap_lam_data,
+					map_data.snow_rain_buffer,
+					snow_shader_,
+					map_data.map_textures_array,
+					billboard_description,
+					view_matrix,
+					drawing_info.camera_params.position,
+					movement_distance,
+					global_light_params.light_scale,
+					fog_color,
+					fog_color_additive );
+
+				drawing_stats.num_visible_snow_rain_particles+= u32( zmap_lam_data.rain_droplets.size() );
+			},
+			MapsDescription::MapDescription::c_precipitation_kind_rain ->
+			{
+				var ZmapLamData& zmap_lam_data= map_data.zmap_lam_data.deref();
+
+				// Rain texture is too bright. Make rain droplets darker.
+				// They still can be seen with such brightness, since additive blending is used for them.
+				var [ f32, 3 ] rain_light_scale
+				[
+					global_light_params.light_scale[0] * 0.25f,
+					global_light_params.light_scale[1] * 0.25f,
+					global_light_params.light_scale[2] * 0.25f,
+				];
+
+				var f32 c_movement_speed= 384.0f;
+				var f32 movement_distance= drawing_info.game_time_s * c_movement_speed;
+
+				DrawSnowOrRain(
+					zmap_lam_data,
+					map_data.snow_rain_buffer,
+					rain_shader_,
+					map_data.map_textures_array,
+					billboards_description_[ size_type( BillboardConstants::c_id_rain ) ],
+					view_matrix,
+					drawing_info.camera_params.position,
+					movement_distance,
+					rain_light_scale,
+					fog_color,
+					fog_color_additive );
+
+				drawing_stats.num_visible_snow_rain_particles+= u32( zmap_lam_data.rain_droplets.size() );
+			},
+			default -> {},
+		}
+	}
+
 	ResetDynamicPolygonsBuffer( semitransparent_polygons_buffer_ );
 
 	drawing_stats.num_visible_billboards+=
@@ -626,56 +714,53 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 			semitransparent_polygons_buffer_.vertices,
 			semitransparent_polygons_buffer_.indices );
 
+	if( size_type( map_index_ ) < maps_description.maps.size() )
 	{
-		var MapsDescription& maps_description= maps_description_.deref();
-		if( size_type( map_index_ ) < maps_description.maps.size() )
+		var MapsDescription::MapDescription& map_description= maps_description.maps[ size_type( map_index_ ) ];
+		var MaterialsDescription::Block& materials_block=
+			materials_description_.deref().blocks[ map_description.materials_block ]; // Halts if not found.
+
+		CreateSemitransparentMapPolygons(
+			map_data,
+			materials_block,
+			visible_room_cluster_flags,
+			drawing_info.dynamic_cluster_objects,
+			drawing_info.game_time_s,
+			semitransparent_polygons_buffer_.vertices,
+			semitransparent_polygons_buffer_.indices );
+
+		// Draw breaking glass shards always as semitransparent,
+		// because the glass special material is semitransparent
+		// and because alpha-fading is used even for glass shard with non-transparent textures.
+		CreateBreakingGlassShards(
+			clusters,
+			map_data.zmap_data.deref().quads,
+			room_clusters_hierarchy,
+			map_data.zmap_lam_data.deref(),
+			materials_block,
+			drawing_info.breaking_glass_effects,
+			semitransparent_polygons_buffer_.vertices,
+			semitransparent_polygons_buffer_.indices );
+	}
+
+	// Calculate fog on per-vertex basis for semitransparent geometry.
+	// We can't apply fullscreen fog effects for semitransparent polygons,
+	// since the fullscreen fog shader reads single depth value,
+	// but many semitransparent polygons can overlap and have many different depth values.
+	if( fog_enabled )
+	{
+		if( map_data.global_fog_enabled )
 		{
-			var MapsDescription::MapDescription& map_description= maps_description.maps[ size_type( map_index_ ) ];
-			var MaterialsDescription::Block& materials_block=
-				materials_description_.deref().blocks[ map_description.materials_block ]; // Halts if not found.
-
-			CreateSemitransparentMapPolygons(
-				map_data,
-				materials_block,
-				visible_room_cluster_flags,
-				drawing_info.dynamic_cluster_objects,
-				drawing_info.game_time_s,
-				semitransparent_polygons_buffer_.vertices,
-				semitransparent_polygons_buffer_.indices );
-
-			// Draw breaking glass shards always as semitransparent,
-			// because the glass special material is semitransparent
-			// and because alpha-fading is used even for glass shard with non-transparent textures.
-			CreateBreakingGlassShards(
-				clusters,
-				map_data.zmap_data.deref().quads,
-				room_clusters_hierarchy,
-				map_data.zmap_lam_data.deref(),
-				materials_block,
-				drawing_info.breaking_glass_effects,
-				semitransparent_polygons_buffer_.vertices,
-				semitransparent_polygons_buffer_.indices );
+			CalculateFogForSemitransparentGeometryVertices(
+				drawing_info.camera_params.position, semitransparent_polygons_buffer_.vertices );
 		}
 
-		// Calculate fog on per-vertex basis for semitransparent geometry.
-		// We can't apply fullscreen fog effects for semitransparent polygons,
-		// since the fullscreen fog shader reads single depth value,
-		// but many semitransparent polygons can overlap and have many different depth values.
-		if( fog_enabled )
+		if( !visible_local_fog_volumes_.empty() )
 		{
-			if( map_data.global_fog_enabled )
-			{
-				CalculateFogForSemitransparentGeometryVertices(
-					drawing_info.camera_params.position, semitransparent_polygons_buffer_.vertices );
-			}
-
-			if( !visible_local_fog_volumes_.empty() )
-			{
-				CalculateLocalFogForSemitransparentGeometryVertices(
-					drawing_info.camera_params.position,
-					visible_local_fog_volumes_,
-					semitransparent_polygons_buffer_.vertices );
-			}
+			CalculateLocalFogForSemitransparentGeometryVertices(
+				drawing_info.camera_params.position,
+				visible_local_fog_volumes_,
+				semitransparent_polygons_buffer_.vertices );
 		}
 	}
 
@@ -1108,6 +1193,7 @@ fn WorldDrawer::SetMap( mut this, u32 map_index )
 			.sky_background_buffer= CreateSkyBackgroundBuffer( map_description ),
 			.stars_buffer= CreateStarsBuffer( map_description, billboards_description_ ),
 			.sky_clouds_params= CreateSkyCloudsParams( map_description ),
+			.snow_rain_buffer= CreateSnowRainBuffer( zmap_lam_data ),
 			.fog_color
 			[
 				f32( map_description.fog_color[2] ) / 255.0f,
@@ -1719,6 +1805,66 @@ fn DrawFirstPersonWeaponModels(
 	DrawModels( models_map, models_to_draw, shader, ust::null_optional_ref, drawing_stats );
 }
 
+fn DrawSnowOrRain(
+	ZmapLamData& zmap_lam_data,
+	SnowRainBuffer& rain_buffer,
+	ShaderProgram &mut shader,
+	Texture& map_textures_array,
+	BillboardDescription& billboard_description,
+	Mat4f& view_matrix,
+	Vec3f& camera_position,
+	f32 movement_distance,
+	[ f32, 3 ]& light_scale,
+	[ f32, 3 ]& fog_color,
+	[ f32, 3 ]& fog_color_additive )
+{
+	var f32 textrure_layer= GetBillboardTextureLayer( billboard_description );
+
+	var Vec2f droplet_size( f32( billboard_description.dx ), f32( billboard_description.dy ) );
+
+	var f32 constexpr tc_scale= 1.0f / f32( MaterialsDescription::c_texture_size );
+
+	var Vec2f texture_coordinates_start(
+		f32( billboard_description.xp % MaterialsDescription::c_texture_size ),
+		f32( billboard_description.yp % MaterialsDescription::c_texture_size ) );
+
+	var Vec2f texture_coordinates_end=
+		texture_coordinates_start +
+		Vec2f(
+			f32( billboard_description.xk - billboard_description.xp ),
+			f32( billboard_description.yk - billboard_description.yp ) );
+
+	SetGLState( g_semitransparent_geometry_drawing_gl_state );
+
+	rain_buffer.vertex_array_object.Bind();
+
+	var u32 texture_slot= 0u;
+	unsafe( glActiveTexture( GLenum( GL_TEXTURE0 ) + GLenum(texture_slot) ) );
+	map_textures_array.Bind();
+
+	shader.Bind();
+	shader.SetUniform( "vu_movement_distance", movement_distance );
+	shader.SetUniform( "gu_matrix", view_matrix );
+	shader.SetUniform( "gu_camera_position", camera_position );
+	shader.SetUniform( "gu_droplet_size", droplet_size );
+	shader.SetUniform( "gu_texture_coordinates_start", texture_coordinates_start * tc_scale );
+	shader.SetUniform( "gu_texture_coordinates_end", texture_coordinates_end * tc_scale );
+	shader.SetUniform( "gu_texture_layer", textrure_layer );
+	shader.SetUniform( "gu_light_scale", Vec3f( light_scale ) );
+	shader.SetUniform( "fu_texture", texture_slot );
+	shader.SetUniform( "fu_fog_color", Vec3f( fog_color ) );
+	shader.SetUniform( "fu_fog_color_additive", Vec3f( fog_color_additive ) );
+
+	// Just draw all snow/rain particles existing on this map.
+	// It's fast enough for modern GPUs.
+	// Rejecting some of them on per-cluster basis is doable, but too complex to implement now,
+	// since snow/rain particles can fall outside bounds of their parent cluster.
+	unsafe( glDrawArrays(
+		GLenum( GL_POINTS ),
+		GLint(0),
+		GLsizei( zmap_lam_data.rain_droplets.size() ) ) );
+}
+
 fn DrawSemitransparentGeometry(
 	DynamicPolygonsBuffer& dynamic_polygons_buffer,
 	ShaderProgram &mut shader,
@@ -2195,6 +2341,77 @@ fn PrepareVertexArrayObjectWithMapVertexFormat(
 		GLboolean(1),
 		GLsizei( typeinfo</MapVertex/>.size_of ),
 		ust::nullptr</byte8/>() + GetStructFieldOffset</MapVertex, "fog_params"/>() ) );
+}
+
+fn CreateSnowRainBuffer( ZmapLamData& zmap_lam_data ) : SnowRainBuffer
+{
+	auto vertices=
+		ust::make_vector_from_mapped_range(
+			zmap_lam_data.rain_droplets.range(),
+			lambda( ZmapLamRainDroplet& rain_droplet ) : SnowRainVertex
+			{
+				return
+					SnowRainVertex
+					{
+						.position= rain_droplet.position,
+						.max_movement_distance( rain_droplet.travel_distance ),
+						// Calculate normalized distance phase.
+						// It's needed to distribute rain droplets along the whole path (with maximum length).
+						.movement_distance_phase(
+							65536.0f * f32( rain_droplet.movement_phase ) / rain_droplet.travel_distance ),
+					};
+			} );
+
+	var BufferObject mut vertex_buffer=
+		BufferObject::CreateStaticDrawBuffer( GLenum( GL_ARRAY_BUFFER ), vertices.range().to_byte8_range() );
+
+	vertex_buffer.Bind();
+
+	var VertexArrayObject mut vertex_array_object;
+	vertex_array_object.Bind();
+
+	// These attribute numbers should match values in vertex shader!
+	var GLuint c_position_attrib= 0u;
+	var GLuint c_max_movement_distance_attrib= 1u;
+	var GLuint c_max_movement_distance_phase_attrib= 2u;
+
+	vertex_buffer.Bind();
+
+	unsafe( glEnableVertexAttribArray( c_position_attrib ) );
+
+	unsafe( glVertexAttribPointer(
+		c_position_attrib,
+		3,
+		GLenum( GL_FLOAT ),
+		GLboolean(0),
+		GLsizei( typeinfo</SnowRainVertex/>.size_of ),
+		ust::nullptr</byte8/>() + GetStructFieldOffset</SnowRainVertex, "position"/>() ) );
+
+	unsafe( glEnableVertexAttribArray( c_max_movement_distance_attrib ) );
+
+	unsafe( glVertexAttribPointer(
+		c_max_movement_distance_attrib,
+		1,
+		GLenum( GL_UNSIGNED_SHORT ),
+		GLboolean(0),
+		GLsizei( typeinfo</SnowRainVertex/>.size_of ),
+		ust::nullptr</byte8/>() + GetStructFieldOffset</SnowRainVertex, "max_movement_distance"/>() ) );
+
+	unsafe( glEnableVertexAttribArray( c_max_movement_distance_phase_attrib ) );
+
+	unsafe( glVertexAttribPointer(
+		c_max_movement_distance_phase_attrib,
+		1,
+		GLenum( GL_UNSIGNED_SHORT ),
+		GLboolean(1),
+		GLsizei( typeinfo</SnowRainVertex/>.size_of ),
+		ust::nullptr</byte8/>() + GetStructFieldOffset</SnowRainVertex, "movement_distance_phase"/>() ) );
+
+	return SnowRainBuffer
+	{
+		.vertex_buffer= move(vertex_buffer),
+		.vertex_array_object= move(vertex_array_object),
+	};
 }
 
 fn DrawGlobalFog(
