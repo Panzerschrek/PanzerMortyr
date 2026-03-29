@@ -13,8 +13,6 @@ fn CreateCausticsTexture() : Texture
 	var u32 size= 64u;
 	var u32 num_layers= 32u;
 
-	scoped_array u8 mut texture_data[ size_type( size * size * num_layers ) ]( 0u8 );
-
 	var f32 spatial_frequency_scale= c_tau / f32( size );
 	var f32 temporal_frequency_scale= c_tau / f32( num_layers );
 
@@ -32,15 +30,17 @@ fn CreateCausticsTexture() : Texture
 			{
 				continue; // Avoid zero frequency.
 			}
-			wave.amplitude= f32( rand.Next() ) * ( 0.1f / f32( PseudoRandomGenerator::c_max_plus_one ) );
+			wave.amplitude= f32( rand.Next() ) * ( 1.0f / f32( PseudoRandomGenerator::c_max_plus_one ) );
 			wave.phase= f32( rand.Next() ) * ( c_tau / f32( PseudoRandomGenerator::c_max_plus_one ) );
 			break;
 		}
 	}
 
+	scoped_array f32 mut texture_data_float[ size_type( size * size * num_layers ) ]( 0.0f );
+
 	for( auto mut t= 0u; t < num_layers; ++t )
 	{
-		auto dst_layer= texture_data.subrange( size_type( t * size * size ), size_type( ( t + 1u ) * size * size ) );
+		auto dst_layer= texture_data_float.subrange( size_type( t * size * size ), size_type( ( t + 1u ) * size * size ) );
 
 		for( auto mut y= 0u; y < size; ++y )
 		{
@@ -73,10 +73,28 @@ fn CreateCausticsTexture() : Texture
 							wave.phase );
 				}
 
-				dst_line[ size_type(x) ]= u8( ust::max( 0.0f, ust::min( ( val + 0.5f ) * 255.0f, 255.0f ) ) );
+
+				dst_line[ size_type(x) ]= val;
 			}
 		}
 	}
+
+	var f32 mut min_val= texture_data_float.front(), mut max_val= texture_data_float.front();
+
+	foreach( val : texture_data_float )
+	{
+		ust::min_assign( min_val, val );
+		ust::max_assign( max_val, val );
+	}
+
+	var f32 range_size= max_val - min_val;
+
+	scoped_array u8 texture_data[ size_type( size * size * num_layers ) ](
+		texture_data_float.iter().map(
+			lambda[&]( f32 val ) : u8
+			{
+				return u8( ust::max( 0.0f, ust::min( ( val - min_val ) * ( 255.0f / range_size ), 255.0f ) ) );
+			} ) );
 
 	var Texture mut texture= Texture::Create( GLenum( GL_TEXTURE_3D ) );
 	texture.Bind();
