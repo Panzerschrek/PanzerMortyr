@@ -19,7 +19,8 @@ void main()
 		texture_color= texture_color * 0.0001 + vec3( 0.75, 0.75, 0.75 );
 	}
 
-	float caustics_value= texture( fu_caustics_texture, vec3( f_texture_coordinates, fu_caustics_layer ) ).r * 4.0;
+	float caustics_value= texture( fu_caustics_texture, vec3( f_texture_coordinates, fu_caustics_layer ) ).r;
+	float light_scale= 0.5 + caustics_value * 2.0;
 
-	color= vec4( texture_color * f_light * caustics_value, 1.0 );
+	color= vec4( texture_color * ( f_light * light_scale ), 1.0 );
 }
