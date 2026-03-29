@@ -1,7 +1,7 @@
 #version 330
 
 // This shader is used for both snow and rain.
-// Geometry shaders for them are different.
+// Geometry shaders for them are different, but compatible (have the same uniforms, inputs, outputs).
 //
 
 uniform float vu_movement_distance;
@@ -19,7 +19,7 @@ void main()
 	g_position= v_position;
 
 	// Assume each snow/rain particle moves along a path with such length.
-	// It should be big enough to ensure snow/rain can flow into the deepest places and small enough to avoid reducing snow/rain density too much.
+	// It should be big enough to ensure snow/rain can fall into the deepest places and small enough to avoid reducing snow/rain density too much.
 	const float c_max_path_length= 1536.0;
 
 	g_movement_distance= mod( vu_movement_distance + v_movement_distance_phase * c_max_path_length, c_max_path_length );

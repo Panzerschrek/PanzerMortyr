@@ -80,12 +80,16 @@ fn WorldDrawer::constructor(
 			embed</char8/>( "shaders/local_fog.vert.glsl" ),
 			embed</char8/>( "shaders/local_fog.frag.glsl" ) ),
 		snow_shader_(
+			// Use the same vertex shader for snow and rain.
 			embed</char8/>( "shaders/snow_rain.vert.glsl" ),
 			embed</char8/>( "shaders/snow.geom.glsl" ),
+			// Reuse fragment shader used for semitransparent geometry for snow.
 			embed</char8/>( "shaders/semitransparent_geometry.frag.glsl" ) ),
 		rain_shader_(
+			// Use the same vertex shader for snow and rain.
 			embed</char8/>( "shaders/snow_rain.vert.glsl" ),
 			embed</char8/>( "shaders/rain.geom.glsl" ),
+			// Reuse fragment shader used for semitransparent geometry for rain.
 			embed</char8/>( "shaders/semitransparent_geometry.frag.glsl" ) ),
 		stub_white_texture_= CreateStubWhiteTexture(),
 		depth_buffer_copy_texture_= CreateDepthBufferCopyTexture(),
@@ -624,6 +628,11 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 			fog_color_additive );
 	}
 
+	// Draw snow/rain before other simitransparent geometry.
+	// It's not fully correct, since it may produce wrong polygons order (not strick back-to-front order).
+	// But we have no other way of doing this.
+	// There are too many snow/rain particles to process and sort them on CPU.
+	// So, process them (generate geometry) on GPU and draw them.
 	if( size_type( map_index_ ) < maps_description.maps.size() )
 	{
 		var MapsDescription::MapDescription& map_description= maps_description.maps[ size_type( map_index_ ) ];
@@ -638,7 +647,7 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 				var f32 c_movement_speed= 64.0f;
 				var f32 movement_distance= drawing_info.game_time_s * c_movement_speed;
 
-				// For some reason the billboards description file doesn't contain description for snowflake billboard.
+				// For some reason the billboards description file doesn't contain a description for snowflake billboard.
 				// So, just hardcode it.
 				var BillboardDescription billboard_description
 					{ .dx= 2u, .dy= 2u, .xp= 0u, .yp= 32u, .xk= 16u, .yk= 48u, .tek= 998u };
@@ -1846,6 +1855,10 @@ fn DrawSnowOrRain(
 	shader.SetUniform( "fu_fog_color", Vec3f( fog_color ) );
 	shader.SetUniform( "fu_fog_color_additive", Vec3f( fog_color_additive ) );
 
+	// Just draw all snow/rain particles existing on this map.
+	// It's fast enough for modern GPUs.
+	// Rejecting some of them on per-cluster basis is doable, but too complex to implement now,
+	// since snow/rain particles can fall outside bounds of their parent cluster.
 	unsafe( glDrawArrays(
 		GLenum( GL_POINTS ),
 		GLint(0),
@@ -2348,7 +2361,6 @@ fn CreateSnowRainBuffer( ZmapLamData& zmap_lam_data ) : SnowRainBuffer
 							65536.0f * f32( rain_droplet.movement_phase ) / rain_droplet.travel_distance ),
 					};
 			} );
-
 
 	var BufferObject mut vertex_buffer=
 		BufferObject::CreateStaticDrawBuffer( GLenum( GL_ARRAY_BUFFER ), vertices.range().to_byte8_range() );
