@@ -12,10 +12,12 @@ namespace PM
 {
 
 fn GameFilesystem::Create(
-	ust::filesystem_path_view executable_path, ConsoleOutPtr& console_out ) : GameFilesystemNullablePtr
+	ust::filesystem_path_view executable_path,
+	ust::filesystem_path_view custom_game_installation_directory_path,
+	ConsoleOutPtr& console_out ) : GameFilesystemNullablePtr
 {
 	var ust::optional</GameArchiveSearchResult/> game_archive_search_result_opt=
-		SearchForGameArchiveFile( executable_path, console_out );
+		SearchForGameArchiveFile( executable_path, custom_game_installation_directory_path, console_out );
 
 	if( game_archive_search_result_opt.empty() )
 	{
@@ -168,21 +170,33 @@ struct GameArchiveSearchResult
 	ust::filesystem_path archive_file;
 }
 
-fn SearchForGameArchiveFile( ust::filesystem_path_view executable_path, ConsoleOutPtr& console_out ) : ust::optional</GameArchiveSearchResult/>
+fn SearchForGameArchiveFile(
+	ust::filesystem_path_view executable_path,
+	ust::filesystem_path_view custom_game_installation_directory_path,
+	ConsoleOutPtr& console_out ) : ust::optional</GameArchiveSearchResult/>
 {
-	var [ ust::filesystem_path_view, 2 ] start_directories
+	var [ ust::filesystem_path_view, 3 ] start_directories
 	[
+		// Explicit game installation directory has highest priority.
+		custom_game_installation_directory_path,
+		// Then follows current directory.
 		".",
-		ust::path::get_parent_path( executable_path ).deref_or( ust::filesystem_path_view( "." ) ),
+		// The directory where PanzerMortyr executable is located goes last.
+		ust::path::get_parent_path( executable_path ).deref_or( ust::filesystem_path_view( "" ) ),
 	];
 
 	foreach( &start_directory : start_directories )
 	{
+		if( start_directory.empty() )
+		{
+			continue;
+		}
+
 		ConsoleOutAddTextLine(
 			console_out, ust::concat( "Searching for game data in \"", start_directory, "\"." ) );
 
 		// Search for "Data" directory and "main.hal" file in it.
-		if_var( &data_directory :  SearchForDataDirectory( console_out, start_directory ) )
+		if_var( &data_directory : SearchForDataDirectory( console_out, start_directory ) )
 		{
 			var ust::optional</GameArchiveSearchResult/> game_archive_search_result_opt=
 				SearchForGameArchiveFileInDirectory( console_out, data_directory );
@@ -196,7 +210,7 @@ fn SearchForGameArchiveFile( ust::filesystem_path_view executable_path, ConsoleO
 		// Search for "main.hal" file in current start directory, assuming start directory is called "Data".
 
 		var ust::optional</GameArchiveSearchResult/> game_archive_search_result_opt=
-				SearchForGameArchiveFileInDirectory( console_out, start_directory );
+			SearchForGameArchiveFileInDirectory( console_out, start_directory );
 
 		if( !game_archive_search_result_opt.empty() )
 		{
