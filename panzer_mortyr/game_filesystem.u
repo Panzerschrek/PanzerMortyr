@@ -13,16 +13,8 @@ namespace PM
 
 fn GameFilesystem::Create( ConsoleOutPtr& console_out ) : GameFilesystemNullablePtr
 {
-	var ust::optional</ust::filesystem_path/> data_directory_opt=
-		SearchForDataDirectory( console_out, "." );
-
-	if_var( &data_directory : data_directory_opt )
-	{
-		ConsoleOutAddTextLine( console_out, ust::concat( "Found data directory \"", data_directory, "\"." ) );
-	}
-
 	var ust::optional</GameArchiveSearchResult/> game_archive_search_result_opt=
-		SearchForGameArchiveFileInDirectory( console_out, "Data" );
+		SearchForGameArchiveFile( console_out );
 
 	if( game_archive_search_result_opt.empty() )
 	{
@@ -31,6 +23,15 @@ fn GameFilesystem::Create( ConsoleOutPtr& console_out ) : GameFilesystemNullable
 	}
 
 	var GameArchiveSearchResult& game_archive_search_result= game_archive_search_result_opt.try_deref();
+
+	ConsoleOutAddTextLine(
+		console_out,
+		ust::concat(
+			"Found arhive file \"",
+			game_archive_search_result.archive_file,
+			"\" in directory \"",
+			game_archive_search_result.archive_file_directory,
+			"\"." ) );
 
 	// TODO - do not hardcode path to archive file.
 	// Allow tuning it and try to locate it using current directory or executable directory.
@@ -191,6 +192,42 @@ struct GameArchiveSearchResult
 	ust::filesystem_path archive_file;
 }
 
+fn SearchForGameArchiveFile( ConsoleOutPtr& console_out ) : ust::optional</GameArchiveSearchResult/>
+{
+	var [ ust::filesystem_path, 1 ] start_directories
+	[
+		".",
+		// TODO - add more start paths.
+	];
+
+	foreach( &start_directory : start_directories )
+	{
+		// Search for "Data" directory and "main.hal" file in it.
+		if_var( &data_directory :  SearchForDataDirectory( console_out, start_directory ) )
+		{
+			var ust::optional</GameArchiveSearchResult/> game_archive_search_result_opt=
+				SearchForGameArchiveFileInDirectory( console_out, data_directory );
+
+			if( !game_archive_search_result_opt.empty() )
+			{
+				return game_archive_search_result_opt;
+			}
+		}
+
+		// Search for "main.hal" directory, assuming start directory is called "Data".
+
+		var ust::optional</GameArchiveSearchResult/> game_archive_search_result_opt=
+				SearchForGameArchiveFileInDirectory( console_out, start_directory );
+
+		if( !game_archive_search_result_opt.empty() )
+		{
+			return game_archive_search_result_opt;
+		}
+	}
+
+	return ust::null_optional;
+}
+
 fn SearchForGameArchiveFileInDirectory(
 	ConsoleOutPtr& console_out, ust::filesystem_path_view d ) : ust::optional</GameArchiveSearchResult/>
 {
@@ -202,8 +239,8 @@ fn SearchForGameArchiveFileInDirectory(
 			{
 				return GameArchiveSearchResult
 				{
-					.archive_file_directory= ust::path::join( d, res.archive_file_directory ),
-					.archive_file= ust::path::join( d, res.archive_file ),
+					.archive_file_directory= d,
+					.archive_file= ust::path::join( d, res ),
 				};
 			}
 		},
@@ -218,7 +255,7 @@ fn SearchForGameArchiveFileInDirectory(
 
 fn SearchForGameArchiveFileInDirectory(
 	ConsoleOutPtr& console_out,
-	ust::iterator</ust::directory_raw_iterator/> mut directory_iterator ) : ust::optional</GameArchiveSearchResult/>
+	ust::iterator</ust::directory_raw_iterator/> mut directory_iterator ) : ust::optional</ust::filesystem_path/>
 {
 	foreach( entry_res : move(directory_iterator) )
 	{
@@ -233,11 +270,7 @@ fn SearchForGameArchiveFileInDirectory(
 		{
 			if( entry.name == "main.hal" )
 			{
-				return GameArchiveSearchResult
-				{
-					.archive_file_directory= ".",
-					.archive_file= entry.name,
-				};
+				return entry.name;
 			}
 		}
 	}
