@@ -17,7 +17,6 @@ Textures/materials investigation:
 
 * Identify remaining special material kinds.
 * Investigate how lava texture affects lighting of surrounding geometry.
-* Investigate how underwater caustics work.
 
 Models format investigation:
 
@@ -148,7 +147,6 @@ PanzerMortyr game logic:
 PanzerMortyr rendering:
 
 * Apply additional tessellation for tessellated polygons in order to perform smoother light values interpolation (naively triangulating them doesn't produce good result always).
-* Draw underwater caustics properly.
 * Draw reflections in reflective surfaces (usually floors).
 * Use smooth animation for animated models (with two or more frames interpolation).
 * Draw decals (bullet holes, blood, footsteps).
