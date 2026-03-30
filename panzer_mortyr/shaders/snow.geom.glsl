@@ -13,6 +13,7 @@ uniform vec2 gu_texture_coordinates_start;
 uniform vec2 gu_texture_coordinates_end;
 uniform float gu_texture_layer;
 uniform vec3 gu_light_scale;
+uniform float gu_fog_distance_scale;
 
 in vec3 g_position[];
 in float g_movement_distance[];
@@ -82,9 +83,8 @@ void main()
 
 	// TODO - allow turning fog off.
 	// Use exponential fog formula.
-	// This code (including the scale constant) should match code calculating fog in other places!
-	float fog_distance_scale= 1.0 / 3072.0;
-	f_fog_density= 1.0 - exp( -distance_to_camera * fog_distance_scale );
+	// This code should match code calculating fog in other places!
+	f_fog_density= 1.0 - exp( distance_to_camera * gu_fog_distance_scale );
 
 	f_additive_fog_density= 0.0; // Don't use additive fog. It's too complex.
 
