@@ -1,17 +1,29 @@
 import "/math.iu"
 import "/scoped_array.iu"
-import "random.iu"
 import "caustics.iu"
 import "gl_functions.iu"
 import "math_constants.iu"
+import "random.iu"
 
 namespace PM
 {
 
 fn CreateCausticsTexture() : Texture
 {
+	// Create a 3D texture for caustics.
+	//
+	// Each layer is composed from several random waves,
+	// but with spatial frequency equal to an integer multiple of texture size,
+	// so that this texture is seamless.
+	//
+	// Each layer represents some time slice.
+	// Temporal frequency is also equal to an integer multiple of number of texture layers,
+	// so that this texture is temporally-seamless.
+	//
+
 	var u32 size= 64u;
 	var u32 num_layers= 32u;
+	var u32 volume= size * size * num_layers;
 
 	var f32 spatial_frequency_scale= c_tau / f32( size );
 	var f32 temporal_frequency_scale= c_tau / f32( num_layers );
@@ -37,11 +49,12 @@ fn CreateCausticsTexture() : Texture
 
 	var [ CausticWave, 128 ] waves[ create_next_wave() ... ];
 
-	scoped_array f32 mut texture_data_float[ size_type( size * size * num_layers ) ]( 0.0f );
+	scoped_array f32 mut texture_data_float[ size_type( volume ) ]( 0.0f );
 
 	for( auto mut t= 0u; t < num_layers; ++t )
 	{
-		auto dst_layer= texture_data_float.subrange( size_type( t * size * size ), size_type( ( t + 1u ) * size * size ) );
+		auto dst_layer=
+			texture_data_float.subrange( size_type( t * size * size ), size_type( ( t + 1u ) * size * size ) );
 
 		for( auto mut y= 0u; y < size; ++y )
 		{
@@ -63,6 +76,7 @@ fn CreateCausticsTexture() : Texture
 					var f32 amplitude_scale= wave.amplitude / spatial_frequency;
 
 					// Somewhat realistic assumption - temporal frequency depends on spatial frequency.
+					// Round to integer to ensure seamless temporal result.
 					var f32 temporal_frequency= ust::round( ust::sqrt( spatial_frequency ) );
 
 					val+=
@@ -90,7 +104,7 @@ fn CreateCausticsTexture() : Texture
 
 	var f32 range_size= max_val - min_val;
 
-	scoped_array u8 texture_data[ size_type( size * size * num_layers ) ](
+	scoped_array u8 texture_data[ size_type( volume ) ](
 		texture_data_float.iter().map(
 			lambda[&]( f32 val ) : u8
 			{
@@ -112,7 +126,8 @@ fn CreateCausticsTexture() : Texture
 		GLenum( GL_UNSIGNED_BYTE ),
 		ust::ptr_cast_to_byte8( texture_data.data() ) ) );
 
-	// TODO - create mips, use anisotropic filtration, etc.
+	// Don't create mips, since we don't want to perform coarse temporal texture fetch if low-detail spatial mip fetch is needed.
+	// For the same reason don't use nearest and anisotropic filtration.
 	unsafe( glTexParameteri( GLenum( GL_TEXTURE_3D ), GLenum( GL_TEXTURE_MIN_FILTER ), GLint( GL_LINEAR ) ) );
 	unsafe( glTexParameteri( GLenum( GL_TEXTURE_3D ), GLenum( GL_TEXTURE_MAG_FILTER ), GLint( GL_LINEAR ) ) );
 
@@ -123,7 +138,7 @@ struct CausticWave
 {
 	[ i32, 2 ] spatial_frequency;
 	f32 amplitude;
-	f32 phase; // O to tau.
+	f32 phase; // 0 to tau.
 }
 
 } // namespace PM
