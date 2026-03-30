@@ -96,7 +96,6 @@ PanzerMortyr game logic:
 * Implement rats.
 * Avoid spawning some enemies based on current skill level (investigate how the original game does this).
 * Implement remaining entity state transitions (used only by some enemy types).
-* Implement panic mode for enemies - with fleeing from the player on low health or with no ammo left.
 * Implement ammo seeking behavior for enemies.
 * Fix ugly injury-based entity state transitions, when an injury operation is changed while some other injury operation is already in process.
 * Implement pushing pushable entities.

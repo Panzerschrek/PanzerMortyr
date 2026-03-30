@@ -3886,22 +3886,74 @@ fn UpdateEntityMovementTarget(
 		{
 			var f32 player_crouching_phase= 0.0f; // For line of sight check assume that the player is staying.
 
-			if( entity.player_is_in_sight )
+			var EntitiesDescription::OperationAnimationDescription& animation=
+				operation.animations[ size_type( EntitiesDescription::Operation::AnimationKind::Forward ) ];
+
+			var EntityDistanceRanges distance_ranges= GetEntityDistanceRanges( entity_description );
+
+			var f32 optimal_square_distance_min=
+				distance_ranges.optimal.distance_min * distance_ranges.optimal.distance_min;
+			var f32 optimal_square_distance_max=
+				distance_ranges.optimal.distance_max * distance_ranges.optimal.distance_max;
+			var f32 good_enough_square_distance_min=
+				distance_ranges.good_enough.distance_min * distance_ranges.good_enough.distance_min;
+			var f32 good_enough_square_distance_max=
+				distance_ranges.good_enough.distance_max * distance_ranges.good_enough.distance_max;
+
+			var bool is_in_panic_mode=
+				 // First condition is necessary to disable out-of-ammo panic if panic is disabled.
+				entity_description.panic > 0u &&
+				// TODO - make sure <= should be used here instead of <.
+				( entity.energy <= entity_description.panic || entity.ammo == 0u );
+
+			if( is_in_panic_mode )
 			{
-				var EntitiesDescription::OperationAnimationDescription& animation=
-					operation.animations[ size_type( EntitiesDescription::Operation::AnimationKind::Forward ) ];
+				// Panic mode - try run away from the player as far as possible.
 
-				var EntityDistanceRanges distance_ranges= GetEntityDistanceRanges( entity_description );
+				if( entity.target_navigation_graph_node != ~0u )
+				{
+					// If target node is too close to the player - reset it to trigger its recalculation.
 
-				var f32 optimal_square_distance_min=
-					distance_ranges.optimal.distance_min * distance_ranges.optimal.distance_min;
-				var f32 optimal_square_distance_max=
-					distance_ranges.optimal.distance_max * distance_ranges.optimal.distance_max;
-				var f32 good_enough_square_distance_min=
-					distance_ranges.good_enough.distance_min * distance_ranges.good_enough.distance_min;
-				var f32 good_enough_square_distance_max=
-					distance_ranges.good_enough.distance_max * distance_ranges.good_enough.distance_max;
+					var MapaWayNavigationGraphNode& node= navigation_graph.nodes[ entity.target_navigation_graph_node ];
+					var Vec3f node_position( f32( node.position[0] ), f32( node.position[1] ), f32( node.position[2] ) );
+					var f32 square_distance= ( node_position - player_position ).SquareLength();
 
+					if( square_distance < good_enough_square_distance_max )
+					{
+						entity.target_navigation_graph_node= ~0u;
+					}
+				}
+
+				if( entity.target_navigation_graph_node == ~0u )
+				{
+					// Search for the most distant from the player node as target node.
+					var f32 mut largest_square_distance= 0.0f;
+					var u32 mut most_distant_node= ~0u;
+
+					for( auto mut i= 0u; i < navigation_graph.num_nodes; ++i )
+					{
+						if( i == entity.current_navigation_graph_node )
+						{
+							// Avoid selecting current navigation node as target.
+							continue;
+						}
+
+						var MapaWayNavigationGraphNode& node= navigation_graph.nodes[i];
+						var Vec3f node_position( f32( node.position[0] ), f32( node.position[1] ), f32( node.position[2] ) );
+						var f32 square_distance= ( node_position - player_position ).SquareLength();
+
+						if( square_distance > largest_square_distance )
+						{
+							largest_square_distance= square_distance;
+							most_distant_node= i;
+						}
+					}
+
+					entity.target_navigation_graph_node= most_distant_node;
+				}
+			}
+			else if( entity.player_is_in_sight )
+			{
 				// Check if currnet target node is good enough. If so - preserve it, otherwise reset it.
 				// Also check if player is still visible from it.
 				if( entity.target_navigation_graph_node != ~0u )
@@ -3940,7 +3992,7 @@ fn UpdateEntityMovementTarget(
 					}
 				}
 
-				if(  entity.target_navigation_graph_node == ~0u )
+				if( entity.target_navigation_graph_node == ~0u )
 				{
 					// Try selecting a position near the player.
 
@@ -4094,7 +4146,8 @@ fn UpdateEntityMovementTarget(
 				}
 			}
 
-			if( !entity.player_is_in_sight || entity.target_navigation_graph_node == ~0u )
+			if( ( !entity.player_is_in_sight && !is_in_panic_mode ) ||
+				entity.target_navigation_graph_node == ~0u )
 			{
 				// If player is not visible or if failed to find even good enough target,
 				// select the node nearest to last seen player position.
