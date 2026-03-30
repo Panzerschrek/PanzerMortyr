@@ -1,0 +1,144 @@
+import "/math.iu"
+import "/scoped_array.iu"
+import "caustics.iu"
+import "gl_functions.iu"
+import "math_constants.iu"
+import "random.iu"
+
+namespace PM
+{
+
+fn CreateCausticsTexture() : Texture
+{
+	// Create a 3D texture for caustics.
+	//
+	// Each layer is composed from several random waves,
+	// but with spatial frequency equal to an integer multiple of texture size,
+	// so that this texture is seamless.
+	//
+	// Each layer represents some time slice.
+	// Temporal frequency is also equal to an integer multiple of number of texture layers,
+	// so that this texture is temporally-seamless.
+	//
+
+	var u32 size= 64u;
+	var u32 num_layers= 32u;
+	var u32 volume= size * size * num_layers;
+
+	var f32 spatial_frequency_scale= c_tau / f32( size );
+	var f32 temporal_frequency_scale= c_tau / f32( num_layers );
+
+	auto mut create_next_wave=
+		lambda[rand= PseudoRandomGenerator( 473u ) ] mut () : CausticWave
+		{
+			loop
+			{
+				var [ i32, 2 ] spatial_frequency[ i32( rand.Next() % 25u ) - 12, i32( rand.Next() % 25u ) - 12 ];
+				if( spatial_frequency[0] == 0 & spatial_frequency[1] == 0 )
+				{
+					continue; // Avoid zero frequency.
+				}
+				return CausticWave
+				{
+					.spatial_frequency= spatial_frequency,
+					.amplitude= f32( rand.Next() ),
+					.phase= f32( rand.Next() ) * ( c_tau / f32( PseudoRandomGenerator::c_max_plus_one ) ),
+				};
+			}
+		};
+
+	var [ CausticWave, 128 ] waves[ create_next_wave() ... ];
+
+	scoped_array f32 mut texture_data_float[ size_type( volume ) ]( 0.0f );
+
+	for( auto mut t= 0u; t < num_layers; ++t )
+	{
+		auto dst_layer=
+			texture_data_float.subrange( size_type( t * size * size ), size_type( ( t + 1u ) * size * size ) );
+
+		for( auto mut y= 0u; y < size; ++y )
+		{
+			auto dst_line= dst_layer.subrange( size_type( y * size ), size_type( ( y + 1u ) * size ) );
+
+			for( auto mut x= 0u; x < size; ++x )
+			{
+				var f32 mut val= 0.0f;
+
+				foreach( &wave : waves )
+				{
+					// It's non-zero, since we don't create waves with zero frequency.
+					var f32 spatial_frequency=
+						ust::sqrt( f32(
+							wave.spatial_frequency[0] * wave.spatial_frequency[0] +
+							wave.spatial_frequency[1] * wave.spatial_frequency[1] ) );
+
+					// Make amplitude for shorter waves smaller.
+					var f32 amplitude_scale= wave.amplitude / spatial_frequency;
+
+					// Somewhat realistic assumption - temporal frequency depends on spatial frequency.
+					// Round to integer to ensure seamless temporal result.
+					var f32 temporal_frequency= ust::round( ust::sqrt( spatial_frequency ) );
+
+					val+=
+						amplitude_scale *
+						ust::sin(
+							f32( i32(x) * wave.spatial_frequency[0] ) * spatial_frequency_scale +
+							f32( i32(y) * wave.spatial_frequency[1] ) * spatial_frequency_scale +
+							f32(t) * temporal_frequency * temporal_frequency_scale +
+							wave.phase );
+				}
+
+
+				dst_line[ size_type(x) ]= val;
+			}
+		}
+	}
+
+	var f32 mut min_val= texture_data_float.front(), mut max_val= texture_data_float.front();
+
+	foreach( val : texture_data_float )
+	{
+		ust::min_assign( min_val, val );
+		ust::max_assign( max_val, val );
+	}
+
+	var f32 range_size= max_val - min_val;
+
+	scoped_array u8 texture_data[ size_type( volume ) ](
+		texture_data_float.iter().map(
+			lambda[&]( f32 val ) : u8
+			{
+				return u8( ust::max( 0.0f, ust::min( ( val - min_val ) * ( 255.0f / range_size ), 255.0f ) ) );
+			} ) );
+
+	var Texture mut texture= Texture::Create( GLenum( GL_TEXTURE_3D ) );
+	texture.Bind();
+
+	unsafe( glTexImage3D(
+		GLenum( GL_TEXTURE_3D ),
+		0,
+		GLint( GL_R8 ),
+		GLsizei( size ),
+		GLsizei( size ),
+		GLsizei( num_layers ),
+		0,
+		GLenum( GL_RED ),
+		GLenum( GL_UNSIGNED_BYTE ),
+		ust::ptr_cast_to_byte8( texture_data.data() ) ) );
+
+	// Don't create mips, since we don't want to perform coarse temporal texture fetch if low-detail spatial mip fetch is needed.
+	// For the same reason don't use nearest and anisotropic filtration.
+	unsafe( glTexParameteri( GLenum( GL_TEXTURE_3D ), GLenum( GL_TEXTURE_MIN_FILTER ), GLint( GL_LINEAR ) ) );
+	unsafe( glTexParameteri( GLenum( GL_TEXTURE_3D ), GLenum( GL_TEXTURE_MAG_FILTER ), GLint( GL_LINEAR ) ) );
+
+	return texture;
+}
+
+struct CausticWave
+{
+	[ i32, 2 ] spatial_frequency;
+	f32 amplitude;
+	f32 phase; // 0 to tau.
+}
+
+} // namespace PM

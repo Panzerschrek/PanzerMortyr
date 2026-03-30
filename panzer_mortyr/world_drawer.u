@@ -7,6 +7,7 @@ import "/common_lib/materials_file.iu"
 
 import "billboards.iu"
 import "breaking_glass.iu"
+import "caustics.iu"
 import "cluster_utils.iu"
 import "fog.iu"
 import "gl_functions.iu"
@@ -52,6 +53,9 @@ fn WorldDrawer::constructor(
 		map_shader_(
 			embed</char8/>( "shaders/map.vert.glsl" ),
 			embed</char8/>( "shaders/map.frag.glsl" ) ),
+		map_caustics_shader_(
+			embed</char8/>( "shaders/map.vert.glsl" ),
+			embed</char8/>( "shaders/map_caustics.frag.glsl" ) ),
 		map_dynamic_light_shader_(
 			embed</char8/>( "shaders/map_dynamic_light.vert.glsl" ),
 			embed</char8/>( "shaders/map_dynamic_light.frag.glsl" ) ),
@@ -93,6 +97,7 @@ fn WorldDrawer::constructor(
 			embed</char8/>( "shaders/semitransparent_geometry.frag.glsl" ) ),
 		stub_white_texture_= CreateStubWhiteTexture(),
 		depth_buffer_copy_texture_= CreateDepthBufferCopyTexture(),
+		caustics_texture_= CreateCausticsTexture(),
 		semitransparent_polygons_buffer_
 		{
 			.vertex_buffer=
@@ -258,6 +263,9 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 	var BBox3f visible_clusters_bbox=
 		CalculateVisibleClustersBBox( clusters, visible_room_cluster_flags, drawing_info.camera_params.position );
 
+	var bool caustics_enabled= settings_.lock_imut().deref().r_caustics_enabled;
+	var bool draw_water_clusters_as_normal= !caustics_enabled;
+
 	DrawMapPolygons(
 		map_data,
 		visible_room_cluster_flags,
@@ -265,9 +273,23 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 		drawing_info.dynamic_cluster_objects,
 		map_shader_,
 		view_matrix,
+		draw_water_clusters_as_normal,
 		drawing_info.game_time_s,
 		global_light_params,
 		drawing_stats );
+
+	if( caustics_enabled )
+	{
+		DrawMapPolygonsWithCaustics(
+			map_data,
+			caustics_texture_,
+			visible_room_cluster_flags,
+			map_caustics_shader_,
+			view_matrix,
+			drawing_info.game_time_s,
+			global_light_params,
+			drawing_stats );
+	}
 
 	var bool dynamic_lights_enabled= settings_.lock_imut().deref().r_dynamic_lights_enabled;
 
@@ -1319,6 +1341,7 @@ fn DrawMapPolygons(
 	ust::array_view_imut</WorldDrawingInfo::DynamicClusterObject/> dynamic_cluster_objects,
 	ShaderProgram &mut shader,
 	Mat4f& view_matrix,
+	bool draw_water_clusters_as_normal,
 	f32 time_s,
 	GlobalLightParams& global_light_params,
 	WorldDrawingStats &mut drawing_stats )
@@ -1354,7 +1377,8 @@ fn DrawMapPolygons(
 		// This room cluster and all his children.
 		var size_type num_clusters_in_group= size_type( room_cluster.c.num_children_clusters ) + 1s;
 
-		if( visible_room_cluster_flags[i] )
+		if( visible_room_cluster_flags[i] &&
+			( draw_water_clusters_as_normal || room_cluster.contents != ZvoxCluster::c_contents_water /* draw clusters with caustics later */ ) )
 		{
 			for( auto mut j= 0s; j < num_clusters_in_group; ++j )
 			{
@@ -1425,6 +1449,85 @@ fn DrawMapPolygons(
 		ExecuteClusterMeshDrawing( geometry_buffer_chunk );
 
 		drawing_stats.num_visible_map_triangles+= geometry_buffer_chunk.num_indices / 3u;
+	}
+}
+
+fn DrawMapPolygonsWithCaustics(
+	MapDrawData& map_data,
+	Texture& caustics_texture,
+	VisibleRoomClusterFlagsImut visible_room_cluster_flags,
+	ShaderProgram &mut shader,
+	Mat4f& view_matrix,
+	f32 time_s,
+	GlobalLightParams& global_light_params,
+	WorldDrawingStats &mut drawing_stats )
+{
+	var f32 constexpr c_caustics_speed= 1.0f / 2.0f;
+
+	var ust::array_view_imut</ZvoxCluster/> clusters= map_data.zvox_data.deref().clusters.range();
+
+	SetGLState( g_map_drawing_gl_state );
+
+	var u32 map_texture_slot= 0u, caustics_texture_slot= 1u;
+
+	unsafe( glActiveTexture( GLenum( GL_TEXTURE0 ) + GLenum(map_texture_slot) ) );
+	map_data.map_textures_array.Bind();
+
+	unsafe( glActiveTexture( GLenum( GL_TEXTURE0 ) + GLenum(caustics_texture_slot) ) );
+	caustics_texture.Bind();
+
+	shader.Bind();
+	shader.SetUniform( "vu_matrix", view_matrix );
+	shader.SetUniform( "fu_texture", map_texture_slot );
+	shader.SetUniform( "fu_caustics_texture", caustics_texture_slot );
+	shader.SetUniform( "fu_caustics_layer", time_s * c_caustics_speed );
+
+	shader.SetUniform( "vu_light_add", Vec3f( global_light_params.light_add ) );
+	shader.SetUniform( "vu_light_scale", Vec3f( global_light_params.light_scale ) );
+
+	map_data.vertex_array_object.Bind();
+	map_data.index_buffer.Bind();
+
+	for( auto mut i= 0s; i < clusters.size(); )
+	{
+		var ZvoxCluster& room_cluster= clusters[i];
+		if( room_cluster.c.num_children_clusters < 0 )
+		{
+			++i;
+			continue;
+		}
+
+		// This room cluster and all his children.
+		var size_type num_clusters_in_group= size_type( room_cluster.c.num_children_clusters ) + 1s;
+
+		if( visible_room_cluster_flags[i] &&
+			room_cluster.contents == ZvoxCluster::c_contents_water /* draw only clusters with caustics */ )
+		{
+			for( auto mut j= 0s; j < num_clusters_in_group; ++j )
+			{
+				var size_type cluster_index= i + j;
+
+				var u8 cluster_type= clusters[ cluster_index ].cluster_type;
+				if( !(
+					cluster_type == ZvoxCluster::c_cluster_type_regular |
+					cluster_type == ZvoxCluster::c_cluster_type_notes ) )
+				{
+					// Draw dynamic clusters later.
+					continue;
+				}
+
+				var GeometryBufferChunk& geometry_buffer_chunk= map_data.clusters_draw_data[ cluster_index ].geometry_buffer_chunk;
+
+				ExecuteClusterMeshDrawing( geometry_buffer_chunk );
+
+				drawing_stats.num_visible_map_triangles+= geometry_buffer_chunk.num_indices / 3u;
+			}
+
+			++drawing_stats.num_room_visible_clusters;
+			drawing_stats.num_total_visible_clusters+= u32( num_clusters_in_group );
+		}
+
+		i+= num_clusters_in_group;
 	}
 }
 
@@ -2008,8 +2111,8 @@ fn LoadMapTextures(
 					// We use non-zero alpha (and thus somethign more like premultiplied alpha-blending),
 					// since pure additive blending for glass gives too bright results.
 					var u8 c_glass_alpha= 128u8;
-					// Liquid textures all are pretty dark (except lava). Use for them pure additive blending.
-					var u8 c_liquid_alpha= 0u8;
+					// Add a little bit absorption to liquid textures - avoid using pure additive blending.
+					var u8 c_liquid_alpha= 85u8;
 
 					for( auto mut tile_y= 0u; tile_y < MaterialsDescription::c_texture_file_num_tiles_y; ++tile_y )
 					{
