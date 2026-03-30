@@ -4,8 +4,9 @@ import "menu.iu"
 namespace PM
 {
 
-fn Menu::constructor( [ u32, 2 ] viewport_size )
+fn Menu::constructor( SettingsPtr mut settings, [ u32, 2 ] viewport_size )
 	(
+		settings_= move(settings),
 		viewport_size_= viewport_size,
 		images_preloaded_= false,
 		current_page_= Page::MainMenu,
@@ -14,7 +15,6 @@ fn Menu::constructor( [ u32, 2 ] viewport_size )
 		new_game_current_row_= 0u,
 		load_save_game_current_row_= 0u,
 		options_current_row_= 0u,
-		options_mouse_sensitivity_= 0u, // TODO - read from settings.
 		controls_current_row_= 0u,
 		sound_settings_current_row_= 0u,
 		advanced_options_current_row_= 0u,
@@ -229,10 +229,9 @@ fn nodiscard Menu::ProcessKeyPress( mut this, SDL_Keysym& key_sym ) : Command
 						// TODO - change boolean values.
 						3u ->
 						{
-							// TODO - update settings.
-							if( options_mouse_sensitivity_ > 0u )
+							with( mut lock : settings_.lock_mut() )
 							{
-								--options_mouse_sensitivity_;
+								DecrementSliderValueForPercents( lock.deref().in_mouse_sensitivity );
 							}
 						},
 						default -> {},
@@ -260,10 +259,9 @@ fn nodiscard Menu::ProcessKeyPress( mut this, SDL_Keysym& key_sym ) : Command
 						// TODO - change boolean values.
 						3u ->
 						{
-							// TODO - update settings.
-							if( options_mouse_sensitivity_ < c_max_slider_value )
+							with( mut lock : settings_.lock_mut() )
 							{
-								++options_mouse_sensitivity_;
+								IncrementSliderValueForPercents( lock.deref().in_mouse_sensitivity );
 							}
 						},
 						default -> {},
@@ -438,9 +436,12 @@ fn Menu::Draw( mut this, ImageDrawer &mut image_drawer, TextDrawer &mut text_dra
 				control_element_width,
 				control_element_height );
 
+			var u32 mouse_sensitivity_slider_value=
+				ConvertPercentsToSliderValue( settings_.lock_imut().deref().in_mouse_sensitivity );
+
 			image_drawer.DrawImage(
 				MenuImages::control_elements,
-				control_elements_offset_x + slider_start_offset * i32( scale ) + i32( options_mouse_sensitivity_ * slider_increment * scale ),
+				control_elements_offset_x + slider_start_offset * i32( scale ) + i32( mouse_sensitivity_slider_value * slider_increment * scale ),
 				control_elements_offset_y + i32( scale * cursor_step_size * 4u ),
 				f32( scale ),
 				0u,
@@ -665,11 +666,54 @@ fn PreloadMenuImages( ImageDrawer &mut image_drawer )
 	image_drawer.PreloadImage( MenuImages::quit_texts );
 }
 
+fn IncrementSliderValueForPercents( u32 &mut percents )
+{
+	var u32 slider_value= ConvertPercentsToSliderValue( percents );
+	loop
+	{
+		if( percents >= 100u )
+		{
+			break;
+		}
+		++percents;
+
+		if( ConvertPercentsToSliderValue( percents ) > slider_value )
+		{
+			break;
+		}
+	}
+}
+
+fn DecrementSliderValueForPercents( u32 &mut percents )
+{
+	var u32 slider_value= ConvertPercentsToSliderValue( percents );
+	loop
+	{
+		if( percents == 0u )
+		{
+			break;
+		}
+		--percents;
+
+		if( ConvertPercentsToSliderValue( percents ) < slider_value )
+		{
+			break;
+		}
+	}
+}
+
+fn ConvertPercentsToSliderValue( u32 percents ) : u32
+{
+	// Roughly how many times slider can be incremented in the original game.
+	// Use this value, but store internal slider values in percents (0 to 100) to be able to perform more fine-tuning.
+	var u32 c_max_slider_value= 33u;
+
+	return ust::min( percents * c_max_slider_value / 100u, c_max_slider_value );
+}
+
 var [ u32, 2 ] c_base_menu_size[ 320u, 200u ];
 
 var u32 c_num_quit_messages= 8u;
-
-var u32 c_max_slider_value= 33u;
 
 namespace PageNumRows
 {
