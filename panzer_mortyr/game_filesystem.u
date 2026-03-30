@@ -1,4 +1,6 @@
+import "/directory_iterator.iu"
 import "/enum_string_conversions.iu"
+import "/path_utils.iu"
 import "/scoped_array.iu"
 import "/string_conversions.iu"
 
@@ -11,9 +13,20 @@ namespace PM
 
 fn GameFilesystem::Create( ConsoleOutPtr& console_out ) : GameFilesystemNullablePtr
 {
+	var ust::optional</GameArchiveSearchResult/> game_archive_search_result_opt=
+		SearchForGameArchiveFile( console_out, "Data" );
+
+	if( game_archive_search_result_opt.empty() )
+	{
+		ConsoleOutAddTextLine( console_out, "Didn't find game data!" );
+		return GameFilesystemNullablePtr();
+	}
+
+	var GameArchiveSearchResult& game_archive_search_result= game_archive_search_result_opt.try_deref();
+
 	// TODO - do not hardcode path to archive file.
 	// Allow tuning it and try to locate it using current directory or executable directory.
-	auto mut archive_file_res= ust::file_readable::open( "Data/main.hal" );
+	auto mut archive_file_res= ust::file_readable::open( game_archive_search_result.archive_file );
 
 	if_var( e : archive_file_res.as_error_ref() )
 	{
@@ -117,5 +130,69 @@ fn GameFilesystem::LoadFileToString( mut this, ResourceString& file_name ) : ust
 
 	return result;
 }
+
+struct GameArchiveSearchResult
+{
+	ust::filesystem_path archive_file_directory;
+	ust::filesystem_path archive_file;
+}
+
+fn SearchForGameArchiveFile(
+	ConsoleOutPtr& console_out, ust::filesystem_path_view d ) : ust::optional</GameArchiveSearchResult/>
+{
+	result_match( ust::open_directory_for_iteration( d ) )
+	{
+		Ok( mut it ) ->
+		{
+			if_var( &res : SearchForGameArchiveFile( console_out, move( it ) ) )
+			{
+				return GameArchiveSearchResult
+				{
+					.archive_file_directory= ust::path::join( d, res.archive_file_directory ),
+					.archive_file= ust::path::join( d, res.archive_file ),
+				};
+			}
+		},
+		Err( e ) ->
+		{
+			ConsoleOutAddTextLine(
+				console_out, ust::concat( "Failed to open directory \"", d, "\" for iteration: ", ust::enum_to_string(e) ) );
+		},
+	}
+	return ust::null_optional;
+}
+
+fn SearchForGameArchiveFile(
+	ConsoleOutPtr& console_out,
+	ust::iterator</ust::directory_raw_iterator/> mut directory_iterator ) : ust::optional</GameArchiveSearchResult/>
+{
+	foreach( entry_res : move(directory_iterator) )
+	{
+		if_var( e : entry_res.as_error_ref() )
+		{
+			ConsoleOutAddTextLine(
+				console_out, ust::concat( "Failed to get directory entry: ", ust::enum_to_string(e) ) );
+			break;
+		}
+
+		if_var( &entry : entry_res.as_ref() )
+		{
+			ConsoleOutAddTextLine(
+				console_out, ust::concat( "Gas entry: ", entry.name ) );
+
+			if( entry.name == "main.hal" )
+			{
+				return GameArchiveSearchResult
+				{
+					.archive_file_directory= ".",
+					.archive_file= entry.name,
+				};
+			}
+		}
+	}
+
+	return ust::null_optional;
+}
+
 
 } // namespace PM
