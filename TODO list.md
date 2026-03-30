@@ -61,8 +61,8 @@ PanzerMortyr general:
 
 * Support loading game data files directly (not only from the game archive). It seems that the original game can do this.
 * Perform more advanced search for the game installation directory by using current directory, current executable directory or even registry entries.
-* Allow changing controls.
 * Allow setting mouse sensitivity.
+* Allow changing shot and zoom controls (change mouse buttons and maybe even use key buttons).
 * Allow setting fullscreen mode with possible resolution changing and/or in "desktop fullscreen" mode.
 * Play cinematics at start.
 * Consider allowing playing cooperative/multiplayer maps as usual singleplayer ones. Maybe add a main menu item for this.
