@@ -331,6 +331,8 @@ fn nodiscard ProcessGameLogicStep(
 
 	ProcessSmokeTrailParticlesLogicStep( game_state.smoke_trail_particles );
 
+	ProcessMuzzleLightsLogicStep( game_state.muzzle_lights );
+
 	ProcessProjectileHitLightsLogicStep( game_state.projectile_hit_lights );
 
 	PickUpItems( map_data, game_state );
@@ -454,6 +456,21 @@ fn PerformPlayerWeaponLogic( GameMapData& map_data, PlayerInput& player_input, G
 									.owner_entity_index= c_player_entity_index,
 									.relative_position(
 										f32( shot[2] ), f32( shot[3] ), f32( shot[4] ) - c_camera_z_offset ),
+									.age_steps= 0u,
+								} );
+						}
+
+						if( tool.light_at_shot[1] > 0u )
+						{
+							AddMuzzleLight(
+								game_state.muzzle_lights,
+								MuzzleLight
+								{
+									.owner_entity_index= c_player_entity_index,
+									.relative_position(
+										f32( shot[2] ), f32( shot[3] ), f32( shot[4] ) - c_camera_z_offset ),
+									.power= f32( tool.light_at_shot[1] ),
+									.color_index= tool.light_at_shot[0],
 									.age_steps= 0u,
 								} );
 						}
@@ -1679,7 +1696,8 @@ fn ProcessEntitiesLogicStep( GameGlobalData& game_global_data, GameMapData& map_
 									game_state.player.crouching_phase,
 									game_state.random,
 									game_state.projectiles,
-									game_state.muzzle_flashes );
+									game_state.muzzle_flashes,
+									game_state.muzzle_lights );
 							}
 						}
 					}
@@ -1752,7 +1770,9 @@ fn ProcessEntitiesLogicStep( GameGlobalData& game_global_data, GameMapData& map_
 							entity,
 							u32( entity_index ),
 							game_state.random,
-							game_state.projectiles );
+							game_state.projectiles,
+							game_state.muzzle_flashes,
+							game_state.muzzle_lights );
 					}
 				}
 
@@ -3277,6 +3297,31 @@ fn ProcessSmokeTrailParticlesLogicStep( SmokeTrailParticlesContainer &mut smoke_
 		} );
 }
 
+fn AddMuzzleLight( MuzzleLightsContainer &mut muzzle_lights, MuzzleLight mut new_muzzle_light )
+{
+	// If there is already a muzzle light for this entity - remove it.
+	// Don't stack muzzle lights for the same entity atop of each other, since it's too costly to draw them.
+	// So, just replace old one with new one.
+	// It's not a huge problem to use here linear search, since maximum number of muzzle lights is pretty small.
+	muzzle_lights.Retain(
+		lambda[ entity_index= new_muzzle_light.owner_entity_index ] ( MuzzleLight& muzzle_light ) : bool
+		{
+			return muzzle_light.owner_entity_index != entity_index;
+		} );
+
+	muzzle_lights.Insert( move(new_muzzle_light ) );
+}
+
+fn ProcessMuzzleLightsLogicStep( MuzzleLightsContainer &mut muzzle_lights )
+{
+	muzzle_lights.Retain(
+		lambda( MuzzleLight &mut muzzle_light ) : bool
+		{
+			++muzzle_light.age_steps;
+			return muzzle_light.age_steps < c_muzzle_light_max_age;
+		} );
+}
+
 fn ProcessProjectileHitLightsLogicStep( ProjectileHitLightsContainer &mut projectile_hit_lights )
 {
 	projectile_hit_lights.Retain(
@@ -4326,7 +4371,8 @@ fn EntityShoot(
 	f32 player_crouching_phase, // Assume an entity knows player's crouching phase if it can see him right now.
 	PseudoRandomGenerator &mut rand,
 	ProjectilesContainer &mut projectiles,
-	MuzzleFlashesContainer &mut muzzle_flashes )
+	MuzzleFlashesContainer &mut muzzle_flashes,
+	MuzzleLightsContainer &mut muzzle_lights )
 {
 	if( entity.ammo == 0u )
 	{
@@ -4394,6 +4440,20 @@ fn EntityShoot(
 				.age_steps= 0u,
 			} );
 	}
+
+	if( weapon_tool.light_at_shot[1] > 0u )
+	{
+		AddMuzzleLight(
+			muzzle_lights,
+			MuzzleLight
+			{
+				.owner_entity_index= entity_index,
+				.relative_position= shot_relative_position,
+				.power= f32( weapon_tool.light_at_shot[1] ),
+				.color_index= weapon_tool.light_at_shot[0],
+				.age_steps= 0u,
+			} );
+	}
 }
 
 fn EntityDirectionalShot(
@@ -4402,7 +4462,9 @@ fn EntityDirectionalShot(
 	EntityState& entity,
 	u32 entity_index,
 	PseudoRandomGenerator &mut rand,
-	ProjectilesContainer &mut projectiles )
+	ProjectilesContainer &mut projectiles,
+	MuzzleFlashesContainer &mut muzzle_flashes,
+	MuzzleLightsContainer &mut muzzle_lights )
 {
 	// No ammo is consumed for directional shots.
 
@@ -4439,6 +4501,32 @@ fn EntityDirectionalShot(
 			.position= shot_position,
 			.velocity= direction_with_random_spread * f32( weapon_tool.speed ),
 		} );
+
+	if( weapon_tool.muzzle_flash_model >= 0 )
+	{
+		muzzle_flashes.Insert(
+			MuzzleFlash
+			{
+				.model( weapon_tool.muzzle_flash_model ),
+				.owner_entity_index= entity_index,
+				.relative_position= shot_offset,
+				.age_steps= 0u,
+			} );
+	}
+
+	if( weapon_tool.light_at_shot[1] > 0u )
+	{
+		AddMuzzleLight(
+			muzzle_lights,
+			MuzzleLight
+			{
+				.owner_entity_index= entity_index,
+				.relative_position= shot_offset,
+				.power= f32( weapon_tool.light_at_shot[1] ),
+				.color_index= weapon_tool.light_at_shot[0],
+				.age_steps= 0u,
+			} );
+	}
 }
 
 fn MoveEntity(

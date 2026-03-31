@@ -24,11 +24,6 @@ Models format investigation:
 * Investigate how LODs are stored and processed in models in #5 format variant.
 * Investigate why HD textures are stored three times with no noticeable difference.
 
-Lighting investigation:
-
-* Investigate how sky quads affect surrounding lighting.
-* Investigate how dynamic lights work (weapon flashes, alarms) - including attenuation formula, line of sight check, surface angle-related attenuation.
-
 Other investigation:
 
 * Investigate save files format - it may be useful.
@@ -114,7 +109,6 @@ PanzerMortyr game logic:
 * Switch to a new weapon when picking it up (investigate when such switchinh takes place in the original game).
 * Implement weapon switching in case of out of ammo.
 * Implement kick as separate "weapon" which can be fired when some other weapon is active (including kicking leg animation shown).
-* Spawn light flashes while shooting.
 * Spawn bubble sprites while swimming in water.
 * Spawn bubble sprites for projectiles moving in water.
 * Do something with unconditional entity state transition "w_zasiegu_strzalu_b" - try making it somewhat random.
