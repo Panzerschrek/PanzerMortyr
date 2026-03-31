@@ -55,7 +55,7 @@ OPTION.BMP - options menu.
 
 KLAWISZ.BMP - key bindings menu.
 
-Contains list of all controls.
+Contains list of all controls and some input on/off options.
 There are several pages fo them.
 
 

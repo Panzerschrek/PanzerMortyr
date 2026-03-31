@@ -1,6 +1,6 @@
 This document lists image files which aren't textures or menu backgrounds.
 
-* BGR.BMP - some bacground texture.
+* BGR.BMP - some background texture.
 * MENU_A.BMP - abort this game yes/no.
 * MENU_B.BMP - quit to tilte yes/no.
 * MENU_KA.BMP - golden key required.
@@ -9,7 +9,7 @@ This document lists image files which aren't textures or menu backgrounds.
 * MENU_M6.BMP - looks like unused main menu image (with red letters on red background).
 * MENU_M7.BMP - looks like unused main menu image (with red letters on red background).
 * MENU_M8.BMP - looks like unused main menu image (with red letters on red background).
-* MENU_PB.BMP - game is paused.
+* MENU_P.BMP - game is paused.
 * MENU_S.BMP - you have found a secret place.
 * MENU_W.BMP - loading.
 * MENU_X.BMP - menu animated cursor frames.
