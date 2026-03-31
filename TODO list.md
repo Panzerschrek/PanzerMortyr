@@ -60,7 +60,6 @@ Gameplay investigation:
 PanzerMortyr general:
 
 * Support loading game data files directly (not only from the game archive). It seems that the original game can do this.
-* Perform more advanced search for the game installation directory by using current directory, current executable directory or even registry entries.
 * Allow changing shot and zoom controls (change mouse buttons and maybe even use key buttons).
 * Allow setting fullscreen mode with possible resolution changing and/or in "desktop fullscreen" mode.
 * Play cinematics at start.
@@ -70,6 +69,7 @@ PanzerMortyr general:
 * Consider embedding git revision into the game executable and showing it somewhere in the game.
 * Display somewhere in the main menu a text explaining that it's PanzerMortyr and not the original game.
 * Allow turning off some costly effects via settings - breaking glass, fog, dynamic lighting, etc.
+* Consider performing even more advanced game data search - with more hardcoded paths, Windows registry fetches, etc.
 
 PanzerMortyr game logic:
 
