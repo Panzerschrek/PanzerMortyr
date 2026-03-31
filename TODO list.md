@@ -99,7 +99,8 @@ PanzerMortyr game logic:
 * Fix ugly injury-based entity state transitions, when an injury operation is changed while some other injury operation is already in process.
 * Implement pushing pushable entities.
 * Perform camera Z coordinate smoothing while climbing steps, so that camera movement doesn't look jaggy.
-* Memorize broken glass quads and quads with breakable material.
+* Allow breaking quads with breakable material property, not only glass quads.
+* Break glass quads and quads with breakable materials while applying spash damage.
 * Don't perform projectile and (maybe) entity collisions with broken map quads.
 * Implement jetpack tool.
 * Implement flashlight tool.
@@ -149,6 +150,7 @@ PanzerMortyr rendering:
 * Use smooth animation for animated models (with two or more frames interpolation).
 * Draw decals (bullet holes, blood, footsteps).
 * Draw animated water circle decals on map quads with "wet" property enabled in points where a rain particle hits such quad.
+* Don't draw broken non-glass quads (with breakable material).
 * Draw injured enemies covered with blood.
 * Draw burning entities with some kind of burning effect (like in RtCW).
 * Draw some fullscreen burning effect if the player is burning.
