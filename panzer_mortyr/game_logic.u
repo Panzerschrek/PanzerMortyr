@@ -306,7 +306,7 @@ fn nodiscard ProcessGameLogicStep(
 
 	ProcessProjectilesLogicStep( map_data, game_state );
 
-	ProcessProjectileHitEventsLogicStep( map_data, game_state );
+	ProcessProjectileHitEventsLogicStep( global_data, map_data, game_state );
 
 	ProcessDamagingFlamesLogicStep(
 		global_data.game_params.deref(),
@@ -1253,7 +1253,6 @@ fn GetFrictionForMapQuad( GameGlobalData& global_data, GameMapData& map_data, u3
 	var f32 default_friction(
 		( materials_properties.empty() ? 1u : materials_properties.front().player_step_friction ) );
 
-
 	var ZmapData& zmap_data= map_data.zmap_data.deref();
 
 	if( size_type( quad_index ) >= zmap_data.quads.size() )
@@ -1308,6 +1307,48 @@ fn GetFrictionForMapQuad( GameGlobalData& global_data, GameMapData& map_data, u3
 	}
 
 	return default_friction;
+}
+
+fn IsMapQuadBreakable( GameGlobalData& global_data, GameMapData& map_data, ZmapQuad& quad ) : bool
+{
+	if( u32( quad.texture_id ) ==
+		MaterialsDescription::c_special_material_texture_indices[ size_type( MaterialsDescription::SpecialMaterial::Glass ) ] )
+	{
+		return true;
+	}
+
+	var MapsDescription& maps_description= global_data.maps_description.deref();
+
+	if( size_type( map_data.map_index ) < maps_description.maps.size() )
+	{
+		var MapsDescription::MapDescription& map_description= maps_description.maps[ size_type( map_data.map_index ) ];
+
+		if_var( &materials_block : global_data.materials_description.deref().blocks.find( map_description.materials_block ) )
+		{
+			var size_type constexpr num_materials_in_texture=
+				size_type( MaterialsDescription::c_texture_file_num_tiles_x * MaterialsDescription::c_texture_file_num_tiles_y );
+
+			var size_type material_index( quad.texture_id );
+
+			var size_type texture_index= material_index / num_materials_in_texture;
+			if( texture_index < materials_block.textures.size() )
+			{
+				var MaterialsDescription::Texture& texture= materials_block.textures[ texture_index ];
+				var size_type tile_index= material_index % num_materials_in_texture;
+				var ust::string8& material_name= texture.materials[ tile_index ];
+
+				foreach( &material_properties : global_data.materials_properties.deref() )
+				{
+					if( material_properties.name == material_name )
+					{
+						return material_properties.fragile;
+					}
+				}
+			}
+		}
+	}
+
+	return false;
 }
 
 // Result vector is not normalized!
@@ -2841,7 +2882,7 @@ fn DamageEntity( EntityState &mut entity, u32 damage )
 	// TODO - spawn blood particles.
 }
 
-fn ProcessProjectileHitEventsLogicStep( GameMapData& map_data, GameState &mut game_state )
+fn ProcessProjectileHitEventsLogicStep( GameGlobalData& global_data, GameMapData& map_data, GameState &mut game_state )
 {
 	var EntitiesDescription& entities_description= map_data.entities_description.deref();
 
@@ -3025,8 +3066,7 @@ fn ProcessProjectileHitEventsLogicStep( GameMapData& map_data, GameState &mut ga
 			size_type( projectile_hit_event.hit_quad_index ) < quads.size() )
 		{
 			var ZmapQuad& quad= quads[ size_type( projectile_hit_event.hit_quad_index ) ];
-			if( u32( quad.texture_id ) ==
-				MaterialsDescription::c_special_material_texture_indices[ size_type( MaterialsDescription::SpecialMaterial::Glass ) ] )
+			if( IsMapQuadBreakable( global_data, map_data, quad ) )
 			{
 				if( !game_state.broken_quad_bits.GetAndSetBitToOne( size_type( projectile_hit_event.hit_quad_index ) ) )
 				{
