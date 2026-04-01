@@ -98,6 +98,19 @@ fn WorldDrawer::constructor(
 		stub_white_texture_= CreateStubWhiteTexture(),
 		depth_buffer_copy_texture_= CreateDepthBufferCopyTexture(),
 		caustics_texture_= CreateCausticsTexture(),
+		breakable_polygons_buffer_
+		{
+			.vertex_buffer=
+				BufferObject::CreateUninitializedDynamicDrawBuffer(
+					GLenum( GL_ARRAY_BUFFER ),
+					c_max_breakable_polygon_vertices * typeinfo</MapVertex/>.size_of ),
+			.max_vertices= c_max_breakable_polygon_vertices,
+			.index_buffer=
+				BufferObject::CreateUninitializedDynamicDrawBuffer(
+					GLenum( GL_ELEMENT_ARRAY_BUFFER ),
+					c_max_breakable_polygon_indices * typeinfo</u16/>.size_of ),
+			.max_indices= c_max_breakable_polygon_indices,
+		},
 		semitransparent_polygons_buffer_
 		{
 			.vertex_buffer=
@@ -118,6 +131,9 @@ fn WorldDrawer::constructor(
 		map_index_= 0u,
 	)
 {
+	PrepareVertexArrayObjectWithMapVertexFormat(
+		breakable_polygons_buffer_.vertex_array_object, breakable_polygons_buffer_.vertex_buffer );
+
 	PrepareVertexArrayObjectWithMapVertexFormat(
 		semitransparent_polygons_buffer_.vertex_array_object, semitransparent_polygons_buffer_.vertex_buffer );
 
@@ -263,6 +279,17 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 	var BBox3f visible_clusters_bbox=
 		CalculateVisibleClustersBBox( clusters, visible_room_cluster_flags, drawing_info.camera_params.position );
 
+	ResetDynamicPolygonsBuffer( breakable_polygons_buffer_ );
+
+	CreateBreakableMapPolygons(
+		map_data,
+		drawing_info.broken_quad_bits,
+		visible_room_cluster_flags,
+		breakable_polygons_buffer_.vertices,
+		breakable_polygons_buffer_.indices );
+
+	UploadDynamicPolygonsBuffer( breakable_polygons_buffer_ );
+
 	var bool caustics_enabled= settings_.lock_imut().deref().r_caustics_enabled;
 	var bool draw_water_clusters_as_normal= !caustics_enabled;
 
@@ -271,6 +298,7 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 		visible_room_cluster_flags,
 		visible_clusters_bbox,
 		drawing_info.dynamic_cluster_objects,
+		breakable_polygons_buffer_,
 		map_shader_,
 		view_matrix,
 		draw_water_clusters_as_normal,
@@ -725,14 +753,6 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 	}
 
 	ResetDynamicPolygonsBuffer( semitransparent_polygons_buffer_ );
-
-	// TODO - use different polygon buffer for breakable map polygons.
-	CreateBreakableMapPolygons(
-		map_data,
-		drawing_info.broken_quad_bits,
-		visible_room_cluster_flags,
-		semitransparent_polygons_buffer_.vertices,
-		semitransparent_polygons_buffer_.indices );
 
 	drawing_stats.num_visible_billboards+=
 		BuildBillboardPolygons(
@@ -1423,6 +1443,7 @@ fn DrawMapPolygons(
 	VisibleRoomClusterFlagsImut visible_room_cluster_flags,
 	BBox3f& visible_clusters_bbox,
 	ust::array_view_imut</WorldDrawingInfo::DynamicClusterObject/> dynamic_cluster_objects,
+	DynamicPolygonsBuffer& breakable_polygons_buffer,
 	ShaderProgram &mut shader,
 	Mat4f& view_matrix,
 	bool draw_water_clusters_as_normal,
@@ -1534,6 +1555,16 @@ fn DrawMapPolygons(
 
 		drawing_stats.num_visible_map_triangles+= geometry_buffer_chunk.num_indices / 3u;
 	}
+
+	// Draw breakable polygons prepared prior to this function.
+	breakable_polygons_buffer.vertex_array_object.Bind();
+	breakable_polygons_buffer.index_buffer.Bind();
+
+	unsafe( glDrawElements(
+		GLenum( GL_TRIANGLES ),
+		GLsizei( ust::min( breakable_polygons_buffer.indices.size(), breakable_polygons_buffer.max_indices ) ),
+		GLenum( GL_UNSIGNED_SHORT ),
+		ust::nullptr</byte8/>() ) );
 }
 
 fn DrawMapPolygonsWithCaustics(
@@ -2944,6 +2975,10 @@ var f32 c_stars_scale= c_sky_scale;
 var f32 c_clouds_scale= c_sky_scale;
 
 var size_type c_max_test_primitive_vertices= 4096s;
+
+// Enough vertices/indices for 512 quads.
+var size_type c_max_breakable_polygon_vertices= 2048s;
+var size_type c_max_breakable_polygon_indices= c_max_breakable_polygon_vertices * 3s / 2s;
 
 // Enough vertices/indices for 4096 quads or 5461 triangles.
 // We require so many, since we can have a lot of glass shards.
