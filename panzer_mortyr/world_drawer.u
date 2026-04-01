@@ -854,6 +854,8 @@ fn WorldDrawer::SetMap( mut this, u32 map_index )
 
 	var MaterialsDescription::Block& materials_block= materials_description_.deref().blocks[ map_description.materials_block ]; // Halts if not found.
 
+	var GameResourcePtr</MaterialsProperties/> materials_properties_ptr= caching_game_resources_loader.LoadMaterialsProperties();
+
 	var GameResourceNullablePtr</ZmapData/> zmap_data_nullable_ptr= caching_game_resources_loader.LoadZmapFile( map_index );
 	var GameResourceNullablePtr</ZvoxData/> zvox_data_nullable_ptr= caching_game_resources_loader.LoadZvoxFile( map_index );
 	var GameResourceNullablePtr</ZpozData/> zpoz_data_nullable_ptr= caching_game_resources_loader.LoadZpozFile( map_index );
@@ -883,6 +885,9 @@ fn WorldDrawer::SetMap( mut this, u32 map_index )
 	var ZmapLamData& zmap_lam_data= zmap_lam_data_ptr.deref();
 	var ZmapLemData& zmap_lem_data= zmap_lem_data_ptr.deref();
 	var RoomClustersHierarchy& room_clusters_hierarchy= room_clusters_hierarchy_ptr.deref();
+
+	var BitArray mut breakable_material_bits=
+		CreateBreakableMaterialsBitArray( materials_properties_ptr.deref(), materials_block );
 
 	var ust::vector</PointLightSource/> mut light_sources=
 		CreatePointLightSourcesForMapLightSources( zvox_data, game_params_.deref() );
@@ -942,6 +947,10 @@ fn WorldDrawer::SetMap( mut this, u32 map_index )
 				{
 					continue;
 				}
+			}
+			else if( breakable_material_bits.GetBit( size_type( quad.texture_id ) ) )
+			{
+				continue; // Draw breakable materials in separate step.
 			}
 
 			if( q >= zmap_lam_data.tessellated_quads.size() || zmap_lam_data.tessellated_quads[q].vertex_count == 0u )
@@ -1224,6 +1233,7 @@ fn WorldDrawer::SetMap( mut this, u32 map_index )
 				f32( map_description.fog_color[0] ) / 255.0f
 			],
 			.global_fog_enabled= map_description.linear_fog_enabled,
+			.breakable_material_bits= move(breakable_material_bits),
 		} );
 }
 
@@ -2449,6 +2459,37 @@ fn PrepareVertexArrayObjectWithMapVertexFormat(
 		GLboolean(1),
 		GLsizei( typeinfo</MapVertex/>.size_of ),
 		ust::nullptr</byte8/>() + GetStructFieldOffset</MapVertex, "fog_params"/>() ) );
+}
+
+fn CreateBreakableMaterialsBitArray(
+	MaterialsProperties& materials_properties,
+	MaterialsDescription::Block& materials_block ) : BitArray
+{
+	var size_type num_tiles_in_texture(
+		MaterialsDescription::c_texture_file_num_tiles_x * MaterialsDescription::c_texture_file_num_tiles_y );
+
+	var BitArray mut breakable_materials_bit_array( materials_block.textures.size() * num_tiles_in_texture );
+
+	for( auto mut i= 0s; i < materials_block.textures.size(); ++i )
+	{
+		var MaterialsDescription::Texture& texture= materials_block.textures[i];
+
+		for( auto mut j= 0s; j < num_tiles_in_texture; ++j )
+		{
+			var ust::string_view8 material_kind_name= texture.materials[j];
+
+			foreach( &material_property : materials_properties )
+			{
+				if( material_kind_name == material_property.name &&
+					material_property.fragile )
+				{
+					breakable_materials_bit_array.SetBitToOne( i * num_tiles_in_texture + j );
+				}
+			}
+		}
+	}
+
+	return breakable_materials_bit_array;
 }
 
 fn CreateSnowRainBuffer( ZmapLamData& zmap_lam_data ) : SnowRainBuffer
