@@ -94,7 +94,6 @@ PanzerMortyr game logic:
 * Fix ugly injury-based entity state transitions, when an injury operation is changed while some other injury operation is already in process.
 * Implement pushing pushable entities.
 * Perform camera Z coordinate smoothing while climbing steps, so that camera movement doesn't look jaggy.
-* Allow breaking quads with breakable material property, not only glass quads.
 * Break glass quads and quads with breakable materials while applying spash damage.
 * Don't perform projectile and (maybe) entity collisions with broken map quads.
 * Implement jetpack tool.
@@ -106,7 +105,6 @@ PanzerMortyr game logic:
 * Leave footsteps where they should be.
 * Implement remaining projectile hit effects (sparkles, blood).
 * Rework code doing first person weapon idle/walking animations. Consider adding states where no animation is played at all.
-* Switch to a new weapon when picking it up (investigate when such switchinh takes place in the original game).
 * Implement weapon switching in case of out of ammo.
 * Implement kick as separate "weapon" which can be fired when some other weapon is active (including kicking leg animation shown).
 * Spawn bubble sprites while swimming in water.
@@ -144,7 +142,6 @@ PanzerMortyr rendering:
 * Use smooth animation for animated models (with two or more frames interpolation).
 * Draw decals (bullet holes, blood, footsteps).
 * Draw animated water circle decals on map quads with "wet" property enabled in points where a rain particle hits such quad.
-* Don't draw broken non-glass quads (with breakable material).
 * Draw injured enemies covered with blood.
 * Draw burning entities with some kind of burning effect (like in RtCW).
 * Draw some fullscreen burning effect if the player is burning.
@@ -159,7 +156,6 @@ PanzerMortyr rendering:
 * Consider colorizing the whole image while the acid protection suit is active.
 * Consider drawing some extra effects for the night vision mode, like fullscreen radial brightness gradient or something similar.
 * Make sure clouds have proper scale and speed (similar to the original game).
-* Don't draw broken map quads (with glass special material and materials with breakable flag).
 * Consider optimizing dynamic lighting even more by using stencil test for them.
 * Consider limiting the number of active dynamic light sources - to avoid huge performance drops.
 * Consider applying dynamic light to glass quads.
