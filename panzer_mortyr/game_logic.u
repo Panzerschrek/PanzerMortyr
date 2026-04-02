@@ -3379,16 +3379,17 @@ fn ProcessProjectileHitLightsLogicStep( ProjectileHitLightsContainer &mut projec
 
 fn PickUpItems( GameMapData& map_data, GameState &mut game_state )
 {
-	if( game_state.player.noclip )
+	if( game_state.player.collider_index == ~0u )
 	{
 		return;
 	}
+
+	var BBox3f player_bbox= game_state.colliders[ size_type( game_state.player.collider_index ) ].bbox;
 
 	var EntitiesDescription& entities_description= map_data.entities_description.deref();
 
 	for( auto mut entity_index= 0s; entity_index < game_state.entities.size(); ++entity_index )
 	{
-
 		var bool mut need_to_remove_entity= false;
 
 		if_var( &entity : game_state.entities[entity_index] )
@@ -3401,11 +3402,28 @@ fn PickUpItems( GameMapData& map_data, GameState &mut game_state )
 
 			if_var( &box_contents : operation.box_contents )
 			{
-				// This entity can be picked-up.
-				// TODO - identify exact radius and center.
-				var f32 c_pickup_distance= 48.0f;
-				var f32 square_distance= ( game_state.player.position - entity.position ).SquareLength();
-				if( square_distance < c_pickup_distance * c_pickup_distance )
+				var EntitiesDescription::OperationAnimationDescription& anim=
+					operation.animations[ size_type( EntitiesDescription::Operation::AnimationKind::Forward ) ];
+
+				var Vec3f bbox_center=
+					entity.position +
+					Vec3f(
+						f32( anim.bounding_box_center_x ),
+						f32( anim.bounding_box_center_y ),
+						f32( anim.bounding_box_center_z ) );
+
+				var Vec3f bbox_half_size(
+					f32( anim.bounding_box_half_size_x ),
+					f32( anim.bounding_box_half_size_y ),
+					f32( anim.bounding_box_half_size_z ) );
+
+				var BBox3f entity_bbox
+				{
+					.min= bbox_center - bbox_half_size,
+					.max= bbox_center + bbox_half_size,
+				};
+
+				if( player_bbox.Instersects( entity_bbox ) )
 				{
 					var size_type tool_index( entities_description.tool_type_to_index_map[ size_type( box_contents.tool_type ) ] );
 					if( tool_index < entities_description.tools.size() )
