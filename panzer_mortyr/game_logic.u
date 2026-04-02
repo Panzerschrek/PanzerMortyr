@@ -350,7 +350,7 @@ fn PerformPlayerWeaponLogic( GameMapData& map_data, PlayerInput& player_input, G
 {
 	var EntitiesDescription& entities_description= map_data.entities_description.deref();
 
-	if( player_input.shot_requested )
+	if( player_input.shot_requested && game_state.player.energy > 0u /* Allow starting shooting only if alive. */ )
 	{
 		// Check if we have no shooting active and the weapon switching is done.
 		if( game_state.player.weapon_state.num_active_shooting_steps.empty() &&
@@ -382,12 +382,22 @@ fn PerformPlayerWeaponLogic( GameMapData& map_data, PlayerInput& player_input, G
 		}
 	}
 
-	if( player_input.inventory_input.requested_weapon != EntitiesDescription::ToolType::None )
+	if( player_input.inventory_input.requested_weapon != EntitiesDescription::ToolType::None &&
+		game_state.player.energy > 0u /* Allow switching weapons only if alive. */ )
 	{
 		game_state.player.weapon_state.requested_weapon= player_input.inventory_input.requested_weapon;
 	}
 
-	game_state.player.weapon_state.extra_lowering= 0.0f;
+	if( game_state.player.energy == 0u )
+	{
+		// In case of death lower the weapon.
+		game_state.player.weapon_state.extra_lowering+= c_weapon_lowering_on_death_speed;
+		ust::min_assign( game_state.player.weapon_state.extra_lowering, 1.0f );
+	}
+	else
+	{
+		game_state.player.weapon_state.extra_lowering= 0.0f;
+	}
 
 	if( !game_state.player.weapon_state.num_active_shooting_steps.empty() )
 	{
@@ -424,7 +434,7 @@ fn PerformPlayerWeaponLogic( GameMapData& map_data, PlayerInput& player_input, G
 						}
 					}
 
-					if( !out_of_ammo )
+					if( !out_of_ammo && game_state.player.energy > 0u /* Allow shooting only if alive. */ )
 					{
 						auto [ position, direction ]=
 							GetPlayerShotStartAndDirection(
@@ -551,9 +561,11 @@ fn PerformPlayerWeaponLogic( GameMapData& map_data, PlayerInput& player_input, G
 			}
 		}
 	}
-	else if( game_state.player.weapon_state.requested_weapon != game_state.player.weapon_state.current_weapon )
+	else if(
+		game_state.player.weapon_state.requested_weapon != game_state.player.weapon_state.current_weapon &&
+		game_state.player.energy > 0u )
 	{
-		// Perform weapon switching logic (if not shooting right now).
+		// Perform weapon switching logic (if not shooting right now or if is alive).
 
 		// Check first if we have requiresed weapon.
 		// It may be necessary if (somehow) the player loses his weapons during transition.
@@ -676,6 +688,12 @@ fn PerformPlayerInventoryLogic(
 	PlayerState &mut player,
 	u32 current_step )
 {
+	if( player.energy == 0u )
+	{
+		// Don't allow changing selected tool and activate tools in dead stae.
+		return;
+	}
+
 	var size_type c_num_tools_for_selection= typeinfo</ typeof( c_inventory_accessible_tools ) />.element_count;
 
 	// Reset current tool if it's no longer available.
@@ -919,11 +937,24 @@ fn PerformPlayerMovement(
 
 	var Vec3f movement_start_position= game_state.player.position;
 
-	ApplyPlayerUnclippedMovement(
-		global_data.game_params.deref(),
-		game_state.player,
-		player_input.move_wish_vector,
-		player_input.jump_requested );
+	if( game_state.player.energy > 0u )
+	{
+		ApplyPlayerUnclippedMovement(
+			global_data.game_params.deref(),
+			game_state.player,
+			player_input.move_wish_vector,
+			player_input.jump_requested );
+	}
+	else
+	{
+		// If the player is dead - apply unclipped movement, but with controls disabled.
+		// Gravity and deceleration should be still applied.
+		ApplyPlayerUnclippedMovement(
+			global_data.game_params.deref(),
+			game_state.player,
+			Vec3f::MakeZero(),
+			false );
+	}
 
 	var Vec3f movement_end_position= game_state.player.position;
 
@@ -1015,7 +1046,9 @@ fn PerformPlayerMovement(
 
 	game_state.player.ground_friction= ground_friction;
 
-	if( player_input.crouching_requested )
+	if( player_input.crouching_requested ||
+		// If the player is dead activate crouching too - to simulate falling.
+		game_state.player.energy == 0u )
 	{
 		game_state.player.crouching_phase+= c_crouching_transition_speed;
 		ust::min_assign( game_state.player.crouching_phase, 1.0f );
@@ -1382,6 +1415,11 @@ fn TriggerEntitiesSpawn( GameMapData& map_data, GameState &mut game_state )
 		return;
 	}
 
+	if( game_state.player.energy == 0u )
+	{
+		return; // Dead player can't trigger entities spawn.
+	}
+
 	var BBox3f player_bbox= game_state.colliders[ size_type( game_state.player.collider_index ) ].bbox;
 
 	var EntitiesDescription& entities_description= map_data.entities_description.deref();
@@ -1603,7 +1641,9 @@ fn ProcessEntitiesLogicStep( GameGlobalData& game_global_data, GameMapData& map_
 					{
 						if_var( &inside_shooting_zone_a : operation_control.inside_shooting_zone_a )
 						{
-							if( entity.player_is_in_sight && entity.ammo > 0u )
+							if( entity.player_is_in_sight && // Attack only if the player is visible.
+								entity.ammo > 0u && // Attack only if has ammo.
+								game_state.player.energy > 0u /* Attack only if the player is alive. */ )
 							{
 								var u32 period( inside_shooting_zone_a[0] );
 								if( period != 0u && entity.num_steps_since_operation_start % period == 0u )
@@ -1628,7 +1668,9 @@ fn ProcessEntitiesLogicStep( GameGlobalData& game_global_data, GameMapData& map_
 						{
 							// TODO - check what else condition is necessary.
 							// Maybe add some random element?
-							if( entity.player_is_in_sight && entity.ammo > 0u )
+							if( entity.player_is_in_sight && // Attack only if the player is visible.
+								entity.ammo > 0u && // Attack only if has ammo.
+								game_state.player.energy > 0u /* Attack only if the player is alive. */ )
 							{
 								var u32 period( inside_shooting_zone_b[0] );
 								if( period != 0u && entity.num_steps_since_operation_start % period == 0u )
@@ -1644,8 +1686,9 @@ fn ProcessEntitiesLogicStep( GameGlobalData& game_global_data, GameMapData& map_
 						{
 							// Assume player should be visible and be in optimal distance to trigger this state transition.
 
-							if( entity.player_is_in_sight &&
-								entity.ammo > 0u &&
+							if( entity.player_is_in_sight && // Attack only if the player is visible.
+								entity.ammo > 0u && // Attack only if has ammo.
+								game_state.player.energy > 0u && // Attack only if the player is alive.
 								entity.num_steps_since_operation_start == convenient_position[0] )
 							{
 								if_var( &player_position : entity.last_seen_player_position )
@@ -1803,7 +1846,9 @@ fn ProcessEntitiesLogicStep( GameGlobalData& game_global_data, GameMapData& map_
 
 				if_var( &directional_shot : operation.directional_shot )
 				{
-					if( entity.num_steps_since_operation_start == directional_shot.time )
+					if( entity.num_steps_since_operation_start == directional_shot.time &&
+						// Perform tank shot only if player is still alive.
+						game_state.player.energy > 0u )
 					{
 						EntityDirectionalShot(
 							entities_description,
@@ -2074,10 +2119,11 @@ fn ProcessDynamicClustersLogicStep( GameMapData& map_data, GameState &mut game_s
 	auto clusters= map_data.zvox_data.deref().clusters.range();
 	auto dynamic_cluster_extra_infos= map_data.zvox_data.deref().dynamic_cluster_extra_infos.range();
 
+	// The player activates dynamic clusters by his bbox. But he can't do this if he has no one or if he is dead.
 	var BBox3f mut player_touch_bbox=
-		( game_state.player.collider_index == ~0u ?
-			BBox3f{ .min( 10000.0f, 10000.0f, 10000.0f ), .max( 10001.0f, 10001.0f, 10001.0f ) } :
-			game_state.colliders[ size_type( game_state.player.collider_index ) ].bbox );
+		( ( game_state.player.collider_index == ~0u || game_state.player.energy == 0u )
+			? BBox3f{ .min( 10000.0f, 10000.0f, 10000.0f ), .max( 10001.0f, 10001.0f, 10001.0f ) }
+			: game_state.colliders[ size_type( game_state.player.collider_index ) ].bbox );
 
 	// Extend player touch bbox a little bit.
 	player_touch_bbox.min-= Vec3f( 1.0f, 1.0f, 1.0f );
@@ -3379,6 +3425,11 @@ fn ProcessProjectileHitLightsLogicStep( ProjectileHitLightsContainer &mut projec
 
 fn PickUpItems( GameMapData& map_data, GameState &mut game_state )
 {
+	if( game_state.player.energy == 0u )
+	{
+		return;
+	}
+
 	if( game_state.player.collider_index == ~0u )
 	{
 		return;
@@ -3578,6 +3629,12 @@ fn DealPlayerEnvironmentalDamage( GameMapData& map_data, GameState &mut game_sta
 fn InteractWithTriggerVolumes( GameMapData& map_data, GameState &mut game_state ) : u32
 {
 	var u32 mut next_map_index= 0u;
+
+	if( game_state.player.energy == 0u )
+	{
+		// Dead player can't interact with triger volumes.
+		return next_map_index;
+	}
 
 	if( size_type( game_state.player.collider_index ) >= game_state.colliders.size() )
 	{
