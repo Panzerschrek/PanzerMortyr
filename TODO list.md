@@ -92,7 +92,6 @@ PanzerMortyr game logic:
 * Implement ammo seeking behavior for enemies.
 * Fix ugly injury-based entity state transitions, when an injury operation is changed while some other injury operation is already in process.
 * Implement pushing pushable entities.
-* Perform camera Z coordinate smoothing while climbing steps, so that camera movement doesn't look jaggy.
 * Break glass quads and quads with breakable materials while applying spash damage.
 * Don't perform projectile and (maybe) entity collisions with broken map quads.
 * Implement jetpack tool.
