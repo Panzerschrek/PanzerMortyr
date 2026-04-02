@@ -68,7 +68,6 @@ PanzerMortyr general:
 
 PanzerMortyr game logic:
 
-* Implement player's death.
 * Implement game state save/loading.
 * Implement multiplayer game logic with client/server.
 * Implement multiplayer-specific game modes.
@@ -121,7 +120,6 @@ PanzerMortyr game logic:
 * Ensure projectiles speed is correct (isn't too small or too big).
 * Consider storing a bounding box of the current attack target of an entity in the entity struture.
 * Don't perform level transition if hasn't satifsy transition requirements necessary for some levels - like killing a boss or collecting all necessary items.
-* Avoid performing transition to the next level if player is dead.
 * Handle properly game end - show end cinematic and credits after it.
 * Adjust rotation angles for grenade projectiles, so that they look nicely.
 * Tune granades exposion delay.
@@ -134,6 +132,7 @@ PanzerMortyr game logic:
 * Consider extinguishing damaging flames on entities located inside liquids.
 * Consider reducing brightness of Volkssturm smoking lights - they are way to bright.
 * Consider performing pseudo-random time-based brightness variation for flame lights.
+* Perform camera rotation upon player's death as the original game does. It seems to be full circle azimuth rotation and a rotation to some fixed elevation.
 
 PanzerMortyr rendering:
 
