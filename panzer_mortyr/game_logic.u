@@ -119,7 +119,7 @@ fn CreateNewMapGameState(
 				.alarmed= false,
 				.player_is_in_sight= false,
 				.lost_energy_in_current_operation= false,
-				.animation_frames= zero_init, // Set exact frames later.
+				.animation_frame= 0u, // Set exact frame later.
 				.velocity_z= 0.0f,
 				.collider_index= ~0u,
 			};
@@ -1528,7 +1528,7 @@ fn TriggerEntitiesSpawn( GameMapData& map_data, GameState &mut game_state )
 				.alarmed= true, // Spawn triggered entities in alarmed state.
 				.player_is_in_sight= false,
 				.lost_energy_in_current_operation= false,
-				.animation_frames= zero_init, // Set later.
+				.animation_frame= 0u, // Set later.
 				.velocity_z= 0.0f,
 				.collider_index= ~0u,
 			};
@@ -1955,7 +1955,7 @@ fn ProcessEntitiesLogicStep( GameGlobalData& game_global_data, GameMapData& map_
 										.alarmed= false,
 										.player_is_in_sight= false,
 										.lost_energy_in_current_operation= false,
-										.animation_frames= zero_init, // Set exact frames later.
+										.animation_frame= 0u, // Set exact frame later.
 										.velocity_z= 0.0f,
 										.collider_index= ~0u,
 									} );
@@ -2086,19 +2086,14 @@ fn ProcessEntitiesLogicStep( GameGlobalData& game_global_data, GameMapData& map_
 				operation );
 
 			// Calculate current frame based on animation params.
-			// TODO - perform different animation logic for different animation kinds.
+			// TODO - perform extra animation logic for some special animation kinds.
 
-			foreach( pair :
-				ust::array_view_imut</EntitiesDescription::OperationAnimationDescription/>( operation.animations ).iter().zip(
-					ust::array_view_mut</u32/>( entity.animation_frames ).iter() ) )
 			{
-				var EntitiesDescription::OperationAnimationDescription& operation_animation_description= pair.first;
-
 				var u32 animation_step=
-					operation_animation_description.start_step +
-					entity.num_steps_since_operation_start % ust::max( 1u, operation_animation_description.num_steps );
+					operation.animation.start_step +
+					entity.num_steps_since_operation_start % ust::max( 1u, operation.animation.num_steps );
 
-				pair.second= animation_step / c_num_steps_per_animation_frame;
+				entity.animation_frame= animation_step / c_num_steps_per_animation_frame;
 			}
 
 			// Increase step counter after doing any other logic.
@@ -3521,20 +3516,17 @@ fn PickUpItems( GameMapData& map_data, GameState &mut game_state )
 
 			if_var( &box_contents : operation.box_contents )
 			{
-				var EntitiesDescription::OperationAnimationDescription& anim=
-					operation.animations[ size_type( EntitiesDescription::Operation::AnimationKind::Forward ) ];
-
 				var Vec3f bbox_center=
 					entity.position +
 					Vec3f(
-						f32( anim.bounding_box_center_x ),
-						f32( anim.bounding_box_center_y ),
-						f32( anim.bounding_box_center_z ) );
+						f32( operation.animation.bounding_box_center_x ),
+						f32( operation.animation.bounding_box_center_y ),
+						f32( operation.animation.bounding_box_center_z ) );
 
 				var Vec3f bbox_half_size(
-					f32( anim.bounding_box_half_size_x ),
-					f32( anim.bounding_box_half_size_y ),
-					f32( anim.bounding_box_half_size_z ) );
+					f32( operation.animation.bounding_box_half_size_x ),
+					f32( operation.animation.bounding_box_half_size_y ),
+					f32( operation.animation.bounding_box_half_size_z ) );
 
 				var BBox3f entity_bbox
 				{
@@ -3927,16 +3919,7 @@ fn CalculateEntityColliderBBox( EntityState& entity, EntitiesDescription::Operat
 		return collider_bbox;
 	}
 
-	foreach( &anim : operation.animations )
-	{
-		collider_bbox= CaclulateColliderBBoxForOperationAnimation( entity, anim, entity.azimuth );
-		if( !collider_bbox.empty() )
-		{
-			break;
-		}
-	}
-
-	return collider_bbox;
+	return CaclulateColliderBBoxForOperationAnimation( entity, operation.animation, entity.azimuth );
 }
 
 fn CaclulateColliderBBoxForOperationAnimation(
@@ -4055,16 +4038,13 @@ fn UpdateEntityPlayerInSightFlag(
 	var EntitiesDescription::Operation& operation=
 		entity_description.operations[ size_type( entity.current_operation ) ];
 
-	var EntitiesDescription::OperationAnimationDescription& animation=
-		operation.animations[ size_type( EntitiesDescription::Operation::AnimationKind::Forward ) ];
-
-	if( animation.num_steps == 0u )
+	if( operation.animation_kind != EntitiesDescription::Operation::AnimationKind::Forward )
 	{
 		// No regular animation means no bbox.
 		return;
 	}
 
-	var Vec3f trace_end= GetEntityPointForPlayerVisibilityTrace( entity.position, animation );
+	var Vec3f trace_end= GetEntityPointForPlayerVisibilityTrace( entity.position, operation.animation );
 	var Vec3f trace_start= GetPlayerPointForEntityVisibilityTrace( player_state.position, player_state.crouching_phase );
 
 	if( trace_start == trace_end )
@@ -4172,9 +4152,6 @@ fn UpdateEntityMovementTarget(
 		{
 			var f32 player_crouching_phase= 0.0f; // For line of sight check assume that the player is staying.
 
-			var EntitiesDescription::OperationAnimationDescription& animation=
-				operation.animations[ size_type( EntitiesDescription::Operation::AnimationKind::Forward ) ];
-
 			var EntityDistanceRanges distance_ranges= GetEntityDistanceRanges( entity_description );
 
 			var f32 optimal_square_distance_min=
@@ -4257,7 +4234,7 @@ fn UpdateEntityMovementTarget(
 						var Vec3f trace_start=
 							GetPlayerPointForEntityVisibilityTrace( player_position, player_crouching_phase );
 
-						var Vec3f trace_end= GetEntityPointForPlayerVisibilityTrace( node_position, animation );
+						var Vec3f trace_end= GetEntityPointForPlayerVisibilityTrace( node_position, operation.animation );
 
 						if( trace_end != trace_start )
 						{
@@ -4371,7 +4348,7 @@ fn UpdateEntityMovementTarget(
 							var MapaWayNavigationGraphNode& node= navigation_graph.nodes[ candidate_node ];
 							var Vec3f node_position( f32( node.position[0] ), f32( node.position[1] ), f32( node.position[2] ) );
 
-							var Vec3f trace_end= GetEntityPointForPlayerVisibilityTrace( node_position, animation );
+							var Vec3f trace_end= GetEntityPointForPlayerVisibilityTrace( node_position, operation.animation );
 
 							var bool mut is_visible= true;
 
@@ -4791,7 +4768,7 @@ fn MoveEntity(
 		entity_description.mode == EntitiesDescription::EntityDescription::c_mode_decoration &&
 		!entity_description.param_akt.empty() && entity_description.param_akt.try_deref()[3] != 0u;
 
-	if( current_operation.animations[ size_type( EntitiesDescription::Operation::AnimationKind::Landscape ) ].num_steps != 0u )
+	if( current_operation.animation_kind == EntitiesDescription::Operation::AnimationKind::Landscape )
 	{
 		// Decorations like planes and airships shouldn't be affected by gravity.
 		affected_by_gravity= false;
@@ -4818,26 +4795,20 @@ fn MoveEntity(
 
 	var ust::optional</BBox3f/> mut collider_bbox_opt;
 
-	foreach( &anim : current_operation.animations )
+	if( current_operation.animation.num_steps > 0u )
 	{
-		if( anim.num_steps == 0u )
-		{
-			continue;
-		}
-
 		var Vec3f mut bbox_half_size(
-			f32( anim.bounding_box_half_size_x ),
-			f32( anim.bounding_box_half_size_y ),
-			f32( anim.bounding_box_half_size_z ) );
+			f32( current_operation.animation.bounding_box_half_size_x ),
+			f32( current_operation.animation.bounding_box_half_size_y ),
+			f32( current_operation.animation.bounding_box_half_size_z ) );
 
 		RotateEntityBBox( bbox_half_size, entity.azimuth );
 
 		var Vec3f bbox_center=
 			Vec3f(
-				f32( anim.bounding_box_center_x ),
-				f32( anim.bounding_box_center_y ),
-				f32( anim.bounding_box_center_z ) );
-
+				f32( current_operation.animation.bounding_box_center_x ),
+				f32( current_operation.animation.bounding_box_center_y ),
+				f32( current_operation.animation.bounding_box_center_z ) );
 
 		collider_bbox_opt= BBox3f{ .min= bbox_center - bbox_half_size, .max= bbox_center + bbox_half_size };
 	}
@@ -5287,21 +5258,20 @@ fn GetPlayerColliderBBox( EntitiesDescription& entities_description, f32 crouchi
 
 		foreach( &operation : entity_description.operations ) label operations_loop
 		{
-			foreach( &animation : operation.animations )
+			var EntitiesDescription::OperationAnimationDescription& animation= operation.animation;
+
+			if( animation.num_steps != 0u &&
+				animation.bounding_box_half_size_x != 0 &&
+				animation.bounding_box_half_size_y != 0 )
 			{
-				if( animation.num_steps != 0u &&
-					animation.bounding_box_half_size_x != 0 &&
-					animation.bounding_box_half_size_y != 0 )
-				{
-					bbox.min.x= f32( animation.bounding_box_center_x - animation.bounding_box_half_size_x );
-					bbox.max.x= f32( animation.bounding_box_center_x + animation.bounding_box_half_size_x );
-					bbox.min.y= f32( animation.bounding_box_center_y - animation.bounding_box_half_size_y );
-					bbox.max.y= f32( animation.bounding_box_center_y + animation.bounding_box_half_size_y );
+				bbox.min.x= f32( animation.bounding_box_center_x - animation.bounding_box_half_size_x );
+				bbox.max.x= f32( animation.bounding_box_center_x + animation.bounding_box_half_size_x );
+				bbox.min.y= f32( animation.bounding_box_center_y - animation.bounding_box_half_size_y );
+				bbox.max.y= f32( animation.bounding_box_center_y + animation.bounding_box_half_size_y );
 
-					// The original game seems to use a hard-coded Z dimensions, so, ignore Z dimensions from the config.
+				// The original game seems to use a hard-coded Z dimensions, so, ignore Z dimensions from the config.
 
-					break label operations_loop;
-				}
+				break label operations_loop;
 			}
 		}
 	}
