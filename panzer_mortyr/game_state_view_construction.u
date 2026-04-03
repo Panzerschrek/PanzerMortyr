@@ -134,41 +134,53 @@ fn ConstructWorldDrawingInfo(
 				// PanzerMortyr addition - add lights for burning entities.
 				var f32 flame_power= 6.0f;
 
-				var EntitiesDescription::OperationAnimationDescription& a=
-					operation.animations[ size_type( EntitiesDescription::Operation::AnimationKind::Forward ) ];
-
 				drawing_info.dynamic_light_sources.push_back(
 					WorldDrawingInfo::DynamicLightSource
 					{
 						.position=
 							entity.position +
 							Vec3f(
-								f32( a.bounding_box_center_x ),
-								f32( a.bounding_box_center_y ),
-								f32( a.bounding_box_center_z ) ),
+								f32( operation.animation.bounding_box_center_x ),
+								f32( operation.animation.bounding_box_center_y ),
+								f32( operation.animation.bounding_box_center_z ) ),
 						.power= f32( num_damaging_flames ) * flame_power * c_light_power_scale,
 						.color_index= c_flame_color_index,
 					} );
 			}
 
-			auto add_animation_model=
-				lambda[&](
-					EntitiesDescription::OperationAnimationDescription& operation_animation_description,
-					f32 azimuth,
-					u32 frame,
-					bool disable_culling,
-					bool constant_lighting )
+			if( operation.animation.num_steps > 0u )
+			{
+				var size_type a( operation.animation.animation_number );
+				if( a < entities_description.animations.size() )
 				{
-					if( operation_animation_description.num_steps == 0u )
-					{
-						return;
-					}
+					var EntitiesDescription::AnimationDescription& animation= entities_description.animations[a];
 
-					var size_type a( operation_animation_description.animation_number );
-					if( a >= entities_description.animations.size() )
-					{
-						return;
-					}
+					var bool is_sky_decoration=
+						operation.animation_kind == EntitiesDescription::Operation::AnimationKind::Landscape;
+
+					drawing_info.model_objects.push_back(
+						WorldDrawingInfo::ModelObject
+						{
+							.model_file_name= animation.model_file_name,
+							.position= entity.position,
+							.azimuth= entity.azimuth,
+							.elevation= 0.0f,
+							.frame= entity.animation_frame,
+							// If it's a sky decoration - disable culling.
+							// It should be always visible, even if such decoration is located somewhere outside map bounds.
+							.disable_culling= is_sky_decoration,
+							.first_person_weapon= false,
+							// Use constant lighting for sky decorations.
+							.constant_lighting= is_sky_decoration,
+						} );
+				}
+			}
+
+			if( operation.directional_animation.num_steps > 0u )
+			{
+				var size_type a( operation.directional_animation.animation_number );
+				if( a < entities_description.animations.size() )
+				{
 					var EntitiesDescription::AnimationDescription& animation= entities_description.animations[a];
 
 					drawing_info.model_objects.push_back(
@@ -176,63 +188,20 @@ fn ConstructWorldDrawingInfo(
 						{
 							.model_file_name= animation.model_file_name,
 							.position= entity.position,
-							.azimuth= azimuth,
+							.azimuth= Convert1024Angle( f32( operation.directional_animation.direction ) ),
 							.elevation= 0.0f,
-							.frame= frame,
-							.disable_culling= disable_culling,
+							.frame= entity.directional_animation_frame,
+							.disable_culling= false,
 							.first_person_weapon= false,
-							.constant_lighting= constant_lighting,
+							.constant_lighting= false,
 						} );
-				};
-
-			add_animation_model(
-				operation.animations[ size_type( EntitiesDescription::Operation::AnimationKind::Forward ) ],
-				entity.azimuth,
-				entity.animation_frames[ size_type( EntitiesDescription::Operation::AnimationKind::Forward ) ],
-				false,
-				false );
-
-			{
-				var EntitiesDescription::OperationAnimationDescription& operation_animation_description=
-					operation.animations[ size_type( EntitiesDescription::Operation::AnimationKind::Rotation ) ];
-
-				add_animation_model(
-					operation_animation_description,
-					Convert1024Angle( f32( operation_animation_description.direction ) ),
-					entity.animation_frames[ size_type( EntitiesDescription::Operation::AnimationKind::Rotation ) ],
-					false,
-					false );
+				}
 			}
 
-			// TODO - set barrel angles properly.
-			add_animation_model(
-				operation.animations[ size_type( EntitiesDescription::Operation::AnimationKind::Barrel ) ],
-				entity.azimuth,
-				entity.animation_frames[ size_type( EntitiesDescription::Operation::AnimationKind::Barrel ) ],
-				false,
-				false );
-
-			add_animation_model(
-				operation.animations[ size_type( EntitiesDescription::Operation::AnimationKind::Landscape ) ],
-				entity.azimuth,
-				entity.animation_frames[ size_type( EntitiesDescription::Operation::AnimationKind::Landscape ) ],
-				// If it's a sky decoration - disable culling.
-				// It should be always visible, even if such decoration is located somewhere outside map bounds.
-				true,
-				// Use constant lighting for sky decorations.
-				true );
-
-			// TODO - draw flies.
-			add_animation_model(
-				operation.animations[ size_type( EntitiesDescription::Operation::AnimationKind::Insect ) ],
-				entity.azimuth,
-				entity.animation_frames[ size_type( EntitiesDescription::Operation::AnimationKind::Insect ) ],
-				false,
-				false );
-
-			// For now ignore slide animation - it seems to be unused.
-			// For now ignore icon animation - it seems to be unused.
-			// For now ignore characher animation - it seems to be unused.
+			if( operation.animation_kind == EntitiesDescription::Operation::AnimationKind::Insect )
+			{
+				// TODO - draw flies.
+			}
 		}
 
 		game_state.projectiles.Iterate(
