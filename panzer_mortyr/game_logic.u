@@ -1563,9 +1563,13 @@ fn ProcessEntitiesLogicStep( GameGlobalData& game_global_data, GameMapData& map_
 		var bool mut need_to_remove_entity= false;
 		var ust::optional</EntityState/> mut new_spawned_entity;
 
-		// Accumulate explosion damage events to apply them later.
+		// Memorize explosion damage event to apply it later.
 		// It's needed, since we can't iterate over entities and apply damage for other entities in the same time.
 		var ust::optional</DelayedExplosionSplashDamage/> mut delayed_explosion_splash_damage;
+
+		// Memorize shot alarm event to apply it later.
+		// It's needed, since we can't iterate over entities and modify other entities in the same time.
+		var ust::optional</DelayedShotAlarm/> mut delayed_shot_alarm;
 
 		{
 			var EntityState &mut entity= game_state.entities[entity_index].try_deref();
@@ -1795,18 +1799,19 @@ fn ProcessEntitiesLogicStep( GameGlobalData& game_global_data, GameMapData& map_
 						{
 							if( entity.num_steps_since_operation_start == u32( item[4] ) )
 							{
-								EntityShoot(
-									game_params,
-									entities_description,
-									game_state.skill,
-									item,
-									entity,
-									u32( entity_index ),
-									game_state.player.crouching_phase,
-									game_state.random,
-									game_state.projectiles,
-									game_state.muzzle_flashes,
-									game_state.muzzle_lights );
+								delayed_shot_alarm=
+									EntityShoot(
+										game_params,
+										entities_description,
+										game_state.skill,
+										item,
+										entity,
+										u32( entity_index ),
+										game_state.player.crouching_phase,
+										game_state.random,
+										game_state.projectiles,
+										game_state.muzzle_flashes,
+										game_state.muzzle_lights );
 							}
 						}
 					}
@@ -2135,6 +2140,15 @@ fn ProcessEntitiesLogicStep( GameGlobalData& game_global_data, GameMapData& map_
 				// Avoid applying splash damage to this entity.
 				// It's needed for the tank enemy, which deals splash damage around it. It should not damage itself.
 				u32( entity_index ) );
+		}
+
+		if_var( &d : delayed_shot_alarm )
+		{
+			AlarmEnemiesByNearbyEvent(
+				game_state.colliders,
+				game_state.entities,
+				d.center,
+				d.max_distance );
 		}
 	}
 }
@@ -4539,6 +4553,12 @@ struct EntityDistanceRange
 	f32 distance_max;
 }
 
+struct DelayedShotAlarm
+{
+	Vec3f center;
+	f32 max_distance;
+}
+
 fn EntityShoot(
 	GameParams& game_params,
 	EntitiesDescription& entities_description,
@@ -4550,18 +4570,18 @@ fn EntityShoot(
 	PseudoRandomGenerator &mut rand,
 	ProjectilesContainer &mut projectiles,
 	MuzzleFlashesContainer &mut muzzle_flashes,
-	MuzzleLightsContainer &mut muzzle_lights )
+	MuzzleLightsContainer &mut muzzle_lights ) : ust::optional</DelayedShotAlarm/>
 {
 	if( entity.ammo == 0u )
 	{
-		return;
+		return ust::null_optional;
 	}
 
 	var i32 weapon_tool_index= item[0];
 
 	if( !( weapon_tool_index >= 0 && size_type( weapon_tool_index ) < entities_description.tools.size() ) )
 	{
-		return;
+		return ust::null_optional;
 	}
 
 	var EntitiesDescription::Tool& weapon_tool= entities_description.tools[ size_type( weapon_tool_index ) ];
@@ -4569,7 +4589,7 @@ fn EntityShoot(
 	if( !entity.player_is_in_sight || entity.last_seen_player_position.empty() )
 	{
 		// Can't see the player anymore, avoid shooting.
-		return;
+		return ust::null_optional;
 	}
 
 	var Vec3f target_position=
@@ -4632,6 +4652,13 @@ fn EntityShoot(
 				.age_steps= 0u,
 			} );
 	}
+
+	return
+		DelayedShotAlarm
+		{
+			.center= shot_position,
+			.max_distance= c_enemy_shot_enemy_alarm_max_distance,
+		};
 }
 
 fn EntityDirectionalShot(
