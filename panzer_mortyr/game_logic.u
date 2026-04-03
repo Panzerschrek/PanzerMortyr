@@ -3914,48 +3914,64 @@ fn AddEntityCollider(
 
 fn CalculateEntityColliderBBox( EntityState& entity, EntitiesDescription::Operation& operation ) : ust::optional</BBox3f/>
 {
-	var ust::optional</BBox3f/> mut collider_bbox;
+	// Rotation animation is used only by the tank enemy on map 24.
+	// If it's present - used bbox for it.
+	var ust::optional</BBox3f/> mut collider_bbox=
+		CaclulateColliderBBoxForOperationAnimation(
+			entity,
+			operation.rotation_animation,
+			Convert1024Angle( f32( operation.rotation_animation.direction ) ) );
+
+	if( !collider_bbox.empty() )
+	{
+		return collider_bbox;
+	}
 
 	foreach( &anim : operation.animations )
 	{
-		if( anim.num_steps == 0u )
+		collider_bbox= CaclulateColliderBBoxForOperationAnimation( entity, anim, entity.azimuth );
+		if( !collider_bbox.empty() )
 		{
-			continue;
+			break;
 		}
-
-		if( anim.bounding_box_half_size_x == 0 ||
-			anim.bounding_box_half_size_y == 0 ||
-			anim.bounding_box_half_size_z == 0 )
-		{
-			// Entities with at least one zero collider dimentsion don't collide with each other.
-			continue;
-		}
-
-		var Vec3f mut bbox_half_size(
-			f32( anim.bounding_box_half_size_x ),
-			f32( anim.bounding_box_half_size_y ),
-			f32( anim.bounding_box_half_size_z ) );
-
-		var f32 bbox_angle=
-			( ust::ref_cmp_eq( anim, operation.animations[ size_type( EntitiesDescription::Operation::AnimationKind::Rotation ) ] )
-			? Convert1024Angle( f32( anim.direction ) )
-			: entity.azimuth );
-
-		RotateEntityBBox( bbox_half_size, bbox_angle );
-
-		var Vec3f bbox_center=
-			entity.position +
-			Vec3f(
-				f32( anim.bounding_box_center_x ),
-				f32( anim.bounding_box_center_y ),
-				f32( anim.bounding_box_center_z ) );
-
-		// Usually we have only one collision box.
-		// The only exception is the tank enemy on map 24. In this case use the last one collider - it's good enough.
-		collider_bbox= BBox3f{ .min= bbox_center - bbox_half_size, .max= bbox_center + bbox_half_size };
 	}
 
 	return collider_bbox;
+}
+
+fn CaclulateColliderBBoxForOperationAnimation(
+	EntityState& entity,
+	EntitiesDescription::OperationAnimationDescription& anim,
+	f32 bbox_angle ) : ust::optional</BBox3f/>
+{
+	if( anim.num_steps == 0u )
+	{
+		return ust::null_optional;
+	}
+
+	if( anim.bounding_box_half_size_x == 0 ||
+		anim.bounding_box_half_size_y == 0 ||
+		anim.bounding_box_half_size_z == 0 )
+	{
+		// Entities with at least one zero collider dimentsion don't collide with each other.
+		return ust::null_optional;
+	}
+
+	var Vec3f mut bbox_half_size(
+		f32( anim.bounding_box_half_size_x ),
+		f32( anim.bounding_box_half_size_y ),
+		f32( anim.bounding_box_half_size_z ) );
+
+	RotateEntityBBox( bbox_half_size, bbox_angle );
+
+	var Vec3f bbox_center=
+		entity.position +
+		Vec3f(
+			f32( anim.bounding_box_center_x ),
+			f32( anim.bounding_box_center_y ),
+			f32( anim.bounding_box_center_z ) );
+
+	return BBox3f{ .min= bbox_center - bbox_half_size, .max= bbox_center + bbox_half_size };
 }
 
 fn RemoveEntityCollider(
@@ -4814,12 +4830,7 @@ fn MoveEntity(
 			f32( anim.bounding_box_half_size_y ),
 			f32( anim.bounding_box_half_size_z ) );
 
-		var f32 bbox_angle=
-			( ust::ref_cmp_eq( anim, current_operation.animations[ size_type( EntitiesDescription::Operation::AnimationKind::Rotation ) ] )
-			? Convert1024Angle( f32( anim.direction ) )
-			: entity.azimuth );
-
-		RotateEntityBBox( bbox_half_size, bbox_angle );
+		RotateEntityBBox( bbox_half_size, entity.azimuth );
 
 		var Vec3f bbox_center=
 			Vec3f(
@@ -4827,8 +4838,29 @@ fn MoveEntity(
 				f32( anim.bounding_box_center_y ),
 				f32( anim.bounding_box_center_z ) );
 
-		// Usually we have only one collision box.
-		// The only exception is the tank enemy on map 24. In this case use the last one collider - it's good enough.
+
+		collider_bbox_opt= BBox3f{ .min= bbox_center - bbox_half_size, .max= bbox_center + bbox_half_size };
+	}
+
+	// Usually we have only one collision box.
+	// The only exception is the tank enemy on map 24. Use for it rotation animation collider.
+	if( current_operation.rotation_animation.num_steps > 0u )
+	{
+		auto& anim= current_operation.rotation_animation;
+
+		var Vec3f mut bbox_half_size(
+			f32( anim.bounding_box_half_size_x ),
+			f32( anim.bounding_box_half_size_y ),
+			f32( anim.bounding_box_half_size_z ) );
+
+		RotateEntityBBox( bbox_half_size, Convert1024Angle( f32( anim.direction ) ) );
+
+		var Vec3f bbox_center=
+			Vec3f(
+				f32( anim.bounding_box_center_x ),
+				f32( anim.bounding_box_center_y ),
+				f32( anim.bounding_box_center_z ) );
+
 		collider_bbox_opt= BBox3f{ .min= bbox_center - bbox_half_size, .max= bbox_center + bbox_half_size };
 	}
 
