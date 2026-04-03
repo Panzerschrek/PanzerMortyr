@@ -353,6 +353,78 @@ fn GetPackageInfo( BK::BuildSystemInterface &mut build_system_interface ) : BK::
 			} );
 	}
 
+	{
+		//
+		// SDL build
+		//
+
+		var ust::filesystem_path sdl_source_path=
+			ust::path::join( build_system_interface.GetCurrentPackageSourceDirectory(), "SDL" );
+
+		var ust::filesystem_path sdl_build_path=
+			ust::path::join( build_system_interface.GetCurrentPackageBuildDirectory(), "sdl_build" );
+
+		var ust::filesystem_path cmake_cache_file=
+			ust::path::join( sdl_build_path, "CMakeCache.txt" );
+
+		var ust::string_view8 sdl_library_base_name=
+			( build_system_interface.GetBuildConfiguration() == BK::BuildConfiguration::Debug
+				? ust::string_view8( "libSDL2d" )
+				: ust::string_view8( "libSDL2" ) );
+
+		var ust::string_view8 sdl_library_prefix=
+			( is_target_windows ? ust::string_view8( ".lib" ) : ust::string_view8( ".a" ) );
+
+		var ust::filesystem_path sdl_compiled=
+			ust::path::join(
+				sdl_build_path,
+				ust::concat( sdl_library_base_name, sdl_library_prefix ) );
+
+		var ust::string_view8 mut cmake_build_type;
+		switch( build_system_interface.GetBuildConfiguration() )
+		{
+			BK::BuildConfiguration::Debug -> { cmake_build_type= "Debug"; },
+			BK::BuildConfiguration::Release -> { cmake_build_type= "Release"; },
+			BK::BuildConfiguration::MinSizeRelease -> { cmake_build_type= "MinSizeRel"; },
+		}
+
+		var ust::string8 cmake_executable =
+			ust::concat(
+				"cmake",
+				( is_host_windows ? ust::string_view8(".exe") : ust::string_view8("") ) );
+
+		custom_build_steps.push_back(
+			BK::CustomBuildStep
+			{
+				.command= BK::CustomBuildStep::ExeCommand
+				{
+					.exe_path= cmake_executable,
+					.command_line= ust::make_array</ust::string8/>(
+						"-S", sdl_source_path,
+						"-B", sdl_build_path,
+						"-DBUILD_EXAMPLES=OFF",
+						ust::concat( "-DCMAKE_BUILD_TYPE=", cmake_build_type ),
+						"-G", "Ninja" )
+				},
+				.input_files= ust::make_array( ust::path::join( sdl_source_path, "CMakeLists.txt" ) ),
+				.output_files= ust::make_array( cmake_cache_file ),
+				.comment= "cmake generation for sdl",
+			} );
+
+		custom_build_steps.push_back(
+			BK::CustomBuildStep
+			{
+				.command= BK::CustomBuildStep::ExeCommand
+				{
+					.exe_path= cmake_executable,
+					.command_line= ust::make_array</ust::string8/>( "--build", sdl_build_path )
+				},
+				.input_files= ust::make_array( cmake_cache_file ),
+				.output_files= ust::make_array( sdl_compiled ),
+				.comment= "cmake build for sdl",
+			} );
+	}
+
 	build_targets.push_back(
 		BK::BuildTarget
 		{
