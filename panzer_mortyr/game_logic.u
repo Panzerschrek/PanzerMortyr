@@ -34,14 +34,17 @@ fn CreateNewMapGameState(
 			.armor= 0u,
 			.collider_index= ~0u,
 			.inventory= zero_init,
-			.current_weapon= EntitiesDescription::ToolType::None,
-			.requested_weapon= EntitiesDescription::ToolType::None,
-			.weapon_switching_fraction= c_weapon_switching_half_time_steps,
-			.weapon_state
+			.primary_weapon_state
 			{
-				.extra_lowering= 0.0f,
-				.current_animation= PlayerWeaponState::WeaponAnimation::None,
-				.current_animation_step= 0u,
+				.current_weapon= EntitiesDescription::ToolType::None,
+				.requested_weapon= EntitiesDescription::ToolType::None,
+				.weapon_switching_fraction= c_weapon_switching_half_time_steps,
+				.weapon_state
+				{
+					.extra_lowering= 0.0f,
+					.current_animation= PlayerWeaponState::WeaponAnimation::None,
+					.current_animation_step= 0u,
+				},
 			},
 			.kick_weapon_state
 			{
@@ -167,14 +170,17 @@ fn CreateNewMapGameState(
 					.armor= 0u, // TODO - maybe read it from some config?
 					.collider_index= ~0u,
 					.inventory= zero_init,
-					.current_weapon= EntitiesDescription::ToolType::None,
-					.requested_weapon= EntitiesDescription::ToolType::None,
-					.weapon_switching_fraction= c_weapon_switching_half_time_steps,
-					.weapon_state
+					.primary_weapon_state
 					{
-						.extra_lowering= 0.0f,
-						.current_animation= PlayerWeaponState::WeaponAnimation::None,
-						.current_animation_step= 0u,
+						.current_weapon= EntitiesDescription::ToolType::None,
+						.requested_weapon= EntitiesDescription::ToolType::None,
+						.weapon_switching_fraction= c_weapon_switching_half_time_steps,
+						.weapon_state
+						{
+							.extra_lowering= 0.0f,
+							.current_animation= PlayerWeaponState::WeaponAnimation::None,
+							.current_animation_step= 0u,
+						},
 					},
 					.kick_weapon_state
 					{
@@ -208,13 +214,14 @@ fn CreateNewMapGameState(
 				game_state.player.inventory[ size_type( EntitiesDescription::ToolType::KeyC ) ]= 0u;
 
 				// Preserve current weapon (if can).
-				if( game_state.player.inventory[ size_type( prev_state.current_weapon ) ] != 0u )
+				if( game_state.player.inventory[ size_type( prev_state.primary_weapon_state.current_weapon ) ] != 0u )
 				{
-					game_state.player.current_weapon= prev_state.current_weapon;
+					game_state.player.primary_weapon_state.current_weapon=
+						prev_state.primary_weapon_state.current_weapon;
 				}
 				else
 				{
-					game_state.player.current_weapon= EntitiesDescription::ToolType::Kick;
+					game_state.player.primary_weapon_state.current_weapon= EntitiesDescription::ToolType::Kick;
 				}
 
 				// Preserve selected tool.
@@ -256,12 +263,13 @@ fn CreateNewMapGameState(
 				{
 					if( game_state.player.inventory[ size_type(weapon_tool) ] > 0u )
 					{
-						game_state.player.current_weapon= weapon_tool;
+						game_state.player.primary_weapon_state.current_weapon= weapon_tool;
 					}
 				}
 			}
 
-			game_state.player.requested_weapon= game_state.player.current_weapon;
+			game_state.player.primary_weapon_state.requested_weapon=
+				game_state.player.primary_weapon_state.current_weapon;
 
 			AddPlayerCollider( entities_description, game_state );
 
@@ -369,7 +377,7 @@ fn PerformPlayerWeaponLogic( GameMapData& map_data, PlayerInput& player_input, G
 	{
 		if( player_input.shot_requested )
 		{
-			if( game_state.player.current_weapon == EntitiesDescription::ToolType::Kick )
+			if( game_state.player.primary_weapon_state.current_weapon == EntitiesDescription::ToolType::Kick )
 			{
 				// If current weapon is kick - perform kicking using kicking weapon state.
 				// This allows to switch to other weapon while performing such kicking.
@@ -381,12 +389,12 @@ fn PerformPlayerWeaponLogic( GameMapData& map_data, PlayerInput& player_input, G
 			}
 			else if(
 				// Make sure weapon switching is done.
-				game_state.player.weapon_switching_fraction >= c_weapon_switching_half_time_steps )
+				game_state.player.primary_weapon_state.weapon_switching_fraction >= c_weapon_switching_half_time_steps )
 			{
 				TryStartPlayerShooting(
 					entities_description,
-					game_state.player.current_weapon,
-					game_state.player.weapon_state,
+					game_state.player.primary_weapon_state.current_weapon,
+					game_state.player.primary_weapon_state.weapon_state,
 					game_state.player.inventory );
 			}
 		}
@@ -404,28 +412,28 @@ fn PerformPlayerWeaponLogic( GameMapData& map_data, PlayerInput& player_input, G
 	if( player_input.inventory_input.requested_weapon != EntitiesDescription::ToolType::None &&
 		game_state.player.energy > 0u /* Allow switching weapons only if alive. */ )
 	{
-		game_state.player.requested_weapon= player_input.inventory_input.requested_weapon;
+		game_state.player.primary_weapon_state.requested_weapon= player_input.inventory_input.requested_weapon;
 	}
 
 	if( game_state.player.energy == 0u )
 	{
 		// In case of death lower the weapon.
-		game_state.player.weapon_state.extra_lowering+= c_weapon_lowering_on_death_speed;
-		ust::min_assign( game_state.player.weapon_state.extra_lowering, 1.0f );
+		game_state.player.primary_weapon_state.weapon_state.extra_lowering+= c_weapon_lowering_on_death_speed;
+		ust::min_assign( game_state.player.primary_weapon_state.weapon_state.extra_lowering, 1.0f );
 	}
 	else
 	{
-		game_state.player.weapon_state.extra_lowering= 0.0f;
+		game_state.player.primary_weapon_state.weapon_state.extra_lowering= 0.0f;
 	}
 
 	// Process shooting logic.
 	for( auto mut i= 0u; i < 2u; ++i )
 	{
 		var EntitiesDescription::ToolType weapon_tool_type=
-			( i == 0u ? game_state.player.current_weapon : EntitiesDescription::ToolType::Kick );
+			( i == 0u ? game_state.player.primary_weapon_state.current_weapon : EntitiesDescription::ToolType::Kick );
 
 		var PlayerWeaponState &mut weapon_state=
-			( i == 0u ? game_state.player.weapon_state : game_state.player.kick_weapon_state );
+			( i == 0u ? game_state.player.primary_weapon_state.weapon_state : game_state.player.kick_weapon_state );
 
 		if( weapon_state.num_active_shooting_steps.empty() )
 		{
@@ -601,36 +609,40 @@ fn PerformPlayerWeaponLogic( GameMapData& map_data, PlayerInput& player_input, G
 		}
 	}
 
-	if( game_state.player.weapon_state.num_active_shooting_steps.empty() &&
-		game_state.player.requested_weapon != game_state.player.current_weapon && game_state.player.energy > 0u )
+	if( game_state.player.primary_weapon_state.weapon_state.num_active_shooting_steps.empty() &&
+		game_state.player.primary_weapon_state.requested_weapon != game_state.player.primary_weapon_state.current_weapon &&
+		game_state.player.energy > 0u )
 	{
 		// Perform weapon switching logic (if not shooting right now or if is alive).
 
 		// Check first if we have requiresed weapon.
 		// It may be necessary if (somehow) the player loses his weapons during transition.
 		// TODO - check also for ammo.
-		if( game_state.player.inventory[ size_type( game_state.player.requested_weapon ) ] == 0u )
+		if( game_state.player.inventory[ size_type( game_state.player.primary_weapon_state.requested_weapon ) ] == 0u )
 		{
-			game_state.player.requested_weapon= game_state.player.current_weapon;
+			game_state.player.primary_weapon_state.requested_weapon=
+				game_state.player.primary_weapon_state.current_weapon;
 		}
 		else
 		{
-			if( game_state.player.weapon_switching_fraction == 0u )
+			if( game_state.player.primary_weapon_state.weapon_switching_fraction == 0u )
 			{
-				game_state.player.current_weapon= game_state.player.requested_weapon;
-				++game_state.player.weapon_switching_fraction;
+				game_state.player.primary_weapon_state.current_weapon=
+					game_state.player.primary_weapon_state.requested_weapon;
+
+				++game_state.player.primary_weapon_state.weapon_switching_fraction;
 			}
 			else
 			{
-				--game_state.player.weapon_switching_fraction;
+				--game_state.player.primary_weapon_state.weapon_switching_fraction;
 			}
 		}
 	}
 	else
 	{
-		if( game_state.player.weapon_switching_fraction < c_weapon_switching_half_time_steps )
+		if( game_state.player.primary_weapon_state.weapon_switching_fraction < c_weapon_switching_half_time_steps )
 		{
-			++game_state.player.weapon_switching_fraction;
+			++game_state.player.primary_weapon_state.weapon_switching_fraction;
 		}
 	}
 
@@ -638,9 +650,9 @@ fn PerformPlayerWeaponLogic( GameMapData& map_data, PlayerInput& player_input, G
 
 	PerformFirstPersonWeaponAnimation(
 		entities_description,
-		game_state.player.current_weapon,
+		game_state.player.primary_weapon_state.current_weapon,
 		walking,
-		game_state.player.weapon_state );
+		game_state.player.primary_weapon_state.weapon_state );
 
 	PerformFirstPersonWeaponAnimation(
 		entities_description,
@@ -857,7 +869,7 @@ fn PerformPlayerInventoryLogic(
 			{
 				if( player.inventory[ size_type( player.tools_state.selected_tool ) ] > 0u )
 				{
-					player.requested_weapon= player.tools_state.selected_tool;
+					player.primary_weapon_state.requested_weapon= player.tools_state.selected_tool;
 				}
 			},
 			EntitiesDescription::ToolType::HealthPack ->
@@ -3700,7 +3712,7 @@ fn PickUpItems( GameMapData& map_data, GameState &mut game_state )
 									box_contents.tool_type >= EntitiesDescription::ToolType::WeaponA &&
 									box_contents.tool_type <= EntitiesDescription::ToolType::WeaponJ )
 								{
-									game_state.player.requested_weapon= box_contents.tool_type;
+									game_state.player.primary_weapon_state.requested_weapon= box_contents.tool_type;
 								}
 
 								current_count+= box_contents.amount;
@@ -5416,7 +5428,8 @@ fn GetCrosshairPositionAndKind(
 	var EntitiesDescription& entities_description= map_data.entities_description.deref();
 
 	var size_type weapon_tool_index(
-		entities_description.tool_type_to_index_map[ size_type( game_state.player.current_weapon ) ] );
+		entities_description.tool_type_to_index_map[
+			size_type( game_state.player.primary_weapon_state.current_weapon ) ] );
 
 	if( weapon_tool_index < entities_description.tools.size() )
 	{
