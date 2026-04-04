@@ -62,7 +62,6 @@ PanzerMortyr general:
 * Consider writing some kind of alternative installer - a tool, which depacks game data from the original game ISO or mdf/mds files.
 * Draw loading screen before performing transition to the next level in game code and corresponding game and rendering resource loading.
 * Consider embedding git revision into the game executable and showing it somewhere in the game.
-* Display somewhere in the main menu a text explaining that it's PanzerMortyr and not the original game.
 * Allow turning off some costly effects via settings - breaking glass, fog, dynamic lighting, etc.
 * Consider performing even more advanced game data search - with more hardcoded paths, Windows registry fetches, etc.
 
