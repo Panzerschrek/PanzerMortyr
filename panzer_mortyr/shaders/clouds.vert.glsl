@@ -1,5 +1,7 @@
 #version 330
 
+// Use hardcoded pyramid mesh.
+
 const vec3 c_vertices[5]= vec3[5]
 (
 	vec3( 1.0,  1.0, 0.5),
@@ -9,14 +11,18 @@ const vec3 c_vertices[5]= vec3[5]
 	vec3(0, 0, -1.0)
 );
 
-const int c_num_indices= 4 * 3;
+const int c_num_indices= 6 * 3;
 
 const int c_indeces[c_num_indices]= int[c_num_indices]
 (
+	// Upper 4 triangles.
 	4, 1, 0,
 	4, 3, 1,
 	4, 2, 3,
-	4, 0, 2
+	4, 0, 2,
+	// Lower 2 triangles.
+	0, 1, 2,
+	1, 2, 3
 );
 
 uniform mat4 vu_matrix;
