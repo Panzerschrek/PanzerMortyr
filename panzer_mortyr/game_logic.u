@@ -612,90 +612,101 @@ fn PerformPlayerWeaponLogic( GameMapData& map_data, PlayerInput& player_input, G
 		}
 	}
 
+	var bool walking= game_state.player.velocity.xy().Length() >= 1.0f;
+
+	PerformFirstPersonWeaponAnimation(
+		entities_description,
+		game_state.player.current_weapon,
+		walking,
+		game_state.player.weapon_state );
+}
+
+fn PerformFirstPersonWeaponAnimation(
+	EntitiesDescription& entities_description,
+	EntitiesDescription::ToolType weapon_tool_type,
+	bool walking,
+	PlayerWeaponState &mut weapon_state )
+{
+	var size_type weapon_tool_index( entities_description.tool_type_to_index_map[ size_type( weapon_tool_type ) ] );
+
+	if( weapon_tool_index >= entities_description.tools.size() )
 	{
-		var size_type weapon_tool_index(
-				entities_description.tool_type_to_index_map[ size_type( game_state.player.current_weapon ) ] );
+		return;
+	}
 
-		if( weapon_tool_index < entities_description.tools.size() )
+	var EntitiesDescription::Tool& tool= entities_description.tools[ weapon_tool_index ];
+
+	// Some stupid (and probably wrong) state machine.
+	// If walking - play walking animation. Otherwise play Idle0 and Idle1.
+	switch( weapon_state.current_animation )
+	{
+		PlayerWeaponState::WeaponAnimation::None ->
 		{
-			var EntitiesDescription::Tool& tool= entities_description.tools[ weapon_tool_index ];
-
-			// TODO - tune this.
-			var bool walking= game_state.player.velocity.xy().Length() >= 1.0f;
-
-			// Some stupid (and probably wrong) state machine.
-			// If walking - play walking animation. Otherwise play Idle0 and Idle1.
-			switch( game_state.player.weapon_state.current_animation )
+			if( walking )
 			{
-				PlayerWeaponState::WeaponAnimation::None ->
-				{
-					if( walking )
-					{
-						game_state.player.weapon_state.current_animation= PlayerWeaponState::WeaponAnimation::Walking;
-						game_state.player.weapon_state.current_animation_step= u32( tool.weapon_data[0] );
-					}
-					else
-					{
-						game_state.player.weapon_state.current_animation= PlayerWeaponState::WeaponAnimation::Idle0;
-						game_state.player.weapon_state.current_animation_step= u32( tool.weapon_data[2] );
-					}
-				},
-				PlayerWeaponState::WeaponAnimation::Walking ->
-				{
-					++game_state.player.weapon_state.current_animation_step;
-					if( game_state.player.weapon_state.current_animation_step >= u32( tool.weapon_data[0] + tool.weapon_data[1] ) )
-					{
-						if( walking )
-						{
-							game_state.player.weapon_state.current_animation_step= u32( tool.weapon_data[0] );
-						}
-						else
-						{
-							game_state.player.weapon_state.current_animation= PlayerWeaponState::WeaponAnimation::Idle0;
-							game_state.player.weapon_state.current_animation_step= u32( tool.weapon_data[2] );
-						}
-					}
-				},
-				PlayerWeaponState::WeaponAnimation::Idle0 ->
-				{
-					++game_state.player.weapon_state.current_animation_step;
-					if( game_state.player.weapon_state.current_animation_step >= u32( tool.weapon_data[2] + tool.weapon_data[3] ) )
-					{
-						if( walking )
-						{
-							game_state.player.weapon_state.current_animation= PlayerWeaponState::WeaponAnimation::Walking;
-							game_state.player.weapon_state.current_animation_step= u32( tool.weapon_data[0] );
-						}
-						else
-						{
-							game_state.player.weapon_state.current_animation= PlayerWeaponState::WeaponAnimation::Idle1;
-							game_state.player.weapon_state.current_animation_step= u32( tool.weapon_data[4] );
-						}
-					}
-				},
-				PlayerWeaponState::WeaponAnimation::Idle1 ->
-				{
-					++game_state.player.weapon_state.current_animation_step;
-					if( game_state.player.weapon_state.current_animation_step >= u32( tool.weapon_data[4] + tool.weapon_data[5] ) )
-					{
-						if( walking )
-						{
-							game_state.player.weapon_state.current_animation= PlayerWeaponState::WeaponAnimation::Walking;
-							game_state.player.weapon_state.current_animation_step= u32( tool.weapon_data[0] );
-						}
-						else
-						{
-							game_state.player.weapon_state.current_animation= PlayerWeaponState::WeaponAnimation::Idle0;
-							game_state.player.weapon_state.current_animation_step= u32( tool.weapon_data[2] );
-						}
-					}
-				},
-				PlayerWeaponState::WeaponAnimation::Shooting ->
-				{
-					++game_state.player.weapon_state.current_animation_step;
-				},
+				weapon_state.current_animation= PlayerWeaponState::WeaponAnimation::Walking;
+				weapon_state.current_animation_step= u32( tool.weapon_data[0] );
 			}
-		}
+			else
+			{
+				weapon_state.current_animation= PlayerWeaponState::WeaponAnimation::Idle0;
+				weapon_state.current_animation_step= u32( tool.weapon_data[2] );
+			}
+		},
+		PlayerWeaponState::WeaponAnimation::Walking ->
+		{
+			++weapon_state.current_animation_step;
+			if( weapon_state.current_animation_step >= u32( tool.weapon_data[0] + tool.weapon_data[1] ) )
+			{
+				if( walking )
+				{
+					weapon_state.current_animation_step= u32( tool.weapon_data[0] );
+				}
+				else
+				{
+					weapon_state.current_animation= PlayerWeaponState::WeaponAnimation::Idle0;
+					weapon_state.current_animation_step= u32( tool.weapon_data[2] );
+				}
+			}
+		},
+		PlayerWeaponState::WeaponAnimation::Idle0 ->
+		{
+			++weapon_state.current_animation_step;
+			if( weapon_state.current_animation_step >= u32( tool.weapon_data[2] + tool.weapon_data[3] ) )
+			{
+				if( walking )
+				{
+					weapon_state.current_animation= PlayerWeaponState::WeaponAnimation::Walking;
+					weapon_state.current_animation_step= u32( tool.weapon_data[0] );
+				}
+				else
+				{
+					weapon_state.current_animation= PlayerWeaponState::WeaponAnimation::Idle1;
+					weapon_state.current_animation_step= u32( tool.weapon_data[4] );
+				}
+			}
+		},
+		PlayerWeaponState::WeaponAnimation::Idle1 ->
+		{
+			++weapon_state.current_animation_step;
+			if( weapon_state.current_animation_step >= u32( tool.weapon_data[4] + tool.weapon_data[5] ) )
+			{
+				if( walking )
+				{
+					weapon_state.current_animation= PlayerWeaponState::WeaponAnimation::Walking;
+					weapon_state.current_animation_step= u32( tool.weapon_data[0] );
+				}
+				else
+				{
+					weapon_state.current_animation= PlayerWeaponState::WeaponAnimation::Idle0;
+					weapon_state.current_animation_step= u32( tool.weapon_data[2] );
+				}
+			}
+		},
+		PlayerWeaponState::WeaponAnimation::Shooting ->
+		{
+			++weapon_state.current_animation_step;
+		},
 	}
 }
 
