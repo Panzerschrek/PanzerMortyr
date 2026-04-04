@@ -103,7 +103,6 @@ PanzerMortyr game logic:
 * Implement remaining projectile hit effects (sparkles, blood).
 * Rework code doing first person weapon idle/walking animations. Consider adding states where no animation is played at all.
 * Implement weapon switching in case of out of ammo.
-* Implement kick as separate "weapon" which can be fired when some other weapon is active (including kicking leg animation shown).
 * Spawn bubble sprites while swimming in water.
 * Spawn bubble sprites for projectiles moving in water.
 * Do something with unconditional entity state transition "w_zasiegu_strzalu_b" - try making it somewhat random.
