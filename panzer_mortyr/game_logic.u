@@ -347,6 +347,8 @@ fn nodiscard ProcessGameLogicStep(
 
 	ProcessMuzzleFlashesLogicStep( game_state.muzzle_flashes );
 
+	ProcessSparkParticlesLogicStep( game_state.spark_particles );
+
 	ProcessExplosionParticlesLogicStep( game_state.explosion_particles );
 
 	ProcessFlameParticlesLogicStep( game_state );
@@ -3290,6 +3292,57 @@ fn ProcessProjectileHitEventsLogicStep( GameGlobalData& global_data, GameMapData
 				} );
 		}
 
+		if( weapon_tool.stars == EntitiesDescription::Tool::c_sparks_effect_id )
+		{
+			if( size_type( projectile_hit_event.hit_quad_index ) < quads.size() )
+			{
+				var Vec3f normal= CalculateQuadNormal( quads[ size_type( projectile_hit_event.hit_quad_index ) ] );
+				var f32 normal_length= normal.Length();
+				if( normal_length > 0.0f )
+				{
+					var Vec3f normal_normalized= normal / normal_length;
+
+					// Generate sparks travelling with random direction and speed.
+					for( auto mut i= 0s; i < 32s; ++i )
+					{
+						var [ f32, 3 ] direction_raw[
+							f32( game_state.random.Next() ) * ( 2.0f / f32( PseudoRandomGenerator::c_max ) ) - 1.0f ... ];
+						var Vec3f direction( direction_raw );
+
+						var f32 direction_length= direction.Length();
+
+						// Ignore random vectors outside unit sphere. Doing so gives nice spherical distribution.
+						// Also ignore zero vectors.
+						if( direction_length > 1.0f | direction_length == 0.0f )
+						{
+							continue;
+						}
+
+						// If random direction is facing away from the hit plane - reflect it.
+						// There is no reason to spawn sparks flying towards hit plane, since they are invisible anyway.
+
+						var Vec3f mut direction_corrected= direction;
+						var f32 normal_dot= direction.Dot( normal_normalized );
+						if( normal_dot < 0.0f )
+						{
+							direction_corrected -= ( 2.0f * normal_dot / direction_length ) * normal_normalized;
+						}
+
+						var f32 c_sparks_speed_scale= 8.0f;
+
+						game_state.spark_particles.Insert(
+							SparkParticle
+							{
+								.position= projectile_hit_event.position,
+								// Since direction vector isn't normalized, result speeds are variating, which gives good result.
+								.velocity= direction_corrected * c_sparks_speed_scale,
+								.age_steps= 0u,
+							} );
+					}
+				}
+			}
+		}
+
 		// Alarm entities by nearby projectile hits.
 		AlarmEnemiesByNearbyEvent(
 			game_state.colliders,
@@ -3476,6 +3529,22 @@ fn ProcessMuzzleFlashesLogicStep( MuzzleFlashesContainer &mut muzzle_flashes )
 		{
 			++muzzle_flash.age_steps;
 			return muzzle_flash.age_steps < c_muzzle_flash_max_age;
+		} );
+}
+
+fn ProcessSparkParticlesLogicStep( SparkParticlesContainer &mut spark_particles )
+{
+	spark_particles.Retain(
+		lambda( SparkParticle &mut spark_particle ) : bool
+		{
+			spark_particle.position+= spark_particle.velocity;
+
+			var f32 c_sparks_gravity= 1.0f;
+
+			spark_particle.velocity.z+= c_sparks_gravity;
+
+			++spark_particle.age_steps;
+			return spark_particle.age_steps < c_spark_particle_max_age;
 		} );
 }
 
