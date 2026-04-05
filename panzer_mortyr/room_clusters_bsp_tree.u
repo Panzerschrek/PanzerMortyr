@@ -16,12 +16,12 @@ fn BuildRoomClustersBSPTree( ust::array_view_imut</ZvoxCluster/> clusters ) : Ro
 
 		if( cluster.c.num_children_clusters >= 0 )
 		{
-			cluster_subvolumes.push_back(
-				RoomClusterSubvolume
-				{
-					.bbox= CreateClusterBBox( cluster ),
-					.clustrer_index(i),
-				} );
+			var BBox3f bbox= CreateClusterBBox( cluster );
+			var Vec3f bbox_dimensions= bbox.GetDimensions();
+			if( bbox_dimensions.x > 0.0f & bbox_dimensions.y > 0.0f & bbox_dimensions.z > 0.0f )
+			{
+				cluster_subvolumes.push_back( RoomClusterSubvolume{ .bbox= bbox, .clustrer_index(i) } );
+			}
 		}
 	}
 
@@ -112,6 +112,77 @@ fn BuildRoomClustersBSPTree_r(
 			}
 		}
 	}
+
+	var Planef& clip_plane= best_plane;
+
+	var ust::vector</RoomClusterSubvolume/> mut subvolumes_front, mut subvolumes_back;
+
+	foreach( &cluster_subvolume : cluster_subvolumes )
+	{
+		var ust::optional</BBox3f/> mut bbox_front, mut bbox_back;
+
+		foreach( &v : cluster_subvolume.bbox.CreateCornerVertices() )
+		{
+			var f32 dist= clip_plane.GetDistanceForPoint( v );
+			if( dist > 0.0f )
+			{
+				if( bbox_front.empty() )
+				{
+					bbox_front= BBox3f{ .min= v, .max= v };
+				}
+				else
+				{
+					bbox_front.try_deref().ExtendWithPoint( v );
+				}
+			}
+			else if( dist < 0.0f )
+			{
+				if( bbox_back.empty() )
+				{
+					bbox_back= BBox3f{ .min= v, .max= v };
+				}
+				else
+				{
+					bbox_back.try_deref().ExtendWithPoint( v );
+				}
+			}
+		}
+
+		// This condition should be true, unless empty bounding boxes are present.
+		debug_assert( !bbox_front.empty() | !bbox_back.empty() );
+
+		if( !bbox_front.empty() & !bbox_back.empty() )
+		{
+			// This works only for axis-aligned bounding boxes.
+			// If this box was split but current clip plane, extend both halves via center vertex.
+			var Vec3f center= cluster_subvolume.bbox.GetCenter();
+			bbox_front.try_deref().ExtendWithPoint( center );
+			bbox_back.try_deref().ExtendWithPoint( center );
+		}
+
+		if_var( &bb : bbox_front )
+		{
+			subvolumes_front.push_back(
+				RoomClusterSubvolume{ .bbox= bb, .clustrer_index= cluster_subvolume.clustrer_index } );
+		}
+		if_var( &bb : bbox_back )
+		{
+			subvolumes_back.push_back(
+				RoomClusterSubvolume{ .bbox= bb, .clustrer_index= cluster_subvolume.clustrer_index } );
+		}
+	}
+
+	debug_assert( !subvolumes_front.empty() & !subvolumes_back.empty() );
+
+	var RoomClustersBSPTree::NodeIndex child_front= BuildRoomClustersBSPTree_r( tree, subvolumes_front );
+	var RoomClustersBSPTree::NodeIndex child_back= BuildRoomClustersBSPTree_r( tree, subvolumes_back );
+
+	tree.branch_nodes[ size_type( node_index ) ]=
+		RoomClustersBSPTree::BranchNode
+		{
+			.plane= clip_plane,
+			.children[ child_front, child_back ],
+		};
 
 	return node_index;
 }
