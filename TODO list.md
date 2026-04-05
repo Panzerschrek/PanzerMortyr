@@ -125,7 +125,6 @@ PanzerMortyr game logic:
 * Consider disabling all or at least some weapons of the player if weapon shot start position is in water or other liquid.
 * Consider extinguishing damaging flames on entities located inside liquids.
 * Consider reducing brightness of Volkssturm smoking lights - they are way to bright.
-* Consider performing pseudo-random time-based brightness variation for flame lights.
 * Perform camera rotation upon player's death as the original game does. It seems to be full circle azimuth rotation and a rotation to some fixed elevation.
 
 PanzerMortyr rendering:
