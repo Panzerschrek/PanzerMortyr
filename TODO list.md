@@ -94,7 +94,6 @@ PanzerMortyr game logic:
 * Break glass quads and quads with breakable materials while applying spash damage.
 * Don't perform projectile and (maybe) entity collisions with broken map quads.
 * Implement jetpack tool.
-* Implement flashlight tool.
 * Implement invisibility tool (false documents) and enemy properties allowing to uncover the player having invisibility.
 * Implement flame particles emitted by explosive decorations ("wybuch_benzyny"/"plomienie").
 * Spawn bullet holes on walls, including holes attached to dynamic (movable) clusters.
@@ -138,6 +137,7 @@ PanzerMortyr rendering:
 * Draw animated water circle decals on map quads with "wet" property enabled in points where a rain particle hits such quad.
 * Draw injured enemies covered with blood.
 * Draw burning entities with some kind of burning effect (like in RtCW).
+* Suport light soruces with conic shape and use such source kind for flashlight.
 * Draw some fullscreen burning effect if the player is burning.
 * Experiment with an algorithm for dynamic visible clusters search similar to one used in SquareWheel.
 * Add support for MSAA (with proper support of fullscreen effects like fog).
