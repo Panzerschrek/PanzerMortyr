@@ -100,7 +100,7 @@ PanzerMortyr game logic:
 * Spawn bullet holes on walls, including holes attached to dynamic (movable) clusters.
 * Leave blood makrs on walls.
 * Leave footsteps where they should be.
-* Implement remaining projectile hit effects (sparkles, blood).
+* Implement remaining projectile hit effects (blood).
 * Rework code doing first person weapon idle/walking animations. Consider adding states where no animation is played at all.
 * Implement weapon switching in case of out of ammo.
 * Spawn bubble sprites while swimming in water.

@@ -43,6 +43,7 @@ Changes:
 * Light effects of projectile hits stay shorter for dim lights (compared to the original game).
 * Snow/rain drawing params may be slightly different - this includes moving speed, density, particle size, drawing distance. But these params are generally close enough to the original game.
 * Caustics look different. Different caustics texture is used, which is procedurally-generated, not the original one stored in a texture file. Caustics modulate underlying geometry light instead of adding it as the original game does.
+* Bullet hit spark effects (MG-42, laser pistol) look a little bit different and use different from the original billboard.
 
 
 ### Gameplay
