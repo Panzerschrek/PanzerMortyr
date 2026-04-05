@@ -57,10 +57,92 @@ fn BuildRoomClustersBSPTree_r(
 			.children= zero_init,
 		} );
 
-	// Search for best splitter plane.
+	var Planef split_plane= ChooseSplitPlane( cluster_subvolumes );
 
-	var Planef mut best_plane= Planef::CreateFromNormalAndPoint( Vec3f( 0.0f, 0.0f, 1.0f ), Vec3f::MakeZero() );
-	var i32 mut best_plane_score= 0x7FFFFFFF; // Smaller is better.
+	var ust::vector</RoomClusterSubvolume/> mut subvolumes_front, mut subvolumes_back;
+
+	foreach( &cluster_subvolume : cluster_subvolumes )
+	{
+		var ust::optional</BBox3f/> mut bbox_front, mut bbox_back;
+
+		foreach( &v : cluster_subvolume.bbox.CreateCornerVertices() )
+		{
+			var f32 dist= split_plane.GetDistanceForPoint( v );
+			if( dist > 0.0f )
+			{
+				if( bbox_front.empty() )
+				{
+					bbox_front= BBox3f{ .min= v, .max= v };
+				}
+				else
+				{
+					bbox_front.try_deref().ExtendWithPoint( v );
+				}
+			}
+			else if( dist < 0.0f )
+			{
+				if( bbox_back.empty() )
+				{
+					bbox_back= BBox3f{ .min= v, .max= v };
+				}
+				else
+				{
+					bbox_back.try_deref().ExtendWithPoint( v );
+				}
+			}
+		}
+
+		// This condition should be true, unless empty bounding boxes are present.
+		debug_assert( !bbox_front.empty() | !bbox_back.empty() );
+
+		if( !bbox_front.empty() & !bbox_back.empty() )
+		{
+			// This works only for axis-aligned bounding boxes.
+			// If this box was split but current clip plane, extend both halves via center vertex.
+			var Vec3f center= cluster_subvolume.bbox.GetCenter();
+			bbox_front.try_deref().ExtendWithPoint( center );
+			bbox_back.try_deref().ExtendWithPoint( center );
+		}
+
+		if_var( &bb : bbox_front )
+		{
+			debug_assert( bb.min.x < bb.max.x );
+			debug_assert( bb.min.y < bb.max.y );
+			debug_assert( bb.min.z < bb.max.z );
+			subvolumes_front.push_back(
+				RoomClusterSubvolume{ .bbox= bb, .clustrer_index= cluster_subvolume.clustrer_index } );
+		}
+		if_var( &bb : bbox_back )
+		{
+			debug_assert( bb.min.x < bb.max.x );
+			debug_assert( bb.min.y < bb.max.y );
+			debug_assert( bb.min.z < bb.max.z );
+			subvolumes_back.push_back(
+				RoomClusterSubvolume{ .bbox= bb, .clustrer_index= cluster_subvolume.clustrer_index } );
+		}
+	}
+
+	debug_assert( !subvolumes_front.empty() & !subvolumes_back.empty() );
+
+	var RoomClustersBSPTree::NodeIndex child_front= BuildRoomClustersBSPTree_r( tree, subvolumes_front );
+	var RoomClustersBSPTree::NodeIndex child_back= BuildRoomClustersBSPTree_r( tree, subvolumes_back );
+
+	tree.branch_nodes[ size_type( node_index ) ]=
+		RoomClustersBSPTree::BranchNode
+		{
+			.plane= split_plane,
+			.children[ child_front, child_back ],
+		};
+
+	return node_index;
+}
+
+fn ChooseSplitPlane( ust::array_view_imut</RoomClusterSubvolume/> cluster_subvolumes ) : Planef
+{
+	debug_assert( cluster_subvolumes.size() >= 2s );
+
+	var Planef mut best_split_plane= Planef::CreateFromNormalAndPoint( Vec3f( 0.0f, 0.0f, 1.0f ), Vec3f::MakeZero() );
+	var i32 mut best_split_plane_score= 0x7FFFFFFF; // Smaller is better.
 
 	foreach( &cluster_subvolume : cluster_subvolumes )
 	{
@@ -105,86 +187,17 @@ fn BuildRoomClustersBSPTree_r(
 
 			// Prefer building a balanced tree, but slightly downvote split planes producing too much splits.
 			var i32 score= ust::abs( num_front_subvolumes - num_back_subvolumes ) * 8 + num_split_subvolumes;
-			if( score < best_plane_score )
+			if( score < best_split_plane_score )
 			{
-				best_plane= candidate_plane;
-				best_plane_score= score;
+				best_split_plane= candidate_plane;
+				best_split_plane_score= score;
 			}
 		}
 	}
 
-	var Planef& clip_plane= best_plane;
+	debug_assert( best_split_plane_score < 0x7FFFFFFF );
 
-	var ust::vector</RoomClusterSubvolume/> mut subvolumes_front, mut subvolumes_back;
-
-	foreach( &cluster_subvolume : cluster_subvolumes )
-	{
-		var ust::optional</BBox3f/> mut bbox_front, mut bbox_back;
-
-		foreach( &v : cluster_subvolume.bbox.CreateCornerVertices() )
-		{
-			var f32 dist= clip_plane.GetDistanceForPoint( v );
-			if( dist > 0.0f )
-			{
-				if( bbox_front.empty() )
-				{
-					bbox_front= BBox3f{ .min= v, .max= v };
-				}
-				else
-				{
-					bbox_front.try_deref().ExtendWithPoint( v );
-				}
-			}
-			else if( dist < 0.0f )
-			{
-				if( bbox_back.empty() )
-				{
-					bbox_back= BBox3f{ .min= v, .max= v };
-				}
-				else
-				{
-					bbox_back.try_deref().ExtendWithPoint( v );
-				}
-			}
-		}
-
-		// This condition should be true, unless empty bounding boxes are present.
-		debug_assert( !bbox_front.empty() | !bbox_back.empty() );
-
-		if( !bbox_front.empty() & !bbox_back.empty() )
-		{
-			// This works only for axis-aligned bounding boxes.
-			// If this box was split but current clip plane, extend both halves via center vertex.
-			var Vec3f center= cluster_subvolume.bbox.GetCenter();
-			bbox_front.try_deref().ExtendWithPoint( center );
-			bbox_back.try_deref().ExtendWithPoint( center );
-		}
-
-		if_var( &bb : bbox_front )
-		{
-			subvolumes_front.push_back(
-				RoomClusterSubvolume{ .bbox= bb, .clustrer_index= cluster_subvolume.clustrer_index } );
-		}
-		if_var( &bb : bbox_back )
-		{
-			subvolumes_back.push_back(
-				RoomClusterSubvolume{ .bbox= bb, .clustrer_index= cluster_subvolume.clustrer_index } );
-		}
-	}
-
-	debug_assert( !subvolumes_front.empty() & !subvolumes_back.empty() );
-
-	var RoomClustersBSPTree::NodeIndex child_front= BuildRoomClustersBSPTree_r( tree, subvolumes_front );
-	var RoomClustersBSPTree::NodeIndex child_back= BuildRoomClustersBSPTree_r( tree, subvolumes_back );
-
-	tree.branch_nodes[ size_type( node_index ) ]=
-		RoomClustersBSPTree::BranchNode
-		{
-			.plane= clip_plane,
-			.children[ child_front, child_back ],
-		};
-
-	return node_index;
+	return best_split_plane;
 }
 
 } // namespace PM
