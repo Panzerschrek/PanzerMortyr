@@ -1,3 +1,6 @@
+import "/assert.iu"
+import "cluster_utils.iu"
+import "geometry_utils.iu"
 import "room_clusters_bsp_tree.iu"
 
 namespace PM
@@ -5,9 +8,112 @@ namespace PM
 
 fn BuildRoomClustersBSPTree( ust::array_view_imut</ZvoxCluster/> clusters ) : RoomClustersBSPTree
 {
-	// TODO.
-	ust::ignore_unused( clusters );
-	return RoomClustersBSPTree();
+	var ust::vector</RoomClusterSubvolume/> mut cluster_subvolumes;
+
+	for( auto mut i= 0s; i < clusters.size(); ++i )
+	{
+		var ZvoxCluster& cluster= clusters[i];
+
+		if( cluster.c.num_children_clusters >= 0 )
+		{
+			cluster_subvolumes.push_back(
+				RoomClusterSubvolume
+				{
+					.bbox= CreateClusterBBox( cluster ),
+					.clustrer_index(i),
+				} );
+		}
+	}
+
+	var RoomClustersBSPTree mut tree;
+
+	BuildRoomClustersBSPTree_r( tree, cluster_subvolumes );
+
+	return tree;
+}
+
+type RoomClusterSubvolume= RoomClustersBSPTree::LeafNode;
+
+fn BuildRoomClustersBSPTree_r(
+	RoomClustersBSPTree &mut tree,
+	ust::array_view_imut</RoomClusterSubvolume/> cluster_subvolumes ) : RoomClustersBSPTree::NodeIndex
+{
+	debug_assert( !cluster_subvolumes.empty() );
+
+	if( cluster_subvolumes.size() == 1s )
+	{
+		var RoomClustersBSPTree::NodeIndex node_index( size_type(RoomClustersBSPTree::c_first_leaf_node) + tree.leaf_nodes.size() );
+		tree.leaf_nodes.push_back( cluster_subvolumes.front() );
+		return node_index;
+	}
+
+	var RoomClustersBSPTree::NodeIndex node_index( tree.branch_nodes.size() );
+
+	 // Set actual value later, now insert a stub.
+	tree.branch_nodes.push_back(
+		RoomClustersBSPTree::BranchNode
+		{
+			.plane{ .normal= Vec3f::MakeZero(), .distance= 0.0f },
+			.children= zero_init,
+		} );
+
+	// Search for best splitter plane.
+
+	var Planef mut best_plane= Planef::CreateFromNormalAndPoint( Vec3f( 0.0f, 0.0f, 1.0f ), Vec3f::MakeZero() );
+	var i32 mut best_plane_score= 0x7FFFFFFF; // Smaller ist better.
+
+	foreach( &cluster_subvolume : cluster_subvolumes )
+	{
+		foreach( &candidate_plane : CreateBBoxPlanes( cluster_subvolume.bbox ) )
+		{
+			var i32 mut num_front_subvolumes= 0, mut num_back_subvolumes= 0, mut num_split_subvolumes= 0;
+
+			foreach( &cluster_subvolume_for_splitting : cluster_subvolumes )
+			{
+				var i32 mut num_front_vertices= 0, mut num_back_vertices= 0, mut num_vertices_on_plane= 0;
+
+				foreach( &v : cluster_subvolume_for_splitting.bbox.CreateCornerVertices() )
+				{
+					var f32 dist= candidate_plane.GetDistanceForPoint(v);
+					if( dist > 0.0f )
+					{
+						++num_front_vertices;
+					}
+					else if( dist < 0.0f )
+					{
+						++num_back_vertices;
+					}
+					else
+					{
+						++num_vertices_on_plane;
+					}
+				}
+
+				if( num_front_vertices > 0 && num_back_vertices == 0 )
+				{
+					++num_front_subvolumes;
+				}
+				else if( num_front_vertices == 0 && num_back_vertices > 0 )
+				{
+					++num_back_subvolumes;
+				}
+				else
+				{
+					++num_split_subvolumes;
+				}
+			}
+
+			// Don't care about split subvolumes. Prefer building a balanced tree.
+			var i32 score= ust::abs( num_front_subvolumes - num_back_subvolumes );
+			if( score < best_plane_score )
+			{
+				best_plane= candidate_plane;
+				best_plane_score= score;
+			}
+		}
+	}
+
+	return node_index;
 }
 
 } // namespace PM
