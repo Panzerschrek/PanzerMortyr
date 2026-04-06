@@ -31,10 +31,16 @@ fn BuildRoomClustersBSPTree( ust::array_view_imut</ZvoxCluster/> clusters ) : Ro
 
 	tree.portals= BuildPortals( tree.leaf_nodes );
 
+	BuildLeafPortalLists( tree );
+
 	return tree;
 }
 
-type RoomClusterSubvolume= RoomClustersBSPTree::LeafNode;
+struct RoomClusterSubvolume
+{
+	BBox3f bbox;
+	u32 clustrer_index;
+}
 
 fn BuildRoomClustersBSPTree_r(
 	RoomClustersBSPTree &mut tree,
@@ -45,7 +51,18 @@ fn BuildRoomClustersBSPTree_r(
 	if( cluster_subvolumes.size() == 1s )
 	{
 		var RoomClustersBSPTree::NodeIndex node_index( size_type(RoomClustersBSPTree::c_first_leaf_node) + tree.leaf_nodes.size() );
-		tree.leaf_nodes.push_back( cluster_subvolumes.front() );
+
+		var RoomClusterSubvolume& volume= cluster_subvolumes.front();
+
+		tree.leaf_nodes.push_back(
+			RoomClustersBSPTree::LeafNode
+			{
+				.bbox= volume.bbox,
+				.clustrer_index= volume.clustrer_index,
+				.first_leaf_portal(0), // Set later.
+				.num_leaf_portals(0), // Set later.
+			} );
+
 		return node_index;
 	}
 
@@ -285,6 +302,33 @@ fn BuildPortals(
 	}
 
 	return portals;
+}
+
+fn BuildLeafPortalLists( RoomClustersBSPTree &mut tree )
+{
+	// Yet another algorithm with quadratic time complexity. But it's fine for small number of leafs/portals.
+	//foreach( &mut leaf : tree.leaf_nodes )
+	for( auto mut leaf_index= 0s; leaf_index < tree.leaf_nodes.size(); ++leaf_index )
+	{
+		var RoomClustersBSPTree::LeafNode &mut leaf_node= tree.leaf_nodes[ leaf_index ];
+
+		leaf_node.first_leaf_portal= u16( tree.leaf_portals.size() );
+
+		for( auto mut portal_index= 0s; portal_index < tree.portals.size(); ++portal_index )
+		{
+			var RoomClustersBSPTree::Portal& portal= tree.portals[ portal_index ];
+			if( size_type( portal.leaf_nodes[0] ) == leaf_index |
+				size_type( portal.leaf_nodes[1] ) == leaf_index )
+			{
+				tree.leaf_portals.push_back( RoomClustersBSPTree::PortalIndex( portal_index ) );
+			}
+		}
+
+		leaf_node.num_leaf_portals= u16( tree.leaf_portals.size() - size_type( leaf_node.first_leaf_portal ) );
+	}
+
+	// Each portal should be mentioned exactly two times - in portal lists of two leafs to which it belongs.
+	debug_assert( tree.leaf_portals.size() == tree.portals.size() * 2s );
 }
 
 } // namespace PM
