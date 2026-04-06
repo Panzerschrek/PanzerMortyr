@@ -10,16 +10,24 @@ fn MapVisibilityCalculator::constructor( ust::array_view_imut</ZvoxCluster/> clu
 	)
 {}
 
-fn MapVisibilityCalculator::CalculateVisibility( mut this, Mat4f& view_matrix )
+fn MapVisibilityCalculator::CalculateVisibility( mut this, Vec3f& camera_position, Mat4f& view_matrix )
 {
 	foreach( &mut p : portals_projected_ )
 	{
 		p.reset();
 	}
 
-	foreach( pair : room_clusters_bsp_tree_.portals.iter().zip( portals_projected_.iter() ) )
+	var size_type camera_leaf_index= FindCameraLeafIndex( room_clusters_bsp_tree_, camera_position );
+
+	var RoomClustersBSPTree::LeafNode& camera_leaf_node= room_clusters_bsp_tree_.leaf_nodes[ camera_leaf_index ];
+
+	for( auto mut i= 0s; i < size_type( camera_leaf_node.num_leaf_portals ); ++i )
 	{
-		pair.second= ProjectPortal( pair.first, view_matrix );
+		var size_type portal_index(
+			room_clusters_bsp_tree_.leaf_portals[ size_type( camera_leaf_node.first_leaf_portal ) + i ] );
+
+		portals_projected_[ portal_index ]=
+			ProjectPortal( room_clusters_bsp_tree_.portals[ portal_index ], view_matrix );
 	}
 }
 
@@ -56,6 +64,23 @@ fn ProjectPortal( RoomClustersBSPTree::Portal& portal, Mat4f& view_matix ) : Map
 	}
 
 	return result;
+}
+
+fn FindCameraLeafIndex( RoomClustersBSPTree& tree, Vec3f& camera_positon ) : size_type
+{
+	var RoomClustersBSPTree::NodeIndex mut node_index(0);
+
+	loop
+	{
+		if( node_index >= RoomClustersBSPTree::c_first_leaf_node )
+		{
+			return size_type( node_index ) - size_type( RoomClustersBSPTree::c_first_leaf_node );
+		}
+
+		var RoomClustersBSPTree::BranchNode& node= tree.branch_nodes[ size_type( node_index ) ];
+
+		node_index= ( node.plane.GetDistanceForPoint( camera_positon ) >= 0.0f ? node.children[0] : node.children[1] );
+	}
 }
 
 } // namespace PM
