@@ -4,7 +4,58 @@ namespace PM
 {
 
 fn MapVisibilityCalculator::constructor( ust::array_view_imut</ZvoxCluster/> clusters )
-	( room_clusters_bsp_tree_= BuildRoomClustersBSPTree( clusters ) )
+	(
+		room_clusters_bsp_tree_= BuildRoomClustersBSPTree( clusters ),
+		portals_projected_( room_clusters_bsp_tree_.portals.size() )
+	)
 {}
+
+fn MapVisibilityCalculator::CalculateVisibility( mut this, Mat4f& view_matrix )
+{
+	foreach( &mut p : portals_projected_ )
+	{
+		p.reset();
+	}
+
+	foreach( pair : room_clusters_bsp_tree_.portals.iter().zip( portals_projected_.iter() ) )
+	{
+		pair.second= ProjectPortal( pair.first, view_matrix );
+	}
+}
+
+fn ProjectPortal( RoomClustersBSPTree::Portal& portal, Mat4f& view_matix ) : ust::optional</ClippingPolygon/>
+{
+	var ust::optional</ClippingPolygon/> mut result;
+
+	// TODO - use only 4 vertices, since portals are flat.
+	foreach( &v : portal.bbox.CreateCornerVertices() )
+	{
+		var Vec3f point_projected= v * view_matix;
+
+		var f32 w=
+			v.x * view_matix.values[0][3] +
+			v.y * view_matix.values[1][3] +
+			v.z * view_matix.values[2][3] +
+			view_matix.values[3][3];
+
+		if( w <= 0.0f )
+		{
+			return ust::null_optional; // TODO - clip properly.
+		}
+
+		var Vec2f p= point_projected.xy() / w;
+
+		if( !result.empty() )
+		{
+			result.try_deref().ExtendWithPoint( p );
+		}
+		else
+		{
+			result= ClippingPolygon::CreateFromPoint( p );
+		}
+	}
+
+	return result;
+}
 
 } // namespace PM
