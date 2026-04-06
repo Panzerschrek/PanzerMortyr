@@ -29,16 +29,13 @@ fn MapVisibilityCalculator::CalculateVisibility( mut this, Vec3f& camera_positio
 	// It's from -1 to 1, since normalized coordinates are used (as in OpenGL).
 	leaf_bounds_[ camera_leaf_index ]= ClippingPolygon::CreateFromBox( Vec2f( -1.0f, -1.0f ), Vec2f( 1.0f, 1.0f ) );
 
-	var RoomClustersBSPTree::LeafNode& camera_leaf_node= room_clusters_bsp_tree_.leaf_nodes[ camera_leaf_index ];
-
-	for( auto mut i= 0s; i < size_type( camera_leaf_node.num_leaf_portals ); ++i )
-	{
-		var size_type portal_index(
-			room_clusters_bsp_tree_.leaf_portals[ size_type( camera_leaf_node.first_leaf_portal ) + i ] );
-
-		portals_projected_[ portal_index ]=
-			ProjectPortal( room_clusters_bsp_tree_.portals[ portal_index ], view_matrix );
-	}
+	CalculateVisibility_r(
+		room_clusters_bsp_tree_,
+		camera_position,
+		view_matrix,
+		leaf_bounds_,
+		portals_projected_,
+		RoomClustersBSPTree::NodeIndex(0) );
 }
 
 fn ProjectPortal( RoomClustersBSPTree::Portal& portal, Mat4f& view_matix ) : MapVisibilityCalculator::PortalProjected
@@ -90,6 +87,86 @@ fn FindCameraLeafIndex( RoomClustersBSPTree& tree, Vec3f& camera_positon ) : siz
 		var RoomClustersBSPTree::BranchNode& node= tree.branch_nodes[ size_type( node_index ) ];
 
 		node_index= ( node.plane.GetDistanceForPoint( camera_positon ) >= 0.0f ? node.children[0] : node.children[1] );
+	}
+}
+
+fn CalculateVisibility_r(
+	RoomClustersBSPTree& tree,
+	Vec3f& camera_position,
+	Mat4f& view_matrix,
+	ust::array_view_mut</ ust::optional</ ClippingPolygon /> /> leaf_bounds,
+	ust::array_view_mut</ MapVisibilityCalculator::PortalProjected /> portal_bounds,
+	RoomClustersBSPTree::NodeIndex node_index )
+{
+	if( node_index >= RoomClustersBSPTree::c_first_leaf_node )
+	{
+		var size_type leaf_node_index= size_type( node_index ) - size_type( RoomClustersBSPTree::c_first_leaf_node );
+		var RoomClustersBSPTree::LeafNode& leaf_node= tree.leaf_nodes[ leaf_node_index ];
+
+		auto leaf_portals_range=
+			tree.leaf_portals.range().subrange(
+				size_type( leaf_node.first_leaf_portal ),
+				size_type( leaf_node.first_leaf_portal ) + size_type( leaf_node.num_leaf_portals ) );
+
+		var ust::optional</ ClippingPolygon /> &mut this_leaf_bounds_opt= leaf_bounds[ size_type( leaf_node_index ) ];
+
+		// Visit all portals of this leaf.
+		// If at least one portal is visible, assume this leaf to be visible.
+		// Build clipping bounds as intersection of all portal clipping bounds.
+		foreach( &portal_index : leaf_portals_range )
+		{
+			if_var( &b : portal_bounds[ size_type( portal_index ) ] )
+			{
+				if( this_leaf_bounds_opt.empty() )
+				{
+					this_leaf_bounds_opt= b;
+				}
+				else
+				{
+					this_leaf_bounds_opt.try_deref().ExtendWithOther( b );
+				}
+			}
+		}
+
+		if_var( &this_leaf_bounds : this_leaf_bounds_opt )
+		{
+			// Iterate over all out portals of the leaf.
+			// If it's an optput portal (with no bounds set yet) - calculate its bounds as intersection of its own polygon bounds and input leaf bounds.
+			foreach( &portal_index : leaf_portals_range )
+			{
+				var MapVisibilityCalculator::PortalProjected &mut out_portal_bounds=
+					portal_bounds[ size_type( portal_index ) ];
+
+				if( out_portal_bounds.empty() )
+				{
+					var MapVisibilityCalculator::PortalProjected mut portal_projected_opt=
+						ProjectPortal( tree.portals[ size_type( portal_index ) ], view_matrix );
+
+					if_var( &mut portal_projected : portal_projected_opt )
+					{
+						portal_projected.ExtendWithOther( this_leaf_bounds );
+						if( portal_projected.IsValidAndNonEmpty() )
+						{
+							out_portal_bounds= portal_projected;
+						}
+					}
+				}
+			}
+		}
+	}
+	else
+	{
+		var RoomClustersBSPTree::BranchNode& node= tree.branch_nodes[ size_type( node_index ) ];
+
+		var [ RoomClustersBSPTree::NodeIndex, 2 ] children_order=
+			( node.plane.GetDistanceForPoint( camera_position ) >= 0.0f
+				? ust::make_array( node.children[0], node.children[1] )
+				: ust::make_array( node.children[1], node.children[0] ) );
+
+		foreach( &child_node_index : children_order )
+		{
+			CalculateVisibility_r( tree, camera_position, view_matrix, leaf_bounds, portal_bounds, child_node_index );
+		}
 	}
 }
 
