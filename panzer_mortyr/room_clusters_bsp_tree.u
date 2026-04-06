@@ -29,6 +29,8 @@ fn BuildRoomClustersBSPTree( ust::array_view_imut</ZvoxCluster/> clusters ) : Ro
 
 	BuildRoomClustersBSPTree_r( tree, cluster_subvolumes );
 
+	tree.portals= BuildPortals( tree.leaf_nodes );
+
 	return tree;
 }
 
@@ -228,6 +230,61 @@ fn ChooseSplitPlane( ust::array_view_imut</RoomClusterSubvolume/> cluster_subvol
 	debug_assert( best_split_plane_score < 0x7FFFFFFF );
 
 	return best_split_plane;
+}
+
+fn BuildPortals(
+	ust::array_view_imut</RoomClustersBSPTree::LeafNode/> leaf_nodes ) : ust::vector</RoomClustersBSPTree::Portal/>
+{
+	var ust::vector</RoomClustersBSPTree::Portal/> mut portals;
+
+	// Use brute-force check of each leaf node with each other.
+	// It's fine, since the total number of nodes isn't that huge.
+
+	for( auto mut i= 0s; i < leaf_nodes.size(); ++i )
+	{
+		var BBox3f& bbox_i= leaf_nodes[i].bbox;
+
+		for( auto mut j= i + 1s; j < leaf_nodes.size(); ++j )
+		{
+			var BBox3f& bbox_j= leaf_nodes[j].bbox;
+
+			var BBox3f intersection_bbox
+			{
+				.min(
+					ust::max( bbox_i.min.x, bbox_j.min.x ),
+					ust::max( bbox_i.min.y, bbox_j.min.y ),
+					ust::max( bbox_i.min.z, bbox_j.min.z ) ),
+				.max(
+					ust::min( bbox_i.max.x, bbox_j.max.x ),
+					ust::min( bbox_i.max.y, bbox_j.max.y ),
+					ust::min( bbox_i.max.z, bbox_j.max.z ) ),
+			};
+
+			var Vec3f intersection_bbox_dimensions= intersection_bbox.GetDimensions();
+
+			var bool is_x_flat_portal=
+				intersection_bbox_dimensions.x == 0.0f &
+				intersection_bbox_dimensions.y > 0.0f &
+				intersection_bbox_dimensions.z > 0.0f;
+
+			var bool is_y_flat_portal=
+				intersection_bbox_dimensions.x > 0.0f &
+				intersection_bbox_dimensions.y == 0.0f &
+				intersection_bbox_dimensions.z > 0.0f;
+
+			var bool is_z_flat_portal=
+				intersection_bbox_dimensions.x > 0.0f &
+				intersection_bbox_dimensions.y > 0.0f &
+				intersection_bbox_dimensions.z == 0.0f;
+
+			if( is_x_flat_portal | is_y_flat_portal | is_z_flat_portal )
+			{
+				portals.push_back( RoomClustersBSPTree::Portal{ .bbox= intersection_bbox, .leaf_nodes[ (i), (j) ] } );
+			}
+		}
+	}
+
+	return portals;
 }
 
 } // namespace PM
