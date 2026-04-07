@@ -167,11 +167,14 @@ fn ProjectPortal( RoomClustersBSPTree::Portal& portal, Mat4f& view_matix ) : Map
 
 fn ProjectBBox( BBox3f& bbox, Mat4f& view_matix ) : MapVisibilityCalculator::PortalProjected
 {
-	var MapVisibilityCalculator::PortalProjected mut result;
+	var [ Vec3f, 8 ] mut vertices_projected[ Vec3f::MakeZero() ... ]; // Set later.
 
-	foreach( &v : bbox.CreateCornerVertices() )
+	var [ Vec3f, 8 ] bbox_vertices= bbox.CreateCornerVertices();
+
+	for( auto mut i= 0s; i < 8s; ++i )
 	{
-		var Vec3f point_projected= v * view_matix;
+		var Vec3f& v= bbox_vertices[i];
+		var Vec3f v_projected= v * view_matix;
 
 		var f32 w=
 			v.x * view_matix.values[0][3] +
@@ -179,22 +182,31 @@ fn ProjectBBox( BBox3f& bbox, Mat4f& view_matix ) : MapVisibilityCalculator::Por
 			v.z * view_matix.values[2][3] +
 			view_matix.values[3][3];
 
-		if( w <= 0.0f )
-		{
-			return ust::null_optional; // TODO - clip properly.
-		}
+		// Assuming we have standard OpenGL perspective projection matrix with Z written into W component.
 
-		var Vec2f p= point_projected.xy() / w;
+		vertices_projected[i]= Vec3f( v_projected.xy(), w );
+	}
 
-		if( !result.empty() )
+	var MapVisibilityCalculator::PortalProjected mut result;
+
+	foreach( &v : vertices_projected )
+	{
+		if( v.z > 0.0f ) // TODO - use z near here?
 		{
-			result.try_deref().ExtendWithPoint( p );
-		}
-		else
-		{
-			result= ClippingPolygon::CreateFromPoint( p );
+			var Vec2f p= v.xy() / v.z;
+
+			if( !result.empty() )
+			{
+				result.try_deref().ExtendWithPoint( p );
+			}
+			else
+			{
+				result= ClippingPolygon::CreateFromPoint( p );
+			}
 		}
 	}
+
+	// TODO - clip box lines properly here.
 
 	return result;
 }
