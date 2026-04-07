@@ -289,8 +289,6 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 
 	DrawMapPolygons(
 		map_data,
-		visible_room_cluster_flags,
-		visible_clusters_bbox,
 		drawing_info.dynamic_cluster_objects,
 		breakable_polygons_buffer_,
 		map_shader_,
@@ -305,7 +303,6 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 		DrawMapPolygonsWithCaustics(
 			map_data,
 			caustics_texture_,
-			visible_room_cluster_flags,
 			map_caustics_shader_,
 			view_matrix,
 			drawing_info.game_time_s,
@@ -333,8 +330,6 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 		DrawMapPolygonsWithDynamicLights(
 			game_params_.deref(),
 			map_data,
-			visible_room_cluster_flags,
-			visible_clusters_bbox,
 			drawing_info.dynamic_cluster_objects,
 			map_dynamic_light_shader_,
 			view_matrix,
@@ -1454,8 +1449,6 @@ fn CreateBreakableMapPolygons(
 
 fn DrawMapPolygons(
 	MapDrawData& map_data,
-	VisibleRoomClusterFlagsImut visible_room_cluster_flags,
-	BBox3f& visible_clusters_bbox,
 	ust::array_view_imut</WorldDrawingInfo::DynamicClusterObject/> dynamic_cluster_objects,
 	DynamicPolygonsBuffer& breakable_polygons_buffer,
 	ShaderProgram &mut shader,
@@ -1466,6 +1459,9 @@ fn DrawMapPolygons(
 	WorldDrawingStats &mut drawing_stats )
 {
 	var ust::array_view_imut</ZvoxCluster/> clusters= map_data.zvox_data.deref().clusters.range();
+
+	var MapVisibilityCalculator::VisibleRoomClusterFlags visible_room_cluster_flags=
+		map_data.map_visibility_calculator.GetVisibleRoomClusterFlags();
 
 	SetGLState( g_map_drawing_gl_state );
 
@@ -1536,8 +1532,6 @@ fn DrawMapPolygons(
 	ExecuteDrawingMeshesWithFilmSpecialMaterial( map_data.special_material_film_meshes, time_s );
 	drawing_stats.num_visible_map_triangles+= map_data.special_material_film_meshes[0].num_indices / 3u;
 
-	var RoomClustersHierarchy& room_clusters_hierarchy= map_data.room_clusters_hierarchy.deref();
-
 	// Draw dynamic clusters with individual matrices.
 	foreach( &dynamic_cluster_object : dynamic_cluster_objects )
 	{
@@ -1549,14 +1543,7 @@ fn DrawMapPolygons(
 		bbox.min+= dynamic_cluster_object.translation;
 		bbox.max+= dynamic_cluster_object.translation;
 
-		// First perform fast check if this dynamic cluster is within the bbox containing all visible clusters.
-		if( !visible_clusters_bbox.InstersectsOrTouches( bbox ) )
-		{
-			continue;
-		}
-
-		// Then check if this dynamic cluster is within at least one visible room cluster.
-		if( !IsBBoxWithinVisibleClusters( clusters, room_clusters_hierarchy, visible_room_cluster_flags, bbox ) )
+		if( !map_data.map_visibility_calculator.IsBoxVisible( bbox.CreateCornerVertices() ) )
 		{
 			continue;
 		}
@@ -1586,7 +1573,6 @@ fn DrawMapPolygons(
 fn DrawMapPolygonsWithCaustics(
 	MapDrawData& map_data,
 	Texture& caustics_texture,
-	VisibleRoomClusterFlagsImut visible_room_cluster_flags,
 	ShaderProgram &mut shader,
 	Mat4f& view_matrix,
 	f32 time_s,
@@ -1596,6 +1582,9 @@ fn DrawMapPolygonsWithCaustics(
 	var f32 constexpr c_caustics_speed= 1.0f / 2.0f;
 
 	var ust::array_view_imut</ZvoxCluster/> clusters= map_data.zvox_data.deref().clusters.range();
+
+	var MapVisibilityCalculator::VisibleRoomClusterFlags visible_room_cluster_flags=
+		map_data.map_visibility_calculator.GetVisibleRoomClusterFlags();
 
 	SetGLState( g_map_drawing_gl_state );
 
@@ -1665,8 +1654,6 @@ fn DrawMapPolygonsWithCaustics(
 fn DrawMapPolygonsWithDynamicLights(
 	GameParams& game_params,
 	MapDrawData& map_data,
-	VisibleRoomClusterFlagsImut visible_room_cluster_flags,
-	BBox3f& visible_clusters_bbox,
 	ust::array_view_imut</WorldDrawingInfo::DynamicClusterObject/> dynamic_cluster_objects,
 	ShaderProgram &mut shader,
 	Mat4f& view_matrix,
@@ -1682,7 +1669,9 @@ fn DrawMapPolygonsWithDynamicLights(
 	}
 
 	var ust::array_view_imut</ZvoxCluster/> clusters= map_data.zvox_data.deref().clusters.range();
-	var RoomClustersHierarchy& room_clusters_hierarchy= map_data.room_clusters_hierarchy.deref();
+
+	var MapVisibilityCalculator::VisibleRoomClusterFlags visible_room_cluster_flags=
+		map_data.map_visibility_calculator.GetVisibleRoomClusterFlags();
 
 	shader.Bind();
 	shader.SetUniform( "vu_matrix", view_matrix );
@@ -1799,14 +1788,7 @@ fn DrawMapPolygonsWithDynamicLights(
 				continue;
 			}
 
-			// First perform fast check if this dynamic cluster is within the bbox containing all visible clusters.
-			if( !visible_clusters_bbox.InstersectsOrTouches( bbox ) )
-			{
-				continue;
-			}
-
-			// Then check if this dynamic cluster is within at least one visible room cluster.
-			if( !IsBBoxWithinVisibleClusters( clusters, room_clusters_hierarchy, visible_room_cluster_flags, bbox ) )
+			if( !map_data.map_visibility_calculator.IsBoxVisible( bbox.CreateCornerVertices() ) )
 			{
 				continue;
 			}
