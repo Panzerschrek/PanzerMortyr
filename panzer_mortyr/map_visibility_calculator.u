@@ -1,3 +1,4 @@
+import "camera_utils.iu"
 import "map_visibility_calculator.iu"
 
 namespace PM
@@ -187,11 +188,15 @@ fn ProjectBBox( BBox3f& bbox, Mat4f& view_matix ) : MapVisibilityCalculator::Por
 		vertices_projected[i]= Vec3f( v_projected.xy(), w );
 	}
 
+	// Assume here this Z near constant is used for projection matrix.
+	var f32 z_near= c_z_near;
+
 	var MapVisibilityCalculator::PortalProjected mut result;
 
+	// Project each vertex which is at front of the near clip plane.
 	foreach( &v : vertices_projected )
 	{
-		if( v.z > 0.0f ) // TODO - use z near here?
+		if( v.z >= z_near )
 		{
 			var Vec2f p= v.xy() / v.z;
 
@@ -206,9 +211,68 @@ fn ProjectBBox( BBox3f& bbox, Mat4f& view_matix ) : MapVisibilityCalculator::Por
 		}
 	}
 
-	// TODO - clip box lines properly here.
+	// Process all line segments of the box.
+	// For lines crossing near plane calculate intersection with it and use it for projection.
+
+	foreach( &line_indices : c_box_line_indices )
+	{
+		var Vec3f& v0= cast_imut(vertices_projected)[ line_indices[0] ];
+		var Vec3f& v1= cast_imut(vertices_projected)[ line_indices[1] ];
+
+		if( v0.z >= z_near && v0.z >= z_near )
+		{
+			// Not clipped at all.
+		}
+		else if( v0.z <= z_near && v1.z <= z_near )
+		{
+			// Fully clipped.
+		}
+		else
+		{
+			// Clip here the line.
+
+			var f32 dist0 = v0.z - z_near;
+			var f32 dist1 = v1.z - z_near;
+			var f32 dist_sum = v1.z - v0.z;
+			if( dist_sum != 0.0f )
+			{
+				var f32 k0 = dist0 / dist_sum;
+				var f32 k1 = dist1 / dist_sum;
+				var Vec3f intersection_point= v0 * k1 - v1 * k0;
+
+				var Vec2f p= intersection_point.xy() / intersection_point.z;
+
+				if( !result.empty() )
+				{
+					result.try_deref().ExtendWithPoint( p );
+				}
+				else
+				{
+					result= ClippingPolygon::CreateFromPoint( p );
+				}
+			}
+		}
+	}
 
 	return result;
 }
+
+var [ [ u32, 2 ], 12 ] constexpr c_box_line_indices
+[
+	[ 0u, 1u ],
+	[ 1u, 5u ],
+	[ 5u, 4u ],
+	[ 4u, 0u ],
+
+	[ 2u, 3u ],
+	[ 3u, 7u ],
+	[ 7u, 6u ],
+	[ 6u, 2u ],
+
+	[ 0u, 2u ],
+	[ 1u, 3u ],
+	[ 5u, 7u ],
+	[ 4u, 6u ],
+];
 
 } // namespace PM
