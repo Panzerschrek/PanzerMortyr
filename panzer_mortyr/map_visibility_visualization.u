@@ -11,104 +11,123 @@ fn VisualizeProjectedPortals(
 
 	foreach( &portal_opt : portals_projected )
 	{
-		if( portal_opt.empty() )
+		if_var( &p : portal_opt )
 		{
-			continue;
+			AddClippingPolygonLines( p, color, test_lines );
 		}
+	}
+}
 
-		var ClippingPolygon& p= portal_opt.try_deref();
+fn VisualizeLeafProjectedBounds(
+	ust::array_view_imut</MapVisibilityCalculator::LeafProjectedBounds/> portals_projected,
+	ust::vector</WorldDrawingInfo::TestLine/> &mut test_lines )
+{
+	var [ u8, 3 ] color[ 240u8, 200u8, 50u8 ];
 
-		if( p.IsEmptyOrInvalid() )
+	foreach( &bounds_opt : portals_projected )
+	{
+		if_var( &p : bounds_opt )
 		{
-			continue;
+			AddClippingPolygonLines( p, color, test_lines );
 		}
+	}
+}
 
+fn AddClippingPolygonLines(
+	ClippingPolygon& p,
+	[ u8, 3 ]& color,
+	ust::vector</WorldDrawingInfo::TestLine/> &mut test_lines )
+{
+	if( p.IsEmptyOrInvalid() )
+	{
+		return;
+	}
+
+	{
+		var [ Vec2f, 4 ] vertices
+		[
+			( p.x.min, p.y.min ),
+			( p.x.min, p.y.max ),
+			( p.x.max, p.y.max ),
+			( p.x.max, p.y.min ),
+		];
+
+		var [ tup[ Vec2f, f32 ], 4 ] clip_lines
+		[
+			[ Vec2f(  1.0f,  1.0f ), -p.x_plus_y.min ],
+			[ Vec2f( -1.0f, -1.0f ),  p.x_plus_y.max ],
+			[ Vec2f(  1.0f, -1.0f ), -p.x_minus_y.min ],
+			[ Vec2f( -1.0f,  1.0f ),  p.x_minus_y.max ],
+		];
+
+		var Vec2f mut prev_v= vertices[3];
+
+		for( auto mut i= 0s; i < 4s; ++i ) label for_vertices
 		{
-			var [ Vec2f, 4 ] vertices
-			[
-				( p.x.min, p.y.min ),
-				( p.x.min, p.y.max ),
-				( p.x.max, p.y.max ),
-				( p.x.max, p.y.min ),
-			];
+			var Vec2f& v= vertices[i];
 
-			var [ tup[ Vec2f, f32 ], 4 ] clip_lines
-			[
-				[ Vec2f(  1.0f,  1.0f ), -p.x_plus_y.min ],
-				[ Vec2f( -1.0f, -1.0f ),  p.x_plus_y.max ],
-				[ Vec2f(  1.0f, -1.0f ), -p.x_minus_y.min ],
-				[ Vec2f( -1.0f,  1.0f ),  p.x_minus_y.max ],
-			];
+			var [ Vec2f, 2 ] mut segment[ v, prev_v ];
 
-			var Vec2f mut prev_v= vertices[3];
+			prev_v= v;
 
-			for( auto mut i= 0s; i < 4s; ++i ) label for_vertices
+			foreach( &clip_line : clip_lines )
 			{
-				var Vec2f& v= vertices[i];
-
-				var [ Vec2f, 2 ] mut segment[ v, prev_v ];
-
-				prev_v= v;
-
-				foreach( &clip_line : clip_lines )
+				if_var( &segment_clipped : ClipLineSegmentByAnotherLine( segment, clip_line[0], clip_line[1] ) )
 				{
-					if_var( &segment_clipped : ClipLineSegmentByAnotherLine( segment, clip_line[0], clip_line[1] ) )
-					{
-						segment= segment_clipped;
-					}
-					else
-					{
-						continue label for_vertices;
-					}
+					segment= segment_clipped;
 				}
-
-				test_lines.push_back(
-					WorldDrawingInfo::TestLine{ .vertices[ ( segment[0], 0.0f ), ( segment[1], 0.0f ) ], .color= color } );
+				else
+				{
+					continue label for_vertices;
+				}
 			}
+
+			test_lines.push_back(
+				WorldDrawingInfo::TestLine{ .vertices[ ( segment[0], 0.0f ), ( segment[1], 0.0f ) ], .color= color } );
 		}
+	}
 
+	{
+		var [ Vec2f, 4 ] vertices
+		[
+			p.x_plus_y.max * Vec2f( 0.5f, 0.5f ) + p.x_minus_y.max * Vec2f( 0.5f, -0.5f ),
+			p.x_plus_y.min * Vec2f( 0.5f, 0.5f ) + p.x_minus_y.max * Vec2f( 0.5f, -0.5f ),
+			p.x_plus_y.min * Vec2f( 0.5f, 0.5f ) + p.x_minus_y.min * Vec2f( 0.5f, -0.5f ),
+			p.x_plus_y.max * Vec2f( 0.5f, 0.5f ) + p.x_minus_y.min * Vec2f( 0.5f, -0.5f ),
+		];
+
+		var [ tup[ Vec2f, f32 ], 4 ] clip_lines
+		[
+			[ Vec2f(  1.0f,  0.0f ), -p.x.min ],
+			[ Vec2f( -1.0f,  0.0f ),  p.x.max ],
+			[ Vec2f(  0.0f,  1.0f ), -p.y.min ],
+			[ Vec2f(  0.0f, -1.0f ),  p.y.max ],
+		];
+
+		var Vec2f mut prev_v= vertices[3];
+
+		for( auto mut i= 0s; i < 4s; ++i ) label for_vertices
 		{
-			var [ Vec2f, 4 ] vertices
-			[
-				p.x_plus_y.max * Vec2f( 0.5f, 0.5f ) + p.x_minus_y.max * Vec2f( 0.5f, -0.5f ),
-				p.x_plus_y.min * Vec2f( 0.5f, 0.5f ) + p.x_minus_y.max * Vec2f( 0.5f, -0.5f ),
-				p.x_plus_y.min * Vec2f( 0.5f, 0.5f ) + p.x_minus_y.min * Vec2f( 0.5f, -0.5f ),
-				p.x_plus_y.max * Vec2f( 0.5f, 0.5f ) + p.x_minus_y.min * Vec2f( 0.5f, -0.5f ),
-			];
+			var Vec2f& v= vertices[i];
 
-			var [ tup[ Vec2f, f32 ], 4 ] clip_lines
-			[
-				[ Vec2f(  1.0f,  0.0f ), -p.x.min ],
-				[ Vec2f( -1.0f,  0.0f ),  p.x.max ],
-				[ Vec2f(  0.0f,  1.0f ), -p.y.min ],
-				[ Vec2f(  0.0f, -1.0f ),  p.y.max ],
-			];
+			var [ Vec2f, 2 ] mut segment[ v, prev_v ];
 
-			var Vec2f mut prev_v= vertices[3];
+			prev_v= v;
 
-			for( auto mut i= 0s; i < 4s; ++i ) label for_vertices
+			foreach( &clip_line : clip_lines )
 			{
-				var Vec2f& v= vertices[i];
-
-				var [ Vec2f, 2 ] mut segment[ v, prev_v ];
-
-				prev_v= v;
-
-				foreach( &clip_line : clip_lines )
+				if_var( &segment_clipped : ClipLineSegmentByAnotherLine( segment, clip_line[0], clip_line[1] ) )
 				{
-					if_var( &segment_clipped : ClipLineSegmentByAnotherLine( segment, clip_line[0], clip_line[1] ) )
-					{
-						segment= segment_clipped;
-					}
-					else
-					{
-						continue label for_vertices;
-					}
+					segment= segment_clipped;
 				}
-
-				test_lines.push_back(
-					WorldDrawingInfo::TestLine{ .vertices[ ( segment[0], 0.0f ), ( segment[1], 0.0f ) ], .color= color } );
+				else
+				{
+					continue label for_vertices;
+				}
 			}
+
+			test_lines.push_back(
+				WorldDrawingInfo::TestLine{ .vertices[ ( segment[0], 0.0f ), ( segment[1], 0.0f ) ], .color= color } );
 		}
 	}
 }
