@@ -63,6 +63,79 @@ fn MapVisibilityCalculator::CalculateVisibility( mut this, Vec3f& camera_positio
 	}
 }
 
+fn MapVisibilityCalculator::IsBoxVisible( this, [ Vec3f, 8 ]& box_vertices ) : bool
+{
+	return IsBoxVisible_r( box_vertices, RoomClustersBSPTree::NodeIndex(0) );
+}
+
+fn MapVisibilityCalculator::IsBoxVisible_r( this, [ Vec3f, 8 ]& box_vertices, RoomClustersBSPTree::NodeIndex node_index ) : bool
+{
+	if( node_index >= RoomClustersBSPTree::c_first_leaf_node )
+	{
+		// Found leaf node where given box is at least partially located.
+
+		var size_type leaf_node_index= size_type( node_index ) - size_type( RoomClustersBSPTree::c_first_leaf_node );
+
+		if( leaf_bounds_[leaf_node_index].empty() )
+		{
+			// If this leaf isn't visible, given box isn't visible too (at least its part lying within this leaf).
+			return false;
+		}
+
+		// Perform last check if given box actually lies within bounding box of this leaf.
+
+		var RoomClustersBSPTree::LeafNode& leaf_node= room_clusters_bsp_tree_.leaf_nodes[ leaf_node_index ];
+
+		var BBox3f mut input_vertices_bbox{ .min= box_vertices[0], .max= box_vertices[0] };
+		foreach( &v : box_vertices )
+		{
+			input_vertices_bbox.ExtendWithPoint( v );
+		}
+
+		return leaf_node.bbox.InstersectsOrTouches( input_vertices_bbox );
+
+		// TODO - consider adding one more check - project bbox and test it against cluster screen bounds.
+	}
+	else
+	{
+		// TODO - consider speeding-up this by pre-calculating BSP tree branch nodes wisible in this frame.
+
+		// Test vertices of given box against split plane.
+		var RoomClustersBSPTree::BranchNode& branch_node=
+			room_clusters_bsp_tree_.branch_nodes[ size_type( node_index ) ];
+
+		var size_type mut num_vertices_front= 0s, mut num_vertices_back= 0s;
+		foreach( &v : box_vertices )
+		{
+			var f32 dist= branch_node.plane.GetDistanceForPoint( v );
+			if( dist > 0.0f )
+			{
+				++num_vertices_front;
+			}
+			if( dist < 0.0f )
+			{
+				++num_vertices_back;
+			}
+		}
+
+		// In many cases we need to go to only one side.
+		if( num_vertices_front == 0s )
+		{
+			return IsBoxVisible_r( box_vertices, branch_node.children[1] );
+		}
+		if( num_vertices_back == 0s )
+		{
+			return IsBoxVisible_r( box_vertices, branch_node.children[0] );
+		}
+
+		// But sometimes a box may insersect split plane. In such case test all branches.
+
+		return
+			IsBoxVisible_r( box_vertices, branch_node.children[0] ) ||
+			IsBoxVisible_r( box_vertices, branch_node.children[1] );
+	}
+}
+
 fn FindCameraLeafIndex( RoomClustersBSPTree& tree, Vec3f& camera_positon ) : size_type
 {
 	var RoomClustersBSPTree::NodeIndex mut node_index(0);
