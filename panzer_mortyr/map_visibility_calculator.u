@@ -43,6 +43,8 @@ fn MapVisibilityCalculator::GetVisibleLeafsBBox( this ) : BBox3f&
 
 fn MapVisibilityCalculator::CalculateVisibility( mut this, Vec3f& camera_position, Mat4f& view_matrix )
 {
+	// Reset visibility information calculated previously.
+
 	foreach( &mut c : leaf_bounds_ )
 	{
 		c.reset();
@@ -60,11 +62,15 @@ fn MapVisibilityCalculator::CalculateVisibility( mut this, Vec3f& camera_positio
 
 	visible_leafs_bbox_= MakeInvalidBBox();
 
+	// Find the tree leaf where camera is located.
+
 	var size_type camera_leaf_index= FindCameraLeafIndex( room_clusters_bsp_tree_, camera_position );
 
 	// Bounds for camera leaf is the whole screen.
 	// It's from -1 to 1, since normalized coordinates are used (as in OpenGL).
 	leaf_bounds_[ camera_leaf_index ]= ClippingPolygon::CreateFromBox( Vec2f( -1.0f, -1.0f ), Vec2f( 1.0f, 1.0f ) );
+
+	// Launch recursive BSP tree traversal.
 
 	CalculateLeafsAndPortalsVisibility_r( camera_position, view_matrix, RoomClustersBSPTree::NodeIndex(0) );
 
@@ -84,8 +90,8 @@ fn MapVisibilityCalculator::CalculateVisibility( mut this, Vec3f& camera_positio
 
 	if( !room_clusters_bsp_tree_.leaf_nodes[ camera_leaf_index ].bbox.PointIsInsideOrOnFace( camera_position ) )
 	{
-		// If camera is somewhere in a void space (outside a cluster) - mark all room clusters as visible.
-		// It's useful for noclip mode.
+		// If camera is somewhere in void space (outside a cluster) - mark all room clusters as visible.
+		// It's useful for noclip mode, in other cases this should not happen.
 		foreach( &leaf : room_clusters_bsp_tree_.leaf_nodes )
 		{
 			visible_room_cluster_flags_[ size_type( leaf.clustrer_index ) ]= true;
@@ -174,6 +180,7 @@ fn MapVisibilityCalculator::CalculateLeafsAndPortalsVisibility_r(
 		// Take here branch node copy to allow further recursive call with mutable "this".
 		var RoomClustersBSPTree::BranchNode node= room_clusters_bsp_tree_.branch_nodes[ size_type( node_index ) ];
 
+		// Select recursive traversal order based on camera position relative to the node plane - to ensure front-to back order.
 		var [ RoomClustersBSPTree::NodeIndex, 2 ] children_order=
 			( node.plane.GetDistanceForPoint( camera_position ) >= 0.0f
 				? ust::make_array( node.children[0], node.children[1] )
@@ -236,7 +243,7 @@ fn MapVisibilityCalculator::IsBoxVisible_r( this, [ Vec3f, 8 ]& box_vertices, Ro
 			}
 		}
 
-		// In many cases we need to go to only one side.
+		// In many cases we need to go to only one side of the BSP tree.
 		if( num_vertices_front == 0s )
 		{
 			return IsBoxVisible_r( box_vertices, branch_node.children[1] );
@@ -246,7 +253,7 @@ fn MapVisibilityCalculator::IsBoxVisible_r( this, [ Vec3f, 8 ]& box_vertices, Ro
 			return IsBoxVisible_r( box_vertices, branch_node.children[0] );
 		}
 
-		// But sometimes a box may insersect split plane. In such case test all branches.
+		// But sometimes a box may insersect a split plane. In such case test both children of this branch node.
 
 		return
 			IsBoxVisible_r( box_vertices, branch_node.children[0] ) ||
