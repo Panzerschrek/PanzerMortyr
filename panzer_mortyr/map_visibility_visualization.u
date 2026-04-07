@@ -23,44 +23,84 @@ fn VisualizeProjectedPortals(
 			continue;
 		}
 
-		// TODO - rework this piece of crap.
-		// We need a proper algorithm which starts with a triangle/quad and cuts it by all clipping planes to produce result polygon.
-
-		var [ Vec2f, 8 ] vertices
+		var [ Vec2f, 4 ] vertices
 		[
-			FindLinesIntersection( Vec2f( 0.0f, 1.0f ), -p.y.min, Vec2f( 1.0f, 1.0f ), -p.x_plus_y.min ),
-			FindLinesIntersection( Vec2f( 1.0f, 1.0f ), -p.x_plus_y.min, Vec2f( 1.0f, 0.0f ), -p.x.min ),
-			FindLinesIntersection( Vec2f( 1.0f, 0.0f ), -p.x.min, Vec2f( 1.0f, -1.0f ), -p.x_minus_y.min ),
-			FindLinesIntersection( Vec2f( 1.0f, -1.0f ), -p.x_minus_y.min, Vec2f( 0.0f, 1.0f ), -p.y.max ),
-			FindLinesIntersection( Vec2f( 0.0f, 1.0f ), -p.y.max, Vec2f( 1.0f, 1.0f ), -p.x_plus_y.max ),
-			FindLinesIntersection( Vec2f( 1.0f, 1.0f ), -p.x_plus_y.max, Vec2f( 1.0f, 0.0f ), -p.x.max ),
-			FindLinesIntersection( Vec2f( 1.0f, 0.0f ), -p.x.max, Vec2f( 1.0f, -1.0f ), -p.x_minus_y.max ),
-			FindLinesIntersection( Vec2f( 1.0f, -1.0f ), -p.x_minus_y.max, Vec2f( 0.0f, 1.0f ), -p.y.min ),
+			( p.x.min, p.y.min ),
+			( p.x.min, p.y.max ),
+			( p.x.max, p.y.max ),
+			( p.x.max, p.y.min ),
 		];
 
-		var Vec2f center( ( p.x.min + p.x.max ) * 0.5f, ( p.y.min + p.y.max ) * 0.5f );
+		var Vec2f mut prev_v= vertices[3];
 
-		var Vec2f mut prev_v= vertices[7];
-		for( auto mut i= 0s; i < 8s; ++i )
+		var [ tup[ Vec2f, f32 ], 4 ] clip_lines
+		[
+			[ Vec2f(  1.0f,  1.0f ), -p.x_plus_y.min ],
+			[ Vec2f( -1.0f, -1.0f ),  p.x_plus_y.max ],
+			[ Vec2f(  1.0f, -1.0f ), -p.x_minus_y.min ],
+			[ Vec2f( -1.0f,  1.0f ),  p.x_minus_y.max ],
+		];
+
+		for( auto mut i= 0s; i < 4s; ++i ) label for_vertices
 		{
-			var Vec2f v= vertices[i];
+			var Vec2f& v= vertices[i];
 
-			var Vec2f dir0= v - center, dir1= prev_v - center;
+			var [ Vec2f, 2 ] mut segment[ v, prev_v ];
 
-			if( dir0.x * dir1.y - dir1.x * dir0.y >= 0.0f )
-			{
-				test_lines.push_back(
-					WorldDrawingInfo::TestLine{ .vertices[ ( prev_v, 0.0f ), ( v, 0.0f ) ], .color= color } );
-			}
 			prev_v= v;
+
+			foreach( &clip_line : clip_lines )
+			{
+				if_var( &segment_clipped : ClipLineSegmentByAnotherLine( segment, clip_line[0], clip_line[1] ) )
+				{
+					segment= segment_clipped;
+				}
+				else
+				{
+					continue label for_vertices;
+				}
+			}
+
+			test_lines.push_back(
+				WorldDrawingInfo::TestLine{ .vertices[ ( segment[0], 0.0f ), ( segment[1], 0.0f ) ], .color= color } );
 		}
 	}
 }
 
-// Given lines should not be parallel.
-fn FindLinesIntersection( Vec2f& n0, f32 d0, Vec2f& n1, f32 d1 ) : Vec2f
+fn ClipLineSegmentByAnotherLine(
+	[ Vec2f, 2 ]& segment, Vec2f& line_normal, f32 line_distance ) : ust::optional</ [ Vec2f, 2 ] />
 {
-	return Vec2f( d1 * n0.y - d0 * n1.y,  d0 * n1.x - d1 * n0.x ) / ( n0.x * n1.y - n0.y * n1.x );
+	var f32 dist0= segment[0].Dot( line_normal ) + line_distance;
+	var f32 dist1= segment[1].Dot( line_normal ) + line_distance;
+
+	if( dist0 <= 0.0f && dist1 <= 0.0f )
+	{
+		return ust::null_optional;
+	}
+
+	if( dist0 >= 0.0f && dist1 >= 0.0f )
+	{
+		return segment;
+	}
+
+	var f32 dist_sum= ust::abs(dist0) + ust::abs(dist1);
+	if( dist_sum > 0.0f )
+	{
+		var f32 k0 = ust::abs(dist0) / dist_sum;
+		var f32 k1 = ust::abs(dist1) / dist_sum;
+		var Vec2f intersection= segment[0] * k1 + segment[1] * k0;
+
+		if( dist0 < 0.0f )
+		{
+			return ust::make_array( segment[1], intersection );
+		}
+		else
+		{
+			return ust::make_array( segment[0], intersection );
+		}
+	}
+
+	return ust::null_optional;
 }
 
 } // namespace PM
