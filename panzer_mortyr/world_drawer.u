@@ -13,7 +13,8 @@ import "fog.iu"
 import "gl_functions.iu"
 import "image_loading.iu"
 import "map_quad_utils.iu"
-import "visibility_calculation.iu"
+import "map_visibility_visualization.iu"
+import "room_clusters_bsp_tree_visualization.iu"
 import "world_drawer.iu"
 
 namespace PM
@@ -221,7 +222,7 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 		}
 	}
 
-	var MapDrawData& map_data= map_data_.try_deref();
+	var MapDrawData &mut map_data= map_data_.try_deref();
 
 	// Clear only depth buffer, but not color buffer.
 	// Clearing color isn't necessary, since we draw sky background geometry.
@@ -258,33 +259,14 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 
 	var RoomClustersHierarchy& room_clusters_hierarchy= map_data.room_clusters_hierarchy.deref();
 
-	// Perform visibility checks only for room clusters.
-	// Doing it for non-room clusters is too costly, since there are too many of them.
-	// TODO - allocate this  container once at map start?
-	scoped_array bool mut visible_room_cluster_flags[ clusters.size() ]( false );
-
-	MarkVisibleRoomClusters(
-		room_clusters_hierarchy,
-		clusters,
-		map_data.zpoz_data.deref(),
-		drawing_info.camera_params.position,
-		visible_room_cluster_flags );
-
-	// Perform frustum culling for potentially-visible room clusters.
-	RejectVisibleRoomClustersUsingCameraPlanes( clusters, camera_clip_planes, visible_room_cluster_flags );
-
-	// Calculate bounding box including all visible clusters.
-	// It allows to perform rought rejection of things outside this box.
-
-	var BBox3f visible_clusters_bbox=
-		CalculateVisibleClustersBBox( clusters, visible_room_cluster_flags, drawing_info.camera_params.position );
+	// Calculate map visibility as first drawing step.
+	map_data.map_visibility_calculator.CalculateVisibility( drawing_info.camera_params.position, view_matrix );
 
 	ResetDynamicPolygonsBuffer( breakable_polygons_buffer_ );
 
 	CreateBreakableMapPolygons(
 		map_data,
 		drawing_info.broken_quad_bits,
-		visible_room_cluster_flags,
 		breakable_polygons_buffer_.vertices,
 		breakable_polygons_buffer_.indices );
 
@@ -297,8 +279,6 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 
 	DrawMapPolygons(
 		map_data,
-		visible_room_cluster_flags,
-		visible_clusters_bbox,
 		drawing_info.dynamic_cluster_objects,
 		breakable_polygons_buffer_,
 		map_shader_,
@@ -313,7 +293,6 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 		DrawMapPolygonsWithCaustics(
 			map_data,
 			caustics_texture_,
-			visible_room_cluster_flags,
 			map_caustics_shader_,
 			view_matrix,
 			drawing_info.game_time_s,
@@ -341,8 +320,6 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 		DrawMapPolygonsWithDynamicLights(
 			game_params_.deref(),
 			map_data,
-			visible_room_cluster_flags,
-			visible_clusters_bbox,
 			drawing_info.dynamic_cluster_objects,
 			map_dynamic_light_shader_,
 			view_matrix,
@@ -409,37 +386,10 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 				Vec3f( frame_bbox.max.x, frame_bbox.max.y, frame_bbox.max.z ) * model_transormation_matrix,
 			];
 
-			if( !model_object.disable_culling )
+			if( !model_object.disable_culling &&
+				!map_data.map_visibility_calculator.IsBoxVisible( bbox_corners_transformed ) )
 			{
-				var BBox3f mut bbox
-				{
-					.min= bbox_corners_transformed[0],
-					.max= bbox_corners_transformed[0],
-				};
-
-				for( auto mut i= 1s; i < 8s; ++i )
-				{
-					var Vec3f& v= bbox_corners_transformed[i];
-					ust::min_assign( bbox.min.x, v.x );
-					ust::min_assign( bbox.min.y, v.y );
-					ust::min_assign( bbox.min.z, v.z );
-					ust::max_assign( bbox.max.x, v.x );
-					ust::max_assign( bbox.max.y, v.y );
-					ust::max_assign( bbox.max.z, v.z );
-				}
-
-				// First perform fast check if this model is within the bbox containing all visible clusters.
-				if( !visible_clusters_bbox.InstersectsOrTouches( bbox ) )
-				{
-					continue;
-				}
-
-				// Then check if this model is within at least one visible cluster.
-				if( !IsBBoxWithinVisibleClusters(
-						clusters, room_clusters_hierarchy, visible_room_cluster_flags, bbox ) )
-				{
-					continue;
-				}
+				continue;
 			}
 
 			// Perform more costly check against camera clip planes.
@@ -568,6 +518,47 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 		test_primitive_shader_,
 		view_matrix );
 
+	if( settings_.lock_imut().deref().r_debug_show_room_clusters_bsp_tree )
+	{
+		var ust::vector</WorldDrawingInfo::TestLine/> mut lines;
+
+		VisualizeRoomClustersBSPTree(
+			map_data.map_visibility_calculator.GetRoomClustersBSPTree(), drawing_info.camera_params.position, lines );
+
+		DrawTestLines(
+			lines,
+			test_primitive_vertex_array_object_,
+			test_primitive_vertex_buffer_object_,
+			test_primitive_shader_,
+			view_matrix );
+	}
+	if( settings_.lock_imut().deref().r_debug_show_room_clusters_bsp_tree_projected_portals )
+	{
+		var ust::vector</WorldDrawingInfo::TestLine/> mut lines;
+
+		VisualizeProjectedPortals( map_data.map_visibility_calculator.GetPortalsProjected(), lines );
+
+		DrawTestLines(
+			lines,
+			test_primitive_vertex_array_object_,
+			test_primitive_vertex_buffer_object_,
+			test_primitive_shader_,
+			Mat4f::MakeIdentity() /* Use identity matrix, since portals are alread projected. */ );
+	}
+	if( settings_.lock_imut().deref().r_debug_show_room_clusters_bsp_tree_projected_leaf_bounds )
+	{
+		var ust::vector</WorldDrawingInfo::TestLine/> mut lines;
+
+		VisualizeLeafProjectedBounds( map_data.map_visibility_calculator.GetLeafProjectedBounds(), lines );
+
+		DrawTestLines(
+			lines,
+			test_primitive_vertex_array_object_,
+			test_primitive_vertex_buffer_object_,
+			test_primitive_shader_,
+			Mat4f::MakeIdentity() /* Use identity matrix, since portals are alread projected. */ );
+	}
+
 	var bool fog_enabled= settings_.lock_imut().deref().r_fog_enabled;
 
 	visible_local_fog_volumes_.clear();
@@ -589,7 +580,7 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 			};
 
 			if( !AreBoxVerticesClippedByAtLeastOneCameraClipPlane( camera_clip_planes, bbox.CreateCornerVertices() ) &&
-				IsBBoxWithinVisibleClusters( clusters, room_clusters_hierarchy, visible_room_cluster_flags, bbox ) )
+				map_data.map_visibility_calculator.IsBoxVisible( bbox.CreateCornerVertices() ) )
 			{
 				visible_local_fog_volumes_.push_back( bbox );
 			}
@@ -765,7 +756,7 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 			billboards_description_,
 			drawing_info.camera_params,
 			camera_clip_planes,
-			visible_clusters_bbox,
+			map_data.map_visibility_calculator.GetVisibleLeafsBBox(),
 			semitransparent_polygons_buffer_.vertices,
 			semitransparent_polygons_buffer_.indices );
 
@@ -779,7 +770,6 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 			map_data,
 			materials_block,
 			drawing_info.broken_quad_bits,
-			visible_room_cluster_flags,
 			drawing_info.dynamic_cluster_objects,
 			drawing_info.game_time_s,
 			semitransparent_polygons_buffer_.vertices,
@@ -891,14 +881,12 @@ fn WorldDrawer::SetMap( mut this, u32 map_index )
 
 	var GameResourceNullablePtr</ZmapData/> zmap_data_nullable_ptr= caching_game_resources_loader.LoadZmapFile( map_index );
 	var GameResourceNullablePtr</ZvoxData/> zvox_data_nullable_ptr= caching_game_resources_loader.LoadZvoxFile( map_index );
-	var GameResourceNullablePtr</ZpozData/> zpoz_data_nullable_ptr= caching_game_resources_loader.LoadZpozFile( map_index );
 	var GameResourceNullablePtr</ZmapLamData/> zmap_lam_data_nullable_ptr= caching_game_resources_loader.LoadZmapLamFile( map_index );
 	var GameResourceNullablePtr</ZmapLemData/> zmap_lem_data_nullable_ptr= caching_game_resources_loader.LoadZmapLemFile( map_index );
 	var GameResourceNullablePtr</RoomClustersHierarchy/> room_clusters_hierarchy_nullable_ptr= caching_game_resources_loader.LoadRoomClustersHierarchy( map_index );
 
 	if( zmap_data_nullable_ptr.empty() ||
 		zvox_data_nullable_ptr.empty() ||
-		zpoz_data_nullable_ptr.empty() ||
 		zmap_lam_data_nullable_ptr.empty() ||
 		zmap_lam_data_nullable_ptr.empty() ||
 		room_clusters_hierarchy_nullable_ptr.empty() )
@@ -908,7 +896,6 @@ fn WorldDrawer::SetMap( mut this, u32 map_index )
 
 	var GameResourcePtr</ZmapData/> zmap_data_ptr= zmap_data_nullable_ptr.try_to_non_nullable();
 	var GameResourcePtr</ZvoxData/> zvox_data_ptr= zvox_data_nullable_ptr.try_to_non_nullable();
-	var GameResourcePtr</ZpozData/> zpoz_data_ptr= zpoz_data_nullable_ptr.try_to_non_nullable();
 	var GameResourcePtr</ZmapLamData/> zmap_lam_data_ptr= zmap_lam_data_nullable_ptr.try_to_non_nullable();
 	var GameResourcePtr</ZmapLemData/> zmap_lem_data_ptr= zmap_lem_data_nullable_ptr.try_to_non_nullable();
 	var GameResourcePtr</RoomClustersHierarchy/> room_clusters_hierarchy_ptr= room_clusters_hierarchy_nullable_ptr.try_to_non_nullable();
@@ -1246,10 +1233,10 @@ fn WorldDrawer::SetMap( mut this, u32 map_index )
 		{
 			.zmap_data= zmap_data_ptr,
 			.zvox_data= zvox_data_ptr,
-			.zpoz_data= zpoz_data_ptr,
 			.zmap_lam_data= zmap_lam_data_ptr,
 			.zmap_lem_data= zmap_lem_data_ptr,
 			.room_clusters_hierarchy= room_clusters_hierarchy_ptr,
+			.map_visibility_calculator( zvox_data.clusters ),
 			.light_sources= move(light_sources),
 			.vertex_array_object= move(vertex_array_object),
 			.vertex_buffer= move(vertex_buffer),
@@ -1285,7 +1272,6 @@ fn CreateSemitransparentMapPolygons(
 	MapDrawData& map_data,
 	MaterialsDescription::Block& materials_block,
 	BitArrayView broken_quad_bits,
-	VisibleRoomClusterFlagsImut visible_room_cluster_flags,
 	ust::array_view_imut</WorldDrawingInfo::DynamicClusterObject/> dynamic_cluster_objects,
 	f32 time_s,
 	ust::vector</MapVertex/> &mut vertices,
@@ -1294,7 +1280,9 @@ fn CreateSemitransparentMapPolygons(
 	var ust::array_view_imut</ZmapQuad/> quads= map_data.zmap_data.deref().quads;
 	var ust::array_view_imut</ZvoxCluster/> clusters= map_data.zvox_data.deref().clusters;
 	var ZmapLamData& zmap_lam_data= map_data.zmap_lam_data.deref();
-	var RoomClustersHierarchy& room_clusters_hierarchy= map_data.room_clusters_hierarchy.deref();
+
+	var MapVisibilityCalculator::VisibleRoomClusterFlags visible_room_cluster_flags=
+		map_data.map_visibility_calculator.GetVisibleRoomClusterFlags();
 
 	for( auto mut i= 0s; i < clusters.size(); )
 	{
@@ -1383,7 +1371,7 @@ fn CreateSemitransparentMapPolygons(
 				f32( light_shafts_box.center[2] + light_shafts_box.bounding_box_half_size[2] ) ),
 		};
 
-		if( !IsBBoxWithinVisibleClusters( clusters, room_clusters_hierarchy, visible_room_cluster_flags, bbox ) )
+		if( !map_data.map_visibility_calculator.IsBoxVisible( bbox.CreateCornerVertices() ) )
 		{
 			continue;
 		}
@@ -1395,13 +1383,15 @@ fn CreateSemitransparentMapPolygons(
 fn CreateBreakableMapPolygons(
 	MapDrawData& map_data,
 	BitArrayView broken_quad_bits,
-	VisibleRoomClusterFlagsImut visible_room_cluster_flags,
 	ust::vector</MapVertex/> &mut vertices,
 	ust::vector</u16/> &mut indices )
 {
 	var ust::array_view_imut</ZmapQuad/> quads= map_data.zmap_data.deref().quads;
 	var ust::array_view_imut</ZvoxCluster/> clusters= map_data.zvox_data.deref().clusters;
 	var ZmapLamData& zmap_lam_data= map_data.zmap_lam_data.deref();
+
+	var MapVisibilityCalculator::VisibleRoomClusterFlags visible_room_cluster_flags=
+		map_data.map_visibility_calculator.GetVisibleRoomClusterFlags();
 
 	for( auto mut i= 0s; i < clusters.size(); )
 	{
@@ -1447,8 +1437,6 @@ fn CreateBreakableMapPolygons(
 
 fn DrawMapPolygons(
 	MapDrawData& map_data,
-	VisibleRoomClusterFlagsImut visible_room_cluster_flags,
-	BBox3f& visible_clusters_bbox,
 	ust::array_view_imut</WorldDrawingInfo::DynamicClusterObject/> dynamic_cluster_objects,
 	DynamicPolygonsBuffer& breakable_polygons_buffer,
 	ShaderProgram &mut shader,
@@ -1459,6 +1447,9 @@ fn DrawMapPolygons(
 	WorldDrawingStats &mut drawing_stats )
 {
 	var ust::array_view_imut</ZvoxCluster/> clusters= map_data.zvox_data.deref().clusters.range();
+
+	var MapVisibilityCalculator::VisibleRoomClusterFlags visible_room_cluster_flags=
+		map_data.map_visibility_calculator.GetVisibleRoomClusterFlags();
 
 	SetGLState( g_map_drawing_gl_state );
 
@@ -1529,8 +1520,6 @@ fn DrawMapPolygons(
 	ExecuteDrawingMeshesWithFilmSpecialMaterial( map_data.special_material_film_meshes, time_s );
 	drawing_stats.num_visible_map_triangles+= map_data.special_material_film_meshes[0].num_indices / 3u;
 
-	var RoomClustersHierarchy& room_clusters_hierarchy= map_data.room_clusters_hierarchy.deref();
-
 	// Draw dynamic clusters with individual matrices.
 	foreach( &dynamic_cluster_object : dynamic_cluster_objects )
 	{
@@ -1542,14 +1531,7 @@ fn DrawMapPolygons(
 		bbox.min+= dynamic_cluster_object.translation;
 		bbox.max+= dynamic_cluster_object.translation;
 
-		// First perform fast check if this dynamic cluster is within the bbox containing all visible clusters.
-		if( !visible_clusters_bbox.InstersectsOrTouches( bbox ) )
-		{
-			continue;
-		}
-
-		// Then check if this dynamic cluster is within at least one visible room cluster.
-		if( !IsBBoxWithinVisibleClusters( clusters, room_clusters_hierarchy, visible_room_cluster_flags, bbox ) )
+		if( !map_data.map_visibility_calculator.IsBoxVisible( bbox.CreateCornerVertices() ) )
 		{
 			continue;
 		}
@@ -1579,7 +1561,6 @@ fn DrawMapPolygons(
 fn DrawMapPolygonsWithCaustics(
 	MapDrawData& map_data,
 	Texture& caustics_texture,
-	VisibleRoomClusterFlagsImut visible_room_cluster_flags,
 	ShaderProgram &mut shader,
 	Mat4f& view_matrix,
 	f32 time_s,
@@ -1589,6 +1570,9 @@ fn DrawMapPolygonsWithCaustics(
 	var f32 constexpr c_caustics_speed= 1.0f / 2.0f;
 
 	var ust::array_view_imut</ZvoxCluster/> clusters= map_data.zvox_data.deref().clusters.range();
+
+	var MapVisibilityCalculator::VisibleRoomClusterFlags visible_room_cluster_flags=
+		map_data.map_visibility_calculator.GetVisibleRoomClusterFlags();
 
 	SetGLState( g_map_drawing_gl_state );
 
@@ -1658,8 +1642,6 @@ fn DrawMapPolygonsWithCaustics(
 fn DrawMapPolygonsWithDynamicLights(
 	GameParams& game_params,
 	MapDrawData& map_data,
-	VisibleRoomClusterFlagsImut visible_room_cluster_flags,
-	BBox3f& visible_clusters_bbox,
 	ust::array_view_imut</WorldDrawingInfo::DynamicClusterObject/> dynamic_cluster_objects,
 	ShaderProgram &mut shader,
 	Mat4f& view_matrix,
@@ -1675,7 +1657,9 @@ fn DrawMapPolygonsWithDynamicLights(
 	}
 
 	var ust::array_view_imut</ZvoxCluster/> clusters= map_data.zvox_data.deref().clusters.range();
-	var RoomClustersHierarchy& room_clusters_hierarchy= map_data.room_clusters_hierarchy.deref();
+
+	var MapVisibilityCalculator::VisibleRoomClusterFlags visible_room_cluster_flags=
+		map_data.map_visibility_calculator.GetVisibleRoomClusterFlags();
 
 	shader.Bind();
 	shader.SetUniform( "vu_matrix", view_matrix );
@@ -1792,14 +1776,7 @@ fn DrawMapPolygonsWithDynamicLights(
 				continue;
 			}
 
-			// First perform fast check if this dynamic cluster is within the bbox containing all visible clusters.
-			if( !visible_clusters_bbox.InstersectsOrTouches( bbox ) )
-			{
-				continue;
-			}
-
-			// Then check if this dynamic cluster is within at least one visible room cluster.
-			if( !IsBBoxWithinVisibleClusters( clusters, room_clusters_hierarchy, visible_room_cluster_flags, bbox ) )
+			if( !map_data.map_visibility_calculator.IsBoxVisible( bbox.CreateCornerVertices() ) )
 			{
 				continue;
 			}
@@ -2837,107 +2814,147 @@ fn DrawTestPrimitives(
 	ShaderProgram &mut shader,
 	Mat4f& view_matrix )
 {
+	DrawTestSprites(
+		test_sprites, test_primitive_vertex_array_object, test_primitive_vertex_buffer_object, shader, view_matrix );
+
+	DrawTestTriangles(
+		test_triangles, test_primitive_vertex_array_object, test_primitive_vertex_buffer_object, shader, view_matrix );
+
+	DrawTestLines(
+		test_lines, test_primitive_vertex_array_object, test_primitive_vertex_buffer_object, shader, view_matrix );
+}
+
+fn DrawTestSprites(
+	ust::array_view_imut</Vec3f/> test_sprites,
+	VertexArrayObject& test_primitive_vertex_array_object,
+	BufferObject &mut test_primitive_vertex_buffer_object,
+	ShaderProgram &mut shader,
+	Mat4f& view_matrix )
+{
+	if( test_sprites.empty() )
+	{
+		return;
+	}
+
 	SetGLState( g_test_primitives_drawing_gl_state );
 
-	// Draw test sprites.
-	if( !test_sprites.empty() )
-	{
-		unsafe( glPointSize( 8.0f ) );
+	unsafe( glPointSize( 8.0f ) );
 
-		test_primitive_vertex_array_object.Bind();
-		test_primitive_vertex_buffer_object.Bind();
+	test_primitive_vertex_array_object.Bind();
+	test_primitive_vertex_buffer_object.Bind();
 
-		scoped_array TestPrimitiveVertex vertices[ test_sprites.size() ](
-			test_sprites.iter().map(
-				lambda( Vec3f& p ) : TestPrimitiveVertex
+	scoped_array TestPrimitiveVertex vertices[ test_sprites.size() ](
+		test_sprites.iter().map(
+			lambda( Vec3f& p ) : TestPrimitiveVertex
+			{
+				return TestPrimitiveVertex
 				{
-					return TestPrimitiveVertex
-					{
-						.position[ p.x, p.y, p.z ],
-						.color[ 0u8, 255u8, 0u8 ],
-						.padding15= zero_init,
-					};
-				} ) );
+					.position[ p.x, p.y, p.z ],
+					.color[ 0u8, 255u8, 0u8 ],
+					.padding15= zero_init,
+				};
+			} ) );
 
-		auto range= vertices.to_byte8_range();
+	auto range= vertices.to_byte8_range();
 
-		unsafe( glBufferSubData( GLenum( GL_ARRAY_BUFFER ), GLintptr(0), GLsizeiptr( range.size() ), range.data() ) );
+	unsafe( glBufferSubData( GLenum( GL_ARRAY_BUFFER ), GLintptr(0), GLsizeiptr( range.size() ), range.data() ) );
 
-		shader.Bind();
-		shader.SetUniform( "vu_matrix", view_matrix );
+	shader.Bind();
+	shader.SetUniform( "vu_matrix", view_matrix );
 
-		unsafe( glDrawArrays( GLenum( GL_POINTS ), GLint(0), GLint( vertices.size() ) ) );
+	unsafe( glDrawArrays( GLenum( GL_POINTS ), GLint(0), GLint( vertices.size() ) ) );
 
-		unsafe( glPointSize( 1.0f ) );
-	}
+	unsafe( glPointSize( 1.0f ) );
+}
 
-	// Draw test triangles.
-	if( !test_triangles.empty() )
+fn DrawTestTriangles(
+	ust::array_view_imut</WorldDrawingInfo::TestTriangle/> test_triangles,
+	VertexArrayObject& test_primitive_vertex_array_object,
+	BufferObject &mut test_primitive_vertex_buffer_object,
+	ShaderProgram &mut shader,
+	Mat4f& view_matrix )
+{
+	if( test_triangles.empty() )
 	{
-		test_primitive_vertex_array_object.Bind();
-		test_primitive_vertex_buffer_object.Bind();
-
-		scoped_array TestPrimitiveVertex mut vertices[ test_triangles.size() * 3s ]( ust::make_zeroed</TestPrimitiveVertex/>() );
-
-		for( auto mut i= 0s; i < test_triangles.size(); ++i )
-		{
-			var WorldDrawingInfo::TestTriangle& triangle= test_triangles[i];
-
-			for( auto mut j= 0s; j < 3s; ++j )
-			{
-				var TestPrimitiveVertex &mut v= vertices[ i * 3s + j ];
-				var Vec3f& pos= triangle.vertices[j];
-				v.position[0]= pos.x;
-				v.position[1]= pos.y;
-				v.position[2]= pos.z;
-				v.color= triangle.color;
-			}
-		}
-
-		var ust::array_view_imut</TestPrimitiveVertex/> vertices_imut= vertices.subrange_end( c_max_test_primitive_vertices );
-
-		auto range= vertices_imut.to_byte8_range();
-		unsafe( glBufferSubData( GLenum( GL_ARRAY_BUFFER ), GLintptr(0), GLsizeiptr( range.size() ), range.data() ) );
-
-		shader.Bind();
-		shader.SetUniform( "vu_matrix", view_matrix );
-
-		unsafe( glDrawArrays( GLenum( GL_TRIANGLES ), GLint(0), GLint( vertices_imut.size() ) ) );
+		return;
 	}
 
-	// Draw test lines.
-	if( !test_lines.empty() )
+	SetGLState( g_test_primitives_drawing_gl_state );
+
+	test_primitive_vertex_array_object.Bind();
+	test_primitive_vertex_buffer_object.Bind();
+
+	scoped_array TestPrimitiveVertex mut vertices[ test_triangles.size() * 3s ]( ust::make_zeroed</TestPrimitiveVertex/>() );
+
+	for( auto mut i= 0s; i < test_triangles.size(); ++i )
 	{
-		test_primitive_vertex_array_object.Bind();
-		test_primitive_vertex_buffer_object.Bind();
+		var WorldDrawingInfo::TestTriangle& triangle= test_triangles[i];
 
-		scoped_array TestPrimitiveVertex mut vertices[ test_lines.size() * 2s ]( ust::make_zeroed</TestPrimitiveVertex/>() );
-
-		for( auto mut i= 0s; i < test_lines.size(); ++i )
+		for( auto mut j= 0s; j < 3s; ++j )
 		{
-			var WorldDrawingInfo::TestLine& line= test_lines[i];
-
-			for( auto mut j= 0s; j < 2s; ++j )
-			{
-				var TestPrimitiveVertex &mut v= vertices[ i * 2s + j ];
-				var Vec3f& pos= line.vertices[j];
-				v.position[0]= pos.x;
-				v.position[1]= pos.y;
-				v.position[2]= pos.z;
-				v.color= line.color;
-			}
+			var TestPrimitiveVertex &mut v= vertices[ i * 3s + j ];
+			var Vec3f& pos= triangle.vertices[j];
+			v.position[0]= pos.x;
+			v.position[1]= pos.y;
+			v.position[2]= pos.z;
+			v.color= triangle.color;
 		}
-
-		var ust::array_view_imut</TestPrimitiveVertex/> vertices_imut= vertices.subrange_end( c_max_test_primitive_vertices );
-
-		auto range= vertices_imut.to_byte8_range();
-		unsafe( glBufferSubData( GLenum( GL_ARRAY_BUFFER ), GLintptr(0), GLsizeiptr( range.size() ), range.data() ) );
-
-		shader.Bind();
-		shader.SetUniform( "vu_matrix", view_matrix );
-
-		unsafe( glDrawArrays( GLenum( GL_LINES ), GLint(0), GLint( vertices_imut.size() ) ) );
 	}
+
+	var ust::array_view_imut</TestPrimitiveVertex/> vertices_imut= vertices.subrange_end( c_max_test_primitive_vertices );
+
+	auto range= vertices_imut.to_byte8_range();
+	unsafe( glBufferSubData( GLenum( GL_ARRAY_BUFFER ), GLintptr(0), GLsizeiptr( range.size() ), range.data() ) );
+
+	shader.Bind();
+	shader.SetUniform( "vu_matrix", view_matrix );
+
+	unsafe( glDrawArrays( GLenum( GL_TRIANGLES ), GLint(0), GLint( vertices_imut.size() ) ) );
+}
+
+fn DrawTestLines(
+	ust::array_view_imut</WorldDrawingInfo::TestLine/> test_lines,
+	VertexArrayObject& test_primitive_vertex_array_object,
+	BufferObject &mut test_primitive_vertex_buffer_object,
+	ShaderProgram &mut shader,
+	Mat4f& view_matrix )
+{
+	if( test_lines.empty() )
+	{
+		return;
+	}
+
+	SetGLState( g_test_primitives_drawing_gl_state );
+
+	test_primitive_vertex_array_object.Bind();
+	test_primitive_vertex_buffer_object.Bind();
+
+	scoped_array TestPrimitiveVertex mut vertices[ test_lines.size() * 2s ]( ust::make_zeroed</TestPrimitiveVertex/>() );
+
+	for( auto mut i= 0s; i < test_lines.size(); ++i )
+	{
+		var WorldDrawingInfo::TestLine& line= test_lines[i];
+
+		for( auto mut j= 0s; j < 2s; ++j )
+		{
+			var TestPrimitiveVertex &mut v= vertices[ i * 2s + j ];
+			var Vec3f& pos= line.vertices[j];
+			v.position[0]= pos.x;
+			v.position[1]= pos.y;
+			v.position[2]= pos.z;
+			v.color= line.color;
+		}
+	}
+
+	var ust::array_view_imut</TestPrimitiveVertex/> vertices_imut= vertices.subrange_end( c_max_test_primitive_vertices );
+
+	auto range= vertices_imut.to_byte8_range();
+	unsafe( glBufferSubData( GLenum( GL_ARRAY_BUFFER ), GLintptr(0), GLsizeiptr( range.size() ), range.data() ) );
+
+	shader.Bind();
+	shader.SetUniform( "vu_matrix", view_matrix );
+
+	unsafe( glDrawArrays( GLenum( GL_LINES ), GLint(0), GLint( vertices_imut.size() ) ) );
 }
 
 fn LoadModels(

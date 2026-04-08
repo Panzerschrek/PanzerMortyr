@@ -1,0 +1,428 @@
+import "map_visibility_calculator.iu"
+
+namespace PM
+{
+
+fn MapVisibilityCalculator::constructor( ust::array_view_imut</ZvoxCluster/> clusters )
+	(
+		room_clusters_bsp_tree_= BuildRoomClustersBSPTree( clusters ),
+		leaf_bounds_( room_clusters_bsp_tree_.leaf_nodes.size() ),
+		portals_projected_( room_clusters_bsp_tree_.portals.size() ),
+		visible_room_cluster_flags_( clusters.size(), false ),
+		visible_leafs_bbox_= MakeInvalidBBox(),
+	)
+{}
+
+fn MapVisibilityCalculator::GetRoomClustersBSPTree( this ) : RoomClustersBSPTree
+{
+	return room_clusters_bsp_tree_;
+}
+
+fn MapVisibilityCalculator::GetLeafProjectedBounds( this )
+	: ust::array_view_imut</ LeafProjectedBounds /> @( ust::reference_notation::return_inner_references::param0 )
+{
+	return leaf_bounds_;
+}
+
+fn MapVisibilityCalculator::GetPortalsProjected( this )
+	: ust::array_view_imut</ PortalProjected /> @( ust::reference_notation::return_inner_references::param0 )
+{
+	return portals_projected_;
+}
+
+fn MapVisibilityCalculator::GetVisibleRoomClusterFlags( this )
+	: VisibleRoomClusterFlags @( ust::reference_notation::return_inner_references::param0 )
+{
+	return visible_room_cluster_flags_;
+}
+
+fn MapVisibilityCalculator::GetVisibleLeafsBBox( this ) : BBox3f&
+{
+	return visible_leafs_bbox_;
+}
+
+fn MapVisibilityCalculator::CalculateVisibility( mut this, Vec3f& camera_position, Mat4f& view_matrix )
+{
+	// Reset visibility information calculated previously.
+
+	foreach( &mut c : leaf_bounds_ )
+	{
+		c.reset();
+	}
+
+	foreach( &mut p : portals_projected_ )
+	{
+		p.reset();
+	}
+
+	foreach( &mut b : visible_room_cluster_flags_ )
+	{
+		b= false;
+	}
+
+	visible_leafs_bbox_= MakeInvalidBBox();
+
+	// Find the tree leaf where camera is located.
+
+	var size_type camera_leaf_index= GetLeafIndexForPoint( room_clusters_bsp_tree_, camera_position );
+
+	// Bounds for camera leaf is the whole screen.
+	// It's from -1 to 1, since normalized coordinates are used (as in OpenGL).
+	leaf_bounds_[ camera_leaf_index ]= ClippingPolygon::CreateFromBox( Vec2f( -1.0f, -1.0f ), Vec2f( 1.0f, 1.0f ) );
+
+	// Launch recursive BSP tree traversal.
+
+	CalculateLeafsAndPortalsVisibility_r( camera_position, view_matrix, RoomClustersBSPTree::c_root_node_index );
+
+	foreach( pair : room_clusters_bsp_tree_.leaf_nodes.iter().zip( leaf_bounds_.iter() ) )
+	{
+		if( !pair.second.empty() )
+		{
+			var RoomClustersBSPTree::LeafNode& leaf_node= pair.first;
+
+			// Mark as visible room clusters if at least one leaf created from this cluster is visible.
+			visible_room_cluster_flags_[ size_type( leaf_node.clustrer_index ) ]= true;
+
+			// Extend visible leafs bbox.
+			visible_leafs_bbox_.ExtendWithOther( leaf_node.bbox );
+		}
+	}
+
+	if( !room_clusters_bsp_tree_.leaf_nodes[ camera_leaf_index ].bbox.PointIsInsideOrOnFace( camera_position ) )
+	{
+		// If camera is somewhere in void space (outside a cluster) - mark all room clusters as visible.
+		// It's useful for noclip mode, in other cases this should not happen.
+		foreach( &leaf : room_clusters_bsp_tree_.leaf_nodes )
+		{
+			visible_room_cluster_flags_[ size_type( leaf.clustrer_index ) ]= true;
+		}
+
+		var f32 inf= 1000000.0f;
+		visible_leafs_bbox_= BBox3f{ .min= Vec3f( -inf, -inf, -inf ), .max= Vec3f(  inf,  inf,  inf ), };
+	}
+}
+
+fn MapVisibilityCalculator::IsBoxVisible( this, [ Vec3f, 8 ]& box_vertices ) : bool
+{
+	return IsBoxVisible_r( box_vertices, RoomClustersBSPTree::c_root_node_index );
+}
+
+fn MapVisibilityCalculator::CalculateLeafsAndPortalsVisibility_r(
+	mut this, Vec3f& camera_position, Mat4f& view_matrix, RoomClustersBSPTree::NodeIndex node_index )
+{
+	if( node_index >= RoomClustersBSPTree::c_first_leaf_node )
+	{
+		// Reached some leaf.
+
+		var size_type leaf_node_index= size_type( node_index ) - size_type( RoomClustersBSPTree::c_first_leaf_node );
+		var RoomClustersBSPTree::LeafNode& leaf_node= room_clusters_bsp_tree_.leaf_nodes[ leaf_node_index ];
+
+		auto leaf_portals_range=
+			room_clusters_bsp_tree_.leaf_portals.range().subrange(
+				size_type( leaf_node.first_leaf_portal ),
+				size_type( leaf_node.first_leaf_portal ) + size_type( leaf_node.num_leaf_portals ) );
+
+		var MapVisibilityCalculator::LeafProjectedBounds &mut this_leaf_bounds_opt=
+			leaf_bounds_[ size_type( leaf_node_index ) ];
+
+		// Visit all portals of this leaf.
+		// If at least one portal is visible, assume this leaf to be visible.
+		// Build clipping bounds as intersection of all portal clipping bounds.
+		foreach( &portal_index : leaf_portals_range )
+		{
+			if_var( &b : portals_projected_[ size_type( portal_index ) ] )
+			{
+				if( this_leaf_bounds_opt.empty() )
+				{
+					this_leaf_bounds_opt= b;
+				}
+				else
+				{
+					this_leaf_bounds_opt.try_deref().ExtendWithOther( b );
+				}
+			}
+		}
+
+		if_var( &this_leaf_bounds : this_leaf_bounds_opt )
+		{
+			// Iterate over all out portals of the leaf.
+			// If it's an optput portal (with no bounds set yet) -
+			// calculate its bounds as intersection of its own bounds and input leaf bounds.
+			foreach( &portal_index : leaf_portals_range )
+			{
+				var MapVisibilityCalculator::PortalProjected &mut out_portal_bounds=
+					portals_projected_[ size_type( portal_index ) ];
+
+				if( out_portal_bounds.empty() )
+				{
+					var MapVisibilityCalculator::PortalProjected mut portal_projected_opt=
+						ProjectPortal(
+							room_clusters_bsp_tree_.portals[ size_type( portal_index ) ],
+							camera_position,
+							view_matrix );
+
+					if_var( &mut portal_projected : portal_projected_opt )
+					{
+						var ClippingPolygon intersection= portal_projected.CalculateIntersection( this_leaf_bounds );
+						if( intersection.IsValidAndNonEmpty() )
+						{
+							out_portal_bounds= intersection;
+						}
+					}
+				}
+			}
+		}
+	}
+	else
+	{
+		// Branch node - visit both children with order dependent on camera position relative to the node's plane.
+
+		// Take here branch node copy to allow further recursive call with mutable "this".
+		var RoomClustersBSPTree::BranchNode node= room_clusters_bsp_tree_.branch_nodes[ size_type( node_index ) ];
+
+		// Select recursive traversal order based on camera position relative to the node plane - to ensure front-to back order.
+		var [ RoomClustersBSPTree::NodeIndex, 2 ] children_order=
+			( node.plane.GetDistanceForPoint( camera_position ) >= 0.0f
+				? ust::make_array( node.children[0], node.children[1] )
+				: ust::make_array( node.children[1], node.children[0] ) );
+
+		foreach( &child_node_index : children_order )
+		{
+			CalculateLeafsAndPortalsVisibility_r( camera_position, view_matrix, child_node_index );
+		}
+	}
+}
+
+fn MapVisibilityCalculator::IsBoxVisible_r( this, [ Vec3f, 8 ]& box_vertices, RoomClustersBSPTree::NodeIndex node_index ) : bool
+{
+	if( node_index >= RoomClustersBSPTree::c_first_leaf_node )
+	{
+		// Found leaf node where given box is at least partially located.
+
+		var size_type leaf_node_index= size_type( node_index ) - size_type( RoomClustersBSPTree::c_first_leaf_node );
+
+		if( leaf_bounds_[leaf_node_index].empty() )
+		{
+			// If this leaf isn't visible, given box isn't visible too (at least its part lying within this leaf).
+			return false;
+		}
+
+		// Perform last check if given box actually lies within bounding box of this leaf.
+
+		var RoomClustersBSPTree::LeafNode& leaf_node= room_clusters_bsp_tree_.leaf_nodes[ leaf_node_index ];
+
+		var BBox3f mut input_vertices_bbox{ .min= box_vertices[0], .max= box_vertices[0] };
+		foreach( &v : box_vertices )
+		{
+			input_vertices_bbox.ExtendWithPoint( v );
+		}
+
+		return leaf_node.bbox.InstersectsOrTouches( input_vertices_bbox );
+
+		// TODO - consider adding one more check - project bbox and test it against cluster screen bounds.
+	}
+	else
+	{
+		// TODO - consider speeding-up this by pre-calculating BSP tree branch nodes visible in this frame.
+
+		// Test vertices of given box against split plane.
+		var RoomClustersBSPTree::BranchNode& branch_node=
+			room_clusters_bsp_tree_.branch_nodes[ size_type( node_index ) ];
+
+		var size_type mut num_vertices_front= 0s, mut num_vertices_back= 0s;
+		foreach( &v : box_vertices )
+		{
+			var f32 dist= branch_node.plane.GetDistanceForPoint( v );
+			if( dist > 0.0f )
+			{
+				++num_vertices_front;
+			}
+			if( dist < 0.0f )
+			{
+				++num_vertices_back;
+			}
+		}
+
+		// In many cases we need to go to only one side of the BSP tree.
+		if( num_vertices_front == 0s )
+		{
+			return IsBoxVisible_r( box_vertices, branch_node.children[1] );
+		}
+		if( num_vertices_back == 0s )
+		{
+			return IsBoxVisible_r( box_vertices, branch_node.children[0] );
+		}
+
+		// But sometimes a box may insersect a split plane. In such case test both children of this branch node.
+
+		return
+			IsBoxVisible_r( box_vertices, branch_node.children[0] ) ||
+			IsBoxVisible_r( box_vertices, branch_node.children[1] );
+	}
+}
+
+fn GetLeafIndexForPoint( RoomClustersBSPTree& tree, Vec3f& point ) : size_type
+{
+	// Use here simple BSP tree descent towards the leaf where camera is located.
+
+	var RoomClustersBSPTree::NodeIndex mut node_index= RoomClustersBSPTree::c_root_node_index;
+
+	loop
+	{
+		if( node_index >= RoomClustersBSPTree::c_first_leaf_node )
+		{
+			return size_type( node_index ) - size_type( RoomClustersBSPTree::c_first_leaf_node );
+		}
+
+		var RoomClustersBSPTree::BranchNode& node= tree.branch_nodes[ size_type( node_index ) ];
+
+		node_index= ( node.plane.GetDistanceForPoint( point ) >= 0.0f ? node.children[0] : node.children[1] );
+	}
+}
+
+fn ProjectPortal(
+	RoomClustersBSPTree::Portal& portal,
+	Vec3f& camera_position,
+	Mat4f& view_matrix ) : MapVisibilityCalculator::PortalProjected
+{
+	var BBox3f mut bbox= portal.bbox;
+
+	// Projecting flat portal may give some nasty artifacts if camera is too close to portal plane.
+	// So, extend the portal bbox a little bit (in all directions), so that non-flat bbox is projected.
+
+	var f32 extend_eps= c_portals_clipping_z_near * 2.05f;
+	bbox.min-= Vec3f( extend_eps, extend_eps, extend_eps );
+	bbox.max+= Vec3f( extend_eps, extend_eps, extend_eps );
+
+	// If camera is withing portal bbox volume, assume its projection covers the entire screen.
+	if( bbox.PointIsInsideOrOnFace( camera_position ) )
+	{
+		var f32 inf= 10000000.0f;
+		return ClippingPolygon::CreateFromBox( Vec2f( -inf, -inf ), Vec2f( inf, inf ) );
+	}
+
+	return ProjectBBox( bbox, view_matrix );
+}
+
+fn ProjectBBox( BBox3f& bbox, Mat4f& view_matrix ) : MapVisibilityCalculator::PortalProjected
+{
+	var [ Vec3f, 8 ] bbox_vertices= bbox.CreateCornerVertices();
+
+	auto mut project_next_vertex=
+		lambda[i= 0s, &bbox_vertices, &view_matrix] mut () : Vec3f
+		{
+			var Vec3f& v= bbox_vertices[i];
+			++i;
+
+			var Vec3f v_projected= v * view_matrix;
+
+			var f32 w=
+				v.x * view_matrix.values[0][3] +
+				v.y * view_matrix.values[1][3] +
+				v.z * view_matrix.values[2][3] +
+				view_matrix.values[3][3];
+
+			// Assuming we have standard OpenGL perspective projection matrix with Z written into W component.
+			return Vec3f( v_projected.xy(), w );
+		};
+
+	var [ Vec3f, 8 ] vertices_projected[ project_next_vertex() ... ];
+
+	var MapVisibilityCalculator::PortalProjected mut result;
+
+	// Project each vertex which is at front of the near clip plane.
+	foreach( &v : vertices_projected )
+	{
+		if( v.z >= c_portals_clipping_z_near )
+		{
+			var Vec2f p= v.xy() / v.z;
+
+			if( !result.empty() )
+			{
+				result.try_deref().ExtendWithPoint( p );
+			}
+			else
+			{
+				result= ClippingPolygon::CreateFromPoint( p );
+			}
+		}
+	}
+
+	// Process all line segments of the box.
+	// For lines crossing near plane calculate intersection with it and use it for projection.
+
+	foreach( &line_indices : c_box_line_indices )
+	{
+		var Vec3f& v0= cast_imut(vertices_projected)[ line_indices[0] ];
+		var Vec3f& v1= cast_imut(vertices_projected)[ line_indices[1] ];
+
+		if( v0.z >= c_portals_clipping_z_near && v1.z >= c_portals_clipping_z_near )
+		{
+			// Not clipped at all.
+		}
+		else if( v0.z <= c_portals_clipping_z_near && v1.z <= c_portals_clipping_z_near )
+		{
+			// Fully clipped.
+		}
+		else
+		{
+			// Clip here the line.
+
+			// This approach gives result projected coordinates with magnitude slightly less than needed.
+			// Generally a limit should be calculated, which should be -infinity or +infinity.
+			// But it's fine enough doing so considering Z near is pretty small and portal's bbox was extended previously.
+
+			var f32 dist0 = v0.z - c_portals_clipping_z_near;
+			var f32 dist1 = v1.z - c_portals_clipping_z_near;
+			var f32 dist_sum = v1.z - v0.z;
+			if( dist_sum != 0.0f )
+			{
+				var f32 k0 = dist0 / dist_sum;
+				var f32 k1 = dist1 / dist_sum;
+				var Vec3f intersection_point= v0 * k1 - v1 * k0;
+
+				var Vec2f p= intersection_point.xy() / intersection_point.z;
+
+				if( !result.empty() )
+				{
+					result.try_deref().ExtendWithPoint( p );
+				}
+				else
+				{
+					result= ClippingPolygon::CreateFromPoint( p );
+				}
+			}
+		}
+	}
+
+	return result;
+}
+
+fn MakeInvalidBBox() : BBox3f
+{
+	var f32 inf= 1000000.0f;
+	return BBox3f{ .min( inf, inf, inf ), .max( -inf, -inf, -inf ) };
+}
+
+// Use reasonable-small z near for portals clipping.
+var f32 c_portals_clipping_z_near= 1.0f / 16.0f;
+
+var [ [ u32, 2 ], 12 ] constexpr c_box_line_indices
+[
+	[ 0u, 1u ],
+	[ 1u, 5u ],
+	[ 5u, 4u ],
+	[ 4u, 0u ],
+
+	[ 2u, 3u ],
+	[ 3u, 7u ],
+	[ 7u, 6u ],
+	[ 6u, 2u ],
+
+	[ 0u, 2u ],
+	[ 1u, 3u ],
+	[ 5u, 7u ],
+	[ 4u, 6u ],
+];
+
+} // namespace PM

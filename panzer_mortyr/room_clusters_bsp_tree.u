@@ -1,0 +1,344 @@
+import "/assert.iu"
+import "cluster_utils.iu"
+import "geometry_utils.iu"
+import "room_clusters_bsp_tree.iu"
+
+namespace PM
+{
+
+fn BuildRoomClustersBSPTree( ust::array_view_imut</ZvoxCluster/> clusters ) : RoomClustersBSPTree
+{
+	var ust::vector</RoomClusterSubvolume/> mut cluster_subvolumes;
+
+	for( auto mut i= 0s; i < clusters.size(); ++i )
+	{
+		var ZvoxCluster& cluster= clusters[i];
+
+		if( cluster.c.num_children_clusters >= 0 )
+		{
+			var BBox3f mut bbox= CreateClusterBBox( cluster );
+
+			// Hack! Map 28 contains a couple of room clusters with zero dimensions.
+			// We can't ignore them, since they contain visible map quads.
+			// So, extend them a little bit.
+			if( bbox.min.z == bbox.max.z )
+			{
+				bbox.min.z-= 1.0f;
+			}
+
+			cluster_subvolumes.push_back( RoomClusterSubvolume{ .bbox= bbox, .clustrer_index(i) } );
+		}
+	}
+
+	var RoomClustersBSPTree mut tree;
+
+	BuildRoomClustersBSPTree_r( tree, cluster_subvolumes );
+
+	tree.portals= BuildPortals( tree.leaf_nodes );
+
+	BuildLeafPortalLists( tree );
+
+	debug_assert( tree.branch_nodes.size() < size_type( RoomClustersBSPTree::c_first_leaf_node ) );
+	debug_assert( tree.leaf_nodes.size() < ( 1s << typeinfo</ RoomClustersBSPTree::NodeIndex />.size_of * 8s ) / 2s );
+	debug_assert( tree.portals.size() < ( 1s << typeinfo</ RoomClustersBSPTree::PortalIndex />.size_of * 8s ) / 2s );
+
+	return tree;
+}
+
+struct RoomClusterSubvolume
+{
+	BBox3f bbox;
+	u32 clustrer_index;
+}
+
+// Split given box volumes until such split is needed.
+// Warning! This code works properly only if input volumes aren't inersecting and ren't flat!
+
+fn BuildRoomClustersBSPTree_r(
+	RoomClustersBSPTree &mut tree,
+	ust::array_view_imut</RoomClusterSubvolume/> cluster_subvolumes ) : RoomClustersBSPTree::NodeIndex
+{
+	debug_assert( !cluster_subvolumes.empty() );
+
+	if( cluster_subvolumes.size() == 1s )
+	{
+		var RoomClustersBSPTree::NodeIndex node_index( size_type(RoomClustersBSPTree::c_first_leaf_node) + tree.leaf_nodes.size() );
+
+		var RoomClusterSubvolume& volume= cluster_subvolumes.front();
+
+		tree.leaf_nodes.push_back(
+			RoomClustersBSPTree::LeafNode
+			{
+				.bbox= volume.bbox,
+				.clustrer_index= volume.clustrer_index,
+				.first_leaf_portal(0), // Set later.
+				.num_leaf_portals(0), // Set later.
+			} );
+
+		return node_index;
+	}
+
+	var RoomClustersBSPTree::NodeIndex node_index( tree.branch_nodes.size() );
+
+	 // Set actual node value later, now insert a stub.
+	tree.branch_nodes.push_back(
+		RoomClustersBSPTree::BranchNode
+		{
+			.plane{ .normal= Vec3f::MakeZero(), .distance= 0.0f },
+			.children= zero_init,
+		} );
+
+	var Planef split_plane= ChooseSplitPlane( cluster_subvolumes );
+
+	var ust::vector</RoomClusterSubvolume/> mut subvolumes_front, mut subvolumes_back;
+
+	foreach( &cluster_subvolume : cluster_subvolumes )
+	{
+		var ust::optional</BBox3f/> mut bbox_front, mut bbox_back, mut bbox_at_slit_plane;
+
+		foreach( &v : cluster_subvolume.bbox.CreateCornerVertices() )
+		{
+			var f32 dist= split_plane.GetDistanceForPoint( v );
+			if( dist > 0.0f )
+			{
+				if( bbox_front.empty() )
+				{
+					bbox_front= BBox3f{ .min= v, .max= v };
+				}
+				else
+				{
+					bbox_front.try_deref().ExtendWithPoint( v );
+				}
+			}
+			else if( dist < 0.0f )
+			{
+				if( bbox_back.empty() )
+				{
+					bbox_back= BBox3f{ .min= v, .max= v };
+				}
+				else
+				{
+					bbox_back.try_deref().ExtendWithPoint( v );
+				}
+			}
+			else
+			{
+				if( bbox_at_slit_plane.empty() )
+				{
+					bbox_at_slit_plane= BBox3f{ .min= v, .max= v };
+				}
+				else
+				{
+					bbox_at_slit_plane.try_deref().ExtendWithPoint( v );
+				}
+			}
+		}
+
+		if_var( &bb : bbox_at_slit_plane )
+		{
+			if_var( &mut bb_dst : bbox_front )
+			{
+				bb_dst.ExtendWithOther( bb );
+			}
+			if_var( &mut bb_dst : bbox_back )
+			{
+				bb_dst.ExtendWithOther( bb );
+			}
+		}
+
+		// This condition should be true, unless empty bounding boxes are present.
+		debug_assert( !bbox_front.empty() | !bbox_back.empty() );
+
+		if( !bbox_front.empty() & !bbox_back.empty() )
+		{
+			// If this box was split by current clip plane, extend both halves via center vertex projected to the split plane.
+			// This works only for axis-aligned bounding boxes.
+			var Vec3f center= cluster_subvolume.bbox.GetCenter();
+			var Vec3f center_projected_to_clip_plane=
+				center - split_plane.normal * ( split_plane.GetDistanceForPoint( center ) / split_plane.normal.SquareLength() );
+
+			bbox_front.try_deref().ExtendWithPoint( center_projected_to_clip_plane );
+			bbox_back.try_deref().ExtendWithPoint( center_projected_to_clip_plane );
+		}
+
+		if_var( &bb : bbox_front )
+		{
+			debug_assert( bb.min.x < bb.max.x );
+			debug_assert( bb.min.y < bb.max.y );
+			debug_assert( bb.min.z < bb.max.z );
+			subvolumes_front.push_back(
+				RoomClusterSubvolume{ .bbox= bb, .clustrer_index= cluster_subvolume.clustrer_index } );
+		}
+		if_var( &bb : bbox_back )
+		{
+			debug_assert( bb.min.x < bb.max.x );
+			debug_assert( bb.min.y < bb.max.y );
+			debug_assert( bb.min.z < bb.max.z );
+			subvolumes_back.push_back(
+				RoomClusterSubvolume{ .bbox= bb, .clustrer_index= cluster_subvolume.clustrer_index } );
+		}
+	}
+
+	debug_assert( !subvolumes_front.empty() & !subvolumes_back.empty() );
+
+	var RoomClustersBSPTree::NodeIndex child_front= BuildRoomClustersBSPTree_r( tree, subvolumes_front );
+	var RoomClustersBSPTree::NodeIndex child_back= BuildRoomClustersBSPTree_r( tree, subvolumes_back );
+
+	tree.branch_nodes[ size_type( node_index ) ]=
+		RoomClustersBSPTree::BranchNode
+		{
+			.plane= split_plane,
+			.children[ child_front, child_back ],
+		};
+
+	return node_index;
+}
+
+fn ChooseSplitPlane( ust::array_view_imut</RoomClusterSubvolume/> cluster_subvolumes ) : Planef
+{
+	debug_assert( cluster_subvolumes.size() >= 2s );
+
+	var Planef mut best_split_plane= Planef::CreateFromNormalAndPoint( Vec3f( 0.0f, 0.0f, 1.0f ), Vec3f::MakeZero() );
+	var i32 mut best_split_plane_score= 0x7FFFFFFF; // Smaller is better.
+
+	foreach( &cluster_subvolume : cluster_subvolumes )
+	{
+		foreach( &candidate_plane : CreateBBoxPlanes( cluster_subvolume.bbox ) )
+		{
+			var i32 mut num_front_subvolumes= 0, mut num_back_subvolumes= 0, mut num_split_subvolumes= 0;
+
+			foreach( &cluster_subvolume_for_splitting : cluster_subvolumes )
+			{
+				var i32 mut num_front_vertices= 0, mut num_back_vertices= 0, mut num_vertices_on_plane= 0;
+
+				foreach( &v : cluster_subvolume_for_splitting.bbox.CreateCornerVertices() )
+				{
+					var f32 dist= candidate_plane.GetDistanceForPoint(v);
+					if( dist > 0.0f )
+					{
+						++num_front_vertices;
+					}
+					else if( dist < 0.0f )
+					{
+						++num_back_vertices;
+					}
+					else
+					{
+						++num_vertices_on_plane;
+					}
+				}
+
+				debug_assert( num_front_vertices + num_back_vertices + num_vertices_on_plane == 8 );
+
+				if( num_front_vertices > 0 && num_back_vertices == 0 )
+				{
+					++num_front_subvolumes;
+				}
+				else if( num_front_vertices == 0 && num_back_vertices > 0 )
+				{
+					++num_back_subvolumes;
+				}
+				else
+				{
+					++num_split_subvolumes;
+				}
+			}
+
+			// Prefer building a balanced tree, but slightly downvote split planes producing too much splits.
+			var i32 score= ust::abs( num_front_subvolumes - num_back_subvolumes ) * 8 + num_split_subvolumes;
+			if( score < best_split_plane_score )
+			{
+				best_split_plane= candidate_plane;
+				best_split_plane_score= score;
+			}
+		}
+	}
+
+	debug_assert( best_split_plane_score < 0x7FFFFFFF );
+
+	return best_split_plane;
+}
+
+fn BuildPortals(
+	ust::array_view_imut</RoomClustersBSPTree::LeafNode/> leaf_nodes ) : ust::vector</RoomClustersBSPTree::Portal/>
+{
+	var ust::vector</RoomClustersBSPTree::Portal/> mut portals;
+
+	// Use brute-force check of each leaf node with each other.
+	// It's fine, since the total number of nodes isn't that huge.
+
+	for( auto mut i= 0s; i < leaf_nodes.size(); ++i )
+	{
+		var BBox3f& bbox_i= leaf_nodes[i].bbox;
+
+		for( auto mut j= i + 1s; j < leaf_nodes.size(); ++j )
+		{
+			var BBox3f& bbox_j= leaf_nodes[j].bbox;
+
+			var BBox3f intersection_bbox
+			{
+				.min(
+					ust::max( bbox_i.min.x, bbox_j.min.x ),
+					ust::max( bbox_i.min.y, bbox_j.min.y ),
+					ust::max( bbox_i.min.z, bbox_j.min.z ) ),
+				.max(
+					ust::min( bbox_i.max.x, bbox_j.max.x ),
+					ust::min( bbox_i.max.y, bbox_j.max.y ),
+					ust::min( bbox_i.max.z, bbox_j.max.z ) ),
+			};
+
+			var Vec3f intersection_bbox_dimensions= intersection_bbox.GetDimensions();
+
+			var bool is_x_flat_portal=
+				intersection_bbox_dimensions.x == 0.0f &
+				intersection_bbox_dimensions.y > 0.0f &
+				intersection_bbox_dimensions.z > 0.0f;
+
+			var bool is_y_flat_portal=
+				intersection_bbox_dimensions.x > 0.0f &
+				intersection_bbox_dimensions.y == 0.0f &
+				intersection_bbox_dimensions.z > 0.0f;
+
+			var bool is_z_flat_portal=
+				intersection_bbox_dimensions.x > 0.0f &
+				intersection_bbox_dimensions.y > 0.0f &
+				intersection_bbox_dimensions.z == 0.0f;
+
+			if( is_x_flat_portal | is_y_flat_portal | is_z_flat_portal )
+			{
+				// We have a flat intersection box, which means, that these two leaf nodes touch each other on some side.
+				portals.push_back( RoomClustersBSPTree::Portal{ .bbox= intersection_bbox, .leaf_nodes[ (i), (j) ] } );
+			}
+		}
+	}
+
+	return portals;
+}
+
+fn BuildLeafPortalLists( RoomClustersBSPTree &mut tree )
+{
+	// Yet another algorithm with quadratic time complexity. But it's fine for small number of leafs/portals.
+	for( auto mut leaf_index= 0s; leaf_index < tree.leaf_nodes.size(); ++leaf_index )
+	{
+		var RoomClustersBSPTree::LeafNode &mut leaf_node= tree.leaf_nodes[ leaf_index ];
+
+		leaf_node.first_leaf_portal= u16( tree.leaf_portals.size() );
+
+		for( auto mut portal_index= 0s; portal_index < tree.portals.size(); ++portal_index )
+		{
+			var RoomClustersBSPTree::Portal& portal= tree.portals[ portal_index ];
+			if( size_type( portal.leaf_nodes[0] ) == leaf_index |
+				size_type( portal.leaf_nodes[1] ) == leaf_index )
+			{
+				tree.leaf_portals.push_back( RoomClustersBSPTree::PortalIndex( portal_index ) );
+			}
+		}
+
+		leaf_node.num_leaf_portals= u16( tree.leaf_portals.size() - size_type( leaf_node.first_leaf_portal ) );
+	}
+
+	// Each portal should be mentioned exactly twice - in portal lists of two leafs to which it belongs.
+	debug_assert( tree.leaf_portals.size() == tree.portals.size() * 2s );
+}
+
+} // namespace PM

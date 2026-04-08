@@ -1,0 +1,74 @@
+import "clipping_polygon.iu"
+import "mat.iu"
+import "room_clusters_bsp_tree.iu"
+
+namespace PM
+{
+
+// This class performs visibility calculation for map room clusters.
+// Internally it uses a BSP tree created from these clusters with portals between tree leafs.
+// It uses an algorithm based on projection of portals to the screen and recursive clipping of portals in front to back order.
+// BSP tree is necessary to be able to build such order, which is generally impossible for arbitrary clusters.
+
+class MapVisibilityCalculator
+{
+public:
+	type PortalProjected= ust::optional</ ClippingPolygon />;
+	type LeafProjectedBounds= ust::optional</ ClippingPolygon />;
+
+	type VisibleRoomClusterFlags= ust::array_view_imut</bool/>;
+
+public:
+	fn constructor( ust::array_view_imut</ZvoxCluster/> clusters );
+
+	fn GetRoomClustersBSPTree( this ) : RoomClustersBSPTree;
+
+	// Get leaf projected bounds (calculated previously).
+	fn GetLeafProjectedBounds( this )
+		: ust::array_view_imut</ LeafProjectedBounds /> @( ust::reference_notation::return_inner_references::param0 );
+
+	// Get projected portals (calculated previously).
+	fn GetPortalsProjected( this )
+		: ust::array_view_imut</ PortalProjected /> @( ust::reference_notation::return_inner_references::param0 );
+
+	// Get flags for visible room clusters (calculated previously).
+	// For non-room clusters these flags aren't set.
+	fn GetVisibleRoomClusterFlags( this )
+		: VisibleRoomClusterFlags @( ust::reference_notation::return_inner_references::param0 );
+
+	// Get bounding box of visible BSP tree leafs (calculated previously).
+	// It's usefull to perform rough but cheap visibility check.
+	fn GetVisibleLeafsBBox( this ) : BBox3f&;
+
+	// Calculate visibility for given camera position and view matrix.
+	// TODO - try to avoid providing camera position, it can be actually derived from the view matrix.
+	fn CalculateVisibility( mut this, Vec3f& camera_position, Mat4f& view_matrix );
+
+	// Check if given box (represented as its corner vertices) is visible.
+	// It works even with transformed boxes, not only axis-aligned ones.
+	// Call this after visibility is calculated.
+	fn IsBoxVisible( this, [ Vec3f, 8 ]& box_vertices ) : bool;
+
+private:
+	fn CalculateLeafsAndPortalsVisibility_r(
+		mut this, Vec3f& camera_position, Mat4f& view_matrix, RoomClustersBSPTree::NodeIndex node_index );
+
+	fn IsBoxVisible_r( this, [ Vec3f, 8 ]& box_vertices, RoomClustersBSPTree::NodeIndex node_index ) : bool;
+
+private:
+	RoomClustersBSPTree imut room_clusters_bsp_tree_;
+
+	// Contains entry for each leaf. Is non-empty if a leaf is visible.
+	ust::vector</ LeafProjectedBounds /> leaf_bounds_;
+
+	// Contains entry for each portal.
+	ust::vector</ PortalProjected /> portals_projected_;
+
+	// Contains entry for each cluster. But only room clusters may be marked with "true".
+	ust::vector</bool/> visible_room_cluster_flags_;
+
+	// Invalid if nothing is visible.
+	BBox3f visible_leafs_bbox_;
+}
+
+} // namespace PM
