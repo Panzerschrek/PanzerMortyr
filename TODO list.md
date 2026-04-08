@@ -9,7 +9,6 @@ Map format investigation:
 * Investigate what remaining fields of ZvoxCluster structure mean.
 * Investigate exact meaning of many ZpozEntity fields.
 * Investigate meaning of remaining fields of "ZpozMultiplayerSpawnPoint" struct.
-* Investigate what exact kind of visibility data is stored in ZPOZ file and why it seems to have 4 blocks of such data for each cluster.
 * Investigate exact meaning of remaining fields of navigation graph structures.
 * Investigate what remaining fields of "ZmapLamRainDroplet" struct mean.
 
@@ -138,7 +137,6 @@ PanzerMortyr rendering:
 * Draw burning entities with some kind of burning effect (like in RtCW).
 * Suport light soruces with conic shape and use such source kind for flashlight.
 * Draw some fullscreen burning effect if the player is burning.
-* Experiment with an algorithm for dynamic visible clusters search similar to one used in SquareWheel.
 * Add support for MSAA (with proper support of fullscreen effects like fog).
 * Somehow distort/colorize the whole image while swimming in water. Maybe even add or alter global fog if camera is in water volume.
 * Consider optimizing calculating light from point light sources for models - avoid enumerating all lights.
