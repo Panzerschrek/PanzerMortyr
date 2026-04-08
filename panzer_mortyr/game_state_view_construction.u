@@ -1,10 +1,10 @@
 import "/scoped_array.iu"
 import "/common_lib/billboards_description_file.iu"
 import "bounding_boxes_hierarchy_debug_visualization.iu"
-import "collisions.iu"
 import "game_constants.iu"
 import "game_logic.iu"
 import "game_state_view_construction.iu"
+import "geometry_utils.iu"
 import "mat.iu"
 
 namespace PM
@@ -1129,6 +1129,7 @@ fn ConstructGameEventNotificationsDrawingInfo(
 	}
 
 	// Search for a note visible nearby.
+	if( !map_data.note_volumes.empty() )
 	{
 		var f32 c_note_visible_max_distance= 384.0f;
 		var f32 c_note_full_alpha_distance= 32.0f;
@@ -1148,30 +1149,24 @@ fn ConstructGameEventNotificationsDrawingInfo(
 
 		var Vec3f ray_start= GetCameraPositionForPlayerWithExtraDepthShift( game_state.player, camera_controller );
 
-		if_var( trace_result :
-			LineTrace( map_data, game_state.broken_quad_bits, ust::empty_range, ray_start, direction_vector ) )
+		// Check all note volumes - there is not so many of them.
+		foreach( &note_volume : map_data.note_volumes )
 		{
-			if( trace_result.distance < 1.0f )
+			// Find intersection with a box. It gives good enough result.
+			if_var( intersection : FindRayBBoxIntersection( ray_start, direction_vector, note_volume.bbox ) )
 			{
-				var size_type cluster_index( trace_result.cluster_index );
-				var ust::array_view_imut</ZvoxCluster/> clusters= map_data.zvox_data.deref().clusters;
-				if( cluster_index < clusters.size() )
+				if( intersection.near_point_distance < 1.0f )
 				{
-					var ZvoxCluster& cluster= clusters[ cluster_index ];
-					if( cluster.cluster_type == ZvoxCluster::c_cluster_type_notes &&
-						cluster.light_sources_begin >= 0 )
-					{
-						var f32 distance=
-							trace_result.distance * c_note_visible_max_distance;
+					var f32 distance=
+							intersection.near_point_distance * c_note_visible_max_distance;
 
-						info.note_info=
-							GameEventNotificationsDrawingInfo::NoteInfo
-							{
-								.note_index( cluster.light_sources_begin ),
-								.scale= c_note_base_scale / ust::max( 1.0f, distance ),
-								.alpha= ust::min( 1.0f, c_note_full_alpha_distance / distance ),
-							};
-					}
+					info.note_info=
+						GameEventNotificationsDrawingInfo::NoteInfo
+						{
+							.note_index( note_volume.note_index ),
+							.scale= c_note_base_scale / ust::max( 1.0f, distance ),
+							.alpha= ust::min( 1.0f, c_note_full_alpha_distance / distance ),
+						};
 				}
 			}
 		}
