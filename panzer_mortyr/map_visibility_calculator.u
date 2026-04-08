@@ -64,7 +64,7 @@ fn MapVisibilityCalculator::CalculateVisibility( mut this, Vec3f& camera_positio
 
 	// Find the tree leaf where camera is located.
 
-	var size_type camera_leaf_index= FindCameraLeafIndex( room_clusters_bsp_tree_, camera_position );
+	var size_type camera_leaf_index= GetLeafIndexForPoint( room_clusters_bsp_tree_, camera_position );
 
 	// Bounds for camera leaf is the whole screen.
 	// It's from -1 to 1, since normalized coordinates are used (as in OpenGL).
@@ -98,12 +98,7 @@ fn MapVisibilityCalculator::CalculateVisibility( mut this, Vec3f& camera_positio
 		}
 
 		var f32 inf= 1000000.0f;
-		visible_leafs_bbox_=
-			BBox3f
-			{
-				.min= Vec3f( -inf, -inf, -inf ),
-				.max= Vec3f(  inf,  inf,  inf ),
-			};
+		visible_leafs_bbox_= BBox3f{ .min= Vec3f( -inf, -inf, -inf ), .max= Vec3f(  inf,  inf,  inf ), };
 	}
 }
 
@@ -117,6 +112,8 @@ fn MapVisibilityCalculator::CalculateLeafsAndPortalsVisibility_r(
 {
 	if( node_index >= RoomClustersBSPTree::c_first_leaf_node )
 	{
+		// Reached some leaf.
+
 		var size_type leaf_node_index= size_type( node_index ) - size_type( RoomClustersBSPTree::c_first_leaf_node );
 		var RoomClustersBSPTree::LeafNode& leaf_node= room_clusters_bsp_tree_.leaf_nodes[ leaf_node_index ];
 
@@ -149,7 +146,8 @@ fn MapVisibilityCalculator::CalculateLeafsAndPortalsVisibility_r(
 		if_var( &this_leaf_bounds : this_leaf_bounds_opt )
 		{
 			// Iterate over all out portals of the leaf.
-			// If it's an optput portal (with no bounds set yet) - calculate its bounds as intersection of its own polygon bounds and input leaf bounds.
+			// If it's an optput portal (with no bounds set yet) -
+			// calculate its bounds as intersection of its own bounds and input leaf bounds.
 			foreach( &portal_index : leaf_portals_range )
 			{
 				var MapVisibilityCalculator::PortalProjected &mut out_portal_bounds=
@@ -177,6 +175,8 @@ fn MapVisibilityCalculator::CalculateLeafsAndPortalsVisibility_r(
 	}
 	else
 	{
+		// Branch node - visit both children with order dependent on camera position relative to the node's plane.
+
 		// Take here branch node copy to allow further recursive call with mutable "this".
 		var RoomClustersBSPTree::BranchNode node= room_clusters_bsp_tree_.branch_nodes[ size_type( node_index ) ];
 
@@ -223,7 +223,7 @@ fn MapVisibilityCalculator::IsBoxVisible_r( this, [ Vec3f, 8 ]& box_vertices, Ro
 	}
 	else
 	{
-		// TODO - consider speeding-up this by pre-calculating BSP tree branch nodes wisible in this frame.
+		// TODO - consider speeding-up this by pre-calculating BSP tree branch nodes visible in this frame.
 
 		// Test vertices of given box against split plane.
 		var RoomClustersBSPTree::BranchNode& branch_node=
@@ -261,8 +261,10 @@ fn MapVisibilityCalculator::IsBoxVisible_r( this, [ Vec3f, 8 ]& box_vertices, Ro
 	}
 }
 
-fn FindCameraLeafIndex( RoomClustersBSPTree& tree, Vec3f& camera_positon ) : size_type
+fn GetLeafIndexForPoint( RoomClustersBSPTree& tree, Vec3f& point ) : size_type
 {
+	// Use here simple BSP tree descent towards the leaf where camera is located.
+
 	var RoomClustersBSPTree::NodeIndex mut node_index= RoomClustersBSPTree::c_root_node_index;
 
 	loop
@@ -274,7 +276,7 @@ fn FindCameraLeafIndex( RoomClustersBSPTree& tree, Vec3f& camera_positon ) : siz
 
 		var RoomClustersBSPTree::BranchNode& node= tree.branch_nodes[ size_type( node_index ) ];
 
-		node_index= ( node.plane.GetDistanceForPoint( camera_positon ) >= 0.0f ? node.children[0] : node.children[1] );
+		node_index= ( node.plane.GetDistanceForPoint( point ) >= 0.0f ? node.children[0] : node.children[1] );
 	}
 }
 
