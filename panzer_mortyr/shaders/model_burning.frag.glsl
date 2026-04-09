@@ -19,7 +19,7 @@ void main()
 
 	float normal_based_fire_power_scale= max( 0.0, normal_normalized.z * -0.6 + 0.4 );
 
-	vec3 tc_scale= vec3( 1.0 / 16.0, 1.0 / 16.0, 1.0 / 32.0 );
+	vec3 tc_scale= vec3( 1.0 / 32.0, 1.0 / 32.0, 1.0 / 64.0 );
 	vec3 tc= f_position * tc_scale;
 	tc.z+= fu_texture_offet_y;
 
