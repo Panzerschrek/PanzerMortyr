@@ -1,5 +1,6 @@
 #version 330
 
+in vec3 f_position;
 in vec3 f_normal;
 
 out vec4 color;
@@ -16,5 +17,12 @@ void main()
 
 	vec3 light_color= vec3( 0.5, 0.5, 0.125 );
 
-	color= vec4( light_color * light_scale, 1.0 );
+	vec2 tc0= f_position.xz * 0.25;
+	vec2 tc1= f_position.yz * 0.25;
+
+	float texture_value=
+		fract( 0.5 * ( step( 0.5, fract( tc0.x ) ) + step( 0.5, fract( tc0.y ) ) ) ) +
+		fract( 0.5 * ( step( 0.5, fract( tc1.x ) ) + step( 0.5, fract( tc1.y ) ) ) );
+
+	color= vec4( light_color * ( light_scale * texture_value ), 1.0 );
 }
