@@ -18,7 +18,7 @@ void main()
 
 	float light_scale= max( 0.0, normal_normalized.z * -0.6 + 0.4 );
 
-	float tc_scale= 1.0 / 16.0;
+	vec3 tc_scale= vec3( 1.0 / 16.0, 1.0 / 16.0, 1.0 / 32.0 );
 	vec3 tc= f_position * tc_scale;
 
 	vec2 normal_xy_normalized= f_normal.xy / max( 0.00001, length( f_normal.xy ) );
