@@ -2,6 +2,7 @@
 
 uniform sampler3D fu_texture;
 uniform float fu_texture_offet_y;
+uniform float fu_texture_layer;
 
 in vec3 f_position;
 in vec3 f_normal;
@@ -28,8 +29,8 @@ void main()
 	float weight1= normal_xy_normalized.x * normal_xy_normalized.x;
 
 	float texture_value=
-		texture( fu_texture, vec3( tc.x, tc.z + fu_texture_offet_y, 0.0 ) ).r * weight0 +
-		texture( fu_texture, vec3( tc.y, tc.z + fu_texture_offet_y, 0.0 ) ).r * weight1;
+		texture( fu_texture, vec3( tc.x, tc.z + fu_texture_offet_y, fu_texture_layer ) ).r * weight0 +
+		texture( fu_texture, vec3( tc.y, tc.z + fu_texture_offet_y, fu_texture_layer ) ).r * weight1;
 
 	color= vec4( light_color * ( light_scale * texture_value ), 1.0 );
 }
