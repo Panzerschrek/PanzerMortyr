@@ -16,10 +16,35 @@ fn GameEventNotificationDrawer::Draw(
 		images_preloaded_= true;
 	}
 
+	// Preload note images.
+	// We have no way to unload note images.
+	// But it's not so problematic,
+	// since these images are pretty small and there are not so many of them in the entire game.
+	foreach( note_index : drawing_info.note_indices_to_preload )
+	{
+		if( note_index != 0u8 )
+		{
+			image_drawer.PreloadImage( GetNoteImageFileName( note_index ), ust::null_optional_ref );
+		}
+	}
+
+	DrawEventNotification( viewport_size_, image_drawer, drawing_info.event_notification );
+
+	if_var( &note_info : drawing_info.note_info )
+	{
+		DrawNote( viewport_size_, image_drawer, note_info );
+	}
+}
+
+fn DrawEventNotification(
+	[ u32, 2 ] viewport_size,
+	ImageDrawer &mut image_drawer,
+	GameEventNotificationsDrawingInfo::EventNotification event_notification )
+{
 	var ResourceString mut image_file_name= zero_init;
 
 	type EN= GameEventNotificationsDrawingInfo::EventNotification;
-	switch( drawing_info.event_notification )
+	switch( event_notification )
 	{
 		EN::None -> { return; },
 		EN::KeyARequired -> { image_file_name= GameEventNotificationImages::key_a_required; },
@@ -28,15 +53,49 @@ fn GameEventNotificationDrawer::Draw(
 		EN::SecretAreaFound -> { image_file_name= GameEventNotificationImages::secret_area_found; },
 	}
 
-	var u32 scale= ust::max( 1u, ust::min( viewport_size_[0] / 400u, viewport_size_[1] / 300u ) );
+	var u32 scale= ust::max( 1u, ust::min( viewport_size[0] / 400u, viewport_size[1] / 300u ) );
 
 	var [ u32, 2 ] image_size= image_drawer.GetImageSize( image_file_name ).deref_or( ust::make_array( 160u, 100u ) );
 
 	// (Almost) center the image.
-	var i32 offset_x= i32( ( viewport_size_[0] - image_size[0] * scale ) / 2u );
-	var i32 offset_y= i32( ( viewport_size_[1] - image_size[1] * scale ) * 3u / 4u );
+	var i32 offset_x= i32( ( viewport_size[0] - image_size[0] * scale ) / 2u );
+	var i32 offset_y= i32( ( viewport_size[1] - image_size[1] * scale ) * 3u / 4u );
 
 	image_drawer.DrawImage( image_file_name, offset_x, offset_y, f32( scale ) );
+}
+
+fn DrawNote(
+	[ u32, 2 ] viewport_size, ImageDrawer &mut image_drawer, GameEventNotificationsDrawingInfo::NoteInfo& note_info )
+{
+	var ResourceString note_image_file_name= GetNoteImageFileName( note_info.note_index );
+
+	var [ u32, 2 ] image_size=
+		image_drawer.GetImageSize( note_image_file_name ).deref_or( ust::make_array( 320u, 200u ) );
+
+	var f32 scale=
+		ust::min( note_info.scale, 0.9f ) *
+		ust::min( f32( viewport_size[0] ) / f32( image_size[0] ), f32( viewport_size[1] ) / f32( image_size[1] ) );
+
+	image_drawer.DrawImage(
+		note_image_file_name,
+		i32( viewport_size[0] / 2u ) - i32( f32( image_size[0] ) * ( scale / 2.0f ) ),
+		i32( viewport_size[1] / 2u ) - i32( f32( image_size[1] ) * ( scale / 2.0f ) ),
+		scale,
+		u8( ust::max( 0.0f, ust::min( note_info.alpha, 1.0f ) * 255.0f ) ) );
+}
+
+fn GetNoteImageFileName( u8 note_index ) : ResourceString
+{
+	var ResourceString name
+	[
+		'N', 'O', 'T', 'E',
+		( u32('0') + u32( note_index ) / 100u % 10u ),
+		( u32('0') + u32( note_index ) /  10u % 10u ),
+		( u32('0') + u32( note_index ) /   1u % 10u ),
+		'.', 'B', 'M', 'P', '\0', '\0', '\0', '\0', '\0',
+	];
+
+	return name;
 }
 
 fn PreloadGameEventNotificationImages( ImageDrawer &mut image_drawer )

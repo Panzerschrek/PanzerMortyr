@@ -59,6 +59,7 @@ This documents describes various interesting facts about the original game.
 * Game files contain unfinished maps with indices 0, 22, 8000. Trying loading maps 0 or 22 via a console command leads to game crash.
 * Map 0 is a raw version of maps 10 and 33 combined.
 * Map 22 contains elements of maps 1 and 11.
+* Note images 14, 21, 22 aren't used.
 
 ### Bugs
 

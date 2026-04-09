@@ -44,6 +44,7 @@ Changes:
 * Snow/rain drawing params may be slightly different - this includes moving speed, density, particle size, drawing distance. But these params are generally close enough to the original game.
 * Caustics look different. Different caustics texture is used, which is procedurally-generated, not the original one stored in a texture file. Caustics modulate underlying geometry light instead of adding it as the original game does.
 * Bullet hit spark effects (MG-42, laser pistol) look a little bit different and use different from the original billboard.
+* Clusters with notes are highlighted (their lighting is blinking), so that it's harder to miss a note.
 
 
 ### Gameplay
@@ -66,6 +67,7 @@ Changes:
 * Damage from explosive entities is calculated in a different way.
 * Grenade throwing animation may look slightly different. The exact pattern of lowering animation in the original game is unclear.
 * Sky decorations (aircrafts) move differently from the original game. It's unclear how exactly their movement should work, so, it's just guessed.
+* Notes (used for story telling) work differently. They are displayed if player is close to a note cluster and is looking towards it. Gameplay is not paused and it's possible to rotate the player's camera and move while a note is displayed. And it's possible to read the same note again, in the original game a note is shown only once by touching a note cluster and it can't be reactivated later.
 
 
 ### HUD and menus
@@ -83,6 +85,7 @@ Changes:
 * Console looks differently.
 * Menu cursor position may be different - it's mostly just guessed.
 * A background texture pattern is displayed behind the main menu after launching the game instead of playing a prerecorded demo.
+* Note images are shown at screen's center with scale and alpha depending on distance from the player's camera to the note cluster volume, not with fixed scale as the original game does.
 
 
 ### General

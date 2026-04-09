@@ -4,6 +4,7 @@ import "bounding_boxes_hierarchy_debug_visualization.iu"
 import "game_constants.iu"
 import "game_logic.iu"
 import "game_state_view_construction.iu"
+import "geometry_utils.iu"
 import "mat.iu"
 
 namespace PM
@@ -804,6 +805,11 @@ fn ConstructWorldDrawingInfo(
 			}
 		}
 
+		foreach( &note_volume : map_data.note_volumes )
+		{
+			drawing_info.highligted_cluster_indices.push_back( note_volume.cluster_index );
+		}
+
 		if( settings.g_debug_show_entity_bounding_boxes )
 		{
 			var [ u8, 3 ] color[ (255), (0), (255) ];
@@ -1094,13 +1100,17 @@ fn ConstructHudDrawingInfo( EntitiesDescription& entities_description, GameState
 	return info;
 }
 
-fn ConstructGameEventNotificationsDrawingInfo( GameState& game_state ) :GameEventNotificationsDrawingInfo
+fn ConstructGameEventNotificationsDrawingInfo(
+	CameraController& camera_controller,
+	GameMapData& map_data,
+	GameState& game_state ) : GameEventNotificationsDrawingInfo
 {
 	type EN= GameEventNotificationsDrawingInfo::EventNotification;
 
 	var GameEventNotificationsDrawingInfo mut info
 	{
 		.event_notification= EN::None,
+		.note_indices_to_preload[ 0u8 ... ], // Set later.
 	};
 
 	var u32 c_key_requirement_notification_duration( c_steps_per_second * 2.0f );
@@ -1122,6 +1132,65 @@ fn ConstructGameEventNotificationsDrawingInfo( GameState& game_state ) :GameEven
 		game_state.player.last_opened_secret_area_step + c_secret_area_notification_duration >= game_state.step_index )
 	{
 		info.event_notification= EN::SecretAreaFound;
+	}
+
+	// Preload note images.
+	// Do this in any case, so that these images are preloaded at first frame drawn for a map.
+	// Doing so we avoid a possible lag caused by image loading when a note should be actually shown.
+	foreach( pair : ust::array_view_mut</u8/>( info.note_indices_to_preload ).iter().zip( map_data.note_volumes.iter() ) )
+	{
+		pair.first= pair.second.note_index;
+	}
+
+	// Search for a note visible nearby.
+	if( !map_data.note_volumes.empty() )
+	{
+		var f32 c_note_visible_max_distance= 192.0f;
+		var f32 c_note_full_alpha_distance= 32.0f;
+		var f32 c_note_base_scale= 20.0f;
+
+		var f32 azimuth= camera_controller.GetAzimuth();
+		var f32 elevation= camera_controller.GetElevation();
+
+		var f32 elevation_cos= ust::cos(elevation);
+		var f32 elevation_sin= ust::sin(elevation);
+
+		var Vec3f direction_vector=
+			Vec3f(
+				-ust::sin(azimuth) * elevation_cos,
+				 ust::cos(azimuth) * elevation_cos,
+				elevation_sin ) * c_note_visible_max_distance;
+
+		var Vec3f ray_start= GetCameraPositionForPlayerWithExtraDepthShift( game_state.player, camera_controller );
+
+		// Check all note volumes - there is not so many of them.
+		foreach( &note_volume : map_data.note_volumes )
+		{
+			// Find intersection with a box. It gives good enough result.
+			if_var( intersection : FindRayBBoxIntersection( ray_start, direction_vector, note_volume.bbox ) )
+			{
+				if( intersection.near_point_distance < 1.0f && intersection.far_point_distance > 0.0f )
+				{
+					var f32 distance_clamped=
+						ust::max( 0.1f, intersection.near_point_distance * c_note_visible_max_distance );
+
+					var f32 scale= c_note_base_scale / distance_clamped;
+
+					// If multiple notes may be visible at the same time, select one with the largest scale (the closest one).
+					// Such check is needed, since there are multiple note volumes nearby on some maps (but having the same note).
+					if( info.note_info.empty() || info.note_info.try_deref().scale < scale )
+					{
+						info.note_info=
+							GameEventNotificationsDrawingInfo::NoteInfo
+							{
+								.note_index= note_volume.note_index,
+								.scale= scale,
+								.alpha= ust::min( 1.0f, c_note_full_alpha_distance / distance_clamped ),
+							};
+					}
+				}
+			}
+		}
 	}
 
 	return info;

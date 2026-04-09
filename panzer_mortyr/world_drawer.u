@@ -280,6 +280,7 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 	DrawMapPolygons(
 		map_data,
 		drawing_info.dynamic_cluster_objects,
+		drawing_info.highligted_cluster_indices,
 		breakable_polygons_buffer_,
 		map_shader_,
 		view_matrix,
@@ -1438,6 +1439,7 @@ fn CreateBreakableMapPolygons(
 fn DrawMapPolygons(
 	MapDrawData& map_data,
 	ust::array_view_imut</WorldDrawingInfo::DynamicClusterObject/> dynamic_cluster_objects,
+	ust::array_view_imut</u32/> highlighted_cluster_indices,
 	DynamicPolygonsBuffer& breakable_polygons_buffer,
 	ShaderProgram &mut shader,
 	Mat4f& view_matrix,
@@ -1545,11 +1547,31 @@ fn DrawMapPolygons(
 		drawing_stats.num_visible_map_triangles+= geometry_buffer_chunk.num_indices / 3u;
 	}
 
+	shader.SetUniform( "vu_matrix", view_matrix );
+
+	// Draw highlighted clusters with scaled lighting. Scale depends on time, so they are blinking.
+	// This causes drawing the same geometry second time, but it's not a huge problem,
+	// since highlighting is only used for note clusters (maximum a couple of such clusters per map).
+	{
+		var f32 light_scale= 2.0f + ust::sin( time_s * 6.0f );
+		shader.SetUniform( "vu_light_scale", Vec3f( global_light_params.light_scale ) * light_scale );
+
+		foreach( cluster_index : highlighted_cluster_indices )
+		{
+			if( map_data.map_visibility_calculator.IsBoxVisible(
+					CreateClusterBBox( clusters[ size_type( cluster_index ) ] ).CreateCornerVertices() ) )
+			{
+				ExecuteClusterMeshDrawing(
+					map_data.clusters_draw_data[ size_type( cluster_index ) ].geometry_buffer_chunk );
+			}
+		}
+	}
+
+	shader.SetUniform( "vu_light_scale", Vec3f( global_light_params.light_scale ) );
+
 	// Draw breakable polygons prepared prior to this function.
 	breakable_polygons_buffer.vertex_array_object.Bind();
 	breakable_polygons_buffer.index_buffer.Bind();
-
-	shader.SetUniform( "vu_matrix", view_matrix );
 
 	unsafe( glDrawElements(
 		GLenum( GL_TRIANGLES ),
@@ -3091,7 +3113,7 @@ var GLState g_map_drawing_gl_state
 {
 	.color_write_enabled= true,
 	.depth_test_enabled= true,
-	.depth_test_func( GL_LESS ),
+	.depth_test_func( GL_LEQUAL ), // Use <= depth test to allow drawing the same geometry atop of previously-drawn.
 	.depth_write_enabled= true,
 	.cull_face_enabled= true,
 	.cull_face( GL_FRONT ),
