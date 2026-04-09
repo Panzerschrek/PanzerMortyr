@@ -511,6 +511,11 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 			: ust::optional_ref_imut</Texture/>() ),
 		drawing_stats );
 
+	if( drawing_info.fullscreen_effect != WorldDrawingInfo::FullscreenEffect::InfraredVision )
+	{
+		DrawBurningModels( models_, models_to_draw_, model_burning_shader_ );
+	}
+
 	models_to_draw_.clear();
 
 	DrawTestPrimitives(
@@ -1958,6 +1963,67 @@ fn DrawModels(
 	}
 }
 
+fn DrawBurningModels(
+	ModelsMap& models_map,
+	ust::array_view_imut</ModelToDraw/> models_to_draw,
+	ShaderProgram &mut shader )
+{
+	SetGLState( g_burning_models_drawing_gl_state );
+
+	var u32 texture_slot= 0u;
+
+	shader.Bind();
+	shader.SetUniform( "fu_texture", texture_slot );
+
+	unsafe( glActiveTexture( GLenum( GL_TEXTURE0 ) + GLenum(texture_slot) ) );
+
+	foreach( &model_to_draw : models_to_draw )
+	{
+		var ust::optional_ref_imut</ ust::optional</GPUModel/> /> model_opt_opt=
+			models_map.find( model_to_draw.file_name );
+
+		if( model_opt_opt.empty() )
+		{
+			continue;
+		}
+
+		var ust::optional</GPUModel/>& model_opt= model_opt_opt.try_deref();
+		if( model_opt.empty() )
+		{
+			continue;
+		}
+
+		var GPUModel& model= model_opt.try_deref();
+
+		model.textures.back().Bind();
+		model.vertex_array_object.Bind();
+		model.index_buffer.Bind();
+
+		if( model.num_frames > 1u )
+		{
+			// Change vertex attrib pointer for positions to draw requirest frame.
+			// TODO - move this code into a separate function?
+			model.positions_buffer.Bind();
+
+			unsafe( glVertexAttribPointer(
+				GPUModel::c_position_attrib,
+				3,
+				GLenum( GL_FLOAT ),
+				GLboolean(0),
+				GLsizei( typeinfo</ObbVertexPosition/>.size_of ),
+				ust::nullptr</byte8/>() + size_type( model_to_draw.frame * model.num_vertices ) * typeinfo</ObbVertexPosition/>.size_of ) );
+		}
+
+		shader.SetUniform( "vu_matrix", model_to_draw.matrix );
+
+		unsafe( glDrawElements(
+			GLenum( GL_TRIANGLES ),
+			GLsizei( model.num_triangles * 3u ),
+			GLenum( GL_UNSIGNED_SHORT ),
+			ust::nullptr</byte8/>() ) );
+	}
+}
+
 fn DrawFirstPersonWeaponModels(
 	ModelsMap& models_map,
 	ust::array_view_imut</ModelToDraw/> models_to_draw,
@@ -3188,6 +3254,20 @@ var GLState g_models_drawing_gl_state
 	.blending_enabled= false,
 	.blend_source_factor( GL_INVALID_ENUM ),
 	.blend_destination_factor( GL_INVALID_ENUM ),
+};
+
+var GLState g_burning_models_drawing_gl_state
+{
+	.color_write_enabled= true,
+	.depth_test_enabled= true,
+	.depth_test_func( GL_EQUAL ), // Use == test to allow drawing only atop of previosly-draw models.
+	.depth_write_enabled= true,
+	.cull_face_enabled= true,
+	.cull_face( GL_FRONT ),
+	// Use additive blending.
+	.blending_enabled= true,
+	.blend_source_factor( GL_ONE ),
+	.blend_destination_factor( GL_ONE ),
 };
 
 var GLState g_test_primitives_drawing_gl_state
