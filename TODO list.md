@@ -70,7 +70,6 @@ PanzerMortyr game logic:
 * Implement multiplayer game logic with client/server.
 * Implement multiplayer-specific game modes.
 * Make singleplayer mode tweaks for cooperative mode support.
-* Implement note items logic - show note text (it's actually an image) and pause the game while it's shown.
 * Make sure sky decoration movement is as close to the original game as possible.
 * Implement collisions hack for the one-way passable wall on map 33.
 * Consider enabled step movement on collisions with slightly-inclined walls, which should fix movement in some tricky places on some maps.
@@ -120,7 +119,6 @@ PanzerMortyr game logic:
 * Implement behavior specific for the mind control weapon - with enemies attacking their allies.
 * Perform proper player to entity visibility check while doing entity state transition based on "w_zasiegu_widocznosci" property.
 * Make sure muzzle flashes are drawn as close to the original game as possible (their position is correct).
-* Consider displaying some sort of billboards indicating places with notes - so that players don't miss notes, which are used for storytelling.
 * Consider disabling all or at least some weapons of the player if weapon shot start position is in water or other liquid.
 * Consider extinguishing damaging flames on entities located inside liquids.
 * Consider reducing brightness of Volkssturm smoking lights - they are way to bright.
@@ -166,7 +164,6 @@ PanzerMortyr menus and HUD:
 * Make advanced options menu functinal.
 * Extend existing setting menus/add new ones for extra options specific for PanzerMortyr.
 * Show low health and armor numbers in HUD using red color.
-* Display note images.
 * Consider displaying in HUD amounts of tools in inventory, at least important ones - health, ammo.
 * Consider drawing active tools at some edge (left or right) of the screen.
 * Allow configuring crosshair kind, investigate what kinds of crosshairs are available in the original game.
