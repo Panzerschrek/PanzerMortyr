@@ -3,6 +3,7 @@
 uniform sampler3D fu_texture;
 uniform float fu_texture_offet_y;
 uniform float fu_texture_layer;
+uniform float fu_burning_strength;
 
 in vec3 f_position;
 in vec3 f_normal;
@@ -29,7 +30,7 @@ void main()
 		texture( fu_texture, vec3( tc.x, tc.z + fu_texture_offet_y, fu_texture_layer ) ).r * weight0 +
 		texture( fu_texture, vec3( tc.y, tc.z + fu_texture_offet_y, fu_texture_layer ) ).r * weight1;
 
-	float fire_power= texture_value * light_scale * 2.0;
+	float fire_power= texture_value * light_scale * ( 2.0 * fu_burning_strength );
 
 	vec3 color_dark= vec3( 0.0, 0.0, 0.0 );
 	vec3 color_blue= vec3( 0.0, 0.0, 0.4 );
