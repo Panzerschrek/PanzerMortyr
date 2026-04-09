@@ -22,6 +22,8 @@ void main()
 	vec3 tc_scale= vec3( 1.0 / 16.0, 1.0 / 16.0, 1.0 / 32.0 );
 	vec3 tc= f_position * tc_scale;
 
+	// Perform here biplanar texture mapping.
+
 	vec2 normal_xy_normalized= f_normal.xy / max( 0.00001, length( f_normal.xy ) );
 	float weight0= normal_xy_normalized.y * normal_xy_normalized.y;
 	float weight1= normal_xy_normalized.x * normal_xy_normalized.x;
@@ -29,6 +31,8 @@ void main()
 	float texture_value=
 		texture( fu_texture, vec3( tc.x, tc.z + fu_texture_offet_y, fu_texture_layer ) ).r * weight0 +
 		texture( fu_texture, vec3( tc.y, tc.z + fu_texture_offet_y, fu_texture_layer ) ).r * weight1;
+
+	// Modulate normal-based power with texture.
 
 	float fire_power= texture_value * light_scale * ( 2.0 * fu_burning_strength );
 
@@ -42,28 +46,19 @@ void main()
 	float edge1= 0.6;
 	float edge2= 1.1;
 	float edge3= 2.0;
-	if( fire_power < edge1 )
-	{
-		if( fire_power < edge0 )
-		{
-			light_color= mix( color_dark, color_blue, ( fire_power - 0.0 ) / ( edge0 - 0.0 ) );
-		}
-		else
-		{
-			light_color= mix( color_blue, color_orange, ( fire_power - edge0 ) / ( edge1 - edge0 ) );
-		}
-	}
-	else
-	{
-		if( fire_power < edge2 )
-		{
-			light_color= mix( color_orange, color_yellow, ( fire_power - edge1 ) / ( edge2 - edge1 ) );
-		}
-		else
-		{
-			light_color= mix( color_yellow, color_dark, ( fire_power - edge2 ) / ( edge3 - edge2 ) );
-		}
-	}
+
+	// A tricky code doing gradient with 4 different colors.
+	light_color=
+		mix(
+			mix(
+				mix( color_dark, color_blue, ( fire_power - 0.0 ) / ( edge0 - 0.0 ) ),
+				mix( color_blue, color_orange, ( fire_power - edge0 ) / ( edge1 - edge0 ) ),
+				step( edge0, fire_power ) ),
+			mix(
+				mix( color_orange, color_yellow, ( fire_power - edge1 ) / ( edge2 - edge1 ) ),
+				mix( color_yellow, color_dark, ( fire_power - edge2 ) / ( edge3 - edge2 ) ),
+				step( edge2, fire_power ) ),
+			step( edge1, fire_power ) );
 
 	color= vec4( light_color, 1.0 );
 }
