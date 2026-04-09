@@ -12,15 +12,16 @@ out vec4 color;
 
 void main()
 {
-	// Calculate fire light scale depending on direction of the fragment relative Z axis.
+	// Calculate fire power scale depending on Z coordinate of the fragment's normal.
 	// Surfaces which are facing down shouldn't burn.
 
 	vec3 normal_normalized= f_normal / max( 0.00001, length( f_normal ) );
 
-	float light_scale= max( 0.0, normal_normalized.z * -0.6 + 0.4 );
+	float normal_based_fire_power_scale= max( 0.0, normal_normalized.z * -0.6 + 0.4 );
 
 	vec3 tc_scale= vec3( 1.0 / 16.0, 1.0 / 16.0, 1.0 / 32.0 );
 	vec3 tc= f_position * tc_scale;
+	tc.z+= fu_texture_offet_y;
 
 	// Perform here biplanar texture mapping.
 
@@ -29,26 +30,25 @@ void main()
 	float weight1= normal_xy_normalized.x * normal_xy_normalized.x;
 
 	float texture_value=
-		texture( fu_texture, vec3( tc.x, tc.z + fu_texture_offet_y, fu_texture_layer ) ).r * weight0 +
-		texture( fu_texture, vec3( tc.y, tc.z + fu_texture_offet_y, fu_texture_layer ) ).r * weight1;
+		texture( fu_texture, vec3( tc.xz, fu_texture_layer ) ).r * weight0 +
+		texture( fu_texture, vec3( tc.yz, fu_texture_layer ) ).r * weight1;
 
 	// Modulate normal-based power with texture.
 
-	float fire_power= texture_value * light_scale * ( 2.0 * fu_burning_strength );
+	float fire_power= texture_value * normal_based_fire_power_scale * ( 2.0 * fu_burning_strength );
 
 	vec3 color_dark= vec3( 0.0, 0.0, 0.0 );
 	vec3 color_blue= vec3( 0.0, 0.0, 0.4 );
 	vec3 color_orange= vec3( 0.5, 0.3, 0.1 );
 	vec3 color_yellow= vec3( 0.8, 0.8, 0.2 );
 
-	vec3 light_color;
 	float edge0= 0.1;
 	float edge1= 0.6;
 	float edge2= 1.1;
 	float edge3= 2.0;
 
 	// A tricky code doing gradient with 4 different colors.
-	light_color=
+	vec3 light_color=
 		mix(
 			mix(
 				mix( color_dark, color_blue, ( fire_power - 0.0 ) / ( edge0 - 0.0 ) ),
