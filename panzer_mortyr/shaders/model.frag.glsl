@@ -29,9 +29,4 @@ void main()
 	vec3 texture_color= texture( fu_texture, f_texture_coordinates ).rgb;
 
 	color= vec4( texture_color * light, 1.0 );
-
-	if( false )
-	{
-		color= vec4( normal_normalized * 0.5 + vec3( 0.5, 0.5, 0.5 ), 1.0 );
-	}
 }
