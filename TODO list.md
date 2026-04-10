@@ -119,6 +119,7 @@ PanzerMortyr game logic:
 * Consider extinguishing damaging flames on entities located inside liquids.
 * Consider reducing brightness of Volkssturm smoking lights - they are way to bright.
 * Perform camera rotation upon player's death as the original game does. It seems to be full circle azimuth rotation and a rotation to some fixed elevation.
+* Consider disabling burning effect for non-enemy entities. It doesn't look well for things made of iron or other non-burnable materials.
 
 PanzerMortyr rendering:
 
@@ -128,7 +129,6 @@ PanzerMortyr rendering:
 * Draw decals (bullet holes, blood, footsteps).
 * Draw animated water circle decals on map quads with "wet" property enabled in points where a rain particle hits such quad.
 * Draw injured enemies covered with blood.
-* Draw burning entities with some kind of burning effect (like in RtCW).
 * Suport light soruces with conic shape and use such source kind for flashlight.
 * Draw some fullscreen burning effect if the player is burning.
 * Add support for MSAA (with proper support of fullscreen effects like fog).

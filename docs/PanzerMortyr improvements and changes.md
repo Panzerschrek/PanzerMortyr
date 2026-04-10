@@ -45,6 +45,7 @@ Changes:
 * Caustics look different. Different caustics texture is used, which is procedurally-generated, not the original one stored in a texture file. Caustics modulate underlying geometry light instead of adding it as the original game does.
 * Bullet hit spark effects (MG-42, laser pistol) look a little bit different and use different from the original billboard.
 * Clusters with notes are highlighted (their lighting is blinking), so that it's harder to miss a note.
+* Entities with damaging flames attached are drawn with burning effect covering the entire body. In the original game this effect is different - it just uses flame billboards attached to a model.
 
 
 ### Gameplay
