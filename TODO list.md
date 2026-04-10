@@ -100,7 +100,6 @@ PanzerMortyr game logic:
 * Try dealing with cases where two enemies move in exactly opposite directions and block each other.
 * Consider calculating and using a better navigation graph (maybe even single graph for an entire map), which isn't so buggy as original per-entity navigation graphs.
 * Perform alarm-based enemy state transition with a delay (investigate how this delay is specified).
-* Fix shooting through walls, which is possible by staying too close to a wall and by using some weapons (like rifle).
 * Consider creating patches for ZINF-files for fixing some errors in them.
 * Implement misfire - sometimes enemies don't shoot, even if shooting animation is playing.
 * Ensure projectiles speed is correct (isn't too small or too big).

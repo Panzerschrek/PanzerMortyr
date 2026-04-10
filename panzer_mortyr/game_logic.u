@@ -468,21 +468,16 @@ fn PerformPlayerWeaponLogic( GameMapData& map_data, PlayerInput& player_input, G
 			{
 				// Perform the shot.
 
+				var ust::optional_ref_mut</u32/> mut ammo;
+
 				if( tool.ammo_item >= 0 && size_type( tool.ammo_item ) < entities_description.tools.size() )
 				{
 					var EntitiesDescription::Tool& ammo_tool= entities_description.tools[ size_type( tool.ammo_item ) ];
-					var u32 &mut ammo= player_state.inventory[ size_type( ammo_tool.tool_type ) ];
-					if( ammo > 0u )
-					{
-						--ammo;
-					}
-					else
-					{
-						out_of_ammo= true;
-					}
+					ammo= player_state.inventory[ size_type( ammo_tool.tool_type ) ];
 				}
 
-				if( !out_of_ammo && player_state.energy > 0u /* Allow shooting only if alive. */ )
+				if( ( ammo.empty() || ammo.try_deref() > 0u ) &&
+					player_state.energy > 0u /* Allow shooting only if alive. */ )
 				{
 					auto [ position, direction ]=
 						GetPlayerShotStartAndDirection(
@@ -491,6 +486,44 @@ fn PerformPlayerWeaponLogic( GameMapData& map_data, PlayerInput& player_input, G
 							player_state.crouching_phase,
 							player_input.azimuth,
 							player_input.elevation );
+
+					{
+						// HACK!
+						// Weapon shot positions are for some weapons located too far away from the camera and outside the player's bbox.
+						// With such weapons it's possible to shoot through a wall or some other obstacle.
+						// The original game allows this.
+						// We fix this by performing a line of sight check from an estimated camera position (it's not actual position, since it's Y-shifted)
+						// to the shot position.
+						// If there is something in the way - cancel this shot.
+
+						var Vec3f view_center(
+							 player_state.position.xy(),
+							 player_state.position.z + c_camera_z_offset + player_state.crouching_phase * c_crouching_height_delta );
+
+						if( view_center != position )
+						{
+							if_var( &trace_result :
+									LineTrace(
+										map_data,
+										game_state.broken_quad_bits,
+										game_state.dynamic_cluster_colliders,
+										view_center,
+										position - view_center ) )
+							{
+								if( trace_result.distance < 1.0f )
+								{
+									continue; // Line of sight is blocked.
+								}
+							}
+						}
+					}
+
+					// Consume ammo only if passed line of sight check.
+					if_var( &mut a : ammo )
+					{
+						debug_assert( a > 0u );
+						--a;
+					}
 
 					var Vec3f direction_with_random_spread=
 						RandomOffsetShotVector( direction, tool.player_weapon_accuracy, game_state.random );
