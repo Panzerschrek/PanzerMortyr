@@ -31,7 +31,8 @@ Such nodes should be excluded from route search - to allow for one enemy finding
 ### Navigation graph building
 
 For each horizontal map quad (with inclination below some threshold) initial navigation graph nodes should be created using a regular grid with some spacing.
-This spacing should be small enough to allow placing nodes even in tightest corridors, but not too small to avoid creating too much nodes, which may lead to too much memory consumption and too costly route search.
+A grid of squares or equilateral triangles should be considered.
+The spacing between nodes should be small enough to allow placing nodes even in tightest corridors, but not too small to avoid creating too much nodes, which may lead to too much memory consumption and too costly route search.
 
 It should be checked for each node that a bounding box of human size (used by most enemies in the game) can be placed atop of it without colliding with map geometry.
 The lower plane of this bounding box should be lifted up to allow placing nodes on stairs.
@@ -106,3 +107,18 @@ It should not use recursion, since recursive calls add extra cost.
 The size of data structures used by it should be minimized - to improve cache-locality.
 It should use some heuristics (like A-star implementations do) in order to allow moving mostly towards the target without enumerating all nodes nearby.
 Lastly it should use some hard limit for number of nodes visited, so that the entire graph isn't visited in case if no route can be found.
+
+
+### Local routing
+
+Some sort of local routing should be considered to be implemented.
+In can work in combination with graph-based routing.
+If an enemy has its target nearby (closer than some threshold distance), he should try checking if direct walking towards the target is possible.
+If it is - he should go in a straight line.
+
+Doing so may improve result quality by avoiding restricting enemy movements to a fixed grid of navigation nodes.
+
+It may also improve performance by avoiding expensive graph search.
+But it should be measured, whether it's really cheaper to do so, since checking for direct movement isn't cheap either, since it requires querying map quads hierarchy.
+
+Such direct movement approach may also incorporate some cheap logic for finding a way around obstacles.
