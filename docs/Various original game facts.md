@@ -8,7 +8,7 @@ This documents describes various interesting facts about the original game.
 * There is a note on map 1 (the second campaign map) with the following quote:
   ... cadent a latere tuo mille et decem milia a dextris tuis, ad te autem non appropinquabit...
   The same quote can be seen on the first exit door on map 23 (the last campaign map).
-* Keycard items (future-stlye keys) have texts "Sven Mortyr" and "Corvin Software Studios" on them and a Mortyr logo.
+* Keycard items (future-style keys) have texts "Sven Mortyr" and "Corvin Software Studios" on them and a Mortyr logo.
 * On map 10 there is a corridor with several doors. They can't be opened, but each of them contains a name. These are actual names of the game developers, which can be also seen in the help menu.
 
 ### Non-obvious gameplay facts
@@ -29,6 +29,7 @@ This documents describes various interesting facts about the original game.
 * The volkssturm enemy (with grenades) surrenders if has no ammo left, but it's a false surrender (a notable war crime), he continues fighting and searches for more ammunition as long as the player can't see him.
 * Some maps can't be left until some condition is satisfied - necessary items (Quantum Receptor piece) are collected or a boss (the Tank) is killed.
 * The jetpack item is present only at one place in the whole game - on the last level just before boss battle.
+* Enemies can pass through each other (with no collision), at least while patrolling.
 
 ### Technical aspects
 
@@ -43,12 +44,13 @@ This documents describes various interesting facts about the original game.
 * Any map quad with destructible material property can be destroyed. Sky is drawn in place of destroyed quads.
 * First-person weapon models use different perspective from the rest of the frame, tangent of half field of view for them is divided by 2.
 * Many maps contain a hidden room with some items placed in it. These items are usually items which can be dropped by enemies present on this map.
+* The story of the game is narrated via notes. They usually look like a table with a folder item atop of it and a note is shown if the player comes close enough. But note showing is actually activating by touching such table or generally any cluster with note type (sometimes non-table-shaped note clusters are used). The folder item is actually just a strangely-looking small health pack.
 
 ### Cut or unused content
 
 * MG-42 nest isn't used in the game, but it's listed in the manual. These enemies are placed on maps 8 and 24, but are disabled.
 * Gestapo officer is listed in the manual, but he isn't used in the singleplayer game. He is present only on cooperative map 36.
-* Nurse is listed in the manual, but she isn't used in the singleplayer game. Nurses are placed on maps 19, 24, 30, 37, but are disabled. Only on cooperative map 36 there are a couple of them.
+* Nurse is listed in the manual, but she isn't used in the singleplayer game. Nurses are placed on maps 19, 24, 30, 37, but are disabled. Only on cooperative map 36 there are a couple of them. And they can't heal the player, they only can be killed and can drop a small health pack.
 * Adolf Hitler isn't listed in the manual, he is missing in many versions of the game. He is present in the polish version. In English version he is still present in game resources. On map 13 he is placed, but disabled.
 * There is a model METRO.OBB with a variation of the WCZAPCE.OBB model with slightly different texture.
 * There are models KL0-47.OBB, KL48-63.OBB and KL64-87.OBB with some unused enemy type.
