@@ -1,7 +1,7 @@
 #version 330
 
 uniform sampler3D fu_texture;
-uniform float fu_texture_offet_y;
+uniform float fu_texture_offset_y;
 uniform float fu_texture_layer;
 uniform float fu_burning_strength;
 
@@ -21,7 +21,7 @@ void main()
 
 	vec3 tc_scale= vec3( 1.0 / 32.0, 1.0 / 32.0, 1.0 / 64.0 );
 	vec3 tc= f_position * tc_scale;
-	tc.z+= fu_texture_offet_y;
+	tc.z+= fu_texture_offset_y;
 
 	// Perform here biplanar texture mapping.
 
