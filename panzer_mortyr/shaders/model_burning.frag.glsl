@@ -15,7 +15,7 @@ void main()
 	// Calculate fire power scale depending on Z coordinate of the fragment's normal.
 	// Surfaces which are facing down shouldn't burn.
 
-	vec3 normal_normalized= f_normal / max( 0.00001, length( f_normal ) );
+	vec3 normal_normalized= f_normal * inversesqrt( 0.00001 + dot( f_normal, f_normal ) );
 
 	float normal_based_fire_power_scale= max( 0.0, normal_normalized.z * -0.6 + 0.4 );
 
@@ -25,9 +25,9 @@ void main()
 
 	// Perform here biplanar texture mapping.
 
-	vec2 normal_xy_normalized= f_normal.xy / max( 0.00001, length( f_normal.xy ) );
-	float weight0= normal_xy_normalized.y * normal_xy_normalized.y;
-	float weight1= normal_xy_normalized.x * normal_xy_normalized.x;
+	float normal_xy_square_length= max( 0.00001, dot( f_normal.xy, f_normal.xy ) );
+	float weight0= f_normal.y * f_normal.y / normal_xy_square_length;
+	float weight1= f_normal.x * f_normal.x / normal_xy_square_length;
 
 	float texture_value=
 		texture( fu_texture, vec3( tc.xz, fu_texture_layer ) ).r * weight0 +
