@@ -73,7 +73,6 @@ PanzerMortyr game logic:
 * Implement rare animation types used for some entities (barrel roll, flies).
 * Implement logic elements specific for dog enemies.
 * Implement logic elements specific for gestapo enemies.
-* Implement logic elements specific for nurses.
 * Implement logic specific for multiplayer entities.
 * Consider storing entities rotation using quaternions.
 * Consider extrapolating game logic one or two steps further, using extrapolated data to make movements and animations smooth (mix position, angle, animation) and correcting possible extrapolation errors.
@@ -86,7 +85,6 @@ PanzerMortyr game logic:
 * Fix ugly injury-based entity state transitions, when an injury operation is changed while some other injury operation is already in process.
 * Implement pushing pushable entities.
 * Break glass quads and quads with breakable materials while applying spash damage.
-* Don't perform projectile and (maybe) entity collisions with broken map quads.
 * Implement jetpack tool.
 * Implement invisibility tool (false documents) and enemy properties allowing to uncover the player having invisibility.
 * Implement flame particles emitted by explosive decorations ("wybuch_benzyny"/"plomienie").
@@ -166,6 +164,7 @@ PanzerMortyr menus and HUD:
 * Allow configuring crosshair kind, investigate what kinds of crosshairs are available in the original game.
 * Display short game-related mesages (as the original does).
 * Consider displaying some sort of a progress bar while going close to the map exit trigger - as RtCW does.
+* Consider displaying some screen with map stats (completion time, killed enemies) at the end of a map - as Quake does.
 
 PanzerMortyr sound:
 
