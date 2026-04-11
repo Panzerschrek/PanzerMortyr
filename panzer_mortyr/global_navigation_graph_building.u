@@ -179,14 +179,31 @@ fn TweakNodePositionVertically(
 	BBox3f& node_bbox,
 	Vec3f& initial_node_position ) : ust::optional</Vec3f/>
 {
-	var f32 up_eps= 0.5f;
-
-	if( !TestBBoxMapIntersection(
-			map_data,
-			initial_node_position + Vec3f( 0.0f, 0.0f, -up_eps ),
-			node_bbox ) )
+	// First check if we can place the node in its initial position and moving it down results into hitting a ground surface.
 	{
-		return initial_node_position;
+		var Vec3f node_position_slightly_lifted( initial_node_position.xy(), initial_node_position.z - 0.125f );
+
+		if( !TestBBoxMapIntersection( map_data, node_position_slightly_lifted, node_bbox ) )
+		{
+			var f32 move_down_eps= 1.0f;
+			var Vec3f move_vetor= Vec3f( 0.0f, 0.0f, move_down_eps );
+
+			var TraceCollisionResult trace_collision_result=
+				CollisionTrace(
+					map_data,
+					broken_quad_bits,
+					ust::empty_range,
+					ust::empty_range,
+					node_bbox,
+					node_position_slightly_lifted,
+					move_vetor );
+
+			if( trace_collision_result.clipped_move_distance < 1.0f &&
+				IsGroundSurface( trace_collision_result.collision_point_normal ) )
+			{
+				return initial_node_position;
+			}
+		}
 	}
 
 	// Try lifting the node for stairs/ramps.
@@ -218,13 +235,11 @@ fn TweakNodePositionVertically(
 					lifted_position,
 					move_vetor );
 
-			if( trace_collision_result.clipped_move_distance < 1.0f )
+			if( trace_collision_result.clipped_move_distance < 1.0f &&
+				IsGroundSurface( trace_collision_result.collision_point_normal ) )
 			{
-				if( IsGroundSurface( trace_collision_result.collision_point_normal ) )
-				{
-					// Pace result node precisely at position of collision.
-					return lifted_position + move_vetor * trace_collision_result.clipped_move_distance;
-				}
+				// Pace result node precisely at position of collision.
+				return lifted_position + move_vetor * trace_collision_result.clipped_move_distance;
 			}
 
 			// If failed to trace to a ground from an non-occupied position, finish this loop.
