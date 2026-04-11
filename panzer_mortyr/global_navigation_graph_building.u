@@ -103,7 +103,12 @@ fn BuildGlobalNavigationGraph( GameMapData& map_data ) : GlobalNavigationGraph
 					if_var( node_position_projected : ProjectNodeToQuad( vertices, quad_normal, node_position ) )
 					{
 						if_var( node_position_tweaked :
-								TweakNodePosition( map_data, broken_quad_bits, node_bbox, node_position_projected ) )
+								TweakNodePosition(
+									map_data,
+									broken_quad_bits,
+									node_bbox,
+									nodes_spacing,
+									node_position_projected ) )
 						{
 							result.nodes.push_back( GlobalNavigationGraph::Node{ .position= node_position_tweaked } );
 						}
@@ -117,6 +122,58 @@ fn BuildGlobalNavigationGraph( GameMapData& map_data ) : GlobalNavigationGraph
 }
 
 fn TweakNodePosition(
+	GameMapData& map_data,
+	BitArrayView broken_quad_bits,
+	BBox3f& node_bbox,
+	i32 nodes_spacing,
+	Vec3f& initial_node_position ) : ust::optional</Vec3f/>
+{
+	// Try place a node without moving it horizontally.
+	if_var( node_tweaked_vertically :
+		TweakNodePositionVertically( map_data, broken_quad_bits, node_bbox, initial_node_position ) )
+	{
+		return node_tweaked_vertically;
+	}
+
+	// Try moving node slightly sideways.
+
+	var u32 num_tweaking_steps= 4u;
+
+	for( var u32 mut tweaking_step= 1u; tweaking_step < num_tweaking_steps; ++tweaking_step )
+	{
+		var f32 distance= f32( nodes_spacing ) * 0.5f * f32( tweaking_step ) / f32( num_tweaking_steps );
+
+		foreach( &tweak_vector : c_node_horizontal_tweak_vectors )
+		{
+			var Vec3f position_tweaked_horizontally(
+				initial_node_position.x + tweak_vector[0] * distance,
+				initial_node_position.y + tweak_vector[1] * distance,
+				initial_node_position.z );
+
+			if_var( node_tweaked_vertically :
+				TweakNodePositionVertically( map_data, broken_quad_bits, node_bbox, position_tweaked_horizontally ) )
+			{
+				return node_tweaked_vertically;
+			}
+		}
+	}
+
+	return ust::null_optional;
+}
+
+var [ [ f32, 2 ], 8 ] c_node_horizontal_tweak_vectors
+[
+	[ -1.0f,  0.0f ],
+	[  1.0f,  0.0f ],
+	[  0.0f, -1.0f ],
+	[  0.0f,  1.0f ],
+	[ -1.0f, -1.0f ],
+	[ -1.0f,  1.0f ],
+	[  1.0f, -1.0f ],
+	[  1.0f,  1.0f ],
+];
+
+fn TweakNodePositionVertically(
 	GameMapData& map_data,
 	BitArrayView broken_quad_bits,
 	BBox3f& node_bbox,
