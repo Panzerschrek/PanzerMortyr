@@ -1,4 +1,5 @@
 import "collisions.iu"
+import "game_constants.iu"
 import "global_navigation_graph_building.iu"
 import "physics_utils.iu"
 import "plane.iu"
@@ -132,7 +133,8 @@ fn TweakNodePosition(
 	{
 		var Vec3f node_position_slightly_lifted( initial_node_position.xy(), initial_node_position.z - 0.125f );
 
-		if( !TestBBoxMapIntersection( map_data, node_position_slightly_lifted, node_bbox ) )
+		if( !TestBBoxMapIntersection( map_data, node_position_slightly_lifted, node_bbox ) &&
+			!IsNodeOnLedge( map_data, node_bbox, node_position_slightly_lifted ) )
 		{
 			return initial_node_position;
 		}
@@ -175,7 +177,8 @@ fn TweakNodePosition(
 							down_move_vector );
 
 					if( trace_collision_result.clipped_move_distance < 1.0f &&
-						IsGroundSurface( trace_collision_result.collision_point_normal ) )
+						IsGroundSurface( trace_collision_result.collision_point_normal ) &&
+						!IsNodeOnLedge( map_data, node_bbox, node_position_to_test ) )
 					{
 						smallest_move_square_distance= move_square_distance;
 						result_node_position= node_position_to_test;
@@ -219,6 +222,53 @@ var [ [ f32, 2 ], 8 ] c_node_horizontal_tweak_vectors
 	[  1.0f, -1.0f ],
 	[  1.0f,  1.0f ],
 ];
+
+fn IsNodeOnLedge( GameMapData& map_data, BBox3f& node_bbox, Vec3f& node_position ) : bool
+{
+	// Cut a third of a bbox from each side and build a bbox from it directed down.
+	// If it's not obstructed, we have a ledge here.
+
+	var f32 bbox_size_x= node_bbox.max.x - node_bbox.min.x;
+	var f32 bbox_size_y= node_bbox.max.y - node_bbox.min.y;
+
+	// Consider two steps to be maximum allowed distance down.
+	var f32 c_extra_eps= 0.25f;
+	var f32 c_down_movement= c_maximum_step_height_for_climbing * 2.0f + c_extra_eps;
+	var f32 c_bbox_cut_fraction= 1.0f / 3.0f;
+
+	var f32 z_min= node_bbox.max.z - c_extra_eps;
+	var f32 z_max= z_min + c_down_movement;
+
+	var BBox3f bbox_down_x_plus
+	{
+		.min( node_bbox.min.x, node_bbox.min.y, z_min ),
+		.max( node_bbox.min.x + bbox_size_x * c_bbox_cut_fraction, node_bbox.max.y, z_max ),
+	};
+
+	var BBox3f bbox_down_x_minus
+	{
+		.min( node_bbox.max.x - bbox_size_x * c_bbox_cut_fraction, node_bbox.min.y, z_min ),
+		.max( node_bbox.max.x, node_bbox.max.y, z_max ),
+	};
+
+	var BBox3f bbox_down_y_plus
+	{
+		.min( node_bbox.min.x, node_bbox.min.y, z_min ),
+		.max( node_bbox.max.x, node_bbox.min.y + bbox_size_y * c_bbox_cut_fraction, z_max ),
+	};
+
+	var BBox3f bbox_down_y_minus
+	{
+		.min( node_bbox.min.x, node_bbox.max.y - bbox_size_y * c_bbox_cut_fraction, z_min ),
+		.max( node_bbox.max.x, node_bbox.max.y, z_max ),
+	};
+
+	return
+		!TestBBoxMapIntersection( map_data, node_position, bbox_down_x_plus ) ||
+		!TestBBoxMapIntersection( map_data, node_position, bbox_down_x_minus ) ||
+		!TestBBoxMapIntersection( map_data, node_position, bbox_down_y_plus ) ||
+		!TestBBoxMapIntersection( map_data, node_position, bbox_down_y_minus );
+}
 
 fn ProjectNodeToQuad( [ Vec3f, 4 ]& quad_vertices, Vec3f& quad_normal, Vec3f& node_position ) : ust::optional</Vec3f/>
 {
