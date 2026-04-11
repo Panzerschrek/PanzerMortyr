@@ -12,6 +12,9 @@ fn BuildGlobalNavigationGraph( GameMapData& map_data ) : GlobalNavigationGraph
 
 	var ust::array_view_imut</ZmapQuad/> quads= map_data.zmap_data.deref().quads;
 
+	// Assume none of quads is broken.
+	var BitArray broken_quad_bits( quads.size() );
+
 	var i32 nodes_spacing= 64; // TODO - tune it
 
 	// A bounding box slightly larger than one used for the player and most (but not all) enemies.
@@ -99,16 +102,10 @@ fn BuildGlobalNavigationGraph( GameMapData& map_data ) : GlobalNavigationGraph
 					var Vec3f node_position( f32(x), f32(y), 0.0f );
 					if_var( node_position_projected : ProjectNodeToQuad( vertices, quad_normal, node_position ) )
 					{
-						//  TODO - fix this for stairs/rams.
-
-						var f32 up_eps= 0.5f;
-
-						if( !TestBBoxMapIntersection(
-								map_data,
-								node_position_projected + Vec3f( 0.0f, 0.0f, -up_eps ),
-								node_bbox ) )
+						if_var( node_position_tweaked :
+								TweakNodePosition( map_data, broken_quad_bits, node_bbox, node_position_projected ) )
 						{
-							result.nodes.push_back( GlobalNavigationGraph::Node{ .position= node_position_projected } );
+							result.nodes.push_back( GlobalNavigationGraph::Node{ .position= node_position_tweaked } );
 						}
 					}
 				}
@@ -117,6 +114,70 @@ fn BuildGlobalNavigationGraph( GameMapData& map_data ) : GlobalNavigationGraph
 	}
 
 	return result;
+}
+
+fn TweakNodePosition(
+	GameMapData& map_data,
+	BitArrayView broken_quad_bits,
+	BBox3f& node_bbox,
+	Vec3f& initial_node_position ) : ust::optional</Vec3f/>
+{
+	var f32 up_eps= 0.5f;
+
+	if( !TestBBoxMapIntersection(
+			map_data,
+			initial_node_position + Vec3f( 0.0f, 0.0f, -up_eps ),
+			node_bbox ) )
+	{
+		return initial_node_position;
+	}
+
+	// Try lifting the node for stairs/ramps.
+	// Check several positions above the node (using a small step).
+	// If it's possible to place the node's box in this position, try tracing down.
+	// If this tracing results into hitting ground, we find a good position.
+
+	var u32 max_lifting= 72u;
+	var u32 lifting_try_step= 6u;
+
+	for( auto mut lift_delta= 0u; lift_delta <= max_lifting; lift_delta += lifting_try_step )
+	{
+		var Vec3f lifted_position( initial_node_position.xy(), initial_node_position.z - f32( lift_delta ) );
+
+		if( !TestBBoxMapIntersection( map_data, lifted_position, node_bbox ) )
+		{
+			// Find a place above where this node can be placed.
+			// Check if tracing down results into hitting a ground surface.
+
+			var Vec3f move_vetor= initial_node_position - lifted_position;
+
+			var TraceCollisionResult trace_collision_result=
+				CollisionTrace(
+					map_data,
+					broken_quad_bits,
+					ust::empty_range,
+					ust::empty_range,
+					node_bbox,
+					lifted_position,
+					move_vetor );
+
+			if( trace_collision_result.clipped_move_distance < 1.0f )
+			{
+				if( IsGroundSurface( trace_collision_result.collision_point_normal ) )
+				{
+					// Pace result node precisely at position of collision.
+					return lifted_position + move_vetor * trace_collision_result.clipped_move_distance;
+				}
+			}
+
+			// If failed to trace to a ground from an non-occupied position, finish this loop.
+			break;
+		}
+	}
+
+	// Can't place the node.
+
+	return ust::null_optional;
 }
 
 fn ProjectNodeToQuad( [ Vec3f, 4 ]& quad_vertices, Vec3f& quad_normal, Vec3f& node_position ) : ust::optional</Vec3f/>
