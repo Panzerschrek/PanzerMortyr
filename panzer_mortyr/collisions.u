@@ -232,6 +232,64 @@ fn CalculateIntersectionWithQuad(
 	return closest_distance;
 }
 
+fn TestBBoxMapIntersection( GameMapData& map_data, Vec3f& position, BBox3f& bbox ) : bool
+{
+	var CompactPolyhedron mut intersection_polyhedron
+	{
+		.num_planes= 0u,
+		.primary_planes_mask= 0u,
+		.planes[ { .normal= Vec3f::MakeZero(), .distance= 0.0f } ... ],
+	};
+
+	var BBox3f test_bbox
+	{
+		.min= bbox.min + position,
+		.max= bbox.max + position,
+	};
+
+	var bool mut has_intersection= false;
+
+	auto& clusters= map_data.zvox_data.deref().clusters;
+	auto& quads= map_data.zmap_data.deref().quads;
+
+	VisitBoundingBoxesHierarchyForBBox(
+		map_data.collider_quads_hierarchy,
+		test_bbox,
+		lambda[&]( PackedQuadIndex packed_quad_index )
+		{
+			var size_type c= packed_quad_index.GetClusterIndex();
+			var size_type q= packed_quad_index.GetQuadIndex();
+
+			var ZmapQuad& quad= quads[q];
+
+			// TODO - check for broken quads?
+
+			auto& center= clusters[c].c.center;
+			auto& in_vertices= quad.vertices;
+
+			var [ Vec3f, 4 ] vertices
+			[
+				( f32( center[0] + i32( in_vertices[0][0] ) ), f32( center[1] + i32( in_vertices[0][1] ) ), f32( center[2] + i32( in_vertices[0][2] ) ) ),
+				( f32( center[0] + i32( in_vertices[1][0] ) ), f32( center[1] + i32( in_vertices[1][1] ) ), f32( center[2] + i32( in_vertices[1][2] ) ) ),
+				( f32( center[0] + i32( in_vertices[2][0] ) ), f32( center[1] + i32( in_vertices[2][1] ) ), f32( center[2] + i32( in_vertices[2][2] ) ) ),
+				( f32( center[0] + i32( in_vertices[3][0] ) ), f32( center[1] + i32( in_vertices[3][1] ) ), f32( center[2] + i32( in_vertices[3][2] ) ) ),
+			];
+
+			CreateBBoxAndQuadMinkowskiSum( bbox, vertices, intersection_polyhedron );
+
+			if( intersection_polyhedron.num_planes >= 4u &&
+				IsPointInsidePolyhedron(
+					position,
+					ust::array_view_imut</Planef/>( intersection_polyhedron.planes ).subrange_end( size_type( intersection_polyhedron.num_planes ) ) ) )
+			{
+				has_intersection= true;
+			}
+
+		} );
+
+	return has_intersection;
+}
+
 fn CollisionTrace(
 	GameMapData& map_data,
 	BitArrayView broken_quad_bits,
