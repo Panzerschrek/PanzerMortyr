@@ -128,37 +128,84 @@ fn TweakNodePosition(
 	i32 nodes_spacing,
 	Vec3f& initial_node_position ) : ust::optional</Vec3f/>
 {
-	// Try place a node without moving it horizontally.
-	if_var( node_tweaked_vertically :
-		TweakNodePositionVertically( map_data, broken_quad_bits, node_bbox, initial_node_position ) )
+	// Handle simple cases first. If it's possible to place a node without lifting or moving it sideways - do this.
 	{
-		return node_tweaked_vertically;
+		var Vec3f node_position_slightly_lifted( initial_node_position.xy(), initial_node_position.z - 0.125f );
+
+		if( !TestBBoxMapIntersection( map_data, node_position_slightly_lifted, node_bbox ) )
+		{
+			return initial_node_position;
+		}
 	}
 
-	// Try moving node slightly sideways.
+	// Perform small upwards lifting and side lifting.
+	// Take result with smallest distance to the initial node position.
 
-	var u32 num_tweaking_steps= 4u;
+	var f32 mut smallest_move_square_distance= ust::plus_inf</f32/>();
+	var ust::optional</Vec3f/> mut result_node_position;
 
-	for( var u32 mut tweaking_step= 1u; tweaking_step < num_tweaking_steps; ++tweaking_step )
+	var u32 num_side_tweaking_steps= 4u;
+
+	var u32 max_lifting= 72u;
+	var u32 lifting_try_step= 6u;
+
+	for( auto mut lift_delta= 0u; lift_delta <= max_lifting; lift_delta += lifting_try_step )
 	{
-		var f32 distance= f32( nodes_spacing ) * 0.5f * f32( tweaking_step ) / f32( num_tweaking_steps );
-
-		foreach( &tweak_vector : c_node_horizontal_tweak_vectors )
-		{
-			var Vec3f position_tweaked_horizontally(
-				initial_node_position.x + tweak_vector[0] * distance,
-				initial_node_position.y + tweak_vector[1] * distance,
-				initial_node_position.z );
-
-			if_var( node_tweaked_vertically :
-				TweakNodePositionVertically( map_data, broken_quad_bits, node_bbox, position_tweaked_horizontally ) )
+		auto test_position=
+			lambda[&]( Vec3f& node_position_to_test )
 			{
-				return node_tweaked_vertically;
+				var f32 move_square_distance= ( node_position_to_test - initial_node_position ).SquareLength();
+				if( move_square_distance >= smallest_move_square_distance )
+				{
+					return;
+				}
+
+				if( !TestBBoxMapIntersection( map_data, node_position_to_test, node_bbox ) )
+				{
+					var Vec3f down_move_vector( 0.0f, 0.0f, f32( max_lifting ) + 0.25f );
+
+					var TraceCollisionResult trace_collision_result=
+						CollisionTrace(
+							map_data,
+							broken_quad_bits,
+							ust::empty_range,
+							ust::empty_range,
+							node_bbox,
+							node_position_to_test,
+							down_move_vector );
+
+					if( trace_collision_result.clipped_move_distance < 1.0f &&
+						IsGroundSurface( trace_collision_result.collision_point_normal ) )
+					{
+						smallest_move_square_distance= move_square_distance;
+						result_node_position= node_position_to_test;
+					}
+				}
+			};
+
+		var Vec3f position_lifted( initial_node_position.xy(), initial_node_position.z - f32( lift_delta ) );
+
+		// Test position with lifting and without side movement.
+		test_position( position_lifted );
+
+		for( var u32 mut tweaking_step= 1u; tweaking_step < num_side_tweaking_steps; ++tweaking_step )
+		{
+			var f32 side_move_distance= f32( nodes_spacing ) * 0.5f * f32( tweaking_step ) / f32( num_side_tweaking_steps );
+
+			foreach( &tweak_vector : c_node_horizontal_tweak_vectors )
+			{
+				var Vec3f position_lifted_and_tweaked_horizontally(
+					position_lifted.x + tweak_vector[0] * side_move_distance,
+					position_lifted.y + tweak_vector[1] * side_move_distance,
+					position_lifted.z );
+
+				// Test position with both lifting and side movement.
+				test_position( position_lifted_and_tweaked_horizontally );
 			}
 		}
 	}
 
-	return ust::null_optional;
+	return result_node_position;
 }
 
 var [ [ f32, 2 ], 8 ] c_node_horizontal_tweak_vectors
@@ -172,85 +219,6 @@ var [ [ f32, 2 ], 8 ] c_node_horizontal_tweak_vectors
 	[  1.0f, -1.0f ],
 	[  1.0f,  1.0f ],
 ];
-
-fn TweakNodePositionVertically(
-	GameMapData& map_data,
-	BitArrayView broken_quad_bits,
-	BBox3f& node_bbox,
-	Vec3f& initial_node_position ) : ust::optional</Vec3f/>
-{
-	// First check if we can place the node in its initial position and moving it down results into hitting a ground surface.
-	{
-		var Vec3f node_position_slightly_lifted( initial_node_position.xy(), initial_node_position.z - 0.125f );
-
-		if( !TestBBoxMapIntersection( map_data, node_position_slightly_lifted, node_bbox ) )
-		{
-			var f32 move_down_eps= 1.0f;
-			var Vec3f move_vetor= Vec3f( 0.0f, 0.0f, move_down_eps );
-
-			var TraceCollisionResult trace_collision_result=
-				CollisionTrace(
-					map_data,
-					broken_quad_bits,
-					ust::empty_range,
-					ust::empty_range,
-					node_bbox,
-					node_position_slightly_lifted,
-					move_vetor );
-
-			if( trace_collision_result.clipped_move_distance < 1.0f &&
-				IsGroundSurface( trace_collision_result.collision_point_normal ) )
-			{
-				return initial_node_position;
-			}
-		}
-	}
-
-	// Try lifting the node for stairs/ramps.
-	// Check several positions above the node (using a small step).
-	// If it's possible to place the node's box in this position, try tracing down.
-	// If this tracing results into hitting ground, we find a good position.
-
-	var u32 max_lifting= 72u;
-	var u32 lifting_try_step= 6u;
-
-	for( auto mut lift_delta= 0u; lift_delta <= max_lifting; lift_delta += lifting_try_step )
-	{
-		var Vec3f lifted_position( initial_node_position.xy(), initial_node_position.z - f32( lift_delta ) );
-
-		if( !TestBBoxMapIntersection( map_data, lifted_position, node_bbox ) )
-		{
-			// Find a place above where this node can be placed.
-			// Check if tracing down results into hitting a ground surface.
-
-			var Vec3f move_vector= initial_node_position - lifted_position;
-
-			var TraceCollisionResult trace_collision_result=
-				CollisionTrace(
-					map_data,
-					broken_quad_bits,
-					ust::empty_range,
-					ust::empty_range,
-					node_bbox,
-					lifted_position,
-					move_vector );
-
-			if( trace_collision_result.clipped_move_distance < 1.0f &&
-				IsGroundSurface( trace_collision_result.collision_point_normal ) )
-			{
-				// Pace result node precisely at position of collision.
-				return lifted_position + move_vector * trace_collision_result.clipped_move_distance;
-			}
-
-			// If failed to trace to a ground from an non-occupied position, finish this loop.
-			break;
-		}
-	}
-
-	// Can't place the node.
-
-	return ust::null_optional;
-}
 
 fn ProjectNodeToQuad( [ Vec3f, 4 ]& quad_vertices, Vec3f& quad_normal, Vec3f& node_position ) : ust::optional</Vec3f/>
 {
