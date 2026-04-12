@@ -578,14 +578,20 @@ fn BuildGraphEdges(
 				}
 			}
 
-			if( NodeCanBeReached(
-					map_data,
-					broken_quad_bits,
-					src_node_position,
-					node_position,
-					node_bbox_for_reachability_check ) )
+			if_var( reachability_distance :
+					GetNodeReachabilityDistance(
+						map_data,
+						broken_quad_bits,
+						src_node_position,
+						node_position,
+						node_bbox_for_reachability_check ) )
 			{
-				result.push_back( GlobalNavigationGraph::InputEdge{ .src_node_index= candidate_connection } );
+				result.push_back(
+					GlobalNavigationGraph::InputEdge
+					{
+						.src_node_index= candidate_connection,
+						.length( ust::min( ust::ceil( reachability_distance ), 65535.0f ) ),
+					} );
 				++num_input_edges;
 			}
 		}
@@ -598,12 +604,13 @@ fn BuildGraphEdges(
 	return result;
 }
 
-fn NodeCanBeReached(
+// Returns none if destination can't be reached.
+fn GetNodeReachabilityDistance(
 	GameMapData& map_data,
 	BitArrayView broken_quad_bits,
 	Vec3f& start,
 	Vec3f& destination,
-	BBox3f& node_bbox ) : bool
+	BBox3f& node_bbox ) : ust::optional</f32/>
 {
 	// Perform walking movement simulation.
 	// It's necessary to be able to find reachability considering steps and ramps climbing.
@@ -629,10 +636,18 @@ fn NodeCanBeReached(
 
 	var f32 mut velocity_z= 0.0f;
 
+	var f32 mut accumulated_distance= 0.0f;
+
 	for( auto mut i= 0u; i < max_iterations; ++i )
 	{
 		var Vec2f direction_to_target= destination.xy() - position.xy();
 		var f32 distance_to_target= direction_to_target.Length();
+
+		// Accumulate distance by assuming we can move the whole step towards the target.
+		// It isn't true in case of bumping into a wall, which gives less true distance.
+		// But we don't care about true distance, but more about travell time
+		// and such distance accumulation gives a good estimation for it.
+		accumulated_distance+= ust::min( distance_to_target, speed );
 
 		if( distance_to_target <= c_reach_horizontal_distance )
 		{
@@ -640,12 +655,13 @@ fn NodeCanBeReached(
 			if( vertical_distance <= c_reach_vertical_distance )
 			{
 				// Reached the destination.
-				return true;
+				// Return accumulated distance and make sure it isn't smaller than true distance.
+				return ust::max( accumulated_distance, ( start.xy() - destination.xy() ).SquareLength() );
 			}
 			else
 			{
 				// Fail to reach - has fallen down or is staying on a floor above the node.
-				return false;
+				return ust::null_optional;
 			}
 		}
 
@@ -677,7 +693,7 @@ fn NodeCanBeReached(
 	}
 
 	// Can't reach the target.
-	return false;
+	return ust::null_optional;
 }
 
 } // namespace PM
