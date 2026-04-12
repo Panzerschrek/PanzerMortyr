@@ -475,17 +475,20 @@ fn BuildGraphEdges(
 {
 	var ust::vector</GlobalNavigationGraph::InputEdge/> mut result;
 
-	var f32 max_horizontal_distance= 1.5f * f32( nodes_spacing );
+	var f32 max_horizontal_distance= 3.1f * f32( nodes_spacing );
 	var f32 max_vertical_distance= c_maximum_step_height_for_climbing * 10.0f;
+
+	var f32 max_angle_cos_for_collinear_connections= ust::cos( c_tau / 32.0f );
 
 	var Vec3f fetch_box_half_size( max_horizontal_distance, max_horizontal_distance, max_vertical_distance );
 
+	var ust::vector</ GlobalNavigationGraph::NodeIndex /> mut candidate_connections;
+
 	for( auto mut dst_node_index= 0s; dst_node_index < nodes.size(); ++dst_node_index )
 	{
-		var size_type first_input_edge= result.size();
-		var size_type mut num_input_edges= 0s;
-
 		var Vec3f node_position= nodes[ dst_node_index ].position;
+
+		candidate_connections.clear();
 
 		VisitBoundingBoxesHierarchyForBBox(
 			nodes_hierarchy,
@@ -508,11 +511,61 @@ fn BuildGraphEdges(
 				if( horizontal_square_distance <= max_horizontal_distance * max_horizontal_distance &&
 					vertical_distance <= max_vertical_distance )
 				{
-					// TODO - check for reachability.
-					result.push_back( GlobalNavigationGraph::InputEdge{ .src_node_index= src_node_index } );
-					++num_input_edges;
+					candidate_connections.push_back( src_node_index );
 				}
 			} );
+
+		// Sort connections by horizontal distance.
+		// It's necessary to add closest connections first.
+		ust::sort_by_key(
+			candidate_connections.range(),
+			lambda[&]( GlobalNavigationGraph::NodeIndex src_node_index ) : f32
+			{
+				var Vec3f& src_node_position= nodes[ size_type( src_node_index ) ].position;
+				return ( node_position.xy() - src_node_position.xy() ).SquareLength();
+			} );
+
+		var size_type first_input_edge= result.size();
+		var size_type mut num_input_edges= 0s;
+
+		foreach( &candidate_connection : candidate_connections ) label candidates
+		{
+			// Check if direction to this connection is almost the same as to some previously-added connection.
+
+			var Vec3f src_node_position= nodes[ size_type( candidate_connection ) ].position;
+
+			var Vec2f horizontal_vector_to_candidate= src_node_position.xy() - node_position.xy();
+			var f32 horizontal_distance_to_candidate= horizontal_vector_to_candidate.Length();
+			if( horizontal_distance_to_candidate <= 0.0f )
+			{
+				continue;
+			}
+
+			for( auto mut i= 0s; i < num_input_edges; ++i )
+			{
+				var GlobalNavigationGraph::InputEdge& prev_edge= result[ first_input_edge + i ];
+				var Vec3f& prev_src_node_position= nodes[ size_type( prev_edge.src_node_index ) ].position;
+
+				var Vec2f horizontal_vector_to_prev_node= prev_src_node_position.xy() - node_position.xy();
+
+				var f32 horizontal_distance_to_prev_node= horizontal_vector_to_prev_node.Length();
+				if( horizontal_distance_to_prev_node > 0.0f )
+				{
+					var f32 angle_cos=
+						horizontal_vector_to_candidate.Dot( horizontal_vector_to_prev_node ) /
+							( horizontal_distance_to_candidate * horizontal_distance_to_prev_node );
+
+					if( angle_cos > max_angle_cos_for_collinear_connections )
+					{
+						continue label candidates; // Direction is almost the same - skip it.
+					}
+				}
+			}
+
+			// TODO - check for reachability.
+			result.push_back( GlobalNavigationGraph::InputEdge{ .src_node_index= candidate_connection } );
+			++num_input_edges;
+		}
 
 		var GlobalNavigationGraph::Node &mut node= nodes[ dst_node_index ];
 		node.first_input_edge= u32( first_input_edge );
