@@ -13,6 +13,9 @@ namespace PM
 
 fn BuildGlobalNavigationGraph( GameMapData& map_data, ConsoleOutPtr& console_out ) : GlobalNavigationGraph
 {
+	// Assume none of quads is broken.
+	var BitArray broken_quad_bits( map_data.zmap_data.deref().quads.size() );
+
 	var i32 nodes_spacing= 64; // TODO - tune it
 
 	// A bounding box slightly larger than one used for the player and most (but not all) enemies.
@@ -24,7 +27,8 @@ fn BuildGlobalNavigationGraph( GameMapData& map_data, ConsoleOutPtr& console_out
 
 	var GlobalNavigationGraph mut result;
 
-	var ust::vector</Vec3f/> initial_nodes= CreateNavigationGraphNodes( map_data, nodes_spacing, node_bbox );
+	var ust::vector</Vec3f/> initial_nodes=
+		CreateNavigationGraphNodes( map_data, broken_quad_bits, nodes_spacing, node_bbox );
 
 	ConsoleOutAddTextLine(
 		console_out,
@@ -41,7 +45,8 @@ fn BuildGlobalNavigationGraph( GameMapData& map_data, ConsoleOutPtr& console_out
 
 	result.nodes_hierarchy= BuildNodesHierarchy( result.nodes );
 
-	result.node_input_edges= BuildGraphEdges( result.nodes_hierarchy, result.nodes, nodes_spacing );
+	result.node_input_edges=
+		BuildGraphEdges( map_data, broken_quad_bits, result.nodes_hierarchy, result.nodes, nodes_spacing, node_bbox );
 
 	ConsoleOutAddTextLine(
 		console_out,
@@ -50,14 +55,12 @@ fn BuildGlobalNavigationGraph( GameMapData& map_data, ConsoleOutPtr& console_out
 	return result;
 }
 
-fn CreateNavigationGraphNodes( GameMapData& map_data, i32 nodes_spacing, BBox3f& node_bbox ) : ust::vector</Vec3f/>
+fn CreateNavigationGraphNodes(
+	GameMapData& map_data, BitArrayView broken_quad_bits, i32 nodes_spacing, BBox3f& node_bbox ) : ust::vector</Vec3f/>
 {
 	var ust::vector</Vec3f/> mut result;
 
 	var ust::array_view_imut</ZmapQuad/> quads= map_data.zmap_data.deref().quads;
-
-	// Assume none of quads is broken.
-	var BitArray broken_quad_bits( quads.size() );
 
 	foreach( &cluster :map_data.zvox_data.deref().clusters )
 	{
@@ -469,10 +472,23 @@ fn BuildNodesHierarchy(
 }
 
 fn BuildGraphEdges(
+	GameMapData& map_data,
+	BitArrayView broken_quad_bits,
 	GlobalNavigationGraph::NodesHierarchy& nodes_hierarchy,
 	ust::array_view_mut</GlobalNavigationGraph::Node/> nodes,
-	i32 nodes_spacing ) : ust::vector</GlobalNavigationGraph::InputEdge/>
+	i32 nodes_spacing,
+	BBox3f& node_bbox ) : ust::vector</GlobalNavigationGraph::InputEdge/>
 {
+	// Use slightly smaller bbox for reachability check - to avoid some numerical errors.
+
+	var f32 node_bbox_descrease_eps= 1.0f / 4.0f;
+
+	var BBox3f node_bbox_for_reachability_check
+	{
+		.min= node_bbox.min + Vec3f( node_bbox_descrease_eps, node_bbox_descrease_eps, node_bbox_descrease_eps ),
+		.max= node_bbox.max - Vec3f( node_bbox_descrease_eps, node_bbox_descrease_eps, node_bbox_descrease_eps ),
+	};
+
 	var ust::vector</GlobalNavigationGraph::InputEdge/> mut result;
 
 	var f32 max_horizontal_distance= 3.1f * f32( nodes_spacing );
@@ -562,9 +578,16 @@ fn BuildGraphEdges(
 				}
 			}
 
-			// TODO - check for reachability.
-			result.push_back( GlobalNavigationGraph::InputEdge{ .src_node_index= candidate_connection } );
-			++num_input_edges;
+			if( NodeCanBeReached(
+					map_data,
+					broken_quad_bits,
+					src_node_position,
+					node_position,
+					node_bbox_for_reachability_check ) )
+			{
+				result.push_back( GlobalNavigationGraph::InputEdge{ .src_node_index= candidate_connection } );
+				++num_input_edges;
+			}
 		}
 
 		var GlobalNavigationGraph::Node &mut node= nodes[ dst_node_index ];
@@ -573,6 +596,32 @@ fn BuildGraphEdges(
 	}
 
 	return result;
+}
+
+fn NodeCanBeReached(
+	GameMapData& map_data,
+	BitArrayView broken_quad_bits,
+	Vec3f& start,
+	Vec3f& destination,
+	BBox3f& node_bbox ) : bool
+{
+	// TODO - perform walking simulation here.
+	var TraceCollisionResult trace_collision_result=
+		CollisionTrace(
+			map_data,
+			broken_quad_bits,
+			ust::empty_range,
+			ust::empty_range,
+			node_bbox,
+			start,
+			destination - start );
+
+	if( trace_collision_result.clipped_move_distance < 1.0f || !trace_collision_result.extra_push.empty() )
+	{
+		return false;
+	}
+
+	return true;
 }
 
 } // namespace PM
