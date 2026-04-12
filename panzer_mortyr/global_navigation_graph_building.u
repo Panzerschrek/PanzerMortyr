@@ -605,23 +605,65 @@ fn NodeCanBeReached(
 	Vec3f& destination,
 	BBox3f& node_bbox ) : bool
 {
-	// TODO - perform walking simulation here.
-	var TraceCollisionResult trace_collision_result=
-		CollisionTrace(
-			map_data,
-			broken_quad_bits,
-			ust::empty_range,
-			ust::empty_range,
-			node_bbox,
-			start,
-			destination - start );
+	// Perform walking movement simulation.
+	// It's necessary to be able to find reachability considering steps and ramps climbing.
+	// It's also necessary to avoid creating edges between nodes where movement between results into falling down.
 
-	if( trace_collision_result.clipped_move_distance < 1.0f || !trace_collision_result.extra_push.empty() )
+	// Typical speed for walking/patrolling enemies.
+	// It shouldn't be too high, since greater speed allows climbing steeper ramps, but we shouldn't allow it,
+	// because enemies with actual speed lower than that can't climb them and thus reachability for them would be wrong.
+	var f32 speed= 4.0f;
+
+	var f32 c_reach_horizontal_distance= 2.0f;
+	var f32 c_reach_vertical_distance= c_maximum_step_height_for_climbing;
+
+	// Estimate the number of iterations based on distance and movement speed and some constant factor.
+	// Multiplying by such factor is necessary, since speed is lower while climbing inclined surfaces.
+	var u32 max_iterations=
+		ust::max( 2u, u32( ust::ceil( ( start.xy()  - destination.xy() ).Length() / speed * 3.0f ) ) );
+
+	var Vec3f mut position= start;
+
+	for( auto mut i= 0u; i < max_iterations; ++i )
 	{
-		return false;
+		var Vec2f direction_to_target= destination.xy() - position.xy();
+		var f32 distance_to_target= direction_to_target.Length();
+
+		if( distance_to_target <= c_reach_horizontal_distance )
+		{
+			var f32 vertical_distance= ust::abs( position.z - destination.z );
+			if( vertical_distance <= c_reach_vertical_distance )
+			{
+				// Reached the destination.
+				return true;
+			}
+			else
+			{
+				// Fail to reach - has fallen down or is staying on a floor above the node.
+				return false;
+			}
+		}
+
+		// It's important to include gravity downwards movement here.
+		// It's necessary for climbing steps.
+		// Also it's necessary to consider falling.
+		var Vec3f move_vector( direction_to_target * ust::min( 1.0f, speed / distance_to_target ), c_gravity_per_step );
+
+		var CollisionStepMoveResult collision_step_move_result=
+			CollisionStepMove(
+				map_data,
+				broken_quad_bits,
+				ust::empty_range,
+				ust::empty_range,
+				node_bbox,
+				position,
+				position + move_vector );
+
+		position= collision_step_move_result.trace_clip_result.position_clipped;
 	}
 
-	return true;
+	// Can't reach the target.
+	return false;
 }
 
 } // namespace PM
