@@ -1,3 +1,6 @@
+import "bit_array.iu"
+import "bounding_boxes_hierarchy_building.iu"
+import "bounding_boxes_hierarchy_visiting.iu"
 import "collisions.iu"
 import "game_constants.iu"
 import "global_navigation_graph_building.iu"
@@ -13,15 +16,7 @@ fn BuildGlobalNavigationGraph( GameMapData& map_data ) : GlobalNavigationGraph
 
 	var ust::vector</Vec3f/> initial_nodes= CreateNavigationGraphNodes( map_data );
 
-	result.nodes=
-		ust::make_vector_from_mapped_range(
-		initial_nodes.range(),
-		lambda( Vec3f& node_position ) : GlobalNavigationGraph::Node
-		{
-			return GlobalNavigationGraph::Node{ .position= node_position };
-		} );
-
-	// TODO - deduplicate and remove nodes located too close to each other.
+	result.nodes= DeduplicateNavigationGraphNodes( initial_nodes );
 
 	return result;
 }
@@ -353,6 +348,74 @@ fn ProjectNodeToQuad( [ Vec3f, 4 ]& quad_vertices, Vec3f& quad_normal, Vec3f& no
 	}
 
 	return ust::null_optional;
+}
+
+fn DeduplicateNavigationGraphNodes( ust::array_view_imut</Vec3f/> node_positions ) : ust::vector</GlobalNavigationGraph::Node/>
+{
+	var ust::vector</u32/> mut node_indices=
+		ust::make_vector_from_filler_function(
+			node_positions.size(),
+			lambda[i= 0u] mut () : u32
+			{
+				var u32 res= i;
+				++i;
+				return res;
+			} );
+
+	var BoundingBoxesHierarchy</u32/> nodes_hierarchy=
+		BuildBoundingBoxesHierarchy(
+			node_indices.range(),
+			8s,
+			lambda[&]( u32 node_index ) : BBox3f
+			{
+				var Vec3f& position= node_positions[ size_type( node_index ) ];
+				return BBox3f{ .min= position, .max= position };
+			} );
+
+	var ust::vector</GlobalNavigationGraph::Node/> mut result;
+
+	var BitArray mut used_node_bits( node_positions.size() );
+
+	var f32 c_min_horizontal_distance= 4.0f, c_min_vertical_distance= 16.0f;
+	var Vec3f check_bbox_half_size( c_min_horizontal_distance, c_min_horizontal_distance, c_min_vertical_distance );
+
+	for( auto mut i= 0s; i < node_positions.size(); ++i )
+	{
+		var Vec3f& node_position= node_positions[i];
+
+		var bool mut is_duplicate= false;
+
+		VisitBoundingBoxesHierarchyForBBox(
+			nodes_hierarchy,
+			BBox3f
+			{
+				.min= node_position - check_bbox_half_size,
+				.max= node_position + check_bbox_half_size,
+			},
+			lambda[&]( u32 node_index )
+			{
+				if( used_node_bits.GetBit( size_type(node_index) ) )
+				{
+					var Vec3f& other_node_position= node_positions[ size_type(node_index) ];
+					var f32 horizontal_square_distance=
+						( node_position.xy() - other_node_position.xy() ).SquareLength();
+					var f32 vertical_distance= ust::abs( node_position.z - other_node_position.z );
+					if( horizontal_square_distance < c_min_horizontal_distance * c_min_horizontal_distance &&
+						vertical_distance < c_min_vertical_distance )
+					{
+						is_duplicate= true;
+					}
+				}
+			} );
+
+		if( !is_duplicate )
+		{
+			used_node_bits.SetBitToOne( i );
+			result.push_back( GlobalNavigationGraph::Node{ .position= node_position } );
+		}
+	}
+
+	return result;
 }
 
 } // namespace PM
