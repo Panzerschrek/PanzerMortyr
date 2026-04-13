@@ -11,7 +11,10 @@ import "physics_utils.iu"
 namespace PM
 {
 
-fn BuildGlobalNavigationGraph( GameMapData& map_data, ConsoleOutPtr& console_out ) : GlobalNavigationGraph
+fn BuildGlobalNavigationGraph(
+	GameMapData& map_data,
+	ConsoleOutPtr& console_out,
+	bool use_fast_but_incorrect_reachability_check ) : GlobalNavigationGraph
 {
 	// Assume none of quads is broken.
 	var BitArray broken_quad_bits( map_data.zmap_data.deref().quads.size() );
@@ -52,7 +55,14 @@ fn BuildGlobalNavigationGraph( GameMapData& map_data, ConsoleOutPtr& console_out
 	result.nodes_hierarchy= BuildNodesHierarchy( result.nodes );
 
 	result.node_input_edges=
-		BuildGraphEdges( map_data, broken_quad_bits, result.nodes_hierarchy, result.nodes, nodes_spacing, node_bbox );
+		BuildGraphEdges(
+			map_data,
+			broken_quad_bits,
+			result.nodes_hierarchy,
+			result.nodes,
+			nodes_spacing,
+			node_bbox,
+			use_fast_but_incorrect_reachability_check );
 
 	ConsoleOutAddTextLine(
 		console_out,
@@ -487,7 +497,8 @@ fn BuildGraphEdges(
 	GlobalNavigationGraph::NodesHierarchy& nodes_hierarchy,
 	ust::array_view_mut</GlobalNavigationGraph::Node/> nodes,
 	i32 nodes_spacing,
-	BBox3f& node_bbox ) : ust::vector</GlobalNavigationGraph::InputEdge/>
+	BBox3f& node_bbox,
+	bool use_fast_but_incorrect_reachability_check ) : ust::vector</GlobalNavigationGraph::InputEdge/>
 {
 	// Use slightly smaller bbox for reachability check - to avoid some numerical errors.
 	var f32 node_bbox_descrease_eps= 1.0f / 4.0f;
@@ -590,13 +601,22 @@ fn BuildGraphEdges(
 
 			// After making sure that this connection has its own direction, check for reachability.
 
-			if_var( reachability_distance :
-					GetNodeReachabilityDistance(
+			auto reachability_distance_opt=
+				( use_fast_but_incorrect_reachability_check
+					? GetNodeReachabilityDistanceFastButIncorrect(
 						map_data,
 						broken_quad_bits,
 						src_node_position,
 						node_position,
-						node_bbox_for_reachability_check ) )
+						node_bbox_for_reachability_check )
+					: GetNodeReachabilityDistance(
+						map_data,
+						broken_quad_bits,
+						src_node_position,
+						node_position,
+						node_bbox_for_reachability_check ) );
+
+			if_var( reachability_distance : reachability_distance_opt )
 			{
 				result.push_back(
 					GlobalNavigationGraph::InputEdge
@@ -710,6 +730,44 @@ fn GetNodeReachabilityDistance(
 
 	// Can't reach the target.
 	return ust::null_optional;
+}
+
+// Fast but not fully correct reachability check function.
+// Use for debugging only.
+// Returns empty optional if destination can't be reached.
+fn GetNodeReachabilityDistanceFastButIncorrect(
+	GameMapData& map_data,
+	BitArrayView broken_quad_bits,
+	Vec3f& start,
+	Vec3f& destination,
+	BBox3f& node_bbox ) : ust::optional</f32/>
+{
+	var f32 height_difference= destination.z - start.z;
+	if( height_difference > c_maximum_step_height_for_climbing * 4.0f ||
+		height_difference < c_maximum_step_height_for_climbing * -1.5f )
+	{
+		return ust::null_optional;
+	}
+
+	// Fast line of sight check between bbox centers.
+	// It's incorrect in many cases.
+	// It can't handle stairs in many cases, bumping into walls and falling down.
+
+	if_var( &trace_result :
+		LineTrace(
+			map_data,
+			broken_quad_bits,
+			ust::empty_range,
+			start + node_bbox.GetCenter(),
+			destination - start ) )
+	{
+		if( trace_result.distance < 1.0f )
+		{
+			return ust::null_optional;
+		}
+	}
+
+	return ( start - destination ).SquareLength();
 }
 
 fn BuildEntityNavigationInfos(
