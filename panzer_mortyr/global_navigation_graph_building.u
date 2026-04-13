@@ -6,7 +6,6 @@ import "collisions.iu"
 import "game_constants.iu"
 import "global_navigation_graph_building.iu"
 import "physics_utils.iu"
-import "plane.iu"
 
 namespace PM
 {
@@ -16,7 +15,9 @@ fn BuildGlobalNavigationGraph( GameMapData& map_data, ConsoleOutPtr& console_out
 	// Assume none of quads is broken.
 	var BitArray broken_quad_bits( map_data.zmap_data.deref().quads.size() );
 
-	var i32 nodes_spacing= 64; // TODO - tune it
+	// This value is tuned so that it's so small that nodes are created even in tight corridors,
+	// but not too small to waste too much space for the result navigation graph and too much time for computing it.
+	var i32 nodes_spacing= 64;
 
 	// A bounding box slightly larger than one used for the player and most (but not all) enemies.
 	var BBox3f node_bbox
@@ -133,6 +134,8 @@ fn CreateNavigationGraphNodes(
 				nodes_spacing * i32( ust::floor( maxs[1] / f32( nodes_spacing ) ) ),
 			];
 
+			// Place initial nodes in regular grid with given spacing.
+
 			for( var i32 mut y= mins_int[1]; y <= maxs_int[1]; y+= nodes_spacing )
 			{
 				for( var i32 mut x= mins_int[0]; x <= maxs_int[0]; x+= nodes_spacing )
@@ -211,7 +214,7 @@ fn TweakNodePosition(
 	}
 
 	// Perform small upwards lifting and side lifting.
-	// Take result with smallest distance to the initial node position.
+	// Take result with the smallest distance to the initial node position.
 
 	var f32 mut smallest_move_square_distance= ust::plus_inf</f32/>();
 	var ust::optional</Vec3f/> mut result_node_position;
@@ -301,8 +304,8 @@ fn IsNodeOnLedge( GameMapData& map_data, BBox3f& node_bbox, Vec3f& node_position
 	var f32 bbox_size_x= node_bbox.max.x - node_bbox.min.x;
 	var f32 bbox_size_y= node_bbox.max.y - node_bbox.min.y;
 
-	// Consider two steps to be maximum allowed distance down.
 	var f32 c_extra_eps= 0.25f;
+	// Consider two steps to be maximum allowed distance down.
 	var f32 c_down_movement= c_maximum_step_height_for_climbing * 2.0f + c_extra_eps;
 	var f32 c_bbox_cut_fraction= 1.0f / 3.0f;
 
@@ -351,7 +354,6 @@ fn ProjectNodeToQuad( [ Vec3f, 4 ]& quad_vertices, Vec3f& quad_normal, Vec3f& no
 			node_position.z - plane.GetDistanceForPoint( node_position ) / plane.normal.z );
 
 		// Check if intersection point lies within quad boundaries.
-		// TODO - handle edge cases.
 		var Vec3f mut prev_v= quad_vertices[3];
 		for( auto mut i= 0s; i < 4s; ++i )
 		{
@@ -453,7 +455,7 @@ fn BuildNodesHierarchy(
 	var ust::vector</ GlobalNavigationGraph::NodeIndex /> mut node_indices=
 		ust::make_vector_from_filler_function(
 			nodes.size(),
-			lambda[i= 0u] mut () : u32
+			lambda[i= 0u] mut () : GlobalNavigationGraph::NodeIndex
 			{
 				var u32 res= i;
 				++i;
@@ -480,9 +482,7 @@ fn BuildGraphEdges(
 	BBox3f& node_bbox ) : ust::vector</GlobalNavigationGraph::InputEdge/>
 {
 	// Use slightly smaller bbox for reachability check - to avoid some numerical errors.
-
 	var f32 node_bbox_descrease_eps= 1.0f / 4.0f;
-
 	var BBox3f node_bbox_for_reachability_check
 	{
 		.min= node_bbox.min + Vec3f( node_bbox_descrease_eps, node_bbox_descrease_eps, node_bbox_descrease_eps ),
@@ -491,9 +491,11 @@ fn BuildGraphEdges(
 
 	var ust::vector</GlobalNavigationGraph::InputEdge/> mut result;
 
+	// These values were tuned so that it's possible to create diagonal connections like (+1, +1), (+1, +2), (+2, +1).
 	var f32 max_horizontal_distance= 3.1f * f32( nodes_spacing );
 	var f32 max_vertical_distance= c_maximum_step_height_for_climbing * 10.0f;
 
+	// Disallow connections with angle between them less than 11.25 degree.
 	var f32 max_angle_cos_for_collinear_connections= ust::cos( c_tau / 32.0f );
 
 	var Vec3f fetch_box_half_size( max_horizontal_distance, max_horizontal_distance, max_vertical_distance );
@@ -531,7 +533,7 @@ fn BuildGraphEdges(
 				}
 			} );
 
-		// Sort connections by horizontal distance.
+		// Sort connections by squared horizontal distance.
 		// It's necessary to add closest connections first.
 		ust::sort_by_key(
 			candidate_connections.range(),
@@ -546,7 +548,7 @@ fn BuildGraphEdges(
 
 		foreach( &candidate_connection : candidate_connections ) label candidates
 		{
-			// Check if direction to this connection is almost the same as to some previously-added connection.
+			// Check if direction to this connection isn't almost the same as to some previously-added connection.
 
 			var Vec3f src_node_position= nodes[ size_type( candidate_connection ) ].position;
 
@@ -578,6 +580,8 @@ fn BuildGraphEdges(
 				}
 			}
 
+			// After making sure that this connection has its own direction, check for reachability.
+
 			if_var( reachability_distance :
 					GetNodeReachabilityDistance(
 						map_data,
@@ -604,7 +608,7 @@ fn BuildGraphEdges(
 	return result;
 }
 
-// Returns none if destination can't be reached.
+// Returns empty optional if destination can't be reached.
 fn GetNodeReachabilityDistance(
 	GameMapData& map_data,
 	BitArrayView broken_quad_bits,
@@ -614,7 +618,7 @@ fn GetNodeReachabilityDistance(
 {
 	// Perform walking movement simulation.
 	// It's necessary to be able to find reachability considering steps and ramps climbing.
-	// It's also necessary to avoid creating edges between nodes where movement between results into falling down.
+	// It's also necessary to avoid creating edges between nodes where movement results into falling down.
 
 	// Warning!
 	// This code should match entity movement code as close as possible!
@@ -628,7 +632,7 @@ fn GetNodeReachabilityDistance(
 	var f32 c_reach_vertical_distance= c_maximum_step_height_for_climbing;
 
 	// Estimate the number of iterations based on distance and movement speed and some constant factor.
-	// Multiplying by such factor is necessary, since speed is lower while climbing inclined surfaces.
+	// Multiplying by such factor is necessary, since speed is lower while climbing inclined surfaces or bumping around corners.
 	var u32 max_iterations=
 		ust::max( 2u, u32( ust::ceil( ( start.xy()  - destination.xy() ).Length() / speed * 3.0f ) ) );
 
@@ -645,7 +649,7 @@ fn GetNodeReachabilityDistance(
 
 		// Accumulate distance by assuming we can move the whole step towards the target.
 		// It isn't true in case of bumping into a wall, which gives less true distance.
-		// But we don't care about true distance, but more about travell time
+		// But we don't care about true distance, but more about travelling time
 		// and such distance accumulation gives a good estimation for it.
 		accumulated_distance+= ust::min( distance_to_target, speed );
 
@@ -660,7 +664,7 @@ fn GetNodeReachabilityDistance(
 			}
 			else
 			{
-				// Fail to reach - has fallen down or is staying on a floor above the node.
+				// Fail to reach - has fallen down or is staying on a floor above the target node.
 				return ust::null_optional;
 			}
 		}
@@ -690,6 +694,10 @@ fn GetNodeReachabilityDistance(
 			ClampVerticalVelocity(
 				velocity_z, collision_step_move_result.trace_clip_result.collision_events[i].plane_normal );
 		}
+
+		// TODO - detect if this movement requires too much free fall.
+		// If so - assume the target isn't reachable.
+		// It's needed to prevent enemies jumping down too deep.
 	}
 
 	// Can't reach the target.
