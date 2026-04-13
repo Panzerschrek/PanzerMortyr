@@ -59,13 +59,7 @@ fn BuildGlobalNavigationGraph( GameMapData& map_data, ConsoleOutPtr& console_out
 		ust::concat( "Has ", ust::to_string8( result.node_input_edges.size() ), " edges in global navigation graph" ) );
 
 	result.entity_navigation_infos=
-		BuildEntityNavigationInfos(
-			map_data,
-			broken_quad_bits,
-			result.nodes,
-			result.nodes_hierarchy,
-			nodes_spacing,
-			node_bbox );
+		BuildEntityNavigationInfos( map_data, broken_quad_bits, result.nodes, result.nodes_hierarchy, node_bbox );
 
 	return result;
 }
@@ -723,7 +717,6 @@ fn BuildEntityNavigationInfos(
 	BitArrayView broken_quad_bits,
 	ust::array_view_imut</GlobalNavigationGraph::Node/> nodes,
 	GlobalNavigationGraph::NodesHierarchy& nodes_hierarchy,
-	i32 nodes_spacing,
 	BBox3f& node_bbox ) : ust::vector</GlobalNavigationGraph::EntityNavigationInfo/>
 {
 	var ust::array_view_imut</ZpozEntityNavigationInfo/> in_infos= map_data.zpoz_data.deref().entity_navigation_infos;
@@ -733,15 +726,6 @@ fn BuildEntityNavigationInfos(
 	var ust::vector</GlobalNavigationGraph::EntityNavigationInfo/> mut result(
 		in_infos.size(),
 		GlobalNavigationGraph::EntityNavigationInfo{ .patrolling_nodes[ invalid_node_index ... ] } );
-
-	var f32 max_distance= f32(nodes_spacing) * 2.0f;
-
-	var Vec3f fetch_bbox_half_size(
-		max_distance,
-		max_distance,
-		c_maximum_step_height_for_climbing * 3.0f );
-
-	var Vec3f node_bbox_center= node_bbox.GetCenter();
 
 	for( auto mut i= 0s; i < in_infos.size(); ++i )
 	{
@@ -755,49 +739,74 @@ fn BuildEntityNavigationInfos(
 				f32( in_info.patrolling_point_coords[ point_index + 16u ] ),
 				f32( in_info.patrolling_point_coords[ point_index + 32u ] ) );
 
-			// Search for the closest node within direct sight.
-
-			var f32 mut closest_node_square_distance= ust::plus_inf</f32/>();
-			var GlobalNavigationGraph::NodeIndex mut clusters_node_index= invalid_node_index;
-
-			VisitBoundingBoxesHierarchyForBBox(
-				nodes_hierarchy,
-				BBox3f
-				{
-					.min= position - fetch_bbox_half_size,
-					.max= position + fetch_bbox_half_size,
-				},
-				lambda[&]( GlobalNavigationGraph::NodeIndex node_index )
-				{
-					var Vec3f& node_position= nodes[ size_type(node_index) ].position;
-					var f32 square_distance= ( position - node_position ).SquareLength();
-					if( square_distance < closest_node_square_distance &&
-						square_distance <= max_distance * max_distance )
-					{
-						// Perform line of sight check between bounding box centers.
-						// It's mostly enough.
-						// Don't bother performing box tracing or even movement simulation.
-						var Vec3f trace_start= position + node_bbox_center;
-						var Vec3f trace_vector= node_position - position;
-						if_var( trace_result :
-								LineTrace( map_data, broken_quad_bits, ust::empty_range, trace_start, trace_vector ) )
-						{
-							if( trace_result.distance < 1.0f )
-							{
-								return;
-							}
-						}
-
-						closest_node_square_distance= square_distance;
-						clusters_node_index= node_index;
-					}
-				} );
-
-			out_info.patrolling_nodes[point_index]= clusters_node_index;
+			out_info.patrolling_nodes[ point_index ]=
+				FindNearestNavigationGraphNode(
+					map_data,
+					broken_quad_bits,
+					nodes,
+					nodes_hierarchy,
+					node_bbox,
+					position ).deref_or( invalid_node_index );
 		}
 	}
 
 	return result;
+}
+
+// TODO - make it externally-available?
+fn FindNearestNavigationGraphNode(
+	GameMapData& map_data,
+	BitArrayView broken_quad_bits,
+	ust::array_view_imut</GlobalNavigationGraph::Node/> nodes,
+	GlobalNavigationGraph::NodesHierarchy& nodes_hierarchy,
+	BBox3f& node_bbox,
+	Vec3f& position ) : ust::optional</GlobalNavigationGraph::NodeIndex/>
+{
+	var f32 mut closest_node_square_distance= ust::plus_inf</f32/>();
+	var ust::optional</GlobalNavigationGraph::NodeIndex/> mut closest_node_index;
+
+	var Vec3f bbox_center_positioned= position + node_bbox.GetCenter();
+
+	// Assume we can find a node in distanse proportional to node bbox size.
+	var Vec3f fetch_bbox_half_size= node_bbox.GetDimensions() * 4.01f;
+
+	VisitBoundingBoxesHierarchyForBBox(
+		nodes_hierarchy,
+		BBox3f
+		{
+			.min= bbox_center_positioned - fetch_bbox_half_size,
+			.max= bbox_center_positioned + fetch_bbox_half_size,
+		},
+		lambda[&]( GlobalNavigationGraph::NodeIndex node_index )
+		{
+			var Vec3f& node_position= nodes[ size_type(node_index) ].position;
+			var f32 square_distance= ( position - node_position ).SquareLength();
+			if( square_distance < closest_node_square_distance )
+			{
+				// Perform line of sight check between bounding box centers.
+				// It's necessary to find a node in direct sight, not a node behind a wall.
+				// It's mostly enough to perform line check.
+				// Don't bother performing box tracing or even movement simulation, it's too costly.
+				if_var( trace_result :
+						LineTrace(
+							map_data,
+							broken_quad_bits,
+							ust::empty_range,
+							bbox_center_positioned,
+							node_position - position ) )
+				{
+					if( trace_result.distance < 1.0f )
+					{
+						return;
+					}
+				}
+
+				closest_node_square_distance= square_distance;
+				closest_node_index= node_index;
+			}
+		} );
+
+	return closest_node_index;
 }
 
 } // namespace PM
