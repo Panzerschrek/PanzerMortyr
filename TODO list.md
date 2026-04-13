@@ -143,7 +143,6 @@ PanzerMortyr rendering:
 * Consider applying dynamic light to glass quads.
 * Consider optimizing drawing snow/rain - reject snow/rain particles for non-visible clusters and clusters located far away.
 * Allow turning global fog for snow/rain off.
-* Allow setting gamma.
 
 PanzerMortyr menus and HUD:
 
