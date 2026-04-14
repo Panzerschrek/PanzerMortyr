@@ -1,9 +1,11 @@
+import "/assert.iu"
 import "/binary_heap.iu"
 import "global_navigation_graph.iu"
 
 namespace PM
 {
 
+// TODO - rename it?
 class RouteSearcher
 {
 public:
@@ -94,6 +96,133 @@ private:
 	// Reuse distance table container across searches.
 	// It's necessary to avoid reallocating it on each search.
 	ust::vector</f32/> distance_table_;
+}
+
+// TODO - rename it?
+class DirectRouteSearcher
+{
+
+public:
+	fn PerformSearch(
+		GlobalNavigationGraph& graph,
+		GlobalNavigationGraph::NodeIndex start_node,
+		GlobalNavigationGraph::NodeIndex target_node ) : ust::vector</GlobalNavigationGraph::NodeIndex/>
+	{
+		debug_assert( start_node != target_node );
+
+		// An implementation of Dijkstra's algorithm.
+		// TODO - use A* instead. It should be faster in most cases.
+
+		// Perform search from target.
+		// Stop if start is reached.
+		// Then reconstruct the route using start to target order.
+
+		var f32 inf= ust::plus_inf</f32/>();
+		var GlobalNavigationGraph::NodeIndex invalid_node_index(~0s);
+
+		// TODO - reuse this container across invocations.
+		var ust::vector</NodeData/> mut nodes_data(
+			graph.nodes.size(),
+			NodeData{ .distance= inf, .prev_node= invalid_node_index } );
+
+		// TODO - reuse this container across invocations.
+		var ust::vector</SearchElement/> mut search_queue;
+
+		search_queue.push_back(
+			SearchElement
+			{
+				.node_index= target_node,
+				.prev_node_index= invalid_node_index,
+				.distance= 0.0f
+			} );
+
+		var SearchElementCompare compare;
+
+		// TODO - ad some limit to number of iterations to avoid too costly searches.
+		// This is especially important if no route can be found (to avoid visiting almost the whole graph).
+
+		while( search_queue.empty() )
+		{
+			ust::binary_heap::pop_heap( search_queue.range(), compare );
+			auto { node_index, prev_node_index, distance } = search_queue.pop_back();
+
+			{
+				var NodeData &mut node_data= nodes_data[ size_type( node_index ) ];
+
+				if( node_data.distance != inf )
+				{
+					continue; // Already visited this node.
+				}
+
+				node_data.distance= distance;
+				node_data.prev_node= prev_node_index;
+			}
+
+			if( node_index == start_node )
+			{
+				// Reconstruct route using start to target order.
+				var ust::vector</GlobalNavigationGraph::NodeIndex/> mut route;
+
+				for( auto mut n= node_index; n != target_node; n= nodes_data[ size_type(n) ].prev_node )
+				{
+					route.push_back(n);
+				}
+
+				return route;
+			}
+
+			var GlobalNavigationGraph::Node& node= graph.nodes[ size_type( node_index ) ];
+
+			// Since we perform the search from target to start, process input nodes (not output nodes).
+
+			auto edges_range=
+				graph.node_input_edges.range().subrange(
+					size_type( node.first_input_edge ), size_type( node.first_input_edge + node.num_input_edges ) );
+
+			foreach( &edge : edges_range )
+			{
+				search_queue.push_back(
+					SearchElement
+					{
+						.node_index= edge.src_node_index,
+						.prev_node_index= node_index,
+						.distance= distance + f32( edge.length ),
+						// TODO - calculate here also estimated distance to start.
+					} );
+
+				ust::binary_heap::push_heap( search_queue.range(), compare );
+			}
+		}
+
+		// Route not found.
+		return ust::vector</GlobalNavigationGraph::NodeIndex/>();
+	}
+
+private:
+	struct SearchElement
+	{
+		GlobalNavigationGraph::NodeIndex node_index;
+		GlobalNavigationGraph::NodeIndex prev_node_index; // Store prev node index to reconstruct the route.
+		f32 distance;
+		// TODO - store estimated distance too.
+	}
+
+	// Comparator for reverse order.
+	struct SearchElementCompare
+	{
+		op()( this, SearchElement& l, SearchElement& r ) : bool
+		{
+			// Use reverse order.
+			// TODO - compare estimated distance instead.
+			return l.distance > r.distance;
+		}
+	}
+
+	struct NodeData
+	{
+		f32 distance;
+		GlobalNavigationGraph::NodeIndex prev_node; // May be invalid index for the target node.
+	}
 }
 
 } // namespace PM
