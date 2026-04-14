@@ -1,0 +1,79 @@
+import "bounding_boxes_hierarchy_visiting.iu"
+import "collisions.iu"
+import "global_navigation_graph_utils.iu"
+
+namespace PM
+{
+
+fn FindNearestNavigationGraphNode(
+	GameMapData& map_data,
+	BitArrayView broken_quad_bits,
+	GlobalNavigationGraph& graph,
+	Vec3f& position ) : ust::optional</GlobalNavigationGraph::NodeIndex/>
+{
+	return
+		FindNearestNavigationGraphNode(
+			map_data,
+			broken_quad_bits,
+			graph.nodes,
+			graph.nodes_hierarchy,
+			graph.node_bbox,
+			position );
+}
+
+fn FindNearestNavigationGraphNode(
+	GameMapData& map_data,
+	BitArrayView broken_quad_bits,
+	ust::array_view_imut</GlobalNavigationGraph::Node/> nodes,
+	GlobalNavigationGraph::NodesHierarchy& nodes_hierarchy,
+	BBox3f& node_bbox,
+	Vec3f& position ) : ust::optional</GlobalNavigationGraph::NodeIndex/>
+{
+	var f32 mut closest_node_square_distance= ust::plus_inf</f32/>();
+	var ust::optional</GlobalNavigationGraph::NodeIndex/> mut closest_node_index;
+
+	var Vec3f bbox_center_positioned= position + node_bbox.GetCenter();
+
+	// Assume we can find a node in distanse proportional to node bbox size.
+	var Vec3f fetch_bbox_half_size= node_bbox.GetDimensions() * 4.01f;
+
+	VisitBoundingBoxesHierarchyForBBox(
+		nodes_hierarchy,
+		BBox3f
+		{
+			.min= bbox_center_positioned - fetch_bbox_half_size,
+			.max= bbox_center_positioned + fetch_bbox_half_size,
+		},
+		lambda[&]( GlobalNavigationGraph::NodeIndex node_index )
+		{
+			var Vec3f& node_position= nodes[ size_type(node_index) ].position;
+			var f32 square_distance= ( position - node_position ).SquareLength();
+			if( square_distance < closest_node_square_distance )
+			{
+				// Perform line of sight check between bounding box centers.
+				// It's necessary to find a node in direct sight, not a node behind a wall.
+				// It's mostly enough to perform line check.
+				// Don't bother performing box tracing or even movement simulation, it's too costly.
+				if_var( trace_result :
+						LineTrace(
+							map_data,
+							broken_quad_bits,
+							ust::empty_range,
+							bbox_center_positioned,
+							node_position - position ) )
+				{
+					if( trace_result.distance < 1.0f )
+					{
+						return;
+					}
+				}
+
+				closest_node_square_distance= square_distance;
+				closest_node_index= node_index;
+			}
+		} );
+
+	return closest_node_index;
+}
+
+} // namespace PM
