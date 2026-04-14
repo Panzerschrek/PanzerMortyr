@@ -133,46 +133,9 @@ fn Game::GetWorldDrawingInfo( this ) : WorldDrawingInfo
 			map_data_.as_ref(),
 			game_state_.as_ref() );
 
-	if( !map_data_.empty() && !game_state_.empty() )
+	foreach( &node_to_show : debug_navigation_graph_nodes_to_show_ )
 	{
-		var GameMapData& map_data= map_data_.try_deref();
-		var GameState& game_state= game_state_.try_deref();
-
-		if_var( start_node_index :
-			FindNearestNavigationGraphNode( map_data, game_state.broken_quad_bits, game_state.player.position ) )
-		{
-			// TODO - avoid creating it each frame.
-			var RouteSearcher mut route_searcher;
-
-			route_searcher.EnumerateInputNodes(
-				map_data.global_navigation_graph,
-				start_node_index,
-				lambda[&]( GlobalNavigationGraph::NodeIndex node_index, f32 distance ) : bool
-				{
-					var f32 max_distance= 512.0f;
-
-					if( distance > max_distance )
-					{
-						return false;
-					}
-
-					var u8 brightness( 255.0f - distance * 254.5f / max_distance );
-
-					var GlobalNavigationGraph::Node& node=
-						map_data.global_navigation_graph.nodes[ size_type( node_index ) ];
-
-					CreateBBoxLines(
-						BBox3f
-						{
-							.min= node.position + map_data.global_navigation_graph.node_bbox.min,
-							.max= node.position + map_data.global_navigation_graph.node_bbox.max,
-						},
-						ust::make_array( 0u8, brightness, 0u8 ),
-						world_drawing_info.test_lines );
-
-					return true;
-				} );
-		}
+		CreateBBoxLines( node_to_show[0], node_to_show[1], world_drawing_info.test_lines );
 	}
 
 	return world_drawing_info;
@@ -272,6 +235,58 @@ fn Game::process_invulnerability( mut this )
 	}
 }
 
+fn Game::process_debug_show_nearby_navigation_graph_input_nodes( mut this )
+{
+	debug_navigation_graph_nodes_to_show_.clear();
+
+	if( map_data_.empty() || game_state_.empty() )
+	{
+		return;
+	}
+
+	var GameMapData& map_data= map_data_.try_deref();
+	var GameState& game_state= game_state_.try_deref();
+
+	if_var( start_node_index :
+		FindNearestNavigationGraphNode( map_data, game_state.broken_quad_bits, game_state.player.position ) )
+	{
+		auto &mut out_nodes= debug_navigation_graph_nodes_to_show_;
+
+		route_searcher_.EnumerateInputNodes(
+			map_data.global_navigation_graph,
+			start_node_index,
+			lambda[&]( GlobalNavigationGraph::NodeIndex node_index, f32 distance ) : bool
+			{
+				var f32 max_distance= 512.0f;
+
+				if( distance > max_distance )
+				{
+					return false;
+				}
+
+				var u8 brightness( 255.0f - distance * 254.5f / max_distance );
+
+				var GlobalNavigationGraph::Node& node=
+					map_data.global_navigation_graph.nodes[ size_type( node_index ) ];
+
+				out_nodes.push_back(
+					ust::make_tuple(
+						BBox3f
+						{
+							.min= node.position + map_data.global_navigation_graph.node_bbox.min,
+							.max= node.position + map_data.global_navigation_graph.node_bbox.max,
+						},
+						ust::make_array( 255u8, brightness, 255u8 ) ) );
+
+				return true;
+			} );
+	}
+}
+
+fn Game::process_debug_reset_nearby_navigation_graph_nodes_visualization( mut this )
+{
+	debug_navigation_graph_nodes_to_show_.clear();
+}
 
 fn Game::PerformMapTransition(
 	mut this, u32 map_index, u32 skill, ust::optional_ref_imut</PlayerState/> prev_player_state )
