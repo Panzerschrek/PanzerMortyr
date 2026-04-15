@@ -1730,6 +1730,13 @@ fn ProcessEntitiesLogicStep( GameGlobalData& game_global_data, GameMapData& map_
 		{
 			var EntityState &mut entity= game_state.entities[entity_index].try_deref();
 
+			var ust::optional_ref_mut</EntityNavigationState/> mut entity_navigation_state_opt;
+			if( size_type( entity.navigation_info_index ) < game_state.entity_navigation_states.size() )
+			{
+				entity_navigation_state_opt=
+					game_state.entity_navigation_states[ size_type( entity.navigation_info_index ) ];
+			}
+
 			var EntitiesDescription::EntityDescription& entity_description=
 				entities_description.entities[ size_type( entity.kind ) ];
 
@@ -1746,14 +1753,17 @@ fn ProcessEntitiesLogicStep( GameGlobalData& game_global_data, GameMapData& map_
 					entity,
 					game_state.player );
 
-				UpdateEntityMovementTarget(
-					map_data,
-					game_state.broken_quad_bits,
-					game_state.entity_navigation_states,
-					game_state.dynamic_cluster_colliders,
-					entity_description,
-					entity,
-					game_state.random );
+				if_var( &mut entity_navigation_state : entity_navigation_state_opt )
+				{
+					UpdateEntityMovementTarget(
+						map_data,
+						game_state.broken_quad_bits,
+						game_state.dynamic_cluster_colliders,
+						entity_description,
+						entity,
+						entity_navigation_state,
+						game_state.random );
+				}
 			}
 
 			if( entity.player_is_in_sight )
@@ -2232,12 +2242,12 @@ fn ProcessEntitiesLogicStep( GameGlobalData& game_global_data, GameMapData& map_
 			MoveEntity(
 				map_data,
 				game_state.broken_quad_bits,
-				game_state.entity_navigation_states,
 				game_state.dynamic_cluster_colliders,
 				game_state.colliders,
 				game_state.projectiles,
 				game_state.projectile_hit_events,
 				entity,
+				entity_navigation_state_opt,
 				u32(entity_index),
 				entity_description,
 				operation );
@@ -4343,10 +4353,10 @@ fn UpdateEntityPlayerInSightFlag(
 fn UpdateEntityMovementTarget(
 	GameMapData& map_data,
 	BitArrayView broken_quad_bits,
-	ust::array_view_mut</EntityNavigationState/> entity_navigation_states,
 	ust::array_view_imut</DynamicClusterCollider/> dynamic_cluster_colliders,
 	EntitiesDescription::EntityDescription& entity_description,
 	EntityState& entity,
+	EntityNavigationState &mut navigation_state,
 	PseudoRandomGenerator& mut random )
 {
 	if( entity.energy == 0u )
@@ -4380,9 +4390,6 @@ fn UpdateEntityMovementTarget(
 	{
 		return;
 	}
-
-	var EntityNavigationState &mut navigation_state=
-		entity_navigation_states[ size_type( entity.navigation_info_index ) ];
 
 	if( entity.alarmed )
 	{
@@ -4977,12 +4984,12 @@ fn EntityDirectionalShot(
 fn MoveEntity(
 	GameMapData& map_data,
 	BitArrayView broken_quad_bits,
-	ust::array_view_mut</EntityNavigationState/> entity_navigation_states,
 	ust::array_view_imut</DynamicClusterCollider/> dynamic_cluster_colliders,
 	ust::array_view_imut</Collider/> extra_colliders,
 	ProjectilesContainer &mut projectiles,
 	ust::vector</ProjectileHitEvent/> &mut projectile_hit_events,
 	EntityState &mut entity,
+	ust::optional_ref_mut</EntityNavigationState/> navigation_state_opt,
 	u32 entity_index,
 	EntitiesDescription::EntityDescription& entity_description,
 	EntitiesDescription::Operation& current_operation )
@@ -4992,7 +4999,7 @@ fn MoveEntity(
 
 	var Vec3f old_position= entity.position;
 
-	PerformEntityOwnMovement( map_data.mapa_way_data.deref(), entity_navigation_states, entity, current_operation );
+	PerformEntityOwnMovement( map_data.mapa_way_data.deref(), entity, navigation_state_opt, current_operation );
 
 	var Vec3f mut new_position= entity.position;
 
@@ -5127,13 +5134,13 @@ fn MoveEntity(
 
 fn PerformEntityOwnMovement(
 	MapaWayData& mapa_way_data,
-	ust::array_view_mut</EntityNavigationState/> entity_navigation_states,
 	EntityState &mut entity,
+	ust::optional_ref_mut</EntityNavigationState/> navigation_state_opt,
 	EntitiesDescription::Operation& current_operation )
 {
 	if_var( &operation_control : current_operation.operation_control )
 	{
-		PerformEntityOperationControlBasedMovement( mapa_way_data, entity_navigation_states, entity, operation_control );
+		PerformEntityOperationControlBasedMovement( mapa_way_data, entity, navigation_state_opt, operation_control );
 	}
 	else
 	{
@@ -5155,10 +5162,16 @@ fn PerformEntityOwnMovement(
 
 fn PerformEntityOperationControlBasedMovement(
 	MapaWayData& mapa_way_data,
-	ust::array_view_mut</EntityNavigationState/> entity_navigation_states,
 	EntityState &mut entity,
+	ust::optional_ref_mut</EntityNavigationState/> navigation_state_opt,
 	EntitiesDescription::OperationControl& operation_control )
 {
+	if( navigation_state_opt.empty() )
+	{
+		return;
+	}
+	var EntityNavigationState &mut navigation_state= navigation_state_opt.try_deref();
+
 	if( size_type( entity.navigation_info_index ) >= mapa_way_data.navigation_graphs.size() )
 	{
 		return;
@@ -5171,9 +5184,6 @@ fn PerformEntityOperationControlBasedMovement(
 	{
 		return;
 	}
-
-	var EntityNavigationState &mut navigation_state=
-		entity_navigation_states[ size_type( entity.navigation_info_index ) ];
 
 	var ust::optional</Vec2f/> mut movement_target_opt;
 	var u32 mut waypoint_node_index= ~0u;
