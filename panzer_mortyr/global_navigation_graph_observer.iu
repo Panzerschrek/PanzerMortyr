@@ -1,0 +1,100 @@
+import "/binary_heap.iu"
+import "global_navigation_graph.iu"
+
+namespace PM
+{
+
+// This class allows observing a global navigation graph locally - to visit nearby nodes for given node.
+class GlobalNavigationGraphObserver
+{
+public:
+	// Enumerate all nodes leading to given node in their distance order (starting from nearest).
+	// A node can be visited at most once.
+	// Given function should have two parameters - node index and distance.
+	// It should return a boolean value.
+	// True means the search should be continued and false means the search should be stopped.
+	//
+	template</type Func/>
+	fn EnumerateInputNodes(
+		mut this,
+		GlobalNavigationGraph& graph,
+		GlobalNavigationGraph::NodeIndex start_node,
+		Func& node_processing_func )
+	{
+		// An implementation of Dijkstra's algorithm.
+
+		var f32 inf= ust::plus_inf</f32/>();
+
+		// Unvisited nodes have infinite distance.
+		// TODO - avoid filling the whole container on each search.
+		// Use a trickier approach with generational indices.
+		distance_table_.clear();
+		distance_table_.resize( graph.nodes.size(), inf );
+
+		search_queue_.clear();
+		search_queue_.push_back( SearchElement{ .node_index= start_node, .distance= 0.0f } );
+
+		var SearchElementCompare compare;
+
+		while( !search_queue_.empty() )
+		{
+			ust::binary_heap::pop_heap( search_queue_.range(), compare );
+			auto { node_index, distance } = search_queue_.pop_back();
+
+			var f32 &mut distance_in_table= distance_table_[ size_type( node_index ) ];
+
+			if( distance_in_table != inf )
+			{
+				continue; // Already visited this node.
+			}
+
+			distance_in_table= distance;
+
+			if( !node_processing_func( node_index, distance ) )
+			{
+				break; // Processing function wants to end the search.
+			}
+
+			var GlobalNavigationGraph::Node& node= graph.nodes[ size_type( node_index ) ];
+
+			auto edges_range=
+				graph.node_input_edges.range().subrange(
+					size_type( node.first_input_edge ), size_type( node.first_input_edge + node.num_input_edges ) );
+
+			foreach( &edge : edges_range )
+			{
+				search_queue_.push_back(
+					SearchElement{ .node_index= edge.src_node_index, .distance= distance + f32( edge.length ) } );
+				ust::binary_heap::push_heap( search_queue_.range(), compare );
+			}
+		}
+	}
+
+private:
+	struct SearchElement
+	{
+		GlobalNavigationGraph::NodeIndex node_index;
+		f32 distance; // TODO - maybe use integer distance?
+	}
+
+	// Comparator for reverse order.
+	struct SearchElementCompare
+	{
+		op()( this, SearchElement& l, SearchElement& r ) : bool
+		{
+			// Use reverse order.
+			return l.distance > r.distance;
+		}
+	}
+
+private:
+	// Reuse container with search elements across searches.
+	// It's necessary to avoid reallocating it on each search.
+	ust::vector</SearchElement/> search_queue_;
+
+	// Reuse distance table container across searches.
+	// It's necessary to avoid reallocating it on each search.
+	ust::vector</f32/> distance_table_;
+}
+
+} // namespace PM
