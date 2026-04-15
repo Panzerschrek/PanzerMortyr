@@ -17,6 +17,7 @@ public:
 	// True means the search should be continued and false means the search should be stopped.
 	template</type Func/>
 	fn PerformSearch(
+		mut this,
 		GlobalNavigationGraph& graph,
 		GlobalNavigationGraph::NodeIndex start_node,
 		GlobalNavigationGraph::NodeIndex target_node,
@@ -27,17 +28,19 @@ public:
 		// An implementation of Dijkstra's algorithm.
 		// TODO - use A* instead. It should be faster in most cases.
 
+		var u32 search_sequentional_index= search_sequentional_index_;
+		++search_sequentional_index_;
+
 		// Perform search from target.
 		// Stop if start is reached.
 		// Then reconstruct the route using start to target order.
 
-		var f32 inf= ust::plus_inf</f32/>();
 		var GlobalNavigationGraph::NodeIndex invalid_node_index(~0s);
 
-		// TODO - reuse this container across invocations.
-		var ust::vector</NodeData/> mut nodes_data(
+		node_table_.resize(
 			graph.nodes.size(),
-			NodeData{ .distance= inf, .prev_node= invalid_node_index } );
+			NodeTableEntry{ .search_sequentional_index= 0u, .prev_node= invalid_node_index } );
+		var ust::array_view_mut</NodeTableEntry/> node_table= node_table_;
 
 		// TODO - reuse this container across invocations.
 		var ust::vector</SearchElement/> mut search_queue;
@@ -61,15 +64,15 @@ public:
 			auto { node_index, prev_node_index, distance } = search_queue.pop_back();
 
 			{
-				var NodeData &mut node_data= nodes_data[ size_type( node_index ) ];
+				var NodeTableEntry &mut node_table_entry= node_table[ size_type( node_index ) ];
 
-				if( node_data.distance != inf )
+				if( node_table_entry.search_sequentional_index == search_sequentional_index )
 				{
 					continue; // Already visited this node.
 				}
 
-				node_data.distance= distance;
-				node_data.prev_node= prev_node_index;
+				node_table_entry.search_sequentional_index= search_sequentional_index;
+				node_table_entry.prev_node= prev_node_index;
 			}
 
 			if( !node_processing_func( node_index ) )
@@ -84,7 +87,7 @@ public:
 
 				// Don't include target.
 
-				for( auto mut n= node_index; n != target_node; n= nodes_data[ size_type(n) ].prev_node )
+				for( auto mut n= node_index; n != target_node; n= node_table[ size_type(n) ].prev_node )
 				{
 					route.push_back(n);
 				}
@@ -102,16 +105,21 @@ public:
 
 			foreach( &edge : edges_range )
 			{
-				search_queue.push_back(
-					SearchElement
-					{
-						.node_index= edge.src_node_index,
-						.prev_node_index= node_index,
-						.distance= distance + f32( edge.length ),
-						// TODO - calculate here also estimated distance to start.
-					} );
+				// Avoid adding a node into the search queue if it was already visited.
+				// This allows saving some time by not doing not-so-trivial binary heap operations.
+				if( node_table[ size_type( edge.src_node_index ) ].search_sequentional_index != search_sequentional_index )
+				{
+					search_queue.push_back(
+						SearchElement
+						{
+							.node_index= edge.src_node_index,
+							.prev_node_index= node_index,
+							.distance= distance + f32( edge.length ),
+							// TODO - calculate here also estimated distance to start.
+						} );
 
-				ust::binary_heap::push_heap( search_queue.range(), compare );
+					ust::binary_heap::push_heap( search_queue.range(), compare );
+				}
 			}
 		}
 
@@ -139,11 +147,23 @@ private:
 		}
 	}
 
-	struct NodeData
+	struct NodeTableEntry
 	{
-		f32 distance;
+		// Index of last search this node was visited.
+		u32 search_sequentional_index;
 		GlobalNavigationGraph::NodeIndex prev_node; // May be invalid index for the target node.
 	}
+
+private:
+	// Reuse node table container across searches.
+	// It's necessary to avoid reallocating it on each search.
+	ust::vector</NodeTableEntry/> node_table_;
+
+	// Increment this counter each time search is performed.
+	// We use it to detect nodes already visited in current search invocation.
+	// Such approach is faster than marking all nodes as unvisited at the start of each search,
+	// considering only small fraction of nodes is visited on each search.
+	u32 search_sequentional_index_= 1u;
 }
 
 } // namespace PM
