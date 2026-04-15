@@ -26,20 +26,26 @@ public:
 		var u32 search_sequentional_index= search_sequentional_index_;
 		++search_sequentional_index_;
 
-		node_table_.resize( graph.nodes.size(), NodeTableEntry{ .search_sequentional_index= 0u } );
+		// For slight speed-up read ranges of nodes and edges and save them in local variables.
+		var ust::array_view_imut</GlobalNavigationGraph::Node/> graph_nodes= graph.nodes;
+		var ust::array_view_imut</GlobalNavigationGraph::InputEdge/> graph_node_input_edges= graph.node_input_edges;
 
-		search_queue_.clear();
-		search_queue_.push_back( SearchElement{ .node_index= start_node, .distance(0) } );
+		node_table_.resize( graph_nodes.size(), NodeTableEntry{ .search_sequentional_index= 0u } );
+		var ust::array_view_mut</NodeTableEntry/> node_table= node_table_;
+
+		var ust::vector</SearchElement/> &mut search_queue= search_queue_;
+		search_queue.clear();
+		search_queue.push_back( SearchElement{ .node_index= start_node, .distance(0) } );
 
 		var SearchElementCompare compare;
 
-		while( !search_queue_.empty() )
+		while( !search_queue.empty() )
 		{
-			ust::binary_heap::pop_heap( search_queue_.range(), compare );
-			auto { node_index, distance } = search_queue_.pop_back();
+			ust::binary_heap::pop_heap( search_queue.range(), compare );
+			auto { node_index, distance } = search_queue.pop_back();
 
 			{
-				var NodeTableEntry &mut node_table_entry= node_table_[ size_type( node_index ) ];
+				var NodeTableEntry &mut node_table_entry= node_table[ size_type( node_index ) ];
 
 				if( node_table_entry.search_sequentional_index == search_sequentional_index )
 				{
@@ -54,25 +60,25 @@ public:
 				break; // Processing function wants to end the search.
 			}
 
-			var GlobalNavigationGraph::Node& node= graph.nodes[ size_type( node_index ) ];
+			var GlobalNavigationGraph::Node& node= graph_nodes[ size_type( node_index ) ];
 
 			auto edges_range=
-				graph.node_input_edges.range().subrange(
+				graph_node_input_edges.subrange(
 					size_type( node.first_input_edge ), size_type( node.first_input_edge + node.num_input_edges ) );
 
 			foreach( &edge : edges_range )
 			{
 				// Avoid adding a node into the search queue if it was already visited.
 				// This allows saving some time by not doing not-so-trivial binary heap operations.
-				if( node_table_[ size_type( edge.src_node_index ) ].search_sequentional_index != search_sequentional_index )
+				if( node_table[ size_type( edge.src_node_index ) ].search_sequentional_index != search_sequentional_index )
 				{
-					search_queue_.push_back(
+					search_queue.push_back(
 						SearchElement
 						{
 							.node_index= edge.src_node_index,
 							.distance( u32( distance ) + u32( edge.length ) )
 						} );
-					ust::binary_heap::push_heap( search_queue_.range(), compare );
+					ust::binary_heap::push_heap( search_queue.range(), compare );
 				}
 			}
 		}
