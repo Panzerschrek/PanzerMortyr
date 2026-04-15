@@ -126,8 +126,6 @@ fn CreateNewMapGameState(
 				.current_operation= c_start_operation,
 				.num_steps_since_operation_start= 0u,
 				.navigation_info_index( navigation_info_index ),
-				.target_navigation_graph_node= ~0u,
-				.current_navigation_graph_node= ~0u,
 				.alarmed= false,
 				.player_is_in_sight= false,
 				.lost_energy_in_current_operation= false,
@@ -137,6 +135,15 @@ fn CreateNewMapGameState(
 				.collider_index= ~0u,
 			};
 	}
+
+	// Map entity navigation infos 1 to 1 to what is stored in the map data.
+	game_state.entity_navigation_states.resize(
+		zpoz_data.entity_navigation_infos.size(),
+		EntityNavigationState
+		{
+			.target_navigation_graph_node= ~0u,
+			.current_navigation_graph_node= ~0u,
+		} );
 
 	// Build colliders for entities.
 	game_state.colliders.clear();
@@ -1673,8 +1680,6 @@ fn TriggerEntitiesSpawn( GameMapData& map_data, GameState &mut game_state )
 				.current_operation= c_start_operation,
 				.num_steps_since_operation_start= 0u,
 				.navigation_info_index( navigation_info_index ),
-				.target_navigation_graph_node= ~0u,
-				.current_navigation_graph_node= ~0u,
 				.alarmed= true, // Spawn triggered entities in alarmed state.
 				.player_is_in_sight= false,
 				.lost_energy_in_current_operation= false,
@@ -1744,6 +1749,7 @@ fn ProcessEntitiesLogicStep( GameGlobalData& game_global_data, GameMapData& map_
 				UpdateEntityMovementTarget(
 					map_data,
 					game_state.broken_quad_bits,
+					game_state.entity_navigation_states,
 					game_state.dynamic_cluster_colliders,
 					entity_description,
 					entity,
@@ -2101,8 +2107,6 @@ fn ProcessEntitiesLogicStep( GameGlobalData& game_global_data, GameMapData& map_
 										.current_operation= c_start_operation,
 										.num_steps_since_operation_start= 0u,
 										.navigation_info_index= ~0u,
-										.target_navigation_graph_node= ~0u,
-										.current_navigation_graph_node= ~0u,
 										.alarmed= false,
 										.player_is_in_sight= false,
 										.lost_energy_in_current_operation= false,
@@ -2228,6 +2232,7 @@ fn ProcessEntitiesLogicStep( GameGlobalData& game_global_data, GameMapData& map_
 			MoveEntity(
 				map_data,
 				game_state.broken_quad_bits,
+				game_state.entity_navigation_states,
 				game_state.dynamic_cluster_colliders,
 				game_state.colliders,
 				game_state.projectiles,
@@ -4338,9 +4343,10 @@ fn UpdateEntityPlayerInSightFlag(
 fn UpdateEntityMovementTarget(
 	GameMapData& map_data,
 	BitArrayView broken_quad_bits,
+	ust::array_view_mut</EntityNavigationState/> entity_navigation_states,
 	ust::array_view_imut</DynamicClusterCollider/> dynamic_cluster_colliders,
 	EntitiesDescription::EntityDescription& entity_description,
-	EntityState &mut entity,
+	EntityState& entity,
 	PseudoRandomGenerator& mut random )
 {
 	if( entity.energy == 0u )
@@ -4375,6 +4381,9 @@ fn UpdateEntityMovementTarget(
 		return;
 	}
 
+	var EntityNavigationState &mut navigation_state=
+		entity_navigation_states[ size_type( entity.navigation_info_index ) ];
+
 	if( entity.alarmed )
 	{
 		if_var( &player_position : entity.last_seen_player_position )
@@ -4402,21 +4411,23 @@ fn UpdateEntityMovementTarget(
 			{
 				// Panic mode - try run away from the player as far as possible.
 
-				if( entity.target_navigation_graph_node != ~0u )
+				if( navigation_state.target_navigation_graph_node != ~0u )
 				{
 					// If target node is too close to the player - reset it to trigger its recalculation.
 
-					var MapaWayNavigationGraphNode& node= navigation_graph.nodes[ entity.target_navigation_graph_node ];
+					var MapaWayNavigationGraphNode& node=
+						navigation_graph.nodes[ navigation_state.target_navigation_graph_node ];
+
 					var Vec3f node_position( f32( node.position[0] ), f32( node.position[1] ), f32( node.position[2] ) );
 					var f32 square_distance= ( node_position - player_position ).SquareLength();
 
 					if( square_distance < good_enough_square_distance_max )
 					{
-						entity.target_navigation_graph_node= ~0u;
+						navigation_state.target_navigation_graph_node= ~0u;
 					}
 				}
 
-				if( entity.target_navigation_graph_node == ~0u )
+				if( navigation_state.target_navigation_graph_node == ~0u )
 				{
 					// Search for the most distant from the player node as target node.
 					var f32 mut largest_square_distance= 0.0f;
@@ -4424,7 +4435,7 @@ fn UpdateEntityMovementTarget(
 
 					for( auto mut i= 0u; i < navigation_graph.num_nodes; ++i )
 					{
-						if( i == entity.current_navigation_graph_node )
+						if( i == navigation_state.current_navigation_graph_node )
 						{
 							// Avoid selecting current navigation node as target.
 							continue;
@@ -4441,16 +4452,18 @@ fn UpdateEntityMovementTarget(
 						}
 					}
 
-					entity.target_navigation_graph_node= most_distant_node;
+					navigation_state.target_navigation_graph_node= most_distant_node;
 				}
 			}
 			else if( entity.player_is_in_sight )
 			{
 				// Check if currnet target node is good enough. If so - preserve it, otherwise reset it.
 				// Also check if player is still visible from it.
-				if( entity.target_navigation_graph_node != ~0u )
+				if( navigation_state.target_navigation_graph_node != ~0u )
 				{
-					var MapaWayNavigationGraphNode& node= navigation_graph.nodes[ entity.target_navigation_graph_node ];
+					var MapaWayNavigationGraphNode& node=
+						navigation_graph.nodes[ navigation_state.target_navigation_graph_node ];
+
 					var Vec3f node_position( f32( node.position[0] ), f32( node.position[1] ), f32( node.position[2] ) );
 					var f32 square_distance= ( node_position - player_position ).SquareLength();
 
@@ -4478,18 +4491,18 @@ fn UpdateEntityMovementTarget(
 							{
 								if( trace_result.distance < 1.0f )
 								{
-									entity.target_navigation_graph_node= ~0u;
+									navigation_state.target_navigation_graph_node= ~0u;
 								}
 							}
 						}
 					}
 					else
 					{
-						entity.target_navigation_graph_node= ~0u;
+						navigation_state.target_navigation_graph_node= ~0u;
 					}
 				}
 
-				if( entity.target_navigation_graph_node == ~0u )
+				if( navigation_state.target_navigation_graph_node == ~0u )
 				{
 					// Try selecting a position near the player.
 
@@ -4501,7 +4514,7 @@ fn UpdateEntityMovementTarget(
 
 					for( auto mut i= 0u; i < navigation_graph.num_nodes; ++i )
 					{
-						if( i == entity.current_navigation_graph_node )
+						if( i == navigation_state.current_navigation_graph_node )
 						{
 							// Avoid selecting current navigation node as target.
 							continue;
@@ -4598,13 +4611,13 @@ fn UpdateEntityMovementTarget(
 
 							if( is_visible )
 							{
-								entity.target_navigation_graph_node= candidate_node;
+								navigation_state.target_navigation_graph_node= candidate_node;
 								break;
 							}
 						}
 					}
 
-					if( entity.target_navigation_graph_node == ~0u )
+					if( navigation_state.target_navigation_graph_node == ~0u )
 					{
 						// Fallback for some complex cases.
 						// Select just good enough node.
@@ -4613,7 +4626,7 @@ fn UpdateEntityMovementTarget(
 
 						for( auto mut i= 0u; i < navigation_graph.num_nodes; ++i )
 						{
-							if( i == entity.current_navigation_graph_node )
+							if( i == navigation_state.current_navigation_graph_node )
 							{
 								// Avoid selecting current navigation node as target.
 								continue;
@@ -4642,7 +4655,7 @@ fn UpdateEntityMovementTarget(
 						{
 							// Select random point from candidates.
 							// Don't even bother checking player visibility from this point.
-							entity.target_navigation_graph_node=
+							navigation_state.target_navigation_graph_node=
 								u32( candidate_nodes[ random.Next() % num_candidate_nodes ] );
 						}
 					}
@@ -4650,7 +4663,7 @@ fn UpdateEntityMovementTarget(
 			}
 
 			if( ( !entity.player_is_in_sight && !is_in_panic_mode ) ||
-				entity.target_navigation_graph_node == ~0u )
+				navigation_state.target_navigation_graph_node == ~0u )
 			{
 				// If player is not visible or if failed to find even good enough target,
 				// select the node nearest to last seen player position.
@@ -4661,7 +4674,7 @@ fn UpdateEntityMovementTarget(
 
 				for( auto mut i= 0u; i < navigation_graph.num_nodes; ++i )
 				{
-					if( i == entity.current_navigation_graph_node )
+					if( i == navigation_state.current_navigation_graph_node )
 					{
 						// Avoid selecting current navigation node as target.
 						// Doing so allows enemies to travel between two nearest points instead of staying at single nearest point.
@@ -4681,35 +4694,35 @@ fn UpdateEntityMovementTarget(
 					}
 				}
 
-				entity.target_navigation_graph_node= nearest_to_player_node_index;
+				navigation_state.target_navigation_graph_node= nearest_to_player_node_index;
 			}
 		}
 	}
 
-	if( entity.target_navigation_graph_node == ~0u )
+	if( navigation_state.target_navigation_graph_node == ~0u )
 	{
 		// If still has no target (like if not alarmed) - select next patrolling node.
 
-		if( entity.current_navigation_graph_node != ~0u )
+		if( navigation_state.current_navigation_graph_node != ~0u )
 		{
 			// If has current patrolling node, select next patrolling node.
-			for( auto mut i= entity.current_navigation_graph_node + 1u; i < navigation_graph.num_nodes; ++i )
+			for( auto mut i= navigation_state.current_navigation_graph_node + 1u; i < navigation_graph.num_nodes; ++i )
 			{
 				if( navigation_graph.nodes[i].unknown3 == -1 )
 				{
-					entity.target_navigation_graph_node= i;
+					navigation_state.target_navigation_graph_node= i;
 					break;
 				}
 			}
 		}
 
-		if( entity.target_navigation_graph_node == ~0u )
+		if( navigation_state.target_navigation_graph_node == ~0u )
 		{
 			for( auto mut i= 0u; i < navigation_graph.num_nodes; ++i )
 			{
 				if( navigation_graph.nodes[i].unknown3 == -1 )
 				{
-					entity.target_navigation_graph_node= i;
+					navigation_state.target_navigation_graph_node= i;
 					break;
 				}
 			}
@@ -4964,6 +4977,7 @@ fn EntityDirectionalShot(
 fn MoveEntity(
 	GameMapData& map_data,
 	BitArrayView broken_quad_bits,
+	ust::array_view_mut</EntityNavigationState/> entity_navigation_states,
 	ust::array_view_imut</DynamicClusterCollider/> dynamic_cluster_colliders,
 	ust::array_view_imut</Collider/> extra_colliders,
 	ProjectilesContainer &mut projectiles,
@@ -4978,7 +4992,7 @@ fn MoveEntity(
 
 	var Vec3f old_position= entity.position;
 
-	PerformEntityOwnMovement( map_data.mapa_way_data.deref(), entity, current_operation );
+	PerformEntityOwnMovement( map_data.mapa_way_data.deref(), entity_navigation_states, entity, current_operation );
 
 	var Vec3f mut new_position= entity.position;
 
@@ -5113,12 +5127,13 @@ fn MoveEntity(
 
 fn PerformEntityOwnMovement(
 	MapaWayData& mapa_way_data,
+	ust::array_view_mut</EntityNavigationState/> entity_navigation_states,
 	EntityState &mut entity,
 	EntitiesDescription::Operation& current_operation )
 {
 	if_var( &operation_control : current_operation.operation_control )
 	{
-		PerformEntityOperationControlBasedMovement( mapa_way_data, entity, operation_control );
+		PerformEntityOperationControlBasedMovement( mapa_way_data, entity_navigation_states, entity, operation_control );
 	}
 	else
 	{
@@ -5140,6 +5155,7 @@ fn PerformEntityOwnMovement(
 
 fn PerformEntityOperationControlBasedMovement(
 	MapaWayData& mapa_way_data,
+	ust::array_view_mut</EntityNavigationState/> entity_navigation_states,
 	EntityState &mut entity,
 	EntitiesDescription::OperationControl& operation_control )
 {
@@ -5156,29 +5172,32 @@ fn PerformEntityOperationControlBasedMovement(
 		return;
 	}
 
+	var EntityNavigationState &mut navigation_state=
+		entity_navigation_states[ size_type( entity.navigation_info_index ) ];
+
 	var ust::optional</Vec2f/> mut movement_target_opt;
 	var u32 mut waypoint_node_index= ~0u;
 
 	if( operation_control.functioning_mode == EntitiesDescription::OperationControl::c_functioning_mode_move_towards_waypoint ||
 		operation_control.functioning_mode == EntitiesDescription::OperationControl::c_functioning_mode_sky_decoration )
 	{
-		if( entity.target_navigation_graph_node == ~0u )
+		if( navigation_state.target_navigation_graph_node == ~0u )
 		{
 			return;
 		}
 
-		if( entity.current_navigation_graph_node == ~0u )
+		if( navigation_state.current_navigation_graph_node == ~0u )
 		{
 			// Attach to the navigation graph if has no current node.
 			// TODO - maybe do this in cases where current position is way too far away from the current node?
-			AttachEntityToNavigationGraph( entity, navigation_graph );
+			AttachEntityToNavigationGraph( entity, navigation_state, navigation_graph );
 		}
 
 		// Perform lookup from routing matrix to find next waypoint node which will eventually lead to the target node.
 		waypoint_node_index=
-			( entity.current_navigation_graph_node == entity.target_navigation_graph_node
-				? entity.target_navigation_graph_node
-				: u32 ( navigation_graph.routing_matrix[ entity.current_navigation_graph_node ][ entity.target_navigation_graph_node ] ) );
+			( navigation_state.current_navigation_graph_node == navigation_state.target_navigation_graph_node
+				? navigation_state.target_navigation_graph_node
+				: u32 ( navigation_graph.routing_matrix[ navigation_state.current_navigation_graph_node ][ navigation_state.target_navigation_graph_node ] ) );
 
 		var MapaWayNavigationGraphNode& waypoint_node= navigation_graph.nodes[ waypoint_node_index ];
 
@@ -5263,12 +5282,12 @@ fn PerformEntityOperationControlBasedMovement(
 		{
 			// Reached the waypoint.
 			// Mark it as current node.
-			entity.current_navigation_graph_node= waypoint_node_index;
+			navigation_state.current_navigation_graph_node= waypoint_node_index;
 
-			if( waypoint_node_index == entity.target_navigation_graph_node )
+			if( waypoint_node_index == navigation_state.target_navigation_graph_node )
 			{
 				// Reached the target node - reset it to trigger selection of new one on next step.
-				entity.target_navigation_graph_node= ~0u;
+				navigation_state.target_navigation_graph_node= ~0u;
 			}
 		}
 	}
@@ -5279,7 +5298,7 @@ fn PerformEntityOperationControlBasedMovement(
 		// If moving towards the player re-attach to the navigation graph on each step.
 		// It's necessary, since in this mode movements aren't constrained by the navigation graph.
 		// But it's rarely needed, since almost all enemies don't move while turning towards the player.
-		AttachEntityToNavigationGraph( entity, navigation_graph );
+		AttachEntityToNavigationGraph( entity, navigation_state, navigation_graph );
 	}
 }
 
@@ -5342,7 +5361,8 @@ fn PerformEntityRotationForShot( EntityState &mut entity, EntitiesDescription::R
 	}
 }
 
-fn AttachEntityToNavigationGraph( EntityState& mut entity, MapaWayNavigationGraph& navigation_graph )
+fn AttachEntityToNavigationGraph(
+	EntityState& entity, EntityNavigationState &mut entity_navigation_state, MapaWayNavigationGraph& navigation_graph )
 {
 	var u32 mut nearest_node_index= ~0u;
 	var f32 mut nearest_node_square_distance= 1.0e64f;
@@ -5357,7 +5377,7 @@ fn AttachEntityToNavigationGraph( EntityState& mut entity, MapaWayNavigationGrap
 			nearest_node_index= i;
 		}
 	}
-	entity.current_navigation_graph_node= nearest_node_index;
+	entity_navigation_state.current_navigation_graph_node= nearest_node_index;
 }
 
 fn GetEntityDirectionNormalizedVector( EntityState& entity ) : Vec2f
