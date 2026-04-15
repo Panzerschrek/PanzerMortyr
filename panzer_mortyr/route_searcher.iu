@@ -25,11 +25,12 @@ public:
 	{
 		debug_assert( start_node != target_node );
 
-		// An implementation of Dijkstra's algorithm.
-		// TODO - use A* instead. It should be faster in most cases.
+		// An implementation of A* algorithm.
+		// It's better for almost all cases, since it visits way less nodes compared to Dijkstra's algorithm.
+		// In case if a direct way exists between two points almost no unnecessary nodes are visited at all.
 
-		// Perform search from target.
-		// Stop if start is reached.
+		// Perform search from the target node.
+		// Stop if the start node is reached.
 		// Then reconstruct the route using start to target order.
 
 		var u32 search_sequentional_index= search_sequentional_index_;
@@ -39,6 +40,8 @@ public:
 		var ust::array_view_imut</GlobalNavigationGraph::Node/> graph_nodes= graph.nodes;
 		var ust::array_view_imut</GlobalNavigationGraph::InputEdge/> graph_node_input_edges= graph.node_input_edges;
 
+		var Vec2f start_position= graph_nodes[ size_type( start_node ) ].position.xy();
+		var Vec2f target_position= graph_nodes[ size_type( target_node ) ].position.xy();
 
 		var GlobalNavigationGraph::NodeIndex invalid_node_index(~0s);
 
@@ -54,7 +57,9 @@ public:
 			{
 				.node_index= target_node,
 				.prev_node_index= invalid_node_index,
-				.distance= 0.0f
+				.distance= 0.0f,
+				// Use euclidian distance in XY plane as estimated remaining distance.
+				.estimated_total_distance= ( target_position - start_position ).Length(),
 			} );
 
 		var SearchElementCompare compare;
@@ -103,7 +108,6 @@ public:
 
 			// Since we perform the search from target to start, process input nodes (not output nodes).
 
-
 			foreach( &edge :
 				graph_node_input_edges.subrange(
 					size_type( node.first_input_edge ), size_type( node.first_input_edge + node.num_input_edges ) ) )
@@ -112,13 +116,19 @@ public:
 				// This allows saving some time by not doing not-so-trivial binary heap operations.
 				if( node_table[ size_type( edge.src_node_index ) ].search_sequentional_index != search_sequentional_index )
 				{
+					var f32 next_distance= distance + f32( edge.length );
+
+					// Use euclidian distance in XY plane as estimated remaining distance.
+					var f32 estimated_remaining_distance=
+						( graph_nodes[ size_type( edge.src_node_index ) ].position.xy() - start_position ).Length();
+
 					search_queue.push_back(
 						SearchElement
 						{
 							.node_index= edge.src_node_index,
 							.prev_node_index= node_index,
-							.distance= distance + f32( edge.length ),
-							// TODO - calculate here also estimated distance to start.
+							.distance= next_distance,
+							.estimated_total_distance= next_distance + estimated_remaining_distance,
 						} );
 
 					ust::binary_heap::push_heap( search_queue.range(), compare );
@@ -135,8 +145,12 @@ private:
 	{
 		GlobalNavigationGraph::NodeIndex node_index;
 		GlobalNavigationGraph::NodeIndex prev_node_index; // Store prev node index to reconstruct the route.
+
+		// Actual graph distance.
 		f32 distance;
-		// TODO - store estimated distance too.
+
+		// Distance combined from actual graph distance for given node and estimated distance to search target.
+		f32 estimated_total_distance;
 	}
 
 	// Comparator for reverse order.
@@ -145,8 +159,7 @@ private:
 		op()( this, SearchElement& l, SearchElement& r ) : bool
 		{
 			// Use reverse order.
-			// TODO - compare estimated distance instead.
-			return l.distance > r.distance;
+			return l.estimated_total_distance > r.estimated_total_distance;
 		}
 	}
 
