@@ -691,6 +691,53 @@ fn GetNodeReachabilityDistance(
 	Vec3f& destination,
 	BBox3f& node_bbox ) : ust::optional</f32/>
 {
+	// Perform fast and (almost) correct check first (as an optimization measure).
+	// If the start point and the destination point are on the same Z level, check direct tracing.
+	// If it works, it means, that there is no obstacles or even steps between given points.
+	// To make sure walking is possible, perform a couple of ground tests inbetween, to prevent falling down.
+	// This ground test isn't perfect, but is mostly fine.
+	// Generally this check should cover the majority of edges created in a navigation graph,
+	// since there are many flat planes covered with many nodes with nothing inbetween.
+	var f32 c_max_z_difference_for_fast_reachability_check= 2.0f;
+	if( ust::abs( start.z - destination.z ) <= c_max_z_difference_for_fast_reachability_check )
+	{
+		var Vec3f movement_vector= destination - start;
+
+		var TraceCollisionResult trace_collision_result=
+			CollisionTrace(
+				map_data, broken_quad_bits, ust::empty_range, ust::empty_range, node_bbox, start, movement_vector );
+
+		if( trace_collision_result.clipped_move_distance >= 1.0f )
+		{
+			// Perform a couple of ground checks.
+			// Check positions between start and destination nodes.
+			var Vec3f bbox_dimensions= node_bbox.GetDimensions();
+			var u32 length_boxes(
+				ust::ceil(
+					ust::max(
+						ust::abs( start.x - destination.x ) / bbox_dimensions.x,
+						ust::abs( start.y - destination.y ) / bbox_dimensions.y ) ) );
+
+			var bool mut is_on_ground= true;
+
+			// Use a small box as ground probe.
+			var BBox3f ground_probe_bbox{ .min( -1.0f, -1.0f, -2.0f ), .max(  1.0f,  1.0f,  2.0f ) };
+
+			// Start this loop from 1 and doesn't reach the destination.
+			// Performing ground check at start/destination nodes isn't necessary, such check should be performed earlier.
+			for( auto mut i= 1u; i < length_boxes; ++i )
+			{
+				var Vec3f probe_position= start + movement_vector * ( f32(i) / f32(length_boxes) );
+				is_on_ground&= TestBBoxMapIntersection( map_data, probe_position, ground_probe_bbox );
+			}
+
+			if( is_on_ground )
+			{
+				return ( start - destination ).Length();
+			}
+		}
+	}
+
 	// Perform walking movement simulation.
 	// It's necessary to be able to find reachability considering steps and ramps climbing.
 	// It's also necessary to avoid creating edges between nodes where movement results into falling down.
