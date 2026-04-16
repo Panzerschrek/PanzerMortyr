@@ -15,6 +15,7 @@ namespace PM
 fn BuildGlobalNavigationGraph(
 	GameMapData& map_data,
 	ConsoleOutPtr& console_out,
+	PerformanceCounter& performance_counter,
 	bool use_fast_but_incorrect_reachability_check ) : GlobalNavigationGraph
 {
 	// Assume none of quads is broken.
@@ -33,14 +34,20 @@ fn BuildGlobalNavigationGraph(
 
 	var GlobalNavigationGraph mut result{ .node_bbox= node_bbox };
 
+	var PerformanceCounter::TimePoint time_start= performance_counter.GetCurrentTime();
+
 	var ust::vector</Vec3f/> initial_nodes=
 		CreateNavigationGraphNodes( map_data, broken_quad_bits, nodes_spacing, node_bbox );
+
+	var PerformanceCounter::TimePoint time_initial_nodes_created= performance_counter.GetCurrentTime();
 
 	ConsoleOutAddTextLine(
 		console_out,
 		ust::concat( "Has ", ust::to_string8( initial_nodes.size() ), " initial nodes in global navigation graph" ) );
 
 	result.nodes= DeduplicateNavigationGraphNodes( initial_nodes );
+
+	var PerformanceCounter::TimePoint time_nodes_deduplicated= performance_counter.GetCurrentTime();
 
 	assert(
 		result.nodes.size() < size_type( GlobalNavigationGraph::NodeIndex( ~0s ) ),
@@ -55,6 +62,8 @@ fn BuildGlobalNavigationGraph(
 
 	result.nodes_hierarchy= BuildNodesHierarchy( result.nodes );
 
+	var PerformanceCounter::TimePoint time_nodes_hierarchy_built= performance_counter.GetCurrentTime();
+
 	result.node_input_edges=
 		BuildGraphEdges(
 			map_data,
@@ -65,12 +74,49 @@ fn BuildGlobalNavigationGraph(
 			node_bbox,
 			use_fast_but_incorrect_reachability_check );
 
+	var PerformanceCounter::TimePoint time_input_edges_created= performance_counter.GetCurrentTime();
+
 	ConsoleOutAddTextLine(
 		console_out,
 		ust::concat( "Has ", ust::to_string8( result.node_input_edges.size() ), " edges in global navigation graph" ) );
 
 	result.entity_navigation_infos=
 		BuildEntityNavigationInfos( map_data, broken_quad_bits, result.nodes, result.nodes_hierarchy, node_bbox );
+
+	var PerformanceCounter::TimePoint time_navigation_infos_created= performance_counter.GetCurrentTime();
+
+	ConsoleOutAddTextLine( console_out, "Global navigation graph building timings: " );
+
+	ConsoleOutAddTextLine(
+		console_out,
+		ust::concat(
+			" initial nodes creation: ",
+			ust::to_string8( u32( performance_counter.CalculateDurationS( time_start, time_initial_nodes_created ) * 1000.0f ) ),
+			" ms" ) );
+	ConsoleOutAddTextLine(
+		console_out,
+		ust::concat(
+			" nodes deduplication: ",
+			ust::to_string8( u32( performance_counter.CalculateDurationS( time_initial_nodes_created, time_nodes_deduplicated ) * 1000.0f ) ),
+			" ms" ) );
+	ConsoleOutAddTextLine(
+		console_out,
+		ust::concat(
+			" nodes hierarchy building: ",
+			ust::to_string8( u32( performance_counter.CalculateDurationS( time_nodes_deduplicated, time_nodes_hierarchy_built ) * 1000.0f ) ),
+			" ms" ) );
+	ConsoleOutAddTextLine(
+		console_out,
+		ust::concat(
+			" input edges creation: ",
+			ust::to_string8( u32( performance_counter.CalculateDurationS( time_nodes_hierarchy_built, time_input_edges_created ) * 1000.0f ) ),
+			" ms" ) );
+	ConsoleOutAddTextLine(
+		console_out,
+		ust::concat(
+			" navigation infos creation: ",
+			ust::to_string8( u32( performance_counter.CalculateDurationS( time_input_edges_created, time_navigation_infos_created ) * 1000.0f ) ),
+			" ms" ) );
 
 	return result;
 }
