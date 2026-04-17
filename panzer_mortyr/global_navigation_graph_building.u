@@ -19,6 +19,10 @@ fn BuildGlobalNavigationGraph(
 	PerformanceCounter& performance_counter,
 	bool use_fast_but_incorrect_reachability_check ) : GlobalNavigationGraph
 {
+	// Use all available CPU cores to build navigation graph as fast as possible.
+	// But allow creating too many threads.
+	var size_type num_threads( ust::max( 1u, ust::min( ust::get_number_of_available_cpus(), 16u ) ) );
+
 	// Assume none of quads is broken.
 	var BitArray broken_quad_bits( map_data.zmap_data.deref().quads.size() );
 
@@ -38,7 +42,7 @@ fn BuildGlobalNavigationGraph(
 	var PerformanceCounter::TimePoint time_start= performance_counter.GetCurrentTime();
 
 	var ust::vector</Vec3f/> initial_nodes=
-		CreateNavigationGraphNodes( map_data, broken_quad_bits, nodes_spacing, node_bbox );
+		CreateNavigationGraphNodes( num_threads, map_data, broken_quad_bits, nodes_spacing, node_bbox );
 
 	var PerformanceCounter::TimePoint time_initial_nodes_created= performance_counter.GetCurrentTime();
 
@@ -67,6 +71,7 @@ fn BuildGlobalNavigationGraph(
 
 	result.node_input_edges=
 		BuildGraphEdges(
+			num_threads,
 			map_data,
 			broken_quad_bits,
 			result.nodes_hierarchy,
@@ -129,21 +134,17 @@ fn BuildGlobalNavigationGraph(
 }
 
 fn CreateNavigationGraphNodes(
-	GameMapData& map_data, BitArrayView broken_quad_bits, i32 nodes_spacing, BBox3f& node_bbox ) : ust::vector</Vec3f/>
+	size_type num_threads,
+	GameMapData& map_data,
+	BitArrayView broken_quad_bits,
+	i32 nodes_spacing,
+	BBox3f& node_bbox ) : ust::vector</Vec3f/>
 {
-	// Use all available CPU cores to build nodes as fast as possible.
-	// But allow creating too many threads.
-	var size_type num_threads( ust::max( 1u, ust::min( ust::get_number_of_available_cpus(), 16u ) ) );
-
 	if( num_threads == 1s )
 	{
 		return
 			CreateNavigationGraphNodesImpl(
-				map_data,
-				broken_quad_bits,
-				nodes_spacing,
-				node_bbox,
-				map_data.zvox_data.deref().clusters );
+				map_data, broken_quad_bits, nodes_spacing, node_bbox, map_data.zvox_data.deref().clusters );
 	}
 
 	var ust::array_view_imut</ZvoxCluster/> clusters= map_data.zvox_data.deref().clusters;
@@ -633,6 +634,7 @@ fn BuildNodesHierarchy(
 }
 
 fn BuildGraphEdges(
+	size_type num_threads,
 	GameMapData& map_data,
 	BitArrayView broken_quad_bits,
 	GlobalNavigationGraph::NodesHierarchy& nodes_hierarchy,
@@ -642,10 +644,6 @@ fn BuildGraphEdges(
 	bool use_fast_but_incorrect_reachability_check ) : ust::vector</GlobalNavigationGraph::InputEdge/>
 {
 	var size_type num_nodes= nodes.size();
-
-	// Use all available CPU cores to build edges as fast as possible.
-	// But allow creating too many threads.
-	var size_type num_threads( ust::max( 1u, ust::min( ust::get_number_of_available_cpus(), 16u ) ) );
 
 	if( num_threads == 1s )
 	{
