@@ -1,5 +1,6 @@
 import "/assert.iu"
 import "/string_conversions.iu"
+import "/thread.iu"
 import "bit_array.iu"
 import "bounding_boxes_hierarchy_building.iu"
 import "bounding_boxes_hierarchy_visiting.iu"
@@ -18,6 +19,10 @@ fn BuildGlobalNavigationGraph(
 	PerformanceCounter& performance_counter,
 	bool use_fast_but_incorrect_reachability_check ) : GlobalNavigationGraph
 {
+	// Use all available CPU cores to build navigation graph as fast as possible.
+	// But use a reasonable upper limit for the number of threads.
+	var size_type num_threads( ust::max( 1u, ust::min( ust::get_number_of_available_cpus(), 32u ) ) );
+
 	// Assume none of quads is broken.
 	var BitArray broken_quad_bits( map_data.zmap_data.deref().quads.size() );
 
@@ -37,7 +42,7 @@ fn BuildGlobalNavigationGraph(
 	var PerformanceCounter::TimePoint time_start= performance_counter.GetCurrentTime();
 
 	var ust::vector</Vec3f/> initial_nodes=
-		CreateNavigationGraphNodes( map_data, broken_quad_bits, nodes_spacing, node_bbox );
+		CreateNavigationGraphNodes( num_threads, map_data, broken_quad_bits, nodes_spacing, node_bbox );
 
 	var PerformanceCounter::TimePoint time_initial_nodes_created= performance_counter.GetCurrentTime();
 
@@ -66,6 +71,7 @@ fn BuildGlobalNavigationGraph(
 
 	result.node_input_edges=
 		BuildGraphEdges(
+			num_threads,
 			map_data,
 			broken_quad_bits,
 			result.nodes_hierarchy,
@@ -117,18 +123,118 @@ fn BuildGlobalNavigationGraph(
 			" navigation infos creation: ",
 			ust::to_string8( u32( performance_counter.CalculateDurationS( time_input_edges_created, time_navigation_infos_created ) * 1000.0f ) ),
 			" ms" ) );
+	ConsoleOutAddTextLine(
+		console_out,
+		ust::concat(
+			" total: ",
+			ust::to_string8( u32( performance_counter.CalculateDurationS( time_start, time_navigation_infos_created ) * 1000.0f ) ),
+			" ms" ) );
 
 	return result;
 }
 
 fn CreateNavigationGraphNodes(
-	GameMapData& map_data, BitArrayView broken_quad_bits, i32 nodes_spacing, BBox3f& node_bbox ) : ust::vector</Vec3f/>
+	size_type num_threads,
+	GameMapData& map_data,
+	BitArrayView broken_quad_bits,
+	i32 nodes_spacing,
+	BBox3f& node_bbox ) : ust::vector</Vec3f/>
+{
+	if( num_threads == 1s )
+	{
+		auto mut result=
+			CreateNavigationGraphNodesForClusterQuads(
+				map_data, broken_quad_bits, nodes_spacing, node_bbox, map_data.zvox_data.deref().clusters );
+
+		CreateNavigationGraphNodesForEnemyPatrollingPoints(
+			map_data, broken_quad_bits, nodes_spacing, node_bbox, result );
+	}
+
+	var ust::array_view_imut</ZvoxCluster/> clusters= map_data.zvox_data.deref().clusters;
+
+	var ust::vector</ ust::thread</ NodesCreationFunction, ust::vector</Vec3f/> /> /> mut threads;
+
+	if( false ) // Hack for "reference pollution for outer loop variable" error.
+	{
+		threads.push_back(
+			ust::make_thread(
+				NodesCreationFunction
+				{
+					.map_data= map_data,
+					.broken_quad_bits= broken_quad_bits,
+					.nodes_spacing= nodes_spacing,
+					.node_bbox= node_bbox,
+					.clusters= clusters,
+				} ) );
+	}
+
+	for( auto mut t= 0s; t < num_threads; ++t )
+	{
+		// Divide clusters evenly between threads.
+		// It's not ideal, since the number of nodes in different clusters varies a lot.
+		// But there is no other easy way to divide this work across threads evenly.
+		var size_type first_cluster_index= t * clusters.size() / num_threads;
+		var size_type next_thread_first_cluster_index= ( t + 1s ) * clusters.size() / num_threads;
+
+		threads.push_back(
+			ust::make_thread(
+				NodesCreationFunction
+				{
+					.map_data= map_data,
+					.broken_quad_bits= broken_quad_bits,
+					.nodes_spacing= nodes_spacing,
+					.node_bbox= node_bbox,
+					.clusters= clusters.subrange( first_cluster_index, next_thread_first_cluster_index ),
+				} ) );
+	}
+
+	// Reverse elements in the threads container so that extracting them via "pop_back" gives their creation order.
+	// It's necessary to produce the same result (same order of navigation graph nodes) regardless of the number of threads used.
+	threads.range().reverse();
+
+	var ust::vector</Vec3f/> mut result;
+
+	while( !threads.empty() )
+	{
+		var ust::vector</Vec3f/> mut thread_nodes= threads.pop_back().join();
+		result.append( thread_nodes );
+	}
+
+	// Don't care creating nodes for patrolling points using multithreading.
+	// There is not so many of them.
+	CreateNavigationGraphNodesForEnemyPatrollingPoints( map_data, broken_quad_bits, nodes_spacing, node_bbox, result );
+
+	return result;
+}
+
+struct NodesCreationFunction
+{
+	GameMapData& @('a') map_data;
+	BitArrayView @("a") broken_quad_bits;
+	i32 nodes_spacing;
+	BBox3f& @('a') node_bbox;
+
+	ust::array_view_imut</ZvoxCluster/> @("a") clusters;
+
+	op()( this ) : ust::vector</Vec3f/>
+	{
+		return CreateNavigationGraphNodesForClusterQuads( map_data, broken_quad_bits, nodes_spacing, node_bbox, clusters );
+	}
+}
+
+// Nodes are created only for given clusters.
+fn CreateNavigationGraphNodesForClusterQuads(
+	GameMapData& map_data,
+	BitArrayView broken_quad_bits,
+	i32 nodes_spacing,
+	BBox3f& node_bbox,
+	ust::array_view_imut</ZvoxCluster/> clusters ) : ust::vector</Vec3f/>
 {
 	var ust::vector</Vec3f/> mut result;
 
 	var ust::array_view_imut</ZmapQuad/> quads= map_data.zmap_data.deref().quads;
 
-	foreach( &cluster :map_data.zvox_data.deref().clusters )
+	foreach( &cluster : clusters )
 	{
 		if( !(
 			cluster.cluster_type == ZvoxCluster::c_cluster_type_regular |
@@ -220,44 +326,50 @@ fn CreateNavigationGraphNodes(
 		}
 	}
 
+	return result;
+}
+
+fn CreateNavigationGraphNodesForEnemyPatrollingPoints(
+	GameMapData& map_data,
+	BitArrayView broken_quad_bits,
+	i32 nodes_spacing,
+	BBox3f& node_bbox,
+	ust::vector</Vec3f/> &mut result )
+{
 	// Create nodes for patrolling points of entities.
 	// It's necessary to do so to enable moving (almost) precisely to these nodes.
 
+	var ZpozData& zpoz_data= map_data.zpoz_data.deref();
+
+	foreach( &entity : zpoz_data.entities )
 	{
-		var ZpozData& zpoz_data= map_data.zpoz_data.deref();
-
-		foreach( &entity : zpoz_data.entities )
+		if( entity.alive_flag == 0u16 )
 		{
-			if( entity.alive_flag == 0u16 )
+			continue;
+		}
+
+		var size_type navigation_info_index( entity.data[16] );
+		if( navigation_info_index >= zpoz_data.entity_navigation_infos.size() )
+		{
+			continue;
+		}
+
+		var ZpozEntityNavigationInfo& navigation_info= zpoz_data.entity_navigation_infos[ navigation_info_index ];
+
+		for( auto mut point_index= 0u; point_index < navigation_info.num_patrolling_points; ++point_index )
+		{
+			var Vec3f position(
+				f32( navigation_info.patrolling_point_coords[ point_index +  0u ] ),
+				f32( navigation_info.patrolling_point_coords[ point_index + 16u ] ),
+				f32( navigation_info.patrolling_point_coords[ point_index + 32u ] ) );
+
+			if_var( node_position_tweaked :
+					TweakNodePosition( map_data, broken_quad_bits, node_bbox, nodes_spacing, position ) )
 			{
-				continue;
-			}
-
-			var size_type navigation_info_index( entity.data[16] );
-			if( navigation_info_index >= zpoz_data.entity_navigation_infos.size() )
-			{
-				continue;
-			}
-
-			var ZpozEntityNavigationInfo& navigation_info= zpoz_data.entity_navigation_infos[ navigation_info_index ];
-
-			for( auto mut point_index= 0u; point_index < navigation_info.num_patrolling_points; ++point_index )
-			{
-				var Vec3f position(
-					f32( navigation_info.patrolling_point_coords[ point_index +  0u ] ),
-					f32( navigation_info.patrolling_point_coords[ point_index + 16u ] ),
-					f32( navigation_info.patrolling_point_coords[ point_index + 32u ] ) );
-
-				if_var( node_position_tweaked :
-						TweakNodePosition( map_data, broken_quad_bits, node_bbox, nodes_spacing, position ) )
-				{
-					result.push_back( node_position_tweaked );
-				}
+				result.push_back( node_position_tweaked );
 			}
 		}
 	}
-
-	return result;
 }
 
 fn TweakNodePosition(
@@ -539,6 +651,7 @@ fn BuildNodesHierarchy(
 }
 
 fn BuildGraphEdges(
+	size_type num_threads,
 	GameMapData& map_data,
 	BitArrayView broken_quad_bits,
 	GlobalNavigationGraph::NodesHierarchy& nodes_hierarchy,
@@ -547,6 +660,179 @@ fn BuildGraphEdges(
 	BBox3f& node_bbox,
 	bool use_fast_but_incorrect_reachability_check ) : ust::vector</GlobalNavigationGraph::InputEdge/>
 {
+	var size_type num_nodes= nodes.size();
+
+	if( num_threads == 1s )
+	{
+		var GraphEdgesBuildResult mut edges_build_result=
+			BuildGraphEdgesPartImpl(
+				map_data,
+				broken_quad_bits,
+				nodes_hierarchy,
+				nodes,
+				nodes_spacing,
+				node_bbox,
+				use_fast_but_incorrect_reachability_check,
+				0s,
+				num_nodes );
+
+		foreach( pair : nodes.iter().zip( edges_build_result.node_input_edges.iter() ) )
+		{
+			pair.first.first_input_edge= pair.second.first_input_edge;
+			pair.first.num_input_edges= pair.second.num_input_edges;
+		}
+
+		return take( edges_build_result.edges );
+	}
+
+	var ust::vector</GraphEdgesBuildResult/> mut thread_results;
+
+	{
+		var ust::array_view_imut</GlobalNavigationGraph::Node/> nodes_imut= nodes;
+
+		// Start all threads first and put them into a vector.
+
+		var ust::vector</ ust::thread</ EdgesBuildingThreadFunction, GraphEdgesBuildResult /> /> mut threads;
+
+		if( false ) // Hack for "reference pollution for outer loop variable" error.
+		{
+			threads.push_back(
+				ust::make_thread(
+					EdgesBuildingThreadFunction
+					{
+						.map_data= map_data,
+						.broken_quad_bits= broken_quad_bits,
+						.nodes_hierarchy= nodes_hierarchy,
+						.nodes= nodes_imut,
+						.nodes_spacing= nodes_spacing,
+						.node_bbox= node_bbox,
+						.use_fast_but_incorrect_reachability_check= use_fast_but_incorrect_reachability_check,
+						.first_node_index= 0s,
+						.num_nodes= 0s,
+					} ) );
+		}
+
+		for( auto mut t= 0s; t < num_threads; ++t )
+		{
+			// Equally divide nodes across threads.
+			// This isn't ideal, since computational work required for some nodes may be greater than for others.
+			// But it's good enough.
+			var size_type first_node_index= t * num_nodes / num_threads;
+			var size_type next_thread_first_node_index= ( t + 1s ) * num_nodes / num_threads;
+			var size_type num_nodes_in_this_thread= next_thread_first_node_index - first_node_index;
+
+			threads.push_back(
+				ust::make_thread(
+					EdgesBuildingThreadFunction
+					{
+						.map_data= map_data,
+						.broken_quad_bits= broken_quad_bits,
+						.nodes_hierarchy= nodes_hierarchy,
+						.nodes= nodes_imut,
+						.nodes_spacing= nodes_spacing,
+						.node_bbox= node_bbox,
+						.use_fast_but_incorrect_reachability_check= use_fast_but_incorrect_reachability_check,
+						.first_node_index= first_node_index,
+						.num_nodes= num_nodes_in_this_thread,
+					} ) );
+		}
+
+		// Reverse threads so that extracting them via "pop_back" gives their creation order.
+		// It's necessary to produce the same result (same order of edges) regardless of the number of threads used.
+		threads.range().reverse();
+
+		// Join all threads and put their results into a vector.
+
+		while( !threads.empty() )
+		{
+			thread_results.push_back( threads.pop_back().join() );
+		}
+	}
+
+	var ust::vector</GlobalNavigationGraph::InputEdge/> mut result_edges;
+
+	foreach( &mut thread_result : thread_results )
+	{
+		var size_type edges_offset= result_edges.size();
+
+		// Take edges from the thread result.
+		result_edges.append( thread_result.edges );
+
+		auto out_range=
+			nodes.subrange(
+				thread_result.first_node_index,
+				thread_result.first_node_index + thread_result.num_nodes );
+
+		foreach( pair : out_range.iter().zip( thread_result.node_input_edges.iter() ) )
+		{
+			pair.first.first_input_edge= u32( edges_offset + size_type( pair.second.first_input_edge ) );
+			pair.first.num_input_edges= pair.second.num_input_edges;
+		}
+	}
+
+	return result_edges;
+}
+
+struct EdgesBuildingThreadFunction
+{
+	GameMapData& @('a') map_data;
+	BitArrayView @("a") broken_quad_bits;
+	GlobalNavigationGraph::NodesHierarchy& @('a') nodes_hierarchy;
+	ust::array_view_imut</GlobalNavigationGraph::Node/> @("a") nodes;
+	i32 nodes_spacing;
+	BBox3f& @('a') node_bbox;
+	bool use_fast_but_incorrect_reachability_check;
+
+	size_type first_node_index;
+	size_type num_nodes;
+
+	op()( this ) : GraphEdgesBuildResult
+	{
+		return
+			BuildGraphEdgesPartImpl(
+				map_data,
+				broken_quad_bits,
+				nodes_hierarchy,
+				nodes,
+				nodes_spacing,
+				node_bbox,
+				use_fast_but_incorrect_reachability_check,
+				first_node_index,
+				num_nodes );
+	}
+}
+
+struct GraphEdgesBuildResult
+{
+	struct NodeInputEdges
+	{
+		u32 first_input_edge;
+		u32 num_input_edges;
+	}
+
+	size_type first_node_index;
+	size_type num_nodes;
+	ust::vector</NodeInputEdges/> node_input_edges;
+	ust::vector</GlobalNavigationGraph::InputEdge/> edges;
+}
+
+fn BuildGraphEdgesPartImpl(
+	GameMapData& map_data,
+	BitArrayView broken_quad_bits,
+	GlobalNavigationGraph::NodesHierarchy& nodes_hierarchy,
+	ust::array_view_imut</GlobalNavigationGraph::Node/> nodes,
+	i32 nodes_spacing,
+	BBox3f& node_bbox,
+	bool use_fast_but_incorrect_reachability_check,
+	size_type first_node_index,
+	size_type num_nodes ) : GraphEdgesBuildResult
+{
+	var GraphEdgesBuildResult mut result{ .first_node_index= first_node_index, .num_nodes= num_nodes };
+
+	result.node_input_edges.resize(
+		num_nodes,
+		ust::make_zeroed</GraphEdgesBuildResult::NodeInputEdges/>() );
+
 	// Use slightly smaller bbox for reachability check - to avoid some numerical errors.
 	var f32 node_bbox_descrease_eps= 1.0f / 4.0f;
 	var BBox3f node_bbox_for_reachability_check
@@ -554,8 +840,6 @@ fn BuildGraphEdges(
 		.min= node_bbox.min + Vec3f( node_bbox_descrease_eps, node_bbox_descrease_eps, node_bbox_descrease_eps ),
 		.max= node_bbox.max - Vec3f( node_bbox_descrease_eps, node_bbox_descrease_eps, node_bbox_descrease_eps ),
 	};
-
-	var ust::vector</GlobalNavigationGraph::InputEdge/> mut result;
 
 	// These values were tuned so that it's possible to create diagonal connections like (+1, +1), (+1, +2), (+2, +1).
 	var f32 max_horizontal_distance= 3.1f * f32( nodes_spacing );
@@ -568,8 +852,10 @@ fn BuildGraphEdges(
 
 	var ust::vector</ GlobalNavigationGraph::NodeIndex /> mut candidate_connections;
 
-	for( auto mut dst_node_index= 0s; dst_node_index < nodes.size(); ++dst_node_index )
+	for( auto mut i= 0s; i < num_nodes; ++i )
 	{
+		var size_type dst_node_index= first_node_index + i;
+
 		var Vec3f node_position= nodes[ dst_node_index ].position;
 
 		candidate_connections.clear();
@@ -609,7 +895,7 @@ fn BuildGraphEdges(
 				return ( node_position.xy() - src_node_position.xy() ).SquareLength();
 			} );
 
-		var size_type first_input_edge= result.size();
+		var size_type first_input_edge= result.edges.size();
 		var size_type mut num_input_edges= 0s;
 
 		foreach( &candidate_connection : candidate_connections ) label candidates
@@ -627,7 +913,7 @@ fn BuildGraphEdges(
 
 			for( auto mut i= 0s; i < num_input_edges; ++i )
 			{
-				var GlobalNavigationGraph::InputEdge& prev_edge= result[ first_input_edge + i ];
+				var GlobalNavigationGraph::InputEdge& prev_edge= result.edges[ first_input_edge + i ];
 				var Vec3f& prev_src_node_position= nodes[ size_type( prev_edge.src_node_index ) ].position;
 
 				var Vec2f horizontal_vector_to_prev_node= prev_src_node_position.xy() - node_position.xy();
@@ -665,7 +951,7 @@ fn BuildGraphEdges(
 
 			if_var( reachability_distance : reachability_distance_opt )
 			{
-				result.push_back(
+				result.edges.push_back(
 					GlobalNavigationGraph::InputEdge
 					{
 						.src_node_index= candidate_connection,
@@ -675,9 +961,9 @@ fn BuildGraphEdges(
 			}
 		}
 
-		var GlobalNavigationGraph::Node &mut node= nodes[ dst_node_index ];
-		node.first_input_edge= u32( first_input_edge );
-		node.num_input_edges= u32( num_input_edges );
+		var GraphEdgesBuildResult::NodeInputEdges &mut out_node= result.node_input_edges[i];
+		out_node.first_input_edge= u32( first_input_edge );
+		out_node.num_input_edges= u32( num_input_edges );
 	}
 
 	return result;
