@@ -142,9 +142,12 @@ fn CreateNavigationGraphNodes(
 {
 	if( num_threads == 1s )
 	{
-		return
-			CreateNavigationGraphNodesImpl(
+		auto mut result=
+			CreateNavigationGraphNodesForClusterQuads(
 				map_data, broken_quad_bits, nodes_spacing, node_bbox, map_data.zvox_data.deref().clusters );
+
+		CreateNavigationGraphNodesForEnemyPatrollingPoints(
+			map_data, broken_quad_bits, nodes_spacing, node_bbox, result );
 	}
 
 	var ust::array_view_imut</ZvoxCluster/> clusters= map_data.zvox_data.deref().clusters;
@@ -193,6 +196,10 @@ fn CreateNavigationGraphNodes(
 		result.append( thread_nodes );
 	}
 
+	// Don't care creating nodes for patrolling points using multithreading.
+	// There is not so many of them.
+	CreateNavigationGraphNodesForEnemyPatrollingPoints( map_data, broken_quad_bits, nodes_spacing, node_bbox, result );
+
 	return result;
 }
 
@@ -207,12 +214,12 @@ struct NodesCreationFunction
 
 	op()( this ) : ust::vector</Vec3f/>
 	{
-		return CreateNavigationGraphNodesImpl( map_data, broken_quad_bits, nodes_spacing, node_bbox, clusters );
+		return CreateNavigationGraphNodesForClusterQuads( map_data, broken_quad_bits, nodes_spacing, node_bbox, clusters );
 	}
 }
 
 // Nodes are created only for given clusters.
-fn CreateNavigationGraphNodesImpl(
+fn CreateNavigationGraphNodesForClusterQuads(
 	GameMapData& map_data,
 	BitArrayView broken_quad_bits,
 	i32 nodes_spacing,
@@ -315,44 +322,50 @@ fn CreateNavigationGraphNodesImpl(
 		}
 	}
 
+	return result;
+}
+
+fn CreateNavigationGraphNodesForEnemyPatrollingPoints(
+	GameMapData& map_data,
+	BitArrayView broken_quad_bits,
+	i32 nodes_spacing,
+	BBox3f& node_bbox,
+	ust::vector</Vec3f/> &mut result )
+{
 	// Create nodes for patrolling points of entities.
 	// It's necessary to do so to enable moving (almost) precisely to these nodes.
 
+	var ZpozData& zpoz_data= map_data.zpoz_data.deref();
+
+	foreach( &entity : zpoz_data.entities )
 	{
-		var ZpozData& zpoz_data= map_data.zpoz_data.deref();
-
-		foreach( &entity : zpoz_data.entities )
+		if( entity.alive_flag == 0u16 )
 		{
-			if( entity.alive_flag == 0u16 )
+			continue;
+		}
+
+		var size_type navigation_info_index( entity.data[16] );
+		if( navigation_info_index >= zpoz_data.entity_navigation_infos.size() )
+		{
+			continue;
+		}
+
+		var ZpozEntityNavigationInfo& navigation_info= zpoz_data.entity_navigation_infos[ navigation_info_index ];
+
+		for( auto mut point_index= 0u; point_index < navigation_info.num_patrolling_points; ++point_index )
+		{
+			var Vec3f position(
+				f32( navigation_info.patrolling_point_coords[ point_index +  0u ] ),
+				f32( navigation_info.patrolling_point_coords[ point_index + 16u ] ),
+				f32( navigation_info.patrolling_point_coords[ point_index + 32u ] ) );
+
+			if_var( node_position_tweaked :
+					TweakNodePosition( map_data, broken_quad_bits, node_bbox, nodes_spacing, position ) )
 			{
-				continue;
-			}
-
-			var size_type navigation_info_index( entity.data[16] );
-			if( navigation_info_index >= zpoz_data.entity_navigation_infos.size() )
-			{
-				continue;
-			}
-
-			var ZpozEntityNavigationInfo& navigation_info= zpoz_data.entity_navigation_infos[ navigation_info_index ];
-
-			for( auto mut point_index= 0u; point_index < navigation_info.num_patrolling_points; ++point_index )
-			{
-				var Vec3f position(
-					f32( navigation_info.patrolling_point_coords[ point_index +  0u ] ),
-					f32( navigation_info.patrolling_point_coords[ point_index + 16u ] ),
-					f32( navigation_info.patrolling_point_coords[ point_index + 32u ] ) );
-
-				if_var( node_position_tweaked :
-						TweakNodePosition( map_data, broken_quad_bits, node_bbox, nodes_spacing, position ) )
-				{
-					result.push_back( node_position_tweaked );
-				}
+				result.push_back( node_position_tweaked );
 			}
 		}
 	}
-
-	return result;
 }
 
 fn TweakNodePosition(
