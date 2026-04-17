@@ -579,12 +579,11 @@ fn BuildGraphEdges(
 	var ust::vector</GraphEdgesBuildResult/> mut thread_results;
 
 	{
-
 		var ust::array_view_imut</GlobalNavigationGraph::Node/> nodes_imut= nodes;
 
 		var ust::vector</ ust::thread</ EdgesBuildingThreadFunction, GraphEdgesBuildResult /> /> mut threads;
 
-		if( false )
+		if( false ) // Hack for "reference pollution for outer loop variable" error.
 		{
 			threads.push_back(
 				ust::make_thread(
@@ -604,6 +603,9 @@ fn BuildGraphEdges(
 
 		for( auto mut t= 0s; t < num_threads; ++t )
 		{
+			// Equally divide nodes across threads.
+			// This isn't ideal, since computational work required for some nodes may be greater than for others.
+			// But it's good enough.
 			var size_type first_node_index= t * num_nodes / num_threads;
 			var size_type next_thread_first_node_index= ( t + 1s ) * num_nodes / num_threads;
 			var size_type num_nodes_in_this_thread= next_thread_first_node_index - first_node_index;
@@ -641,15 +643,15 @@ fn BuildGraphEdges(
 			result_edges.push_back( edge );
 		}
 
-		for( auto mut node_index= thread_result.first_node_index;
-			node_index < thread_result.first_node_index + thread_result.num_nodes;
-			++node_index )
+		auto out_range=
+			nodes.subrange(
+				thread_result.first_node_index,
+				thread_result.first_node_index + thread_result.num_nodes );
+
+		foreach( pair : out_range.iter().zip( thread_result.node_input_edges.iter() ) )
 		{
-			var GraphEdgesBuildResult::NodeInputEdges& in_node=
-				thread_result.node_input_edges[ node_index - thread_result.first_node_index ];
-
-			var GlobalNavigationGraph::Node& mut out_node= nodes[ node_index ];
-
+			var GlobalNavigationGraph::Node& mut out_node= pair.first;
+			var GraphEdgesBuildResult::NodeInputEdges& in_node= pair.second;
 			out_node.first_input_edge= u32( edges_offset + size_type( in_node.first_input_edge ) );
 			out_node.num_input_edges= in_node.num_input_edges;
 		}
@@ -669,7 +671,7 @@ struct EdgesBuildingThreadFunction
 	bool use_fast_but_incorrect_reachability_check;
 
 	size_type first_node_index;
-	size_type num_nodes ;
+	size_type num_nodes;
 
 	op()( this ) : GraphEdgesBuildResult
 	{
@@ -737,8 +739,10 @@ fn BuildGraphEdgesPart(
 
 	var ust::vector</ GlobalNavigationGraph::NodeIndex /> mut candidate_connections;
 
-	for( auto mut dst_node_index= first_node_index; dst_node_index < first_node_index + num_nodes; ++dst_node_index )
+	for( auto mut i= 0s; i < num_nodes; ++i )
 	{
+		var size_type dst_node_index= first_node_index + i;
+
 		var Vec3f node_position= nodes[ dst_node_index ].position;
 
 		candidate_connections.clear();
@@ -844,8 +848,7 @@ fn BuildGraphEdgesPart(
 			}
 		}
 
-		var GraphEdgesBuildResult::NodeInputEdges &mut out_node=
-			result.node_input_edges[ dst_node_index - first_node_index ];
+		var GraphEdgesBuildResult::NodeInputEdges &mut out_node= result.node_input_edges[i];
 		out_node.first_input_edge= u32( first_input_edge );
 		out_node.num_input_edges= u32( num_input_edges );
 	}
