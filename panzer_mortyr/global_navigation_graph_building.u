@@ -131,11 +131,98 @@ fn BuildGlobalNavigationGraph(
 fn CreateNavigationGraphNodes(
 	GameMapData& map_data, BitArrayView broken_quad_bits, i32 nodes_spacing, BBox3f& node_bbox ) : ust::vector</Vec3f/>
 {
+	// Use all available CPU cores to build nodes as fast as possible.
+	// But allow creating too many threads.
+	var size_type num_threads( ust::max( 1u, ust::min( ust::get_number_of_available_cpus(), 16u ) ) );
+
+	if( num_threads == 1s )
+	{
+		return
+			CreateNavigationGraphNodesImpl(
+				map_data,
+				broken_quad_bits,
+				nodes_spacing,
+				node_bbox,
+				map_data.zvox_data.deref().clusters );
+	}
+
+	var ust::array_view_imut</ZvoxCluster/> clusters= map_data.zvox_data.deref().clusters;
+
+	var ust::vector</ ust::thread</ NodesCreationFunction, ust::vector</Vec3f/> /> /> mut threads;
+
+	if( false ) // Hack for "reference pollution for outer loop variable" error.
+	{
+		threads.push_back(
+			ust::make_thread(
+				NodesCreationFunction
+				{
+					.map_data= map_data,
+					.broken_quad_bits= broken_quad_bits,
+					.nodes_spacing= nodes_spacing,
+					.node_bbox= node_bbox,
+					.clusters= clusters,
+				} ) );
+	}
+
+	for( auto mut t= 0s; t < num_threads; ++t )
+	{
+		// Divide clusters evenly between threads.
+		// It's not ideal, since the number of nodes in different clusters varies a lot.
+		// But there is no other easy way to divide this work across threads.
+		var size_type first_cluster_index= t * clusters.size() / num_threads;
+		var size_type next_thread_first_cluster_index= ( t + 1s ) * clusters.size() / num_threads;
+
+		threads.push_back(
+			ust::make_thread(
+				NodesCreationFunction
+				{
+					.map_data= map_data,
+					.broken_quad_bits= broken_quad_bits,
+					.nodes_spacing= nodes_spacing,
+					.node_bbox= node_bbox,
+					.clusters= clusters.subrange( first_cluster_index, next_thread_first_cluster_index ),
+				} ) );
+	}
+
+	var ust::vector</Vec3f/> mut result;
+
+	while( !threads.empty() )
+	{
+		var ust::vector</Vec3f/> mut thread_nodes= threads.pop_back().join();
+		result.append( thread_nodes );
+	}
+
+	return result;
+}
+
+struct NodesCreationFunction
+{
+	GameMapData& @('a') map_data;
+	BitArrayView @("a") broken_quad_bits;
+	i32 nodes_spacing;
+	BBox3f& @('a') node_bbox;
+
+	ust::array_view_imut</ZvoxCluster/> @("a") clusters;
+
+	op()( this ) : ust::vector</Vec3f/>
+	{
+		return CreateNavigationGraphNodesImpl( map_data, broken_quad_bits, nodes_spacing, node_bbox, clusters );
+	}
+}
+
+// Nodes are created only for given clusters.
+fn CreateNavigationGraphNodesImpl(
+	GameMapData& map_data,
+	BitArrayView broken_quad_bits,
+	i32 nodes_spacing,
+	BBox3f& node_bbox,
+	ust::array_view_imut</ZvoxCluster/> clusters ) : ust::vector</Vec3f/>
+{
 	var ust::vector</Vec3f/> mut result;
 
 	var ust::array_view_imut</ZmapQuad/> quads= map_data.zmap_data.deref().quads;
 
-	foreach( &cluster :map_data.zvox_data.deref().clusters )
+	foreach( &cluster : clusters )
 	{
 		if( !(
 			cluster.cluster_type == ZvoxCluster::c_cluster_type_regular |
