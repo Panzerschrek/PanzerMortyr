@@ -69,7 +69,7 @@ fn BuildGlobalNavigationGraph(
 
 	var PerformanceCounter::TimePoint time_nodes_hierarchy_built= performance_counter.GetCurrentTime();
 
-	result.node_input_edges=
+	result.node_output_edges=
 		BuildGraphEdges(
 			num_threads,
 			map_data,
@@ -80,11 +80,11 @@ fn BuildGlobalNavigationGraph(
 			node_bbox,
 			use_fast_but_incorrect_reachability_check );
 
-	var PerformanceCounter::TimePoint time_input_edges_created= performance_counter.GetCurrentTime();
+	var PerformanceCounter::TimePoint time_output_edges_created= performance_counter.GetCurrentTime();
 
 	ConsoleOutAddTextLine(
 		console_out,
-		ust::concat( "Has ", ust::to_string8( result.node_input_edges.size() ), " edges in global navigation graph" ) );
+		ust::concat( "Has ", ust::to_string8( result.node_output_edges.size() ), " edges in global navigation graph" ) );
 
 	result.entity_navigation_infos=
 		BuildEntityNavigationInfos( map_data, broken_quad_bits, result.nodes, result.nodes_hierarchy, node_bbox );
@@ -114,14 +114,14 @@ fn BuildGlobalNavigationGraph(
 	ConsoleOutAddTextLine(
 		console_out,
 		ust::concat(
-			" input edges creation: ",
-			ust::to_string8( u32( performance_counter.CalculateDurationS( time_nodes_hierarchy_built, time_input_edges_created ) * 1000.0f ) ),
+			" output edges creation: ",
+			ust::to_string8( u32( performance_counter.CalculateDurationS( time_nodes_hierarchy_built, time_output_edges_created ) * 1000.0f ) ),
 			" ms" ) );
 	ConsoleOutAddTextLine(
 		console_out,
 		ust::concat(
 			" navigation infos creation: ",
-			ust::to_string8( u32( performance_counter.CalculateDurationS( time_input_edges_created, time_navigation_infos_created ) * 1000.0f ) ),
+			ust::to_string8( u32( performance_counter.CalculateDurationS( time_output_edges_created, time_navigation_infos_created ) * 1000.0f ) ),
 			" ms" ) );
 	ConsoleOutAddTextLine(
 		console_out,
@@ -617,8 +617,8 @@ fn DeduplicateNavigationGraphNodes( ust::array_view_imut</Vec3f/> node_positions
 				GlobalNavigationGraph::Node
 				{
 					.position= node_position,
-					.first_input_edge= 0u, // Set later.
-					.num_input_edges= 0u, // Set later.
+					.first_output_edge= 0u, // Set later.
+					.num_output_edges= 0u, // Set later.
 				} );
 		}
 	}
@@ -658,7 +658,7 @@ fn BuildGraphEdges(
 	ust::array_view_mut</GlobalNavigationGraph::Node/> nodes,
 	i32 nodes_spacing,
 	BBox3f& node_bbox,
-	bool use_fast_but_incorrect_reachability_check ) : ust::vector</GlobalNavigationGraph::InputEdge/>
+	bool use_fast_but_incorrect_reachability_check ) : ust::vector</GlobalNavigationGraph::OutputEdge/>
 {
 	var size_type num_nodes= nodes.size();
 
@@ -676,10 +676,10 @@ fn BuildGraphEdges(
 				0s,
 				num_nodes );
 
-		foreach( pair : nodes.iter().zip( edges_build_result.node_input_edges.iter() ) )
+		foreach( pair : nodes.iter().zip( edges_build_result.node_output_edges.iter() ) )
 		{
-			pair.first.first_input_edge= pair.second.first_input_edge;
-			pair.first.num_input_edges= pair.second.num_input_edges;
+			pair.first.first_output_edge= pair.second.first_output_edge;
+			pair.first.num_output_edges= pair.second.num_output_edges;
 		}
 
 		return take( edges_build_result.edges );
@@ -749,7 +749,7 @@ fn BuildGraphEdges(
 		}
 	}
 
-	var ust::vector</GlobalNavigationGraph::InputEdge/> mut result_edges;
+	var ust::vector</GlobalNavigationGraph::OutputEdge/> mut result_edges;
 
 	foreach( &mut thread_result : thread_results )
 	{
@@ -763,10 +763,10 @@ fn BuildGraphEdges(
 				thread_result.first_node_index,
 				thread_result.first_node_index + thread_result.num_nodes );
 
-		foreach( pair : out_range.iter().zip( thread_result.node_input_edges.iter() ) )
+		foreach( pair : out_range.iter().zip( thread_result.node_output_edges.iter() ) )
 		{
-			pair.first.first_input_edge= u32( edges_offset + size_type( pair.second.first_input_edge ) );
-			pair.first.num_input_edges= pair.second.num_input_edges;
+			pair.first.first_output_edge= u32( edges_offset + size_type( pair.second.first_output_edge ) );
+			pair.first.num_output_edges= pair.second.num_output_edges;
 		}
 	}
 
@@ -804,16 +804,16 @@ struct EdgesBuildingThreadFunction
 
 struct GraphEdgesBuildResult
 {
-	struct NodeInputEdges
+	struct NodeOutputEdges
 	{
-		u32 first_input_edge;
-		u32 num_input_edges;
+		u32 first_output_edge;
+		u32 num_output_edges;
 	}
 
 	size_type first_node_index;
 	size_type num_nodes;
-	ust::vector</NodeInputEdges/> node_input_edges;
-	ust::vector</GlobalNavigationGraph::InputEdge/> edges;
+	ust::vector</NodeOutputEdges/> node_output_edges;
+	ust::vector</GlobalNavigationGraph::OutputEdge/> edges;
 }
 
 fn BuildGraphEdgesPartImpl(
@@ -829,9 +829,9 @@ fn BuildGraphEdgesPartImpl(
 {
 	var GraphEdgesBuildResult mut result{ .first_node_index= first_node_index, .num_nodes= num_nodes };
 
-	result.node_input_edges.resize(
+	result.node_output_edges.resize(
 		num_nodes,
-		ust::make_zeroed</GraphEdgesBuildResult::NodeInputEdges/>() );
+		ust::make_zeroed</GraphEdgesBuildResult::NodeOutputEdges/>() );
 
 	// Use slightly smaller bbox for reachability check - to avoid some numerical errors.
 	var f32 node_bbox_descrease_eps= 1.0f / 4.0f;
@@ -850,73 +850,73 @@ fn BuildGraphEdgesPartImpl(
 
 	var Vec3f fetch_box_half_size( max_horizontal_distance, max_horizontal_distance, max_vertical_distance );
 
-	var ust::vector</ GlobalNavigationGraph::NodeIndex /> mut candidate_connections;
+	var ust::vector</ GlobalNavigationGraph::NodeIndex /> mut candidate_dst_nodes;
 
 	for( auto mut i= 0s; i < num_nodes; ++i )
 	{
-		var size_type dst_node_index= first_node_index + i;
+		var size_type src_dst_node_index= first_node_index + i;
 
-		var Vec3f node_position= nodes[ dst_node_index ].position;
+		var Vec3f src_node_position= nodes[ src_dst_node_index ].position;
 
-		candidate_connections.clear();
+		candidate_dst_nodes.clear();
 
 		VisitBoundingBoxesHierarchyForBBox(
 			nodes_hierarchy,
 			BBox3f
 			{
-				.min= node_position - fetch_box_half_size,
-				.max= node_position + fetch_box_half_size,
+				.min= src_node_position - fetch_box_half_size,
+				.max= src_node_position + fetch_box_half_size,
 			},
-			lambda[&]( GlobalNavigationGraph::NodeIndex src_node_index )
+			lambda[&]( GlobalNavigationGraph::NodeIndex dst_node_index )
 			{
-				if( size_type( src_node_index ) == dst_node_index )
+				if( size_type( dst_node_index ) == src_dst_node_index )
 				{
 					return;
 				}
 
-				var Vec3f& src_node_position= nodes[ size_type( src_node_index ) ].position;
+				var Vec3f& dst_node_position= nodes[ size_type( dst_node_index ) ].position;
 
-				var f32 horizontal_square_distance= ( node_position.xy() - src_node_position.xy() ).SquareLength();
-				var f32 vertical_distance= ust::abs( node_position.z - src_node_position.z );
+				var f32 horizontal_square_distance= ( src_node_position.xy() - dst_node_position.xy() ).SquareLength();
+				var f32 vertical_distance= ust::abs( src_node_position.z - dst_node_position.z );
 				if( horizontal_square_distance <= max_horizontal_distance * max_horizontal_distance &&
 					vertical_distance <= max_vertical_distance )
 				{
-					candidate_connections.push_back( src_node_index );
+					candidate_dst_nodes.push_back( dst_node_index );
 				}
 			} );
 
 		// Sort connections by squared horizontal distance.
 		// It's necessary to add closest connections first.
 		ust::sort_by_key(
-			candidate_connections.range(),
-			lambda[&]( GlobalNavigationGraph::NodeIndex src_node_index ) : f32
+			candidate_dst_nodes.range(),
+			lambda[&]( GlobalNavigationGraph::NodeIndex dst_node_index ) : f32
 			{
-				var Vec3f& src_node_position= nodes[ size_type( src_node_index ) ].position;
-				return ( node_position.xy() - src_node_position.xy() ).SquareLength();
+				var Vec3f& dst_node_position= nodes[ size_type( dst_node_index ) ].position;
+				return ( src_node_position.xy() - dst_node_position.xy() ).SquareLength();
 			} );
 
-		var size_type first_input_edge= result.edges.size();
-		var size_type mut num_input_edges= 0s;
+		var size_type first_output_edge= result.edges.size();
+		var size_type mut num_output_edges= 0s;
 
-		foreach( &candidate_connection : candidate_connections ) label candidates
+		foreach( &candidate_dst_node : candidate_dst_nodes ) label candidates
 		{
 			// Check if direction to this connection isn't almost the same as to some previously-added connection.
 
-			var Vec3f src_node_position= nodes[ size_type( candidate_connection ) ].position;
+			var Vec3f dst_node_position= nodes[ size_type( candidate_dst_node ) ].position;
 
-			var Vec2f horizontal_vector_to_candidate= src_node_position.xy() - node_position.xy();
+			var Vec2f horizontal_vector_to_candidate= dst_node_position.xy() - src_node_position.xy();
 			var f32 horizontal_distance_to_candidate= horizontal_vector_to_candidate.Length();
 			if( horizontal_distance_to_candidate <= 0.0f )
 			{
 				continue;
 			}
 
-			for( auto mut i= 0s; i < num_input_edges; ++i )
+			for( auto mut i= 0s; i < num_output_edges; ++i )
 			{
-				var GlobalNavigationGraph::InputEdge& prev_edge= result.edges[ first_input_edge + i ];
-				var Vec3f& prev_src_node_position= nodes[ size_type( prev_edge.src_node_index ) ].position;
+				var GlobalNavigationGraph::OutputEdge& prev_edge= result.edges[ first_output_edge + i ];
+				var Vec3f& prev_dst_node_position= nodes[ size_type( prev_edge.dst_node_index ) ].position;
 
-				var Vec2f horizontal_vector_to_prev_node= prev_src_node_position.xy() - node_position.xy();
+				var Vec2f horizontal_vector_to_prev_node= prev_dst_node_position.xy() - src_node_position.xy();
 
 				var f32 horizontal_distance_to_prev_node= horizontal_vector_to_prev_node.Length();
 				if( horizontal_distance_to_prev_node > 0.0f )
@@ -940,30 +940,30 @@ fn BuildGraphEdgesPartImpl(
 						map_data,
 						broken_quad_bits,
 						src_node_position,
-						node_position,
+						dst_node_position,
 						node_bbox_for_reachability_check )
 					: GetNodeReachabilityDistance(
 						map_data,
 						broken_quad_bits,
 						src_node_position,
-						node_position,
+						dst_node_position,
 						node_bbox_for_reachability_check ) );
 
 			if_var( reachability_distance : reachability_distance_opt )
 			{
 				result.edges.push_back(
-					GlobalNavigationGraph::InputEdge
+					GlobalNavigationGraph::OutputEdge
 					{
-						.src_node_index= candidate_connection,
+						.dst_node_index= candidate_dst_node,
 						.length( ust::min( ust::ceil( reachability_distance ), 65535.0f ) ),
 					} );
-				++num_input_edges;
+				++num_output_edges;
 			}
 		}
 
-		var GraphEdgesBuildResult::NodeInputEdges &mut out_node= result.node_input_edges[i];
-		out_node.first_input_edge= u32( first_input_edge );
-		out_node.num_input_edges= u32( num_input_edges );
+		var GraphEdgesBuildResult::NodeOutputEdges &mut out_node= result.node_output_edges[i];
+		out_node.first_output_edge= u32( first_output_edge );
+		out_node.num_output_edges= u32( num_output_edges );
 	}
 
 	return result;
