@@ -144,6 +144,7 @@ fn CreateNewMapGameState(
 		{
 			.target_navigation_graph_node= GlobalNavigationGraph::c_invalid_node_index,
 			.current_navigation_graph_node= GlobalNavigationGraph::c_invalid_node_index,
+			.route[ GlobalNavigationGraph::c_invalid_node_index ... ],
 		} );
 
 	// Build colliders for entities.
@@ -322,7 +323,11 @@ fn CreateNewMapGameState(
 }
 
 fn nodiscard ProcessGameLogicStep(
-	GameGlobalData& global_data, GameMapData& map_data, PlayerInput& player_input, GameState &mut game_state ) : u32
+	GameGlobalData& global_data,
+	GameMapData& map_data,
+	PlayerInput& player_input,
+	GameState &mut game_state,
+	GlobalNavigationGraphRouteSearcher &mut route_searcher ) : u32
 {
 	PerformPlayerWeaponLogic( map_data, player_input, game_state );
 
@@ -336,7 +341,7 @@ fn nodiscard ProcessGameLogicStep(
 	// Spawn new entities before entity update step, so that they are properly animated.
 	TriggerEntitiesSpawn( map_data, game_state );
 
-	ProcessEntitiesLogicStep( global_data, map_data, game_state );
+	ProcessEntitiesLogicStep( global_data, map_data, game_state, route_searcher );
 
 	ProcessDynamicClustersLogicStep( map_data, game_state );
 
@@ -1701,7 +1706,11 @@ struct DelayedExplosionSplashDamage
 	f32 splash_base_damage;
 }
 
-fn ProcessEntitiesLogicStep( GameGlobalData& game_global_data, GameMapData& map_data, GameState &mut game_state )
+fn ProcessEntitiesLogicStep(
+	GameGlobalData& game_global_data,
+	GameMapData& map_data,
+	GameState &mut game_state,
+	GlobalNavigationGraphRouteSearcher &mut route_searcher )
 {
 	var GameParams& game_params= game_global_data.game_params.deref();
 	var EntitiesDescription& entities_description= map_data.entities_description.deref();
@@ -1763,6 +1772,7 @@ fn ProcessEntitiesLogicStep( GameGlobalData& game_global_data, GameMapData& map_
 					map_data,
 					game_state.broken_quad_bits,
 					game_state.dynamic_cluster_colliders,
+					route_searcher,
 					entity_description,
 					entity,
 					entity_navigation_state,
@@ -4357,6 +4367,7 @@ fn UpdateEntityMovementTarget(
 	GameMapData& map_data,
 	BitArrayView broken_quad_bits,
 	ust::array_view_imut</DynamicClusterCollider/> dynamic_cluster_colliders,
+	GlobalNavigationGraphRouteSearcher &mut route_searcher,
 	EntitiesDescription::EntityDescription& entity_description,
 	EntityState& entity,
 	EntityNavigationState &mut navigation_state,
@@ -4390,6 +4401,8 @@ fn UpdateEntityMovementTarget(
 			return;
 		}
 	}
+
+	var bool mut need_to_recalculate_route= false;
 
 	if( navigation_state.target_navigation_graph_node == GlobalNavigationGraph::c_invalid_node_index )
 	{
@@ -4429,6 +4442,38 @@ fn UpdateEntityMovementTarget(
 					navigation_state.target_navigation_graph_node= node_index;
 				}
 			}
+		}
+
+		if( navigation_state.target_navigation_graph_node != GlobalNavigationGraph::c_invalid_node_index )
+		{
+			need_to_recalculate_route= true;
+		}
+	}
+
+	if( need_to_recalculate_route &&
+		navigation_state.current_navigation_graph_node != GlobalNavigationGraph::c_invalid_node_index &&
+		navigation_state.target_navigation_graph_node != GlobalNavigationGraph::c_invalid_node_index )
+	{
+		// Search for a route to rarget.
+		var ust::array_view_imut</GlobalNavigationGraph::NodeIndex/> route=
+			route_searcher.PerformSearch(
+				map_data.global_navigation_graph,
+				navigation_state.current_navigation_graph_node,
+				navigation_state.target_navigation_graph_node,
+				lambda( GlobalNavigationGraph::NodeIndex node_index ) : bool
+				{
+					// TODO - limit number of visited nodes.
+					ust::ignore_unused( node_index );
+					return true;
+				} );
+
+		var ust::array_view_mut</GlobalNavigationGraph::NodeIndex/> saved_route= navigation_state.route;
+
+		saved_route.copy_from( route );
+
+		foreach( &mut n : saved_route.subrange_start( route.size() ) )
+		{
+			n= GlobalNavigationGraph::c_invalid_node_index;
 		}
 	}
 
