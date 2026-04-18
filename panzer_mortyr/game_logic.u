@@ -4912,17 +4912,85 @@ fn PerformEntityOwnMovement(
 }
 
 fn PerformEntityOperationControlBasedMovement(
-	GlobalNavigationGraph& navighation_graph,
+	GlobalNavigationGraph& navigation_graph,
 	EntityState &mut entity,
 	EntityNavigationState &mut navigation_state,
 	EntitiesDescription::OperationControl& operation_control )
 {
-	// TODO - perform global navigation graph-based movement.
+	if( navigation_state.route[0] == GlobalNavigationGraph::c_invalid_node_index )
+	{
+		return;
+	}
 
-	ust::ignore_unused( navighation_graph );
-	ust::ignore_unused( entity );
-	ust::ignore_unused( navigation_state );
-	ust::ignore_unused( operation_control );
+	var Vec2f movement_target= navigation_graph.nodes[ size_type( navigation_state.route[0] ) ].position.xy();
+
+	var f32 turn_speed=
+		( operation_control.functioning_mode == EntitiesDescription::OperationControl::c_functioning_mode_sky_decoration
+			? c_sky_decoration_entity_turn_speed
+			: c_entity_turn_speed );
+
+	var f32 mut move_fraction= 1.0f;
+
+	// Use 2d calculation for vector to waypoint - ignore some Z difference.
+	var Vec2f vec_to_movement_target= movement_target - entity.position.xy();
+	var f32 square_distance_to_movement_target= vec_to_movement_target.SquareLength();
+
+	if( square_distance_to_movement_target != 0.0f )
+	{
+		// Perform smooth turn towards the waypoint node.
+
+		var f32 target_azimuth= ust::atan2( -vec_to_movement_target.x, vec_to_movement_target.y );
+
+		var f32 angle_delta= CalculateRotationAngleDelta( entity.azimuth, target_azimuth );
+
+		if( angle_delta < -turn_speed )
+		{
+			move_fraction= 0.0f; // Don't move if turn.
+			entity.azimuth+= turn_speed;
+		}
+		else if( angle_delta > turn_speed )
+		{
+			move_fraction= 0.0f; // Don't move if turn.
+			entity.azimuth-= turn_speed;
+		}
+		else
+		{
+			move_fraction= 1.0f - ust::abs( angle_delta ) / turn_speed;
+			entity.azimuth= target_azimuth;
+		}
+	}
+
+	var f32 base_move_distance= f32( operation_control.speed ) * c_entity_speed_scale;
+
+	// If we perform a turn don't move.
+	// We should move only directly towards the target, otherwise we can encount various problems with target reaching.
+	// The only exception is sky decorations, they move wiredly in the original game too.
+	if( operation_control.functioning_mode == EntitiesDescription::OperationControl::c_functioning_mode_sky_decoration )
+	{
+		move_fraction= 1.0f;
+	}
+	var f32 move_distance= base_move_distance * move_fraction;
+
+	// Perform movement towards current direction.
+	var Vec3f direction_vector( GetEntityDirectionNormalizedVector( entity ), 0.0f );
+	entity.position+= direction_vector * move_distance;
+
+	if( square_distance_to_movement_target <= base_move_distance * base_move_distance )
+	{
+		// Reached the next route point.
+		// Mark it as current node.
+
+		navigation_state.current_navigation_graph_node= navigation_state.route[0];
+
+		// Shift the route.
+		var size_type max_route_nodes= typeinfo</ typeof( navigation_state.route ) />.element_count;
+		for( auto mut i= 0s; i < max_route_nodes - 1s; ++i )
+		{
+			navigation_state.route[i]= navigation_state.route[ i + 1s ];
+		}
+
+		navigation_state.route[ max_route_nodes - 1s ]= GlobalNavigationGraph::c_invalid_node_index;
+	}
 }
 
 fn PerformEntityObjectMovement( EntityState &mut entity, EntitiesDescription::ObjectMovement& object_movement )
