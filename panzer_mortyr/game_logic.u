@@ -4402,6 +4402,8 @@ fn UpdateEntityMovementTarget(
 		}
 	}
 
+	ust::ignore_unused( random );
+
 	if( navigation_state.target_navigation_graph_node != GlobalNavigationGraph::c_invalid_node_index &&
 		navigation_state.current_navigation_graph_node == navigation_state.target_navigation_graph_node )
 	{
@@ -4409,94 +4411,187 @@ fn UpdateEntityMovementTarget(
 		navigation_state.target_navigation_graph_node= GlobalNavigationGraph::c_invalid_node_index;
 	}
 
-	var bool mut need_to_recalculate_route= false;
-
-	if( navigation_state.target_navigation_graph_node == GlobalNavigationGraph::c_invalid_node_index )
+	if( entity.alarmed )
 	{
-		// Select next patrolling node.
-
-		var GlobalNavigationGraph::EntityNavigationInfo& entity_navigation_info=
-			map_data.global_navigation_graph.entity_navigation_infos[ size_type( entity.navigation_info_index ) ];
-
-		var size_type max_points= typeinfo</ typeof( entity_navigation_info.patrolling_nodes ) />.element_count;
-
-		auto mut i= 0s;
-		for( ; i < max_points; ++i )
+		if_var( &player_position : entity.last_seen_player_position )
 		{
-			if( navigation_state.current_navigation_graph_node == entity_navigation_info.patrolling_nodes[i] )
+			if( entity.player_is_in_sight )
 			{
-				++i;
-				break;
+				var f32 player_crouching_phase= 0.0f; // For line of sight check assume that the player is staying.
+
+				var EntityDistanceRanges distance_ranges= GetEntityDistanceRanges( entity_description );
+
+				var f32 optimal_square_distance_min=
+					distance_ranges.optimal.distance_min * distance_ranges.optimal.distance_min;
+				var f32 optimal_square_distance_max=
+					distance_ranges.optimal.distance_max * distance_ranges.optimal.distance_max;
+				var f32 good_enough_square_distance_min=
+					distance_ranges.good_enough.distance_min * distance_ranges.good_enough.distance_min;
+				var f32 good_enough_square_distance_max=
+					distance_ranges.good_enough.distance_max * distance_ranges.good_enough.distance_max;
+
+				ust::ignore_unused( optimal_square_distance_min );
+				ust::ignore_unused( optimal_square_distance_max );
+
+				if( navigation_state.target_navigation_graph_node != GlobalNavigationGraph::c_invalid_node_index )
+				{
+					// Check if current target node is good enough. If so - preserve it, otherwise reset it.
+
+					var GlobalNavigationGraph::Node& node=
+						map_data.global_navigation_graph.nodes[ size_type( navigation_state.target_navigation_graph_node ) ];
+
+					var f32 square_distance= ( node.position - player_position ).SquareLength();
+
+					var bool good_enough=
+						square_distance >= good_enough_square_distance_min &&
+						square_distance <= good_enough_square_distance_max;
+
+					if( !good_enough )
+					{
+						navigation_state.target_navigation_graph_node= GlobalNavigationGraph::c_invalid_node_index;
+					}
+
+					// TODO - check if player is visible from target.
+					// If he is not in sight from that position - reset it.
+				}
+			}
+			else
+			{
+				// TODO - make sure her target node is located at last seen player position. If it's not so - reset it and recalculate target and route to it.
+			}
+
+			if( navigation_state.target_navigation_graph_node != GlobalNavigationGraph::c_invalid_node_index &&
+				navigation_state.route[0] == GlobalNavigationGraph::c_invalid_node_index )
+			{
+				// No intermediate points are left.
+				// Just reset the target in such case.
+				// We don't care preserving the target in alarmed mode in any cost.
+				// If we need to recalculate a route, use this opportunity to select more actual target.
+				navigation_state.current_navigation_graph_node= GlobalNavigationGraph::c_invalid_node_index;
+			}
+
+			if( navigation_state.target_navigation_graph_node == GlobalNavigationGraph::c_invalid_node_index &&
+				navigation_state.current_navigation_graph_node != GlobalNavigationGraph::c_invalid_node_index )
+			{
+				if_var( player_node_index : FindNearestNavigationGraphNode( map_data, broken_quad_bits, player_position ) )
+				{
+					// For now just set player position as movement target and search a route to it.
+					// TODO - make it smarter. Select node nearby player or go away from him if is too close.
+					navigation_state.target_navigation_graph_node= player_node_index;
+
+					var ust::array_view_imut</GlobalNavigationGraph::NodeIndex/> route=
+						route_searcher.PerformSearch(
+							map_data.global_navigation_graph,
+							navigation_state.current_navigation_graph_node,
+							navigation_state.target_navigation_graph_node,
+							lambda( GlobalNavigationGraph::NodeIndex node_index ) : bool
+							{
+								// TODO - limit number of visited nodes.
+								ust::ignore_unused( node_index );
+								return true;
+							} );
+
+					var ust::array_view_mut</GlobalNavigationGraph::NodeIndex/> saved_route= navigation_state.route;
+
+					saved_route.copy_from( route );
+
+					foreach( &mut n : saved_route.subrange_start( route.size() ) )
+					{
+						n= GlobalNavigationGraph::c_invalid_node_index;
+					}
+
+					// TODO - add a fallback for case if no route can be found.
+				}
 			}
 		}
-
-		for( ; i < max_points; ++i )
-		{
-			var GlobalNavigationGraph::NodeIndex node_index= entity_navigation_info.patrolling_nodes[i];
-			if( node_index != GlobalNavigationGraph::c_invalid_node_index )
-			{
-				navigation_state.target_navigation_graph_node= node_index;
-				break;
-			}
-		}
+	}
+	else
+	{
+		var bool mut need_to_recalculate_route= false;
 
 		if( navigation_state.target_navigation_graph_node == GlobalNavigationGraph::c_invalid_node_index )
 		{
-			foreach( node_index : entity_navigation_info.patrolling_nodes )
+			// Select next patrolling node.
+
+			var GlobalNavigationGraph::EntityNavigationInfo& entity_navigation_info=
+				map_data.global_navigation_graph.entity_navigation_infos[ size_type( entity.navigation_info_index ) ];
+
+			var size_type max_points= typeinfo</ typeof( entity_navigation_info.patrolling_nodes ) />.element_count;
+
+			auto mut i= 0s;
+			for( ; i < max_points; ++i )
 			{
+				if( navigation_state.current_navigation_graph_node == entity_navigation_info.patrolling_nodes[i] )
+				{
+					++i;
+					break;
+				}
+			}
+
+			for( ; i < max_points; ++i )
+			{
+				var GlobalNavigationGraph::NodeIndex node_index= entity_navigation_info.patrolling_nodes[i];
 				if( node_index != GlobalNavigationGraph::c_invalid_node_index )
 				{
 					navigation_state.target_navigation_graph_node= node_index;
 					break;
 				}
 			}
+
+			if( navigation_state.target_navigation_graph_node == GlobalNavigationGraph::c_invalid_node_index )
+			{
+				foreach( node_index : entity_navigation_info.patrolling_nodes )
+				{
+					if( node_index != GlobalNavigationGraph::c_invalid_node_index )
+					{
+						navigation_state.target_navigation_graph_node= node_index;
+						break;
+					}
+				}
+			}
+
+			if( navigation_state.target_navigation_graph_node != GlobalNavigationGraph::c_invalid_node_index )
+			{
+				need_to_recalculate_route= true;
+			}
 		}
 
-		if( navigation_state.target_navigation_graph_node != GlobalNavigationGraph::c_invalid_node_index )
+		if( navigation_state.target_navigation_graph_node != GlobalNavigationGraph::c_invalid_node_index &&
+			navigation_state.route[0] == GlobalNavigationGraph::c_invalid_node_index )
 		{
+			// Need to recalculate the route, since no intermediate points are left.
 			need_to_recalculate_route= true;
 		}
-	}
 
-	if( navigation_state.target_navigation_graph_node != GlobalNavigationGraph::c_invalid_node_index &&
-		navigation_state.route[0] == GlobalNavigationGraph::c_invalid_node_index )
-	{
-		// Need to recalculate the route, since no intermediate points are left.
-		need_to_recalculate_route= true;
-	}
-
-	if( need_to_recalculate_route &&
-		navigation_state.current_navigation_graph_node != GlobalNavigationGraph::c_invalid_node_index &&
-		navigation_state.target_navigation_graph_node != GlobalNavigationGraph::c_invalid_node_index )
-	{
-		// Search for a route to rarget.
-		var ust::array_view_imut</GlobalNavigationGraph::NodeIndex/> route=
-			route_searcher.PerformSearch(
-				map_data.global_navigation_graph,
-				navigation_state.current_navigation_graph_node,
-				navigation_state.target_navigation_graph_node,
-				lambda( GlobalNavigationGraph::NodeIndex node_index ) : bool
-				{
-					// TODO - limit number of visited nodes.
-					ust::ignore_unused( node_index );
-					return true;
-				} );
-
-		var ust::array_view_mut</GlobalNavigationGraph::NodeIndex/> saved_route= navigation_state.route;
-
-		saved_route.copy_from( route );
-
-		foreach( &mut n : saved_route.subrange_start( route.size() ) )
+		if( need_to_recalculate_route &&
+			navigation_state.current_navigation_graph_node != GlobalNavigationGraph::c_invalid_node_index &&
+			navigation_state.target_navigation_graph_node != GlobalNavigationGraph::c_invalid_node_index )
 		{
-			n= GlobalNavigationGraph::c_invalid_node_index;
+			// Search for a route to target.
+			var ust::array_view_imut</GlobalNavigationGraph::NodeIndex/> route=
+				route_searcher.PerformSearch(
+					map_data.global_navigation_graph,
+					navigation_state.current_navigation_graph_node,
+					navigation_state.target_navigation_graph_node,
+					lambda( GlobalNavigationGraph::NodeIndex node_index ) : bool
+					{
+						// TODO - limit number of visited nodes.
+						ust::ignore_unused( node_index );
+						return true;
+					} );
+
+			var ust::array_view_mut</GlobalNavigationGraph::NodeIndex/> saved_route= navigation_state.route;
+
+			saved_route.copy_from( route );
+
+			foreach( &mut n : saved_route.subrange_start( route.size() ) )
+			{
+				n= GlobalNavigationGraph::c_invalid_node_index;
+			}
+
+			// TODO - add a fallback for case if no route can be found.
 		}
 	}
-
-	ust::ignore_unused( dynamic_cluster_colliders );
-	ust::ignore_unused( random );
-
-	var EntityDistanceRanges distance_ranges= GetEntityDistanceRanges( entity_description );
-	ust::ignore_unused( distance_ranges.good_enough );
 }
 
 fn GetPlayerPointForEntityVisibilityTrace( Vec3f& player_position, f32 crouching_phase ) : Vec3f
