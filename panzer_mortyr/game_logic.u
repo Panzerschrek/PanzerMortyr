@@ -5,6 +5,7 @@ import "collisions.iu"
 import "game_constants.iu"
 import "game_logic.iu"
 import "geometry_utils.iu"
+import "global_navigation_graph_utils.iu"
 import "mat.iu"
 import "math_constants.iu"
 import "physics_utils.iu"
@@ -4376,15 +4377,61 @@ fn UpdateEntityMovementTarget(
 		return;
 	}
 
-	// TODO - use new global nabiation graph-based approach.
+	if( navigation_state.current_navigation_graph_node == GlobalNavigationGraph::c_invalid_node_index )
+	{
+		// Attach to the navigation graph if has no current node.
+		AttachEntityToNavigationGraph( map_data, broken_quad_bits, entity, navigation_state );
 
-	ust::ignore_unused( map_data );
-	ust::ignore_unused( broken_quad_bits );
+		if( navigation_state.current_navigation_graph_node == GlobalNavigationGraph::c_invalid_node_index )
+		{
+			// Failed to attach.
+			return;
+		}
+	}
+
+	if( navigation_state.target_navigation_graph_node == GlobalNavigationGraph::c_invalid_node_index )
+	{
+		// Select next patrolling node.
+
+		var GlobalNavigationGraph::EntityNavigationInfo& entity_navigation_info=
+			map_data.global_navigation_graph.entity_navigation_infos[ size_type( entity.navigation_info_index ) ];
+
+		var size_type max_points= typeinfo</ typeof( entity_navigation_info.patrolling_nodes ) />.element_count;
+
+		auto mut i= 0s;
+		for( ; i < max_points; ++i )
+		{
+			if( navigation_state.current_navigation_graph_node == entity_navigation_info.patrolling_nodes[i] )
+			{
+				++i;
+				break;
+			}
+		}
+
+		for( ; i < max_points; ++i )
+		{
+			var GlobalNavigationGraph::NodeIndex node_index= entity_navigation_info.patrolling_nodes[i];
+			if( node_index != GlobalNavigationGraph::c_invalid_node_index )
+			{
+				navigation_state.target_navigation_graph_node= node_index;
+				break;
+			}
+		}
+
+		if( navigation_state.target_navigation_graph_node == GlobalNavigationGraph::c_invalid_node_index )
+		{
+			foreach( node_index : entity_navigation_info.patrolling_nodes )
+			{
+				if( node_index != GlobalNavigationGraph::c_invalid_node_index )
+				{
+					navigation_state.target_navigation_graph_node= node_index;
+				}
+			}
+		}
+	}
+
 	ust::ignore_unused( dynamic_cluster_colliders );
-	ust::ignore_unused( navigation_state );
 	ust::ignore_unused( random );
-
-	ust::ignore_unused( AttachEntityToNavigationGraph );
 
 	var EntityDistanceRanges distance_ranges= GetEntityDistanceRanges( entity_description );
 	ust::ignore_unused( distance_ranges.good_enough );
@@ -4891,12 +4938,15 @@ fn PerformEntityRotationForShot( EntityState &mut entity, EntitiesDescription::R
 }
 
 fn AttachEntityToNavigationGraph(
-	EntityState& entity, EntityNavigationState &mut entity_navigation_state, GlobalNavigationGraph& navigation_graph )
+	GameMapData& map_data,
+	BitArrayView broken_quad_bits,
+	EntityState& entity,
+	EntityNavigationState &mut entity_navigation_state )
 {
-	// TODO - do this.
-	ust::ignore_unused( entity );
-	ust::ignore_unused( entity_navigation_state );
-	ust::ignore_unused( navigation_graph );
+	if_var( node_index : FindNearestNavigationGraphNode( map_data, broken_quad_bits, entity.position ) )
+	{
+		entity_navigation_state.current_navigation_graph_node= node_index;
+	}
 }
 
 fn GetEntityDirectionNormalizedVector( EntityState& entity ) : Vec2f
