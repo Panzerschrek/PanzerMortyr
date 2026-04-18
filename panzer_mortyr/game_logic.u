@@ -4436,28 +4436,56 @@ fn UpdateEntityMovementTarget(
 				if( navigation_state.target_navigation_graph_node != GlobalNavigationGraph::c_invalid_node_index )
 				{
 					// Check if current target node is good enough. If so - preserve it, otherwise reset it.
+					// Also check if player is still visible from it.
 
 					var GlobalNavigationGraph::Node& node=
 						map_data.global_navigation_graph.nodes[ size_type( navigation_state.target_navigation_graph_node ) ];
 
+					// TODO - use distance in XY plane?
 					var f32 square_distance= ( node.position - player_position ).SquareLength();
 
-					var bool good_enough=
+					var bool distance_good_enough=
 						square_distance >= good_enough_square_distance_min &&
 						square_distance <= good_enough_square_distance_max;
 
-					if( !good_enough )
+					if( distance_good_enough )
 					{
+						var Vec3f trace_start=
+							GetPlayerPointForEntityVisibilityTrace( player_position, player_crouching_phase );
+
+						var Vec3f trace_end= GetEntityPointForPlayerVisibilityTrace( node.position, operation.animation );
+
+						if( trace_end != trace_start )
+						{
+							var Vec3f trace_vector= trace_end - trace_start;
+							if_var( &trace_result :
+									LineTrace(
+										map_data,
+										broken_quad_bits,
+										dynamic_cluster_colliders,
+										trace_start,
+										trace_vector ) )
+							{
+								if( trace_result.distance < 1.0f )
+								{
+									// Player is no longer visible from this target.
+									// Reset it to choose a better target.
+									navigation_state.target_navigation_graph_node= GlobalNavigationGraph::c_invalid_node_index;
+								}
+							}
+						}
+					}
+					else
+					{
+						// Too far away or too close. Reset current target and select a better one.
 						navigation_state.target_navigation_graph_node= GlobalNavigationGraph::c_invalid_node_index;
 					}
-
-					// TODO - check if player is visible from target.
-					// If he is not in sight from that position - reset it.
 				}
 			}
 			else
 			{
-				// TODO - make sure her target node is located at last seen player position. If it's not so - reset it and recalculate target and route to it.
+				// TODO - make sure here target node is located at the last seen player position.
+				// If it's not so - reset it and recalculate the target and a route to it.
 			}
 
 			if( navigation_state.target_navigation_graph_node != GlobalNavigationGraph::c_invalid_node_index &&
