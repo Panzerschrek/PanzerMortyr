@@ -4411,130 +4411,132 @@ fn UpdateEntityMovementTarget(
 		navigation_state.target_navigation_graph_node= GlobalNavigationGraph::c_invalid_node_index;
 	}
 
-	if( entity.alarmed )
+	if( entity.alarmed && !entity.last_seen_player_position.empty() )
 	{
-		if_var( &player_position : entity.last_seen_player_position )
+		var Vec3f& player_position= entity.last_seen_player_position.try_deref();
+
+		if( entity.player_is_in_sight )
 		{
-			if( entity.player_is_in_sight )
+			var f32 player_crouching_phase= 0.0f; // For line of sight check assume that the player is staying.
+
+			var EntityDistanceRanges distance_ranges= GetEntityDistanceRanges( entity_description );
+
+			var f32 optimal_square_distance_min=
+				distance_ranges.optimal.distance_min * distance_ranges.optimal.distance_min;
+			var f32 optimal_square_distance_max=
+				distance_ranges.optimal.distance_max * distance_ranges.optimal.distance_max;
+			var f32 good_enough_square_distance_min=
+				distance_ranges.good_enough.distance_min * distance_ranges.good_enough.distance_min;
+			var f32 good_enough_square_distance_max=
+				distance_ranges.good_enough.distance_max * distance_ranges.good_enough.distance_max;
+
+			ust::ignore_unused( optimal_square_distance_min );
+			ust::ignore_unused( optimal_square_distance_max );
+
+			if( navigation_state.target_navigation_graph_node != GlobalNavigationGraph::c_invalid_node_index )
 			{
-				var f32 player_crouching_phase= 0.0f; // For line of sight check assume that the player is staying.
+				// Check if current target node is good enough. If so - preserve it, otherwise reset it.
+				// Also check if player is still visible from it.
 
-				var EntityDistanceRanges distance_ranges= GetEntityDistanceRanges( entity_description );
+				var GlobalNavigationGraph::Node& node=
+					map_data.global_navigation_graph.nodes[ size_type( navigation_state.target_navigation_graph_node ) ];
 
-				var f32 optimal_square_distance_min=
-					distance_ranges.optimal.distance_min * distance_ranges.optimal.distance_min;
-				var f32 optimal_square_distance_max=
-					distance_ranges.optimal.distance_max * distance_ranges.optimal.distance_max;
-				var f32 good_enough_square_distance_min=
-					distance_ranges.good_enough.distance_min * distance_ranges.good_enough.distance_min;
-				var f32 good_enough_square_distance_max=
-					distance_ranges.good_enough.distance_max * distance_ranges.good_enough.distance_max;
+				// TODO - use distance in XY plane?
+				var f32 square_distance= ( node.position - player_position ).SquareLength();
 
-				ust::ignore_unused( optimal_square_distance_min );
-				ust::ignore_unused( optimal_square_distance_max );
+				var bool distance_good_enough=
+					square_distance >= good_enough_square_distance_min &&
+					square_distance <= good_enough_square_distance_max;
 
-				if( navigation_state.target_navigation_graph_node != GlobalNavigationGraph::c_invalid_node_index )
+				if( distance_good_enough )
 				{
-					// Check if current target node is good enough. If so - preserve it, otherwise reset it.
-					// Also check if player is still visible from it.
+					var Vec3f trace_start=
+						GetPlayerPointForEntityVisibilityTrace( player_position, player_crouching_phase );
 
-					var GlobalNavigationGraph::Node& node=
-						map_data.global_navigation_graph.nodes[ size_type( navigation_state.target_navigation_graph_node ) ];
+					var Vec3f trace_end= GetEntityPointForPlayerVisibilityTrace( node.position, operation.animation );
 
-					// TODO - use distance in XY plane?
-					var f32 square_distance= ( node.position - player_position ).SquareLength();
-
-					var bool distance_good_enough=
-						square_distance >= good_enough_square_distance_min &&
-						square_distance <= good_enough_square_distance_max;
-
-					if( distance_good_enough )
+					if( trace_end != trace_start )
 					{
-						var Vec3f trace_start=
-							GetPlayerPointForEntityVisibilityTrace( player_position, player_crouching_phase );
-
-						var Vec3f trace_end= GetEntityPointForPlayerVisibilityTrace( node.position, operation.animation );
-
-						if( trace_end != trace_start )
+						var Vec3f trace_vector= trace_end - trace_start;
+						if_var( &trace_result :
+								LineTrace(
+									map_data,
+									broken_quad_bits,
+									dynamic_cluster_colliders,
+									trace_start,
+									trace_vector ) )
 						{
-							var Vec3f trace_vector= trace_end - trace_start;
-							if_var( &trace_result :
-									LineTrace(
-										map_data,
-										broken_quad_bits,
-										dynamic_cluster_colliders,
-										trace_start,
-										trace_vector ) )
+							if( trace_result.distance < 1.0f )
 							{
-								if( trace_result.distance < 1.0f )
-								{
-									// Player is no longer visible from this target.
-									// Reset it to choose a better target.
-									navigation_state.target_navigation_graph_node= GlobalNavigationGraph::c_invalid_node_index;
-								}
+								// Player is no longer visible from this target.
+								// Reset it to choose a better target.
+								navigation_state.target_navigation_graph_node= GlobalNavigationGraph::c_invalid_node_index;
 							}
 						}
 					}
-					else
-					{
-						// Too far away or too close. Reset current target and select a better one.
-						navigation_state.target_navigation_graph_node= GlobalNavigationGraph::c_invalid_node_index;
-					}
 				}
-			}
-			else
-			{
-				// TODO - make sure here target node is located at the last seen player position.
-				// If it's not so - reset it and recalculate the target and a route to it.
-			}
-
-			if( navigation_state.target_navigation_graph_node != GlobalNavigationGraph::c_invalid_node_index &&
-				navigation_state.route[0] == GlobalNavigationGraph::c_invalid_node_index )
-			{
-				// No intermediate points are left.
-				// Just reset the target in such case.
-				// We don't care preserving the target in alarmed mode in any cost.
-				// If we need to recalculate a route, use this opportunity to select more actual target.
-				navigation_state.current_navigation_graph_node= GlobalNavigationGraph::c_invalid_node_index;
-			}
-
-			if( navigation_state.target_navigation_graph_node == GlobalNavigationGraph::c_invalid_node_index &&
-				navigation_state.current_navigation_graph_node != GlobalNavigationGraph::c_invalid_node_index )
-			{
-				if_var( player_node_index : FindNearestNavigationGraphNode( map_data, broken_quad_bits, player_position ) )
+				else
 				{
-					// For now just set player position as movement target and search a route to it.
-					// TODO - make it smarter. Select node nearby player or go away from him if is too close.
-					navigation_state.target_navigation_graph_node= player_node_index;
-
-					var ust::array_view_imut</GlobalNavigationGraph::NodeIndex/> route=
-						route_searcher.PerformSearch(
-							map_data.global_navigation_graph,
-							navigation_state.current_navigation_graph_node,
-							navigation_state.target_navigation_graph_node,
-							lambda( GlobalNavigationGraph::NodeIndex node_index ) : bool
-							{
-								// TODO - limit number of visited nodes.
-								ust::ignore_unused( node_index );
-								return true;
-							} );
-
-					var ust::array_view_mut</GlobalNavigationGraph::NodeIndex/> saved_route= navigation_state.route;
-
-					saved_route.copy_from( route );
-
-					foreach( &mut n : saved_route.subrange_start( route.size() ) )
-					{
-						n= GlobalNavigationGraph::c_invalid_node_index;
-					}
-
-					// TODO - add a fallback for case if no route can be found.
+					// Too far away or too close. Reset current target and select a better one.
+					navigation_state.target_navigation_graph_node= GlobalNavigationGraph::c_invalid_node_index;
 				}
+			}
+		}
+		else
+		{
+			// TODO - make sure here target node is located at the last seen player position.
+			// If it's not so - reset it and recalculate the target and a route to it.
+		}
+
+		if( navigation_state.target_navigation_graph_node != GlobalNavigationGraph::c_invalid_node_index &&
+			navigation_state.route[0] == GlobalNavigationGraph::c_invalid_node_index )
+		{
+			// No intermediate points are left.
+			// Just reset the target in such case.
+			// We don't care preserving the target in alarmed mode in any cost.
+			// If we need to recalculate a route, use this opportunity to select more actual target.
+			navigation_state.current_navigation_graph_node= GlobalNavigationGraph::c_invalid_node_index;
+		}
+
+		if( navigation_state.target_navigation_graph_node == GlobalNavigationGraph::c_invalid_node_index &&
+			navigation_state.current_navigation_graph_node != GlobalNavigationGraph::c_invalid_node_index )
+		{
+			if_var( player_node_index : FindNearestNavigationGraphNode( map_data, broken_quad_bits, player_position ) )
+			{
+				// For now just set player position as movement target and search a route to it.
+				// TODO - make it smarter. Select node nearby player or go away from him if is too close.
+				navigation_state.target_navigation_graph_node= player_node_index;
+
+				var ust::array_view_imut</GlobalNavigationGraph::NodeIndex/> route=
+					route_searcher.PerformSearch(
+						map_data.global_navigation_graph,
+						navigation_state.current_navigation_graph_node,
+						navigation_state.target_navigation_graph_node,
+						lambda( GlobalNavigationGraph::NodeIndex node_index ) : bool
+						{
+							// TODO - limit number of visited nodes.
+							ust::ignore_unused( node_index );
+							return true;
+						} );
+
+				var ust::array_view_mut</GlobalNavigationGraph::NodeIndex/> saved_route= navigation_state.route;
+
+				saved_route.copy_from( route );
+
+				foreach( &mut n : saved_route.subrange_start( route.size() ) )
+				{
+					n= GlobalNavigationGraph::c_invalid_node_index;
+				}
+
+				// TODO - add a fallback for case if no route can be found.
 			}
 		}
 	}
 	else
 	{
+		// Perform movement between patrolling points if is not alarmed or is alarmed, but has not seen the player yet.
+		// It's necessary to do so for enemies with trigger-based spawn.
+
 		var bool mut need_to_recalculate_route= false;
 
 		if( navigation_state.target_navigation_graph_node == GlobalNavigationGraph::c_invalid_node_index )
