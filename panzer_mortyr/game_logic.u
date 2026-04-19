@@ -4546,10 +4546,7 @@ fn UpdateEntityMovementTarget(
 					map_data.global_navigation_graph.entity_navigation_infos[ size_type( entity.navigation_info_index ) ],
 					navigation_state.current_navigation_graph_node );
 
-			if( navigation_state.target_navigation_graph_node != GlobalNavigationGraph::c_invalid_node_index )
-			{
-				need_to_recalculate_route= true;
-			}
+			need_to_recalculate_route= true;
 		}
 
 		if( navigation_state.target_navigation_graph_node != GlobalNavigationGraph::c_invalid_node_index &&
@@ -4560,32 +4557,67 @@ fn UpdateEntityMovementTarget(
 		}
 
 		if( need_to_recalculate_route &&
-			navigation_state.current_navigation_graph_node != GlobalNavigationGraph::c_invalid_node_index &&
-			navigation_state.target_navigation_graph_node != GlobalNavigationGraph::c_invalid_node_index )
+			navigation_state.current_navigation_graph_node != GlobalNavigationGraph::c_invalid_node_index )
 		{
 			// Search for a route to target.
-			var ust::array_view_imut</GlobalNavigationGraph::NodeIndex/> route=
-				route_searcher.PerformSearch(
-					map_data.global_navigation_graph,
-					navigation_state.current_navigation_graph_node,
-					navigation_state.target_navigation_graph_node,
-					lambda( GlobalNavigationGraph::NodeIndex node_index ) : bool
+
+			var bool mut found_route= false;
+
+			auto node_processing_func=
+				lambda( GlobalNavigationGraph::NodeIndex node_index ) : bool
 					{
 						// TODO - limit number of visited nodes.
 						ust::ignore_unused( node_index );
 						return true;
-					} );
+					};
 
-			var ust::array_view_mut</GlobalNavigationGraph::NodeIndex/> saved_route= navigation_state.route;
-
-			saved_route.copy_from( route );
-
-			foreach( &mut n : saved_route.subrange_start( route.size() ) )
+			if( navigation_state.target_navigation_graph_node != GlobalNavigationGraph::c_invalid_node_index )
 			{
-				n= GlobalNavigationGraph::c_invalid_node_index;
+				var ust::array_view_imut</GlobalNavigationGraph::NodeIndex/> route=
+					route_searcher.PerformSearch(
+						map_data.global_navigation_graph,
+						navigation_state.current_navigation_graph_node,
+						navigation_state.target_navigation_graph_node,
+						node_processing_func );
+
+				if( !route.empty() )
+				{
+					SaveEntityRoute( route, navigation_state );
+					found_route= true;
+				}
 			}
 
-			// TODO - add a fallback for case if no route can be found.
+			if( !found_route )
+			{
+				// Can't find a route to the target patrolling point.
+				// Try selecting the next patrolling point as target and finding a route to it.
+
+				navigation_state.target_navigation_graph_node=
+					SelectNextPatrollingNode(
+						map_data.global_navigation_graph.entity_navigation_infos[ size_type( entity.navigation_info_index ) ],
+						navigation_state.target_navigation_graph_node );
+
+				if( navigation_state.target_navigation_graph_node != GlobalNavigationGraph::c_invalid_node_index )
+				{
+					var ust::array_view_imut</GlobalNavigationGraph::NodeIndex/> route=
+						route_searcher.PerformSearch(
+							map_data.global_navigation_graph,
+							navigation_state.current_navigation_graph_node,
+							navigation_state.target_navigation_graph_node,
+							node_processing_func );
+
+					if( !route.empty() )
+					{
+						SaveEntityRoute( route, navigation_state );
+						found_route= true;
+					}
+				}
+			}
+
+			if( !found_route )
+			{
+				// TODO - add some dumb fallback, like selecting a random nearby node as target.
+			}
 		}
 	}
 }
@@ -4682,6 +4714,19 @@ fn SelectNextPatrollingNode(
 	}
 
 	return GlobalNavigationGraph::c_invalid_node_index;
+}
+
+fn SaveEntityRoute(
+	ust::array_view_imut</GlobalNavigationGraph::NodeIndex/> route, EntityNavigationState &mut navigation_state )
+{
+	var ust::array_view_mut</GlobalNavigationGraph::NodeIndex/> dst_route= navigation_state.route;
+
+	dst_route.copy_from( route );
+
+	foreach( &mut n : dst_route.subrange_start( route.size() ) )
+	{
+		n= GlobalNavigationGraph::c_invalid_node_index;
+	}
 }
 
 struct DelayedShotAlarm
