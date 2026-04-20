@@ -4971,6 +4971,49 @@ fn UpdateEntityMovementTarget(
 			}
 		}
 	}
+
+	// A fallback for cases where no target can be selected and/or no route can be found.
+	// Just select a nearby navigation graph node based on current direction as target.
+	// In the worst case this will result in a straigh movement until next obstacle is reached, than turning will take place.
+	if( navigation_state.current_navigation_graph_node != GlobalNavigationGraph::c_invalid_node_index &&
+		navigation_state.target_navigation_graph_node == GlobalNavigationGraph::c_invalid_node_index )
+	{
+		var GlobalNavigationGraph::Node& current_node=
+			map_data.global_navigation_graph.nodes[ size_type( navigation_state.current_navigation_graph_node ) ];
+
+		var GlobalNavigationGraph::NodeIndex mut best_node_index= GlobalNavigationGraph::c_invalid_node_index;
+		var f32 mut best_angle_cos= ust::minus_inf</f32/>();
+
+		var Vec2f entity_direction_normalized= GetEntityDirectionNormalizedVector( entity );
+
+		foreach( &edge :
+			map_data.global_navigation_graph.node_output_edges.range().subrange(
+				size_type( current_node.first_output_edge ),
+				size_type( current_node.first_output_edge + current_node.num_output_edges ) ) )
+		{
+			var GlobalNavigationGraph::Node& node=
+				map_data.global_navigation_graph.nodes[ size_type( edge.dst_node_index ) ];
+
+			var Vec2f vector_to_node= ( node.position.xy() - entity.position.xy() );
+
+			var f32 vector_to_node_length= vector_to_node.Length();
+			if( vector_to_node_length > 0.0f )
+			{
+				var f32 angle_cos= vector_to_node.Dot( entity_direction_normalized ) / vector_to_node_length;
+				if( angle_cos > best_angle_cos )
+				{
+					best_node_index= edge.dst_node_index;
+					best_angle_cos= angle_cos;
+				}
+			}
+		}
+
+		if( best_node_index != GlobalNavigationGraph::c_invalid_node_index )
+		{
+			SaveEntityRoute( ust::single_element_array_view( best_node_index ), navigation_state );
+			navigation_state.target_navigation_graph_node= best_node_index;
+		}
+	}
 }
 
 fn GetPlayerPointForEntityVisibilityTrace( Vec3f& player_position, f32 crouching_phase ) : Vec3f
