@@ -4441,6 +4441,8 @@ fn UpdateEntityMovementTarget(
 			navigation_state.current_navigation_graph_node= GlobalNavigationGraph::c_invalid_node_index;
 		}
 
+		// TODO - implement target selection in panic mode.
+
 		if( entity.player_is_in_sight )
 		{
 			var f32 player_crouching_phase= 0.0f; // For line of sight check assume that the player is staying.
@@ -4456,10 +4458,12 @@ fn UpdateEntityMovementTarget(
 			var f32 good_enough_square_distance_max=
 				distance_ranges.good_enough.distance_max * distance_ranges.good_enough.distance_max;
 
+			var bool mut navigation_target_needs_update= false;
+
 			if( navigation_state.target_navigation_graph_node != GlobalNavigationGraph::c_invalid_node_index )
 			{
-				// Check if current target node is good enough. If so - preserve it, otherwise reset it.
-				// Also check if player is still visible from it.
+				// Check if current target node is good enough and if the player is still visible from it.
+				// If it's not the case - request navigation target update.
 
 				var GlobalNavigationGraph::Node& node=
 					map_data.global_navigation_graph.nodes[ size_type( navigation_state.target_navigation_graph_node ) ];
@@ -4492,20 +4496,22 @@ fn UpdateEntityMovementTarget(
 							if( trace_result.distance < 1.0f )
 							{
 								// Player is no longer visible from this target.
-								// Reset it to choose a better target.
-								navigation_state.target_navigation_graph_node= GlobalNavigationGraph::c_invalid_node_index;
+								navigation_target_needs_update= true;
 							}
 						}
 					}
 				}
 				else
 				{
-					// Too far away or too close. Reset current target and select a better one.
-					navigation_state.target_navigation_graph_node= GlobalNavigationGraph::c_invalid_node_index;
+					navigation_target_needs_update= true;
 				}
 			}
+			else
+			{
+				navigation_target_needs_update= true;
+			}
 
-			if( navigation_state.target_navigation_graph_node == GlobalNavigationGraph::c_invalid_node_index &&
+			if( navigation_target_needs_update &&
 				navigation_state.current_navigation_graph_node != GlobalNavigationGraph::c_invalid_node_index )
 			{
 				// Need a new target and a route to it.
@@ -4694,8 +4700,6 @@ fn UpdateEntityMovementTarget(
 							navigation_state.target_navigation_graph_node= route[ end_index ];
 							SaveEntityRoute( route.subrange_end( end_index + 1s ), navigation_state );
 						}
-
-						// TODO - add a fallback for case if no route can be found.
 					}
 				}
 				else
@@ -4854,7 +4858,7 @@ fn UpdateEntityMovementTarget(
 		}
 		else
 		{
-			// If the player isn't visible, just go to the last position where it was seen.
+			// If the player isn't visible, just go to the last position where he was seen.
 			if_var( player_node_index : FindNearestNavigationGraphNode( map_data, broken_quad_bits, player_position ) )
 			{
 				if( navigation_state.target_navigation_graph_node != player_node_index ||
@@ -4877,8 +4881,6 @@ fn UpdateEntityMovementTarget(
 						SaveEntityRoute( route, navigation_state );
 						navigation_state.target_navigation_graph_node= route.back();
 					}
-
-					// TODO - add some fallback if failed to find a target node.
 				}
 			}
 		}
