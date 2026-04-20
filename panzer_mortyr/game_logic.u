@@ -4729,27 +4729,58 @@ fn UpdateEntityMovementTarget(
 
 							var GlobalNavigationGraph::Node& node=
 									map_data.global_navigation_graph.nodes[ size_type( node_index ) ];
-								// TODO - use distance in XY plane?
-								var f32 node_square_distance_to_player= ( node.position - player_position ).SquareLength();
+							// TODO - use distance in XY plane?
+							var f32 node_square_distance_to_player= ( player_position - node.position ).SquareLength();
 
-								if( node_square_distance_to_player >= optimal_square_distance_min &&
-									node_square_distance_to_player <= optimal_square_distance_max )
+							if( node_square_distance_to_player >= good_enough_square_distance_min &&
+								node_square_distance_to_player <= good_enough_square_distance_max )
+							{
+								// Check if moving from current position to this node in a straight line doesn't cause to walk to the player too close.
+
+								var Vec3f vec_from_entity_to_node= node.position - entity.position;
+								var Vec3f vec_from_node_to_player= player_position - node.position;
+								var Vec3f vec_from_entity_to_player= player_position - entity.position;
+
+								var bool mut too_close= false;
+
+								var bool projection_is_within_line=
+									vec_from_entity_to_node.Dot( vec_from_node_to_player ) <= 0.0f &&
+									vec_from_entity_to_node.Dot( vec_from_entity_to_player ) >= 0.0f;
+
+								if( projection_is_within_line )
 								{
-									if( num_nodes_collected[0] < max_nodes_collected )
+									var f32 square_distance_from_entity_to_node= vec_from_entity_to_node.SquareLength();
+									if( square_distance_from_entity_to_node > 0.0f )
 									{
-										nodes_collected[0][ num_nodes_collected[0] ]= node_index;
-										++num_nodes_collected[0];
+										var f32 closest_square_distance=
+											vec_from_node_to_player.Cross( vec_from_entity_to_player ).SquareLength() /
+											square_distance_from_entity_to_node;
+
+										too_close= closest_square_distance < good_enough_square_distance_min;
 									}
 								}
-								else if( node_square_distance_to_player >= good_enough_square_distance_min &&
-									node_square_distance_to_player >= good_enough_square_distance_max )
+
+								if( !too_close )
 								{
-									if( num_nodes_collected[1] < max_nodes_collected )
+									if( node_square_distance_to_player >= optimal_square_distance_min &&
+										node_square_distance_to_player <= optimal_square_distance_max )
 									{
-										nodes_collected[1][ num_nodes_collected[1] ]= node_index;
-										++num_nodes_collected[1];
+										if( num_nodes_collected[0] < max_nodes_collected )
+										{
+											nodes_collected[0][ num_nodes_collected[0] ]= node_index;
+											++num_nodes_collected[0];
+										}
+									}
+									else
+									{
+										if( num_nodes_collected[1] < max_nodes_collected )
+										{
+											nodes_collected[1][ num_nodes_collected[1] ]= node_index;
+											++num_nodes_collected[1];
+										}
 									}
 								}
+							}
 
 							return num_nodes_visited < max_nodes_to_visit;
 						} );
@@ -4846,6 +4877,8 @@ fn UpdateEntityMovementTarget(
 						SaveEntityRoute( route, navigation_state );
 						navigation_state.target_navigation_graph_node= route.back();
 					}
+
+					// TODO - add some fallback if failed to find a target node.
 				}
 			}
 		}
