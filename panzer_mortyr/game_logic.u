@@ -4599,8 +4599,10 @@ fn UpdateEntityMovementTarget(
 					}
 				}
 			}
-			else
+			else if( square_distance_to_player > good_enough_square_distance_max )
 			{
+				// Is too far away from the player. Search a direct route towards him.
+
 				if_var( player_node_index : FindNearestNavigationGraphNode( map_data, broken_quad_bits, player_position ) )
 				{
 					var ust::array_view_imut</GlobalNavigationGraph::NodeIndex/> route=
@@ -4700,6 +4702,80 @@ fn UpdateEntityMovementTarget(
 					}
 
 					// TODO - add a fallback for case if no route can be found.
+				}
+			}
+			else
+			{
+				// Is in good enough distance to the player.
+				// Enumerate nearby nodes.
+
+				var size_type mut num_nodes_visited= 0s, max_nodes_to_visit= 48s;
+
+				var size_type max_nodes_collected= 16s;
+
+				var [ [ GlobalNavigationGraph::NodeIndex, max_nodes_collected ], 2 ] mut nodes_collected
+					[ [ GlobalNavigationGraph::c_invalid_node_index ... ] ... ]; // Optimal and good enough indices.
+
+				var [ size_type, 2 ] mut num_nodes_collected[ 0s ... ]; // Optimal and good enough indices.
+
+				navigation_graph_observer.EnumerateOutputNodes(
+					map_data.global_navigation_graph,
+					navigation_state.current_navigation_graph_node,
+					lambda[&]( GlobalNavigationGraph::NodeIndex node_index, u32 graph_distance ) : bool
+					{
+						ust::ignore_unused( graph_distance ); // TODO - use it?
+
+						++num_nodes_visited;
+
+						if( node_index == navigation_state.current_navigation_graph_node )
+						{
+							return true;
+						}
+
+						var GlobalNavigationGraph::Node& node=
+								map_data.global_navigation_graph.nodes[ size_type( node_index ) ];
+							// TODO - use distance in XY plane?
+							var f32 node_square_distance_to_player= ( node.position - player_position ).SquareLength();
+
+							if( node_square_distance_to_player >= optimal_square_distance_min &&
+								node_square_distance_to_player <= optimal_square_distance_max )
+							{
+								if( num_nodes_collected[0] < max_nodes_collected )
+								{
+									nodes_collected[0][ num_nodes_collected[0] ]= node_index;
+									++num_nodes_collected[0];
+								}
+							}
+							else if( node_square_distance_to_player >= good_enough_square_distance_min &&
+								node_square_distance_to_player >= good_enough_square_distance_max )
+							{
+								if( num_nodes_collected[1] < max_nodes_collected )
+								{
+									nodes_collected[1][ num_nodes_collected[1] ]= node_index;
+									++num_nodes_collected[1];
+								}
+							}
+
+						return num_nodes_visited < max_nodes_to_visit;
+					} );
+
+				for( auto mut range_index= 0s; range_index < 2s; ++range_index ) label select_movement_target_loop
+				{
+					auto& range_nodes= nodes_collected[ range_index ];
+					var size_type num_nodes= num_nodes_collected[ range_index ];
+
+					for( auto mut i= 0s; i < num_nodes; ++i )
+					{
+						// TODO - perform random schuffle here.
+						var GlobalNavigationGraph::NodeIndex node_index= range_nodes[i];
+
+						ust::ignore_unused(node_index);
+
+						// TODO - check if the player is visible from the position of this node.
+						// If so - select it.
+
+						break label select_movement_target_loop;
+					}
 				}
 			}
 		}
