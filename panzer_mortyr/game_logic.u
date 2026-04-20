@@ -4708,6 +4708,7 @@ fn UpdateEntityMovementTarget(
 			{
 				// Is in good enough distance to the player.
 				// Enumerate nearby nodes.
+				// Collect nodes in optimal distance and in good enough distance.
 
 				var size_type mut num_nodes_visited= 0s, max_nodes_to_visit= 48s;
 
@@ -4759,22 +4760,68 @@ fn UpdateEntityMovementTarget(
 						return num_nodes_visited < max_nodes_to_visit;
 					} );
 
+				// Proccess first optimal nodes, then good enough.
+				// On each step select a random node from the list.
+				// Check if this node if the player is visible from the position of this node.
+
+				var GlobalNavigationGraph::NodeIndex mut new_navigation_target_node=
+					GlobalNavigationGraph::c_invalid_node_index;
+
 				for( auto mut range_index= 0s; range_index < 2s; ++range_index ) label select_movement_target_loop
 				{
-					auto& range_nodes= nodes_collected[ range_index ];
+					auto &mut range_nodes= nodes_collected[ range_index ];
 					var size_type num_nodes= num_nodes_collected[ range_index ];
 
 					for( auto mut i= 0s; i < num_nodes; ++i )
 					{
-						// TODO - perform random schuffle here.
+						// Select random point from remaining candidates.
+						{
+							var size_type random_index= i + size_type( random.Next() ) % ( num_nodes - i );
+							auto prev= range_nodes[i];
+							range_nodes[i]= range_nodes[ random_index ];
+							range_nodes[ random_index ]= prev;
+						}
+
 						var GlobalNavigationGraph::NodeIndex node_index= range_nodes[i];
 
-						ust::ignore_unused(node_index);
+						var GlobalNavigationGraph::Node& node=
+								map_data.global_navigation_graph.nodes[ size_type( node_index ) ];
 
-						// TODO - check if the player is visible from the position of this node.
-						// If so - select it.
+						var Vec3f trace_start=
+							GetPlayerPointForEntityVisibilityTrace( player_position, player_crouching_phase );
 
-						break label select_movement_target_loop;
+						var Vec3f trace_end= GetEntityPointForPlayerVisibilityTrace( node.position, operation.animation );
+
+						if( trace_end != trace_start )
+						{
+							var Vec3f trace_vector= trace_end - trace_start;
+							auto trace_result=
+								LineTrace(
+									map_data,
+									broken_quad_bits,
+									dynamic_cluster_colliders,
+									trace_start,
+									trace_vector );
+
+							if( trace_result.empty() || trace_result.try_deref().distance >= 1.0f )
+							{
+								new_navigation_target_node= node_index;
+								break label select_movement_target_loop;
+							}
+						}
+					}
+				}
+
+				if( new_navigation_target_node != GlobalNavigationGraph::c_invalid_node_index )
+				{
+					// Reconstruct a route after nodes enumeration.
+					var ust::array_view_imut</GlobalNavigationGraph::NodeIndex/> route=
+						navigation_graph_observer.ReconstructRoute( new_navigation_target_node );
+
+					if( !route.empty() )
+					{
+						SaveEntityRoute( route, navigation_state );
+						navigation_state.target_navigation_graph_node= new_navigation_target_node;
 					}
 				}
 			}
