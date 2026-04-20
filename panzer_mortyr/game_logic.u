@@ -4444,10 +4444,6 @@ fn UpdateEntityMovementTarget(
 		var f32 good_enough_square_distance_max=
 			distance_ranges.good_enough.distance_max * distance_ranges.good_enough.distance_max;
 
-		// TODO - use it.
-		ust::ignore_unused( optimal_square_distance_min );
-		ust::ignore_unused( optimal_square_distance_max );
-
 		if( entity.player_is_in_sight )
 		{
 			if( navigation_state.target_navigation_graph_node != GlobalNavigationGraph::c_invalid_node_index )
@@ -4607,15 +4603,11 @@ fn UpdateEntityMovementTarget(
 			{
 				if_var( player_node_index : FindNearestNavigationGraphNode( map_data, broken_quad_bits, player_position ) )
 				{
-					// For now just set player position as movement target and search a route to it.
-					// TODO - make it smarter. Select node nearby player or go away from him if is too close.
-					navigation_state.target_navigation_graph_node= player_node_index;
-
 					var ust::array_view_imut</GlobalNavigationGraph::NodeIndex/> route=
 						route_searcher.PerformSearch(
 							map_data.global_navigation_graph,
 							navigation_state.current_navigation_graph_node,
-							navigation_state.target_navigation_graph_node,
+							player_node_index,
 							lambda( GlobalNavigationGraph::NodeIndex node_index ) : bool
 							{
 								// TODO - limit number of visited nodes.
@@ -4623,13 +4615,88 @@ fn UpdateEntityMovementTarget(
 								return true;
 							} );
 
-					var ust::array_view_mut</GlobalNavigationGraph::NodeIndex/> saved_route= navigation_state.route;
-
-					saved_route.copy_from( route );
-
-					foreach( &mut n : saved_route.subrange_start( route.size() ) )
+					if( !route.empty() )
 					{
-						n= GlobalNavigationGraph::c_invalid_node_index;
+						// Found a route to the player.
+						// Search for nodes in this route which are in optimal and good enough distance to the player.
+
+						// TODO - fix border conditions. In any cost avoid selecting a node which is too close to the player.
+
+						var size_type max_route_indices= 16s;
+						var [ [ u16, max_route_indices ], 2 ] mut route_indices[ [ ~0u16 ... ] ... ]; // Optimal and good enough indices.
+						var [ size_type, 2 ] mut num_indices[ 0s ... ]; // Optimal and good enough indices.
+
+						for( auto mut i= 0s; i < route.size(); ++i )
+						{
+							var GlobalNavigationGraph::Node& node=
+								map_data.global_navigation_graph.nodes[ size_type( route[i] ) ];
+							// TODO - use distance in XY plane?
+							var f32 node_square_distance_to_player= ( node.position - player_position ).SquareLength();
+
+							if( node_square_distance_to_player >= optimal_square_distance_min &&
+								node_square_distance_to_player <= optimal_square_distance_max )
+							{
+								if( num_indices[0] < max_route_indices )
+								{
+									route_indices[0][ num_indices[0] ]= u16(i);
+									++num_indices[0];
+								}
+							}
+							else if( node_square_distance_to_player >= good_enough_square_distance_min &&
+								node_square_distance_to_player >= good_enough_square_distance_max )
+							{
+								if( num_indices[1] < max_route_indices )
+								{
+									route_indices[1][ num_indices[1] ]= u16(i);
+									++num_indices[1];
+								}
+							}
+						}
+
+						var size_type mut end_index= route.size() - 1s;
+
+						// Check optimal nodes in the route, then good enough ones.
+						// If the player can be seen from the position of this node - select it as target.
+						for( auto mut range_index= 0s; range_index < 2s; ++range_index ) label select_movement_target_loop
+						{
+							auto& range_route_indices= route_indices[ range_index ];
+							var size_type range_num_indices= num_indices[ range_index ];
+
+							for( auto mut i= 0s; i < range_num_indices; ++i )
+							{
+								// Check if the player is visible from the position of this node.
+
+								var size_type index( range_route_indices[i] );
+								var GlobalNavigationGraph::Node& node=
+									map_data.global_navigation_graph.nodes[ size_type( route[index] ) ];
+
+								var Vec3f trace_start=
+									GetPlayerPointForEntityVisibilityTrace( player_position, player_crouching_phase );
+
+								var Vec3f trace_end= GetEntityPointForPlayerVisibilityTrace( node.position, operation.animation );
+
+								if( trace_end != trace_start )
+								{
+									var Vec3f trace_vector= trace_end - trace_start;
+									auto trace_result=
+										LineTrace(
+											map_data,
+											broken_quad_bits,
+											dynamic_cluster_colliders,
+											trace_start,
+											trace_vector );
+
+									if( trace_result.empty() || trace_result.try_deref().distance >= 1.0f )
+									{
+										end_index= index;
+										break label select_movement_target_loop;
+									}
+								}
+							}
+						}
+
+						navigation_state.target_navigation_graph_node= route[ end_index ];
+						SaveEntityRoute( route.subrange_end( end_index + 1s ), navigation_state );
 					}
 
 					// TODO - add a fallback for case if no route can be found.
