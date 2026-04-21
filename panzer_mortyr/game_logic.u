@@ -4441,22 +4441,144 @@ fn UpdateEntityMovementTarget(
 			navigation_state.current_navigation_graph_node= GlobalNavigationGraph::c_invalid_node_index;
 		}
 
-		// TODO - implement target selection in panic mode.
+		var EntityDistanceRanges distance_ranges= GetEntityDistanceRanges( entity_description );
 
-		if( entity.player_is_in_sight )
+		var f32 optimal_square_distance_min=
+			distance_ranges.optimal.distance_min * distance_ranges.optimal.distance_min;
+		var f32 optimal_square_distance_max=
+			distance_ranges.optimal.distance_max * distance_ranges.optimal.distance_max;
+		var f32 good_enough_square_distance_min=
+			distance_ranges.good_enough.distance_min * distance_ranges.good_enough.distance_min;
+		var f32 good_enough_square_distance_max=
+			distance_ranges.good_enough.distance_max * distance_ranges.good_enough.distance_max;
+
+		var bool is_in_panic_mode=
+				 // First condition is necessary to disable out-of-ammo panic if panic is disabled.
+				entity_description.panic > 0u &&
+				// TODO - make sure <= should be used here instead of <.
+				( entity.energy <= entity_description.panic || entity.ammo == 0u );
+
+		if( is_in_panic_mode )
+		{
+			var f32 min_square_distance_for_panic_mode= good_enough_square_distance_max;
+
+			var bool mut navigation_target_needs_update= false;
+
+			if( navigation_state.target_navigation_graph_node != GlobalNavigationGraph::c_invalid_node_index )
+			{
+				// Check if current target is close enough to the player.
+				// If so - request navigation target recalculation.
+
+				var GlobalNavigationGraph::Node& node=
+					map_data.global_navigation_graph.nodes[ size_type( navigation_state.target_navigation_graph_node ) ];
+
+				// TODO - use distance in XY plane?
+				var f32 square_distance= ( node.position - player_position ).SquareLength();
+
+				if( square_distance < min_square_distance_for_panic_mode )
+				{
+					navigation_target_needs_update= true;
+				}
+			}
+			else
+			{
+				navigation_target_needs_update= true;
+			}
+
+			if( navigation_target_needs_update &&
+				navigation_state.current_navigation_graph_node != GlobalNavigationGraph::c_invalid_node_index )
+			{
+				// TODO - use distance in XY plane?
+				var f32 square_distance_to_player= ( player_position - entity.position ).SquareLength();
+
+				if( square_distance_to_player < min_square_distance_for_panic_mode )
+				{
+					// Is way to close to the player.
+					// Enumerate nearby nodes to find a node which isn't so close.
+
+					var GlobalNavigationGraph::NodeIndex mut new_navigation_target_node=
+						GlobalNavigationGraph::c_invalid_node_index;
+
+					var size_type mut num_nodes_visited= 0s;
+
+					navigation_graph_observer.EnumerateOutputNodes(
+						map_data.global_navigation_graph,
+						navigation_state.current_navigation_graph_node,
+						lambda[&]( GlobalNavigationGraph::NodeIndex node_index, u32 graph_distance ) : bool
+						{
+							ust::ignore_unused(graph_distance);
+
+							var GlobalNavigationGraph::Node& node=
+								map_data.global_navigation_graph.nodes[ size_type( node_index ) ];
+
+							// TODO - use distance in XY plane?
+							var f32 square_distance_from_node_to_player=
+								( node.position - player_position ).SquareLength();
+
+							if( square_distance_from_node_to_player >= min_square_distance_for_panic_mode )
+							{
+								// Found a node which is far enough from the player.
+								// Select is as target and end the search.
+								new_navigation_target_node= node_index;
+								return false;
+							}
+
+							++num_nodes_visited;
+							return num_nodes_visited < EntityNavigationConstants::c_max_nodes_to_visit_for_panic_mode_search;
+						} );
+
+					if( new_navigation_target_node != GlobalNavigationGraph::c_invalid_node_index )
+					{
+						// Reconstruct a route after nodes enumeration.
+						var ust::array_view_imut</GlobalNavigationGraph::NodeIndex/> route=
+							navigation_graph_observer.ReconstructRoute( new_navigation_target_node );
+
+						if( !route.empty() )
+						{
+							SaveEntityRoute( route, navigation_state );
+							navigation_state.target_navigation_graph_node= new_navigation_target_node;
+						}
+					}
+				}
+				else
+				{
+					// Is reasonable far away from the player.
+					// Just go to the next node with maximum distance to the player.
+
+					var GlobalNavigationGraph::Node& current_node=
+						map_data.global_navigation_graph.nodes[ size_type( navigation_state.current_navigation_graph_node ) ];
+
+					var GlobalNavigationGraph::NodeIndex mut best_node_index= GlobalNavigationGraph::c_invalid_node_index;
+					var f32 mut largest_square_distance_to_player= ust::minus_inf</f32/>();
+
+					foreach( &edge :
+						map_data.global_navigation_graph.node_output_edges.range().subrange(
+							size_type( current_node.first_output_edge ),
+							size_type( current_node.first_output_edge + current_node.num_output_edges ) ) )
+					{
+						var GlobalNavigationGraph::Node& node=
+							map_data.global_navigation_graph.nodes[ size_type( edge.dst_node_index ) ];
+
+						// TODO - use distance in XY plane?
+						var f32 node_square_distance_to_player= ( player_position - node.position ).SquareLength();
+						if( node_square_distance_to_player > largest_square_distance_to_player )
+						{
+							best_node_index= edge.dst_node_index;
+							largest_square_distance_to_player= node_square_distance_to_player;
+						}
+					}
+
+					if( best_node_index != GlobalNavigationGraph::c_invalid_node_index )
+					{
+						SaveEntityRoute( ust::single_element_array_view( best_node_index ), navigation_state );
+						navigation_state.target_navigation_graph_node= best_node_index;
+					}
+				}
+			}
+		}
+		else if( entity.player_is_in_sight )
 		{
 			var f32 player_crouching_phase= 0.0f; // For line of sight check assume that the player is staying.
-
-			var EntityDistanceRanges distance_ranges= GetEntityDistanceRanges( entity_description );
-
-			var f32 optimal_square_distance_min=
-				distance_ranges.optimal.distance_min * distance_ranges.optimal.distance_min;
-			var f32 optimal_square_distance_max=
-				distance_ranges.optimal.distance_max * distance_ranges.optimal.distance_max;
-			var f32 good_enough_square_distance_min=
-				distance_ranges.good_enough.distance_min * distance_ranges.good_enough.distance_min;
-			var f32 good_enough_square_distance_max=
-				distance_ranges.good_enough.distance_max * distance_ranges.good_enough.distance_max;
 
 			var bool mut navigation_target_needs_update= false;
 
