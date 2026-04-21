@@ -4413,7 +4413,10 @@ fn UpdateEntityMovementTarget(
 	if( navigation_state.current_navigation_graph_node == GlobalNavigationGraph::c_invalid_node_index )
 	{
 		// Attach to the navigation graph if has no current node.
-		AttachEntityToNavigationGraph( map_data, broken_quad_bits, entity, navigation_state );
+		if_var( node_index : FindNearestNavigationGraphNode( map_data, broken_quad_bits, entity.position ) )
+		{
+			navigation_state.current_navigation_graph_node= node_index;
+		}
 
 		if( navigation_state.current_navigation_graph_node == GlobalNavigationGraph::c_invalid_node_index )
 		{
@@ -4421,8 +4424,27 @@ fn UpdateEntityMovementTarget(
 			return;
 		}
 	}
+	else
+	{
+		// Re-attach to the navigation graph if is too far away from the current navigation graph node.
+		// It's necessary for non-graph-based movement modes (like movement towards the player).
+		// It's also needed for rare cases if an enemy has fallen down.
 
-	ust::ignore_unused( random );
+		var GlobalNavigationGraph::Node& current_node=
+			map_data.global_navigation_graph.nodes[ size_type( navigation_state.current_navigation_graph_node ) ];
+
+		var f32 max_distance= 4.0f * f32( map_data.global_navigation_graph.nodes_spacing );
+
+		var f32 square_distance= ( current_node.position - entity.position ).SquareLength();
+
+		if( square_distance > max_distance * max_distance )
+		{
+			if_var( node_index : FindNearestNavigationGraphNode( map_data, broken_quad_bits, entity.position ) )
+			{
+				navigation_state.current_navigation_graph_node= node_index;
+			}
+		}
+	}
 
 	if( navigation_state.target_navigation_graph_node != GlobalNavigationGraph::c_invalid_node_index &&
 		navigation_state.current_navigation_graph_node == navigation_state.target_navigation_graph_node )
@@ -5812,12 +5834,6 @@ fn PerformEntityOperationControlBasedMovement(
 			// TODO - select next patrolling point for sky decorations.
 		}
 	}
-
-	if( operation_control.functioning_mode == EntitiesDescription::OperationControl::c_functioning_mode_move_towards_player &&
-		base_move_distance > 0.0f )
-	{
-		// TODO - reattach to the navigation graph.
-	}
 }
 
 fn PerformEntityObjectMovement( EntityState &mut entity, EntitiesDescription::ObjectMovement& object_movement )
@@ -5876,18 +5892,6 @@ fn PerformEntityRotationForShot( EntityState &mut entity, EntitiesDescription::R
 	else
 	{
 		entity.azimuth= target_azimuth;
-	}
-}
-
-fn AttachEntityToNavigationGraph(
-	GameMapData& map_data,
-	BitArrayView broken_quad_bits,
-	EntityState& entity,
-	EntityNavigationState &mut entity_navigation_state )
-{
-	if_var( node_index : FindNearestNavigationGraphNode( map_data, broken_quad_bits, entity.position ) )
-	{
-		entity_navigation_state.current_navigation_graph_node= node_index;
 	}
 }
 
