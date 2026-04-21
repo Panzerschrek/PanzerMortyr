@@ -19,7 +19,8 @@ fn CreateNewMapGameState(
 	var GameState mut game_state
 	{
 		.skill= skill,
-		.step_index= 0u,
+		// Use pretty large step index to be able to use 0 for representing some time step in the past.
+		.step_index= 4096u,
 		.player
 		{
 			.position= Vec3f::MakeZero(),
@@ -142,6 +143,7 @@ fn CreateNewMapGameState(
 		zpoz_data.entity_navigation_infos.size(),
 		EntityNavigationState
 		{
+			.last_route_search_step_index= 0u,
 			.target_navigation_graph_node= GlobalNavigationGraph::c_invalid_node_index,
 			.current_navigation_graph_node= GlobalNavigationGraph::c_invalid_node_index,
 			.route[ GlobalNavigationGraph::c_invalid_node_index ... ],
@@ -1779,7 +1781,8 @@ fn ProcessEntitiesLogicStep(
 					entity_description,
 					entity,
 					entity_navigation_state,
-					game_state.random );
+					game_state.random,
+					game_state.step_index );
 			}
 
 			if( entity.player_is_in_sight )
@@ -4375,7 +4378,8 @@ fn UpdateEntityMovementTarget(
 	EntitiesDescription::EntityDescription& entity_description,
 	EntityState& entity,
 	EntityNavigationState &mut navigation_state,
-	PseudoRandomGenerator& mut random )
+	PseudoRandomGenerator& mut random,
+	u32 current_step_index )
 {
 	if( entity.energy == 0u )
 	{
@@ -4526,7 +4530,9 @@ fn UpdateEntityMovementTarget(
 					SaveEntityRoute( ust::single_element_array_view( best_node_index ), navigation_state );
 					navigation_state.target_navigation_graph_node= best_node_index;
 				}
-				else
+				else if(
+					current_step_index >=
+					navigation_state.last_route_search_step_index + EntityNavigationConstants::c_min_steps_between_route_searches )
 				{
 					// A fallback for cases when an enemy is pushed into a corner with no way to move away from the player.
 					// Perform more complex nearby nodes enumeration to find a way from this corner.
@@ -4564,6 +4570,9 @@ fn UpdateEntityMovementTarget(
 							++num_nodes_visited;
 							return num_nodes_visited < EntityNavigationConstants::c_max_nodes_to_visit_for_panic_mode_search;
 						} );
+
+					// Remember time point at which a route search/nodes enumeration for this entity was executed.
+					navigation_state.last_route_search_step_index= current_step_index;
 
 					if( new_navigation_target_node != GlobalNavigationGraph::c_invalid_node_index )
 					{
@@ -4637,7 +4646,9 @@ fn UpdateEntityMovementTarget(
 				navigation_target_needs_update= true;
 			}
 
-			if( navigation_target_needs_update )
+			if( navigation_target_needs_update &&
+					current_step_index >=
+					navigation_state.last_route_search_step_index + EntityNavigationConstants::c_min_steps_between_route_searches  )
 			{
 				// Need a new target and a route to it.
 
@@ -4711,6 +4722,9 @@ fn UpdateEntityMovementTarget(
 							return true;
 						} );
 
+					// Remember time point at which a route search/nodes enumeration for this entity was executed.
+					navigation_state.last_route_search_step_index= current_step_index;
+
 					if( new_navigation_target_node != GlobalNavigationGraph::c_invalid_node_index )
 					{
 						// Reconstruct a route after nodes enumeration.
@@ -4741,6 +4755,9 @@ fn UpdateEntityMovementTarget(
 									++num_nodes_visited;
 									return num_nodes_visited < EntityNavigationConstants::c_max_nodes_to_visit_for_direct_route_search;
 								} );
+
+						// Remember time point at which a route search/nodes enumeration for this entity was executed.
+						navigation_state.last_route_search_step_index= current_step_index;
 
 						if( !route.empty() )
 						{
@@ -4923,6 +4940,9 @@ fn UpdateEntityMovementTarget(
 							return num_nodes_visited < EntityNavigationConstants::c_max_nodes_to_visit_for_nearby_target_search;
 						} );
 
+					// Remember time point at which a route search/nodes enumeration for this entity was executed.
+					navigation_state.last_route_search_step_index= current_step_index;
+
 					// Proccess first optimal nodes, then good enough.
 					// On each step select a random node from the list.
 					// Check if this node if the player is visible from the position of this node.
@@ -4993,31 +5013,39 @@ fn UpdateEntityMovementTarget(
 		else
 		{
 			// If the player isn't visible, just go to the last position where he was seen.
-			if_var( player_node_index : FindNearestNavigationGraphNode( map_data, broken_quad_bits, player_position ) )
-			{
-				if( navigation_state.target_navigation_graph_node != player_node_index ||
-					navigation_state.route[0] == GlobalNavigationGraph::c_invalid_node_index )
-				{
-					var ust::array_view_imut</GlobalNavigationGraph::NodeIndex/> route=
-						route_searcher.PerformSearch(
-							map_data.global_navigation_graph,
-							navigation_state.current_navigation_graph_node,
-							player_node_index,
-							lambda[num_nodes_visited= 0s] mut ( GlobalNavigationGraph::NodeIndex node_index ) : bool
-							{
-								ust::ignore_unused( node_index );
-								++num_nodes_visited;
-								return num_nodes_visited < EntityNavigationConstants::c_max_nodes_to_visit_for_direct_route_search;
-							} );
 
-					if( !route.empty() )
+			if( current_step_index >=
+				navigation_state.last_route_search_step_index + EntityNavigationConstants::c_min_steps_between_route_searches  )
+			{
+				if_var( player_node_index : FindNearestNavigationGraphNode( map_data, broken_quad_bits, player_position ) )
+				{
+					if( navigation_state.target_navigation_graph_node != player_node_index ||
+						navigation_state.route[0] == GlobalNavigationGraph::c_invalid_node_index )
 					{
-						SaveEntityRoute( route, navigation_state );
-						navigation_state.target_navigation_graph_node= route.back();
-					}
-					else
-					{
-						// If no route is found, just use the default fallback for the target (calculated later).
+						var ust::array_view_imut</GlobalNavigationGraph::NodeIndex/> route=
+							route_searcher.PerformSearch(
+								map_data.global_navigation_graph,
+								navigation_state.current_navigation_graph_node,
+								player_node_index,
+								lambda[num_nodes_visited= 0s] mut ( GlobalNavigationGraph::NodeIndex node_index ) : bool
+								{
+									ust::ignore_unused( node_index );
+									++num_nodes_visited;
+									return num_nodes_visited < EntityNavigationConstants::c_max_nodes_to_visit_for_direct_route_search;
+								} );
+
+						// Remember time point at which a route search/nodes enumeration for this entity was executed.
+						navigation_state.last_route_search_step_index= current_step_index;
+
+						if( !route.empty() )
+						{
+							SaveEntityRoute( route, navigation_state );
+							navigation_state.target_navigation_graph_node= route.back();
+						}
+						else
+						{
+							// If no route is found, just use the default fallback for the target (calculated later).
+						}
 					}
 				}
 			}
@@ -5047,7 +5075,9 @@ fn UpdateEntityMovementTarget(
 			need_to_recalculate_route= true;
 		}
 
-		if( need_to_recalculate_route )
+		if( need_to_recalculate_route &&
+				current_step_index >=
+				navigation_state.last_route_search_step_index + EntityNavigationConstants::c_min_steps_between_patrolling_route_searches )
 		{
 			// Search for a route to target.
 
@@ -5069,6 +5099,9 @@ fn UpdateEntityMovementTarget(
 						navigation_state.current_navigation_graph_node,
 						navigation_state.target_navigation_graph_node,
 						node_processing_func );
+
+				// Remember time point at which a route search/nodes enumeration for this entity was executed.
+				navigation_state.last_route_search_step_index= current_step_index;
 
 				if( !route.empty() )
 				{
@@ -5095,6 +5128,9 @@ fn UpdateEntityMovementTarget(
 							navigation_state.current_navigation_graph_node,
 							navigation_state.target_navigation_graph_node,
 							node_processing_func );
+
+					// Remember time point at which a route search/nodes enumeration for this entity was executed.
+					navigation_state.last_route_search_step_index= current_step_index;
 
 					if( !route.empty() )
 					{
