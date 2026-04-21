@@ -4488,13 +4488,45 @@ fn UpdateEntityMovementTarget(
 			if( navigation_target_needs_update &&
 				navigation_state.current_navigation_graph_node != GlobalNavigationGraph::c_invalid_node_index )
 			{
+				// First check nodes connected to current one.
+				// Select a node with the greatest distance to the player.
+
 				// TODO - use distance in XY plane?
 				var f32 square_distance_to_player= ( player_position - entity.position ).SquareLength();
 
-				if( square_distance_to_player < min_square_distance_for_panic_mode )
+				var GlobalNavigationGraph::Node& current_node=
+					map_data.global_navigation_graph.nodes[ size_type( navigation_state.current_navigation_graph_node ) ];
+
+				var GlobalNavigationGraph::NodeIndex mut best_node_index= GlobalNavigationGraph::c_invalid_node_index;
+				var f32 mut largest_square_distance_to_player= ust::minus_inf</f32/>();
+
+				foreach( &edge :
+					map_data.global_navigation_graph.node_output_edges.range().subrange(
+						size_type( current_node.first_output_edge ),
+						size_type( current_node.first_output_edge + current_node.num_output_edges ) ) )
 				{
-					// Is way to close to the player.
-					// Enumerate nearby nodes to find a node which isn't so close.
+					var GlobalNavigationGraph::Node& node=
+						map_data.global_navigation_graph.nodes[ size_type( edge.dst_node_index ) ];
+
+					// TODO - use distance in XY plane?
+					var f32 node_square_distance_to_player= ( player_position - node.position ).SquareLength();
+					if( node_square_distance_to_player > largest_square_distance_to_player )
+					{
+						best_node_index= edge.dst_node_index;
+						largest_square_distance_to_player= node_square_distance_to_player;
+					}
+				}
+
+				if( best_node_index != GlobalNavigationGraph::c_invalid_node_index &&
+					largest_square_distance_to_player > square_distance_to_player )
+				{
+					SaveEntityRoute( ust::single_element_array_view( best_node_index ), navigation_state );
+					navigation_state.target_navigation_graph_node= best_node_index;
+				}
+				else
+				{
+					// A fallback for cases when an enemy is pushed into a corner with no way to move away from the player.
+					// Perform more complex nearby nodes enumeration to find a way from this corner.
 
 					var GlobalNavigationGraph::NodeIndex mut new_navigation_target_node=
 						GlobalNavigationGraph::c_invalid_node_index;
@@ -4538,40 +4570,6 @@ fn UpdateEntityMovementTarget(
 							SaveEntityRoute( route, navigation_state );
 							navigation_state.target_navigation_graph_node= new_navigation_target_node;
 						}
-					}
-				}
-				else
-				{
-					// Is reasonable far away from the player.
-					// Just go to the next node with maximum distance to the player.
-
-					var GlobalNavigationGraph::Node& current_node=
-						map_data.global_navigation_graph.nodes[ size_type( navigation_state.current_navigation_graph_node ) ];
-
-					var GlobalNavigationGraph::NodeIndex mut best_node_index= GlobalNavigationGraph::c_invalid_node_index;
-					var f32 mut largest_square_distance_to_player= ust::minus_inf</f32/>();
-
-					foreach( &edge :
-						map_data.global_navigation_graph.node_output_edges.range().subrange(
-							size_type( current_node.first_output_edge ),
-							size_type( current_node.first_output_edge + current_node.num_output_edges ) ) )
-					{
-						var GlobalNavigationGraph::Node& node=
-							map_data.global_navigation_graph.nodes[ size_type( edge.dst_node_index ) ];
-
-						// TODO - use distance in XY plane?
-						var f32 node_square_distance_to_player= ( player_position - node.position ).SquareLength();
-						if( node_square_distance_to_player > largest_square_distance_to_player )
-						{
-							best_node_index= edge.dst_node_index;
-							largest_square_distance_to_player= node_square_distance_to_player;
-						}
-					}
-
-					if( best_node_index != GlobalNavigationGraph::c_invalid_node_index )
-					{
-						SaveEntityRoute( ust::single_element_array_view( best_node_index ), navigation_state );
-						navigation_state.target_navigation_graph_node= best_node_index;
 					}
 				}
 			}
