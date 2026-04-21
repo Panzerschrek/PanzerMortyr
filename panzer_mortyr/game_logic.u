@@ -147,6 +147,7 @@ fn CreateNewMapGameState(
 			.target_navigation_graph_node= GlobalNavigationGraph::c_invalid_node_index,
 			.current_navigation_graph_node= GlobalNavigationGraph::c_invalid_node_index,
 			.route[ GlobalNavigationGraph::c_invalid_node_index ... ],
+			.current_patrolling_point_index= 0u8,
 		} );
 
 	// Build colliders for entities.
@@ -5550,7 +5551,7 @@ fn MoveEntity(
 
 	var Vec3f old_position= entity.position;
 
-	PerformEntityOwnMovement( map_data.global_navigation_graph, entity, navigation_state_opt, current_operation );
+	PerformEntityOwnMovement( map_data, entity, navigation_state_opt, current_operation );
 
 	var Vec3f mut new_position= entity.position;
 
@@ -5684,7 +5685,7 @@ fn MoveEntity(
 }
 
 fn PerformEntityOwnMovement(
-	GlobalNavigationGraph& navigation_graph,
+	GameMapData& map_data,
 	EntityState &mut entity,
 	ust::optional_ref_mut</EntityNavigationState/> navigation_state_opt,
 	EntitiesDescription::Operation& current_operation )
@@ -5694,7 +5695,7 @@ fn PerformEntityOwnMovement(
 		if( !navigation_state_opt.empty() )
 		{
 			PerformEntityOperationControlBasedMovement(
-				navigation_graph, entity, navigation_state_opt.try_deref(), operation_control );
+				map_data, entity, navigation_state_opt.try_deref(), operation_control );
 		}
 	}
 	else
@@ -5716,23 +5717,19 @@ fn PerformEntityOwnMovement(
 }
 
 fn PerformEntityOperationControlBasedMovement(
-	GlobalNavigationGraph& navigation_graph,
+	GameMapData& map_data,
 	EntityState &mut entity,
 	EntityNavigationState &mut navigation_state,
 	EntitiesDescription::OperationControl& operation_control )
 {
-	if( navigation_state.route[0] == GlobalNavigationGraph::c_invalid_node_index )
-	{
-		return;
-	}
-
 	var ust::optional</Vec2f/> mut movement_target_opt;
 
 	if( operation_control.functioning_mode == EntitiesDescription::OperationControl::c_functioning_mode_move_towards_waypoint )
 	{
 		if( navigation_state.route[0] != GlobalNavigationGraph::c_invalid_node_index )
 		{
-			movement_target_opt= navigation_graph.nodes[ size_type( navigation_state.route[0] ) ].position.xy();
+			movement_target_opt=
+				map_data.global_navigation_graph.nodes[ size_type( navigation_state.route[0] ) ].position.xy();
 		}
 	}
 	else if( operation_control.functioning_mode == EntitiesDescription::OperationControl::c_functioning_mode_move_towards_player )
@@ -5744,8 +5741,27 @@ fn PerformEntityOperationControlBasedMovement(
 	}
 	else if( operation_control.functioning_mode == EntitiesDescription::OperationControl::c_functioning_mode_sky_decoration )
 	{
-		// TODO - implement sky decoration movement using patrolling points but no global navigation graph.
-		return;
+		// For sky decorations don't use the global navigation graph at all.
+		// Use initial patrolling points for them directly.
+
+		var ust::array_view_imut</ZpozEntityNavigationInfo/> navigation_infos=
+			map_data.zpoz_data.deref().entity_navigation_infos;
+		if( size_type( entity.navigation_info_index ) < navigation_infos.size() )
+		{
+			var ZpozEntityNavigationInfo& navigation_info= navigation_infos[ size_type( entity.navigation_info_index ) ];
+			if( navigation_info.num_patrolling_points > 0u )
+			{
+				navigation_state.current_patrolling_point_index=
+					u8( u32( navigation_state.current_patrolling_point_index ) % navigation_info.num_patrolling_points );
+
+				var u32 point_index( navigation_state.current_patrolling_point_index );
+
+				movement_target_opt=
+					Vec2f(
+						f32( navigation_info.patrolling_point_coords[ point_index +  0u ] ),
+						f32( navigation_info.patrolling_point_coords[ point_index + 16u ] ) );
+			}
+		}
 	}
 	else
 	{
@@ -5831,7 +5847,7 @@ fn PerformEntityOperationControlBasedMovement(
 		}
 		else if( operation_control.functioning_mode == EntitiesDescription::OperationControl::c_functioning_mode_sky_decoration )
 		{
-			// TODO - select next patrolling point for sky decorations.
+			++navigation_state.current_patrolling_point_index;
 		}
 	}
 }
