@@ -345,7 +345,14 @@ fn nodiscard ProcessGameLogicStep(
 	// Spawn new entities before entity update step, so that they are properly animated.
 	TriggerEntitiesSpawn( map_data, game_state );
 
-	ProcessEntitiesLogicStep( global_data, map_data, game_state, route_searcher, navigation_graph_observer );
+	var RouteSearchContext mut route_search_context
+	{
+		.route_searcher= route_searcher,
+		.navigation_graph_observer= navigation_graph_observer,
+		.num_nodes_visited= 0s,
+	};
+
+	ProcessEntitiesLogicStep( global_data, map_data, game_state, route_search_context );
 
 	ProcessDynamicClustersLogicStep( map_data, game_state );
 
@@ -1714,8 +1721,7 @@ fn ProcessEntitiesLogicStep(
 	GameGlobalData& game_global_data,
 	GameMapData& map_data,
 	GameState &mut game_state,
-	GlobalNavigationGraphRouteSearcher &mut route_searcher,
-	GlobalNavigationGraphObserver &mut navigation_graph_observer )
+	RouteSearchContext &mut route_search_context )
 {
 	var GameParams& game_params= game_global_data.game_params.deref();
 	var EntitiesDescription& entities_description= map_data.entities_description.deref();
@@ -1777,8 +1783,7 @@ fn ProcessEntitiesLogicStep(
 					map_data,
 					game_state.broken_quad_bits,
 					game_state.dynamic_cluster_colliders,
-					route_searcher,
-					navigation_graph_observer,
+					route_search_context,
 					entity_description,
 					entity,
 					entity_navigation_state,
@@ -4370,12 +4375,20 @@ fn UpdateEntityPlayerInSightFlag(
 	}
 }
 
+struct RouteSearchContext
+{
+	GlobalNavigationGraphRouteSearcher &mut @('a') route_searcher;
+	GlobalNavigationGraphObserver &mut @('b') navigation_graph_observer;
+
+	// Total number of nodes visited within this game logic step.
+	size_type num_nodes_visited;
+}
+
 fn UpdateEntityMovementTarget(
 	GameMapData& map_data,
 	BitArrayView broken_quad_bits,
 	ust::array_view_imut</DynamicClusterCollider/> dynamic_cluster_colliders,
-	GlobalNavigationGraphRouteSearcher &mut route_searcher,
-	GlobalNavigationGraphObserver &mut navigation_graph_observer,
+	RouteSearchContext &mut route_search_context,
 	EntitiesDescription::EntityDescription& entity_description,
 	EntityState& entity,
 	EntityNavigationState &mut navigation_state,
@@ -4588,7 +4601,7 @@ fn UpdateEntityMovementTarget(
 
 					var size_type mut num_nodes_visited= 0s;
 
-					navigation_graph_observer.EnumerateOutputNodes(
+					route_search_context.navigation_graph_observer.EnumerateOutputNodes(
 						map_data.global_navigation_graph,
 						navigation_state.current_navigation_graph_node,
 						large_entity,
@@ -4620,11 +4633,13 @@ fn UpdateEntityMovementTarget(
 					// Remember time point at which a route search/nodes enumeration for this entity was executed.
 					navigation_state.last_route_search_step_index= current_step_index;
 
+					route_search_context.num_nodes_visited+= num_nodes_visited;
+
 					if( new_navigation_target_node != GlobalNavigationGraph::c_invalid_node_index )
 					{
 						// Reconstruct a route after nodes enumeration.
 						var ust::array_view_imut</GlobalNavigationGraph::NodeIndex/> route=
-							navigation_graph_observer.ReconstructRoute( new_navigation_target_node );
+							route_search_context.navigation_graph_observer.ReconstructRoute( new_navigation_target_node );
 
 						if( !route.empty() )
 						{
@@ -4710,12 +4725,16 @@ fn UpdateEntityMovementTarget(
 					var GlobalNavigationGraph::NodeIndex mut new_navigation_target_node=
 						GlobalNavigationGraph::c_invalid_node_index;
 
-					navigation_graph_observer.EnumerateOutputNodes(
+					var size_type mut num_nodes_visited= 0s;
+
+					route_search_context.navigation_graph_observer.EnumerateOutputNodes(
 						map_data.global_navigation_graph,
 						navigation_state.current_navigation_graph_node,
 						large_entity,
 						lambda[&]( GlobalNavigationGraph::NodeIndex node_index, u32 graph_distance ) : bool
 						{
+							++num_nodes_visited;
+
 							if( graph_distance > max_graph_distance_to_observe )
 							{
 								// Avoid observing the entire graph if failed to find a good position nearby.
@@ -4769,11 +4788,13 @@ fn UpdateEntityMovementTarget(
 					// Remember time point at which a route search/nodes enumeration for this entity was executed.
 					navigation_state.last_route_search_step_index= current_step_index;
 
+					route_search_context.num_nodes_visited+= num_nodes_visited;
+
 					if( new_navigation_target_node != GlobalNavigationGraph::c_invalid_node_index )
 					{
 						// Reconstruct a route after nodes enumeration.
 						var ust::array_view_imut</GlobalNavigationGraph::NodeIndex/> route=
-							navigation_graph_observer.ReconstructRoute( new_navigation_target_node );
+							route_search_context.navigation_graph_observer.ReconstructRoute( new_navigation_target_node );
 
 						if( !route.empty() )
 						{
@@ -4788,13 +4809,15 @@ fn UpdateEntityMovementTarget(
 
 					if_var( player_node_index : FindNearestNavigationGraphNode( map_data, broken_quad_bits, player_position, large_entity ) )
 					{
+						var size_type mut num_nodes_visited= 0s;
+
 						var ust::array_view_imut</GlobalNavigationGraph::NodeIndex/> route=
-							route_searcher.PerformSearch(
+							route_search_context.route_searcher.PerformSearch(
 								map_data.global_navigation_graph,
 								navigation_state.current_navigation_graph_node,
 								player_node_index,
 								large_entity,
-								lambda[num_nodes_visited= 0s] mut ( GlobalNavigationGraph::NodeIndex node_index ) : bool
+								lambda[&]( GlobalNavigationGraph::NodeIndex node_index ) : bool
 								{
 									ust::ignore_unused( node_index );
 									++num_nodes_visited;
@@ -4803,6 +4826,8 @@ fn UpdateEntityMovementTarget(
 
 						// Remember time point at which a route search/nodes enumeration for this entity was executed.
 						navigation_state.last_route_search_step_index= current_step_index;
+
+						route_search_context.num_nodes_visited+= num_nodes_visited;
 
 						if( !route.empty() )
 						{
@@ -4946,7 +4971,7 @@ fn UpdateEntityMovementTarget(
 
 					var size_type mut num_nodes_visited= 0s;
 
-					navigation_graph_observer.EnumerateOutputNodes(
+					route_search_context.navigation_graph_observer.EnumerateOutputNodes(
 						map_data.global_navigation_graph,
 						navigation_state.current_navigation_graph_node,
 						large_entity,
@@ -5022,6 +5047,8 @@ fn UpdateEntityMovementTarget(
 					// Remember time point at which a route search/nodes enumeration for this entity was executed.
 					navigation_state.last_route_search_step_index= current_step_index;
 
+					route_search_context.num_nodes_visited+= num_nodes_visited;
+
 					// Proccess first optimal nodes, then good enough.
 					// On each step select a random node from the list.
 					// Check if this node if the player is visible from the position of this node.
@@ -5078,7 +5105,7 @@ fn UpdateEntityMovementTarget(
 					{
 						// Reconstruct a route after nodes enumeration.
 						var ust::array_view_imut</GlobalNavigationGraph::NodeIndex/> route=
-							navigation_graph_observer.ReconstructRoute( new_navigation_target_node );
+							route_search_context.navigation_graph_observer.ReconstructRoute( new_navigation_target_node );
 
 						if( !route.empty() )
 						{
@@ -5101,13 +5128,15 @@ fn UpdateEntityMovementTarget(
 					if( navigation_state.target_navigation_graph_node != player_node_index ||
 						navigation_state.route[0] == GlobalNavigationGraph::c_invalid_node_index )
 					{
+						var size_type mut num_nodes_visited= 0s;
+
 						var ust::array_view_imut</GlobalNavigationGraph::NodeIndex/> route=
-							route_searcher.PerformSearch(
+							route_search_context.route_searcher.PerformSearch(
 								map_data.global_navigation_graph,
 								navigation_state.current_navigation_graph_node,
 								player_node_index,
 								large_entity,
-								lambda[num_nodes_visited= 0s] mut ( GlobalNavigationGraph::NodeIndex node_index ) : bool
+								lambda[&]( GlobalNavigationGraph::NodeIndex node_index ) : bool
 								{
 									ust::ignore_unused( node_index );
 									++num_nodes_visited;
@@ -5116,6 +5145,8 @@ fn UpdateEntityMovementTarget(
 
 						// Remember time point at which a route search/nodes enumeration for this entity was executed.
 						navigation_state.last_route_search_step_index= current_step_index;
+
+						route_search_context.num_nodes_visited+= num_nodes_visited;
 
 						if( !route.empty() )
 						{
@@ -5164,26 +5195,28 @@ fn UpdateEntityMovementTarget(
 
 			var bool mut found_route= false;
 
-			auto node_processing_func=
-				lambda[num_nodes_visited= 0s] mut ( GlobalNavigationGraph::NodeIndex node_index ) : bool
-					{
-						ust::ignore_unused( node_index );
-						++num_nodes_visited;
-						return num_nodes_visited < EntityNavigationConstants::c_max_nodes_to_visit_for_patrolling_target_search;
-					};
 
 			if( navigation_state.target_navigation_graph_node != GlobalNavigationGraph::c_invalid_node_index )
 			{
+				var size_type mut num_nodes_visited= 0s;
+
 				var ust::array_view_imut</GlobalNavigationGraph::NodeIndex/> route=
-					route_searcher.PerformSearch(
+					route_search_context.route_searcher.PerformSearch(
 						map_data.global_navigation_graph,
 						navigation_state.current_navigation_graph_node,
 						navigation_state.target_navigation_graph_node,
 						large_entity,
-						node_processing_func );
+						lambda[&]( GlobalNavigationGraph::NodeIndex node_index ) : bool
+						{
+							ust::ignore_unused( node_index );
+							++num_nodes_visited;
+							return num_nodes_visited < EntityNavigationConstants::c_max_nodes_to_visit_for_patrolling_target_search;
+						} );
 
 				// Remember time point at which a route search/nodes enumeration for this entity was executed.
 				navigation_state.last_route_search_step_index= current_step_index;
+
+				route_search_context.num_nodes_visited+= num_nodes_visited;
 
 				if( !route.empty() )
 				{
@@ -5205,16 +5238,25 @@ fn UpdateEntityMovementTarget(
 
 				if( navigation_state.target_navigation_graph_node != GlobalNavigationGraph::c_invalid_node_index )
 				{
+					var size_type mut num_nodes_visited= 0s;
+
 					var ust::array_view_imut</GlobalNavigationGraph::NodeIndex/> route=
-						route_searcher.PerformSearch(
+						route_search_context.route_searcher.PerformSearch(
 							map_data.global_navigation_graph,
 							navigation_state.current_navigation_graph_node,
 							navigation_state.target_navigation_graph_node,
 							large_entity,
-							node_processing_func );
+							lambda[&]( GlobalNavigationGraph::NodeIndex node_index ) : bool
+						{
+							ust::ignore_unused( node_index );
+							++num_nodes_visited;
+							return num_nodes_visited < EntityNavigationConstants::c_max_nodes_to_visit_for_patrolling_target_search;
+						} );
 
 					// Remember time point at which a route search/nodes enumeration for this entity was executed.
 					navigation_state.last_route_search_step_index= current_step_index;
+
+					route_search_context.num_nodes_visited+= num_nodes_visited;
 
 					if( !route.empty() )
 					{
