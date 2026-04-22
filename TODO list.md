@@ -57,7 +57,7 @@ PanzerMortyr general:
 * Consider embedding git revision into the game executable and showing it somewhere in the game.
 * Allow turning off some costly effects via settings - breaking glass, fog, dynamic lighting, etc.
 * Consider performing even more advanced game data search - with more hardcoded paths, Windows registry fetches, etc.
-* Ensure PanzerMortyr works properly on Wayland-based systems (ensure SDL2 is built with its support).
+* Ensure PanzerMortyr works properly on Wayland-based systems.
 * Consider writing console messages into a file - to simplify troubleshooting.
 
 PanzerMortyr game logic:
