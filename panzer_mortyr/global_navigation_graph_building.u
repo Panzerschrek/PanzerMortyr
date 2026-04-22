@@ -37,7 +37,24 @@ fn BuildGlobalNavigationGraph(
 		.max(  15.0f,  15.0f,   0.0f ),
 	};
 
-	var GlobalNavigationGraph mut result{ .node_bbox= node_bbox, .nodes_spacing= nodes_spacing };
+	// For a couple of entities larger than a human use a larger bbox.
+	// It's used only to mark nodes able to fit this bbox as large.
+	// In other calculations (like nodes placement and edge calculation) a human-sized bbox is used.
+	// It's not entirely correct to do so, but it's mostly fine.
+	// This bbox is a little bit larger than dimensions of the "Robo Ed" enemy.
+	// TODO - consider making it smaller and fixing bounding boxes of the "Robo Ed" enemy - right now it doesn't pass in some tight corridors.
+	var BBox3f large_node_bbox
+	{
+		.min( -49.0f, -49.0f, -128.0f ),
+		.max(  49.0f,  49.0f,    0.0f ),
+	};
+
+	var GlobalNavigationGraph mut result
+	{
+		.node_bbox= node_bbox,
+		.large_node_bbox= large_node_bbox,
+		.nodes_spacing= nodes_spacing
+	};
 
 	var PerformanceCounter::TimePoint time_start= performance_counter.GetCurrentTime();
 
@@ -64,6 +81,10 @@ fn BuildGlobalNavigationGraph(
 			"Has ",
 			ust::to_string8( result.nodes.size() ),
 			" nodes in global navigation graph after deduplication" ) );
+
+	MarkLargeNodes( map_data, result.nodes, large_node_bbox );
+
+	var PerformanceCounter::TimePoint time_large_nodes_marked= performance_counter.GetCurrentTime();
 
 	result.nodes_hierarchy= BuildNodesHierarchy( result.nodes );
 
@@ -108,8 +129,14 @@ fn BuildGlobalNavigationGraph(
 	ConsoleOutAddTextLine(
 		console_out,
 		ust::concat(
+			" large nodes marking: ",
+			ust::to_string8( u32( performance_counter.CalculateDurationS( time_nodes_deduplicated, time_large_nodes_marked ) * 1000.0f ) ),
+			" ms" ) );
+	ConsoleOutAddTextLine(
+		console_out,
+		ust::concat(
 			" nodes hierarchy building: ",
-			ust::to_string8( u32( performance_counter.CalculateDurationS( time_nodes_deduplicated, time_nodes_hierarchy_built ) * 1000.0f ) ),
+			ust::to_string8( u32( performance_counter.CalculateDurationS( time_large_nodes_marked, time_nodes_hierarchy_built ) * 1000.0f ) ),
 			" ms" ) );
 	ConsoleOutAddTextLine(
 		console_out,
@@ -619,11 +646,29 @@ fn DeduplicateNavigationGraphNodes( ust::array_view_imut</Vec3f/> node_positions
 					.position= node_position,
 					.first_output_edge= 0u, // Set later.
 					.num_output_edges= 0u, // Set later.
+					.large= false, // Set later.
 				} );
 		}
 	}
 
 	return result;
+}
+
+fn MarkLargeNodes(
+	GameMapData& map_data, ust::array_view_mut</GlobalNavigationGraph::Node/> nodes, BBox3f& large_node_bbox )
+{
+	// Make bbox slightly smaller to prevent finding an intersection if it's located directly on floor or in a corner.
+	var f32 eps= 1.0f / 4.0f;
+	var BBox3f bbox_slightly_downsized
+	{
+		.min= large_node_bbox.min + Vec3f( eps, eps, eps ),
+		.max= large_node_bbox.max - Vec3f( eps, eps, eps ),
+	};
+
+	foreach( &mut node : nodes )
+	{
+		node.large= !TestBBoxMapIntersection( map_data, node.position, bbox_slightly_downsized );
+	}
 }
 
 fn BuildNodesHierarchy(
