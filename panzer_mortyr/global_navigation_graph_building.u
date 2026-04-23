@@ -92,6 +92,10 @@ fn BuildGlobalNavigationGraph(
 
 	var PerformanceCounter::TimePoint time_output_edges_created= performance_counter.GetCurrentTime();
 
+	result.edges_hierarchy= BuildEdgesHierarchy( result.nodes, result.node_output_edges );
+
+	var PerformanceCounter::TimePoint time_edges_hierarchy_built= performance_counter.GetCurrentTime();
+
 	result.entity_navigation_infos=
 		BuildEntityNavigationInfos(
 			map_data,
@@ -153,8 +157,14 @@ fn BuildGlobalNavigationGraph(
 	ConsoleOutAddTextLine(
 		console_out,
 		ust::concat(
+			" edges hierarchy building: ",
+			ust::to_string8( u32( performance_counter.CalculateDurationS( time_output_edges_created, time_edges_hierarchy_built ) * 1000.0f ) ),
+			" ms" ) );
+	ConsoleOutAddTextLine(
+		console_out,
+		ust::concat(
 			" navigation infos creation: ",
-			ust::to_string8( u32( performance_counter.CalculateDurationS( time_output_edges_created, time_navigation_infos_created ) * 1000.0f ) ),
+			ust::to_string8( u32( performance_counter.CalculateDurationS( time_edges_hierarchy_built, time_navigation_infos_created ) * 1000.0f ) ),
 			" ms" ) );
 	ConsoleOutAddTextLine(
 		console_out,
@@ -1213,6 +1223,48 @@ fn GetNodeReachabilityDistanceFastButIncorrect(
 	return ( start.xy() - destination.xy() ).Length();
 }
 
+fn BuildEdgesHierarchy(
+	ust::array_view_imut</GlobalNavigationGraph::Node/> nodes,
+	ust::array_view_imut</GlobalNavigationGraph::OutputEdge/> edges ) : GlobalNavigationGraph::EdgesHierarchy
+{
+	var ust::vector</GlobalNavigationGraph::EdgeInHierarchy/> mut edges_for_hierarchy;
+
+	foreach( &node : nodes )
+	{
+		for( auto mut i= 0s; i < size_type( node.num_output_edges ); ++i )
+		{
+			var GlobalNavigationGraph::OutputEdge& edge= edges[ size_type( node.first_output_edge ) + i ];
+
+			edges_for_hierarchy.push_back(
+				GlobalNavigationGraph::EdgeInHierarchy
+				{
+					.start= node.position,
+					.end= nodes[ size_type( edge.dst_node_index ) ].position,
+					.index(i),
+				} );
+		}
+	}
+
+	return
+		BuildBoundingBoxesHierarchy(
+			edges_for_hierarchy.range(),
+			c_max_navigation_graph_edges_in_edges_hierarchy_node,
+			lambda( GlobalNavigationGraph::EdgeInHierarchy& e ) : BBox3f
+			{
+				return BBox3f
+				{
+					.min(
+						ust::min( e.start.x, e.end.x ),
+						ust::min( e.start.y, e.end.y ),
+						ust::min( e.start.z, e.end.z ) ),
+					.max(
+						ust::max( e.start.x, e.end.x ),
+						ust::max( e.start.y, e.end.y ),
+						ust::max( e.start.z, e.end.z ) ),
+				};
+			} );
+}
+
 fn BuildEntityNavigationInfos(
 	GameMapData& map_data,
 	BitArrayView broken_quad_bits,
@@ -1273,5 +1325,7 @@ fn BuildEntityNavigationInfos(
 // Allow maximum 8 nodes in hierarchy node.
 // It seems to be near the optimal (but it wasn't precisely measured).
 var size_type c_max_navigation_graph_nodes_in_bounding_boxes_hierarchy_node= 8s;
+
+var size_type c_max_navigation_graph_edges_in_edges_hierarchy_node= 7s; // TODO - tune it.
 
 } // namespace PM
