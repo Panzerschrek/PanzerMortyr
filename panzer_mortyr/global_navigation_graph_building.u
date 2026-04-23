@@ -1,0 +1,1277 @@
+import "/assert.iu"
+import "/string_conversions.iu"
+import "/thread.iu"
+import "bit_array.iu"
+import "bounding_boxes_hierarchy_building.iu"
+import "bounding_boxes_hierarchy_visiting.iu"
+import "collisions.iu"
+import "game_constants.iu"
+import "global_navigation_graph_building.iu"
+import "global_navigation_graph_utils.iu"
+import "physics_utils.iu"
+
+namespace PM
+{
+
+fn BuildGlobalNavigationGraph(
+	GameMapData& map_data,
+	ConsoleOutPtr& console_out,
+	PerformanceCounter& performance_counter,
+	bool use_fast_but_incorrect_reachability_check ) : GlobalNavigationGraph
+{
+	// Use all available CPU cores to build navigation graph as fast as possible.
+	// But use a reasonable upper limit for the number of threads.
+	var size_type num_threads( ust::max( 1u, ust::min( ust::get_number_of_available_cpus(), 32u ) ) );
+
+	// Assume none of quads is broken.
+	var BitArray broken_quad_bits( map_data.zmap_data.deref().quads.size() );
+
+	// This value is tuned so that it's so small that nodes are created even in tight corridors,
+	// but not too small to waste too much space for the result navigation graph and too much time for computing it.
+	var f32 nodes_spacing= 64.0f;
+
+	// A bounding box slightly larger than one used for the player and most (but not all) enemies.
+	var BBox3f node_bbox
+	{
+		.min( -15.0f, -15.0f, -64.0f ),
+		.max(  15.0f,  15.0f,   0.0f ),
+	};
+
+	// For a couple of entities larger than a human use a larger bbox.
+	// It's used only to mark nodes able to fit this bbox as large.
+	// In other calculations (like nodes placement and edge calculation) a human-sized bbox is used.
+	// It's not entirely correct to do so, but it's mostly fine.
+	// This bbox is a little bit larger than dimensions of the "Robo Ed" enemy.
+	// TODO - consider making it smaller and fixing bounding boxes of the "Robo Ed" enemy - right now it doesn't pass in some tight corridors.
+	var BBox3f large_node_bbox
+	{
+		.min( -49.0f, -49.0f, -128.0f ),
+		.max(  49.0f,  49.0f,    0.0f ),
+	};
+
+	var GlobalNavigationGraph mut result
+	{
+		.node_bbox= node_bbox,
+		.large_node_bbox= large_node_bbox,
+		.nodes_spacing= nodes_spacing
+	};
+
+	var PerformanceCounter::TimePoint time_start= performance_counter.GetCurrentTime();
+
+	var ust::vector</Vec3f/> initial_nodes=
+		CreateNavigationGraphNodes( num_threads, map_data, broken_quad_bits, nodes_spacing, node_bbox );
+
+	var PerformanceCounter::TimePoint time_initial_nodes_created= performance_counter.GetCurrentTime();
+
+	result.nodes= DeduplicateNavigationGraphNodes( initial_nodes );
+
+	assert(
+		result.nodes.size() < size_type( GlobalNavigationGraph::NodeIndex( ~0s ) ),
+		"Too many nodes in a global navigation graph!" );
+
+	var PerformanceCounter::TimePoint time_nodes_deduplicated= performance_counter.GetCurrentTime();
+
+	MarkLargeNodes( map_data, result.nodes, large_node_bbox );
+
+	var PerformanceCounter::TimePoint time_large_nodes_marked= performance_counter.GetCurrentTime();
+
+	result.nodes_hierarchy= BuildNodesHierarchy( result.nodes );
+
+	var PerformanceCounter::TimePoint time_nodes_hierarchy_built= performance_counter.GetCurrentTime();
+
+	result.node_output_edges=
+		BuildGraphEdges(
+			num_threads,
+			map_data,
+			broken_quad_bits,
+			result.nodes_hierarchy,
+			result.nodes,
+			nodes_spacing,
+			node_bbox,
+			use_fast_but_incorrect_reachability_check );
+
+	var PerformanceCounter::TimePoint time_output_edges_created= performance_counter.GetCurrentTime();
+
+	result.entity_navigation_infos=
+		BuildEntityNavigationInfos(
+			map_data,
+			broken_quad_bits,
+			result.nodes,
+			result.nodes_hierarchy,
+			node_bbox,
+			nodes_spacing );
+
+	var PerformanceCounter::TimePoint time_navigation_infos_created= performance_counter.GetCurrentTime();
+
+	ConsoleOutAddTextLine(
+		console_out,
+		ust::concat( "Has ", ust::to_string8( initial_nodes.size() ), " initial nodes in global navigation graph" ) );
+
+	ConsoleOutAddTextLine(
+		console_out,
+		ust::concat(
+			"Has ",
+			ust::to_string8( result.nodes.size() ),
+			" nodes in global navigation graph after deduplication" ) );
+
+	ConsoleOutAddTextLine(
+		console_out,
+		ust::concat( "Has ", ust::to_string8( result.node_output_edges.size() ), " edges in global navigation graph" ) );
+
+	ConsoleOutAddTextLine( console_out, "Global navigation graph building timings: " );
+
+	ConsoleOutAddTextLine(
+		console_out,
+		ust::concat(
+			" initial nodes creation: ",
+			ust::to_string8( u32( performance_counter.CalculateDurationS( time_start, time_initial_nodes_created ) * 1000.0f ) ),
+			" ms" ) );
+	ConsoleOutAddTextLine(
+		console_out,
+		ust::concat(
+			" nodes deduplication: ",
+			ust::to_string8( u32( performance_counter.CalculateDurationS( time_initial_nodes_created, time_nodes_deduplicated ) * 1000.0f ) ),
+			" ms" ) );
+	ConsoleOutAddTextLine(
+		console_out,
+		ust::concat(
+			" large nodes marking: ",
+			ust::to_string8( u32( performance_counter.CalculateDurationS( time_nodes_deduplicated, time_large_nodes_marked ) * 1000.0f ) ),
+			" ms" ) );
+	ConsoleOutAddTextLine(
+		console_out,
+		ust::concat(
+			" nodes hierarchy building: ",
+			ust::to_string8( u32( performance_counter.CalculateDurationS( time_large_nodes_marked, time_nodes_hierarchy_built ) * 1000.0f ) ),
+			" ms" ) );
+	ConsoleOutAddTextLine(
+		console_out,
+		ust::concat(
+			" output edges creation: ",
+			ust::to_string8( u32( performance_counter.CalculateDurationS( time_nodes_hierarchy_built, time_output_edges_created ) * 1000.0f ) ),
+			" ms" ) );
+	ConsoleOutAddTextLine(
+		console_out,
+		ust::concat(
+			" navigation infos creation: ",
+			ust::to_string8( u32( performance_counter.CalculateDurationS( time_output_edges_created, time_navigation_infos_created ) * 1000.0f ) ),
+			" ms" ) );
+	ConsoleOutAddTextLine(
+		console_out,
+		ust::concat(
+			" total: ",
+			ust::to_string8( u32( performance_counter.CalculateDurationS( time_start, time_navigation_infos_created ) * 1000.0f ) ),
+			" ms" ) );
+
+	return result;
+}
+
+fn CreateNavigationGraphNodes(
+	size_type num_threads,
+	GameMapData& map_data,
+	BitArrayView broken_quad_bits,
+	f32 nodes_spacing,
+	BBox3f& node_bbox ) : ust::vector</Vec3f/>
+{
+	if( num_threads == 1s )
+	{
+		auto mut result=
+			CreateNavigationGraphNodesForClusterQuads(
+				map_data, broken_quad_bits, nodes_spacing, node_bbox, map_data.zvox_data.deref().clusters );
+
+		CreateNavigationGraphNodesForEnemyPatrollingPoints(
+			map_data, broken_quad_bits, nodes_spacing, node_bbox, result );
+	}
+
+	var ust::array_view_imut</ZvoxCluster/> clusters= map_data.zvox_data.deref().clusters;
+
+	var ust::vector</ ust::thread</ NodesCreationFunction, ust::vector</Vec3f/> /> /> mut threads;
+
+	if( false ) // Hack for "reference pollution for outer loop variable" error.
+	{
+		threads.push_back(
+			ust::make_thread(
+				NodesCreationFunction
+				{
+					.map_data= map_data,
+					.broken_quad_bits= broken_quad_bits,
+					.nodes_spacing= nodes_spacing,
+					.node_bbox= node_bbox,
+					.clusters= clusters,
+				} ) );
+	}
+
+	for( auto mut t= 0s; t < num_threads; ++t )
+	{
+		// Divide clusters evenly between threads.
+		// It's not ideal, since the number of nodes in different clusters varies a lot.
+		// But there is no other easy way to divide this work across threads evenly.
+		var size_type first_cluster_index= t * clusters.size() / num_threads;
+		var size_type next_thread_first_cluster_index= ( t + 1s ) * clusters.size() / num_threads;
+
+		threads.push_back(
+			ust::make_thread(
+				NodesCreationFunction
+				{
+					.map_data= map_data,
+					.broken_quad_bits= broken_quad_bits,
+					.nodes_spacing= nodes_spacing,
+					.node_bbox= node_bbox,
+					.clusters= clusters.subrange( first_cluster_index, next_thread_first_cluster_index ),
+				} ) );
+	}
+
+	// Reverse elements in the threads container so that extracting them via "pop_back" gives their creation order.
+	// It's necessary to produce the same result (same order of navigation graph nodes) regardless of the number of threads used.
+	threads.range().reverse();
+
+	var ust::vector</Vec3f/> mut result;
+
+	while( !threads.empty() )
+	{
+		var ust::vector</Vec3f/> mut thread_nodes= threads.pop_back().join();
+		result.append( thread_nodes );
+	}
+
+	// Don't care creating nodes for patrolling points using multithreading.
+	// There is not so many of them.
+	CreateNavigationGraphNodesForEnemyPatrollingPoints( map_data, broken_quad_bits, nodes_spacing, node_bbox, result );
+
+	return result;
+}
+
+struct NodesCreationFunction
+{
+	GameMapData& @('a') map_data;
+	BitArrayView @("a") broken_quad_bits;
+	f32 nodes_spacing;
+	BBox3f& @('a') node_bbox;
+
+	ust::array_view_imut</ZvoxCluster/> @("a") clusters;
+
+	op()( this ) : ust::vector</Vec3f/>
+	{
+		return CreateNavigationGraphNodesForClusterQuads( map_data, broken_quad_bits, nodes_spacing, node_bbox, clusters );
+	}
+}
+
+// Nodes are created only for given clusters.
+fn CreateNavigationGraphNodesForClusterQuads(
+	GameMapData& map_data,
+	BitArrayView broken_quad_bits,
+	f32 nodes_spacing,
+	BBox3f& node_bbox,
+	ust::array_view_imut</ZvoxCluster/> clusters ) : ust::vector</Vec3f/>
+{
+	var ust::vector</Vec3f/> mut result;
+
+	var ust::array_view_imut</ZmapQuad/> quads= map_data.zmap_data.deref().quads;
+
+	foreach( &cluster : clusters )
+	{
+		if( !(
+			cluster.cluster_type == ZvoxCluster::c_cluster_type_regular |
+			cluster.cluster_type == ZvoxCluster::c_cluster_type_notes ) )
+		{
+			// Do not create navigation graph nodes for dynamic clusters.
+			// But create them for note clusters.
+			continue;
+		}
+
+		for( var size_type mut q( cluster.c.first_quad_index ), q_end= size_type( cluster.c.first_quad_index ) + size_type( cluster.num_quads );
+			q < q_end;
+			++q )
+		{
+			var ZmapQuad& quad= quads[q];
+
+			var u32 texture_id( quad.texture_id );
+
+			// Don't create navigation graph nodes for liquid and sky quads.
+			if(
+				texture_id == MaterialsDescription::c_special_material_texture_indices[ size_type( MaterialsDescription::SpecialMaterial::Water ) ] ||
+				texture_id == MaterialsDescription::c_special_material_texture_indices[ size_type( MaterialsDescription::SpecialMaterial::Acid ) ] ||
+				texture_id == MaterialsDescription::c_special_material_texture_indices[ size_type( MaterialsDescription::SpecialMaterial::AcidAlternative ) ] ||
+				texture_id == MaterialsDescription::c_special_material_texture_indices[ size_type( MaterialsDescription::SpecialMaterial::Sky ) ] )
+			{
+				continue;
+			}
+
+			var Vec3f quad_normal= CalculateQuadNormal( quad );
+
+			if( !IsGroundSurface( quad_normal ) )
+			{
+				continue;
+			}
+
+			auto& center= cluster.c.center;
+			auto& in_vertices= quad.vertices;
+
+			var [ Vec3f, 4 ] vertices
+			[
+				( f32( center[0] + i32( in_vertices[0][0] ) ), f32( center[1] + i32( in_vertices[0][1] ) ), f32( center[2] + i32( in_vertices[0][2] ) ) ),
+				( f32( center[0] + i32( in_vertices[1][0] ) ), f32( center[1] + i32( in_vertices[1][1] ) ), f32( center[2] + i32( in_vertices[1][2] ) ) ),
+				( f32( center[0] + i32( in_vertices[2][0] ) ), f32( center[1] + i32( in_vertices[2][1] ) ), f32( center[2] + i32( in_vertices[2][2] ) ) ),
+				( f32( center[0] + i32( in_vertices[3][0] ) ), f32( center[1] + i32( in_vertices[3][1] ) ), f32( center[2] + i32( in_vertices[3][2] ) ) ),
+			];
+
+			var [ f32, 2 ] mins
+			[
+				ust::min( ust::min( vertices[0].x, vertices[1].x ), ust::min( vertices[2].x, vertices[3].x ) ),
+				ust::min( ust::min( vertices[0].y, vertices[1].y ), ust::min( vertices[2].y, vertices[3].y ) ),
+			];
+
+			var [ f32, 2 ] maxs
+			[
+				ust::max( ust::max( vertices[0].x, vertices[1].x ), ust::max( vertices[2].x, vertices[3].x ) ),
+				ust::max( ust::max( vertices[0].y, vertices[1].y ), ust::max( vertices[2].y, vertices[3].y ) ),
+			];
+
+			var [ i32, 2 ] grid_mins
+			[
+				( ust::floor( mins[0] / nodes_spacing ) ),
+				( ust::floor( mins[1] / nodes_spacing ) ),
+			];
+
+			var [ i32, 2 ] grid_maxs
+			[
+				( ust::floor( maxs[0] / nodes_spacing ) ),
+				( ust::floor( maxs[1] / nodes_spacing ) ),
+			];
+
+			// Place initial nodes in regular grid with given spacing.
+
+			for( var i32 mut y= grid_mins[1]; y <= grid_maxs[1]; ++y )
+			{
+				for( var i32 mut x= grid_mins[0]; x <= grid_maxs[0]; ++x )
+				{
+					var Vec3f node_position( f32(x) * nodes_spacing, f32(y)  * nodes_spacing, 0.0f );
+					if_var( node_position_projected : ProjectNodeToQuad( vertices, quad_normal, node_position ) )
+					{
+						if_var( node_position_tweaked :
+								TweakNodePosition(
+									map_data, broken_quad_bits, node_bbox, nodes_spacing, node_position_projected ) )
+						{
+							result.push_back( node_position_tweaked );
+						}
+					}
+				}
+			}
+		}
+	}
+
+	return result;
+}
+
+fn CreateNavigationGraphNodesForEnemyPatrollingPoints(
+	GameMapData& map_data,
+	BitArrayView broken_quad_bits,
+	f32 nodes_spacing,
+	BBox3f& node_bbox,
+	ust::vector</Vec3f/> &mut result )
+{
+	// Create nodes for patrolling points of entities.
+	// It's necessary to do so to enable moving (almost) precisely to these nodes.
+
+	var ZpozData& zpoz_data= map_data.zpoz_data.deref();
+
+	foreach( &entity : zpoz_data.entities )
+	{
+		if( entity.alive_flag == 0u16 )
+		{
+			continue;
+		}
+
+		var size_type navigation_info_index( entity.data[16] );
+		if( navigation_info_index >= zpoz_data.entity_navigation_infos.size() )
+		{
+			continue;
+		}
+
+		var ZpozEntityNavigationInfo& navigation_info= zpoz_data.entity_navigation_infos[ navigation_info_index ];
+
+		for( auto mut point_index= 0u; point_index < navigation_info.num_patrolling_points; ++point_index )
+		{
+			var Vec3f position(
+				f32( navigation_info.patrolling_point_coords[ point_index +  0u ] ),
+				f32( navigation_info.patrolling_point_coords[ point_index + 16u ] ),
+				f32( navigation_info.patrolling_point_coords[ point_index + 32u ] ) );
+
+			if_var( node_position_tweaked :
+					TweakNodePosition( map_data, broken_quad_bits, node_bbox, nodes_spacing, position ) )
+			{
+				result.push_back( node_position_tweaked );
+			}
+		}
+	}
+}
+
+fn TweakNodePosition(
+	GameMapData& map_data,
+	BitArrayView broken_quad_bits,
+	BBox3f& node_bbox,
+	f32 nodes_spacing,
+	Vec3f& initial_node_position ) : ust::optional</Vec3f/>
+{
+	// Handle simple cases first. If it's possible to place a node without lifting or moving it sideways - do this.
+	{
+		var Vec3f node_position_slightly_lifted( initial_node_position.xy(), initial_node_position.z - 0.125f );
+
+		if( !TestBBoxMapIntersection( map_data, node_position_slightly_lifted, node_bbox ) &&
+			!IsNodeOnLedge( map_data, node_bbox, node_position_slightly_lifted ) )
+		{
+			return initial_node_position;
+		}
+	}
+
+	// Perform small upwards lifting and side lifting.
+	// Take result with the smallest distance to the initial node position.
+
+	var f32 mut smallest_move_square_distance= ust::plus_inf</f32/>();
+	var ust::optional</Vec3f/> mut result_node_position;
+
+	var u32 num_side_tweaking_steps= 4u;
+
+	var u32 max_lifting= 72u;
+	var u32 lifting_try_step= 6u;
+
+	for( auto mut lift_delta= 0u; lift_delta <= max_lifting; lift_delta += lifting_try_step )
+	{
+		auto test_position=
+			lambda[&]( Vec3f& node_position_to_test )
+			{
+				var f32 move_square_distance= ( node_position_to_test - initial_node_position ).SquareLength();
+				if( move_square_distance >= smallest_move_square_distance )
+				{
+					return;
+				}
+
+				if( !TestBBoxMapIntersection( map_data, node_position_to_test, node_bbox ) )
+				{
+					var Vec3f down_move_vector( 0.0f, 0.0f, f32( max_lifting ) + 0.25f );
+
+					var TraceCollisionResult trace_collision_result=
+						CollisionTrace(
+							map_data,
+							broken_quad_bits,
+							ust::empty_range,
+							ust::empty_range,
+							node_bbox,
+							node_position_to_test,
+							down_move_vector );
+
+					if( trace_collision_result.clipped_move_distance < 1.0f &&
+						IsGroundSurface( trace_collision_result.collision_point_normal ) &&
+						!IsNodeOnLedge( map_data, node_bbox, node_position_to_test ) )
+					{
+						smallest_move_square_distance= move_square_distance;
+						result_node_position= node_position_to_test;
+					}
+				}
+			};
+
+		var Vec3f position_lifted( initial_node_position.xy(), initial_node_position.z - f32( lift_delta ) );
+
+		// Test position with lifting and without side movement.
+		test_position( position_lifted );
+
+		for( var u32 mut tweaking_step= 1u; tweaking_step < num_side_tweaking_steps; ++tweaking_step )
+		{
+			var f32 side_move_distance= nodes_spacing * 0.5f * f32( tweaking_step ) / f32( num_side_tweaking_steps );
+
+			foreach( &tweak_vector : c_node_horizontal_tweak_vectors )
+			{
+				var Vec3f position_lifted_and_tweaked_horizontally(
+					position_lifted.x + tweak_vector[0] * side_move_distance,
+					position_lifted.y + tweak_vector[1] * side_move_distance,
+					position_lifted.z );
+
+				// Test position with both lifting and side movement.
+				test_position( position_lifted_and_tweaked_horizontally );
+			}
+		}
+	}
+
+	return result_node_position;
+}
+
+var [ [ f32, 2 ], 8 ] c_node_horizontal_tweak_vectors
+[
+	[ -1.0f,  0.0f ],
+	[  1.0f,  0.0f ],
+	[  0.0f, -1.0f ],
+	[  0.0f,  1.0f ],
+	[ -1.0f, -1.0f ],
+	[ -1.0f,  1.0f ],
+	[  1.0f, -1.0f ],
+	[  1.0f,  1.0f ],
+];
+
+fn IsNodeOnLedge( GameMapData& map_data, BBox3f& node_bbox, Vec3f& node_position ) : bool
+{
+	// Cut a third of a bbox from each side and build a bbox from it directed down.
+	// If it's not obstructed, we have a ledge here.
+
+	var Vec2f bbox_size= node_bbox.max.xy() - node_bbox.min.xy();
+
+	var f32 c_extra_eps= 0.25f;
+	// Consider two steps to be maximum allowed distance down.
+	var f32 c_down_movement= c_maximum_step_height_for_climbing * 2.0f + c_extra_eps;
+	var f32 c_bbox_cut_fraction= 1.0f / 3.0f;
+
+	var f32 z_min= node_bbox.max.z - c_extra_eps;
+	var f32 z_max= z_min + c_down_movement;
+
+	var BBox3f bbox_down_x_plus
+	{
+		.min( node_bbox.min.x, node_bbox.min.y, z_min ),
+		.max( node_bbox.min.x + bbox_size.x * c_bbox_cut_fraction, node_bbox.max.y, z_max ),
+	};
+
+	var BBox3f bbox_down_x_minus
+	{
+		.min( node_bbox.max.x - bbox_size.x * c_bbox_cut_fraction, node_bbox.min.y, z_min ),
+		.max( node_bbox.max.x, node_bbox.max.y, z_max ),
+	};
+
+	var BBox3f bbox_down_y_plus
+	{
+		.min( node_bbox.min.x, node_bbox.min.y, z_min ),
+		.max( node_bbox.max.x, node_bbox.min.y + bbox_size.y * c_bbox_cut_fraction, z_max ),
+	};
+
+	var BBox3f bbox_down_y_minus
+	{
+		.min( node_bbox.min.x, node_bbox.max.y - bbox_size.y * c_bbox_cut_fraction, z_min ),
+		.max( node_bbox.max.x, node_bbox.max.y, z_max ),
+	};
+
+	return
+		!TestBBoxMapIntersection( map_data, node_position, bbox_down_x_plus ) ||
+		!TestBBoxMapIntersection( map_data, node_position, bbox_down_x_minus ) ||
+		!TestBBoxMapIntersection( map_data, node_position, bbox_down_y_plus ) ||
+		!TestBBoxMapIntersection( map_data, node_position, bbox_down_y_minus );
+}
+
+fn ProjectNodeToQuad( [ Vec3f, 4 ]& quad_vertices, Vec3f& quad_normal, Vec3f& node_position ) : ust::optional</Vec3f/>
+{
+	var Planef plane= Planef::CreateFromNormalAndPoint( quad_normal, quad_vertices[0] );
+
+	if( plane.normal.z != 0.0f )
+	{
+		var Vec3f intersection_point(
+			node_position.xy(),
+			node_position.z - plane.GetDistanceForPoint( node_position ) / plane.normal.z );
+
+		// Check if intersection point lies within quad boundaries.
+		var Vec3f mut prev_v= quad_vertices[3];
+		for( auto mut i= 0s; i < 4s; ++i )
+		{
+			var Vec3f& v= quad_vertices[i];
+
+			var Vec3f edge_vec= v - prev_v;
+
+			if( edge_vec.SquareLength() > 0.0f && edge_vec.Cross( intersection_point - v ).Dot( quad_normal ) < 0.0f )
+			{
+				return ust::null_optional;
+			}
+
+			prev_v= v;
+		}
+
+		return intersection_point;
+	}
+
+	return ust::null_optional;
+}
+
+fn DeduplicateNavigationGraphNodes( ust::array_view_imut</Vec3f/> node_positions ) : ust::vector</GlobalNavigationGraph::Node/>
+{
+	var ust::vector</u32/> mut node_indices=
+		ust::make_vector_from_filler_function(
+			node_positions.size(),
+			lambda[i= 0u] mut () : u32
+			{
+				var u32 res= i;
+				++i;
+				return res;
+			} );
+
+	var BoundingBoxesHierarchy</u32/> nodes_hierarchy=
+		BuildBoundingBoxesHierarchy(
+			node_indices.range(),
+			c_max_navigation_graph_nodes_in_bounding_boxes_hierarchy_node,
+			lambda[&]( u32 node_index ) : BBox3f
+			{
+				var Vec3f& position= node_positions[ size_type( node_index ) ];
+				return BBox3f{ .min= position, .max= position };
+			} );
+
+	var ust::vector</GlobalNavigationGraph::Node/> mut result;
+
+	var BitArray mut used_node_bits( node_positions.size() );
+
+	var f32 c_min_horizontal_distance= 4.0f, c_min_vertical_distance= 16.0f;
+	var Vec3f check_bbox_half_size( c_min_horizontal_distance, c_min_horizontal_distance, c_min_vertical_distance );
+
+	for( auto mut i= 0s; i < node_positions.size(); ++i )
+	{
+		var Vec3f& node_position= node_positions[i];
+
+		var bool mut is_duplicate= false;
+
+		VisitBoundingBoxesHierarchyForBBox(
+			nodes_hierarchy,
+			BBox3f
+			{
+				.min= node_position - check_bbox_half_size,
+				.max= node_position + check_bbox_half_size,
+			},
+			lambda[&]( u32 node_index )
+			{
+				if( used_node_bits.GetBit( size_type(node_index) ) )
+				{
+					var Vec3f& other_node_position= node_positions[ size_type(node_index) ];
+					var f32 horizontal_square_distance=
+						( node_position.xy() - other_node_position.xy() ).SquareLength();
+					var f32 vertical_distance= ust::abs( node_position.z - other_node_position.z );
+					if( horizontal_square_distance < c_min_horizontal_distance * c_min_horizontal_distance &&
+						vertical_distance < c_min_vertical_distance )
+					{
+						is_duplicate= true;
+					}
+				}
+			} );
+
+		if( !is_duplicate )
+		{
+			used_node_bits.SetBitToOne( i );
+			result.push_back(
+				GlobalNavigationGraph::Node
+				{
+					.position= node_position,
+					.first_output_edge= 0u, // Set later.
+					.num_output_edges= 0u8, // Set later.
+					.large= false, // Set later.
+				} );
+		}
+	}
+
+	return result;
+}
+
+fn MarkLargeNodes(
+	GameMapData& map_data, ust::array_view_mut</GlobalNavigationGraph::Node/> nodes, BBox3f& large_node_bbox )
+{
+	// Make bbox slightly smaller to prevent finding an intersection if it's located directly on floor or in a corner.
+	var f32 eps= 1.0f / 4.0f;
+	var BBox3f bbox_slightly_downsized
+	{
+		.min= large_node_bbox.min + Vec3f( eps, eps, eps ),
+		.max= large_node_bbox.max - Vec3f( eps, eps, eps ),
+	};
+
+	foreach( &mut node : nodes )
+	{
+		node.large= !TestBBoxMapIntersection( map_data, node.position, bbox_slightly_downsized );
+	}
+}
+
+fn BuildNodesHierarchy(
+	ust::array_view_imut</GlobalNavigationGraph::Node/> nodes ) : GlobalNavigationGraph::NodesHierarchy
+{
+	var ust::vector</ GlobalNavigationGraph::NodeIndex /> mut node_indices=
+		ust::make_vector_from_filler_function(
+			nodes.size(),
+			lambda[i= 0u] mut () : GlobalNavigationGraph::NodeIndex
+			{
+				var u32 res= i;
+				++i;
+				return GlobalNavigationGraph::NodeIndex( res );
+			} );
+
+	return
+		BuildBoundingBoxesHierarchy(
+			node_indices.range(),
+			c_max_navigation_graph_nodes_in_bounding_boxes_hierarchy_node,
+			lambda[&]( GlobalNavigationGraph::NodeIndex node_index ) : BBox3f
+			{
+				var Vec3f& position= nodes[ size_type( node_index ) ].position;
+				return BBox3f{ .min= position, .max= position };
+			} );
+}
+
+fn BuildGraphEdges(
+	size_type num_threads,
+	GameMapData& map_data,
+	BitArrayView broken_quad_bits,
+	GlobalNavigationGraph::NodesHierarchy& nodes_hierarchy,
+	ust::array_view_mut</GlobalNavigationGraph::Node/> nodes,
+	f32 nodes_spacing,
+	BBox3f& node_bbox,
+	bool use_fast_but_incorrect_reachability_check ) : ust::vector</GlobalNavigationGraph::OutputEdge/>
+{
+	var size_type num_nodes= nodes.size();
+
+	if( num_threads == 1s )
+	{
+		var GraphEdgesBuildResult mut edges_build_result=
+			BuildGraphEdgesPartImpl(
+				map_data,
+				broken_quad_bits,
+				nodes_hierarchy,
+				nodes,
+				nodes_spacing,
+				node_bbox,
+				use_fast_but_incorrect_reachability_check,
+				0s,
+				num_nodes );
+
+		foreach( pair : nodes.iter().zip( edges_build_result.node_output_edges.iter() ) )
+		{
+			pair.first.first_output_edge= pair.second.first_output_edge;
+			pair.first.num_output_edges= pair.second.num_output_edges;
+		}
+
+		return take( edges_build_result.edges );
+	}
+
+	var ust::vector</GraphEdgesBuildResult/> mut thread_results;
+
+	{
+		var ust::array_view_imut</GlobalNavigationGraph::Node/> nodes_imut= nodes;
+
+		// Start all threads first and put them into a vector.
+
+		var ust::vector</ ust::thread</ EdgesBuildingThreadFunction, GraphEdgesBuildResult /> /> mut threads;
+
+		if( false ) // Hack for "reference pollution for outer loop variable" error.
+		{
+			threads.push_back(
+				ust::make_thread(
+					EdgesBuildingThreadFunction
+					{
+						.map_data= map_data,
+						.broken_quad_bits= broken_quad_bits,
+						.nodes_hierarchy= nodes_hierarchy,
+						.nodes= nodes_imut,
+						.nodes_spacing= nodes_spacing,
+						.node_bbox= node_bbox,
+						.use_fast_but_incorrect_reachability_check= use_fast_but_incorrect_reachability_check,
+						.first_node_index= 0s,
+						.num_nodes= 0s,
+					} ) );
+		}
+
+		for( auto mut t= 0s; t < num_threads; ++t )
+		{
+			// Equally divide nodes across threads.
+			// This isn't ideal, since computational work required for some nodes may be greater than for others.
+			// But it's good enough.
+			var size_type first_node_index= t * num_nodes / num_threads;
+			var size_type next_thread_first_node_index= ( t + 1s ) * num_nodes / num_threads;
+			var size_type num_nodes_in_this_thread= next_thread_first_node_index - first_node_index;
+
+			threads.push_back(
+				ust::make_thread(
+					EdgesBuildingThreadFunction
+					{
+						.map_data= map_data,
+						.broken_quad_bits= broken_quad_bits,
+						.nodes_hierarchy= nodes_hierarchy,
+						.nodes= nodes_imut,
+						.nodes_spacing= nodes_spacing,
+						.node_bbox= node_bbox,
+						.use_fast_but_incorrect_reachability_check= use_fast_but_incorrect_reachability_check,
+						.first_node_index= first_node_index,
+						.num_nodes= num_nodes_in_this_thread,
+					} ) );
+		}
+
+		// Reverse threads so that extracting them via "pop_back" gives their creation order.
+		// It's necessary to produce the same result (same order of edges) regardless of the number of threads used.
+		threads.range().reverse();
+
+		// Join all threads and put their results into a vector.
+
+		while( !threads.empty() )
+		{
+			thread_results.push_back( threads.pop_back().join() );
+		}
+	}
+
+	var ust::vector</GlobalNavigationGraph::OutputEdge/> mut result_edges;
+
+	foreach( &mut thread_result : thread_results )
+	{
+		var size_type edges_offset= result_edges.size();
+
+		// Take edges from the thread result.
+		result_edges.append( thread_result.edges );
+
+		auto out_range=
+			nodes.subrange(
+				thread_result.first_node_index,
+				thread_result.first_node_index + thread_result.num_nodes );
+
+		foreach( pair : out_range.iter().zip( thread_result.node_output_edges.iter() ) )
+		{
+			pair.first.first_output_edge= u32( edges_offset + size_type( pair.second.first_output_edge ) );
+			pair.first.num_output_edges= pair.second.num_output_edges;
+		}
+	}
+
+	return result_edges;
+}
+
+struct EdgesBuildingThreadFunction
+{
+	GameMapData& @('a') map_data;
+	BitArrayView @("a") broken_quad_bits;
+	GlobalNavigationGraph::NodesHierarchy& @('a') nodes_hierarchy;
+	ust::array_view_imut</GlobalNavigationGraph::Node/> @("a") nodes;
+	f32 nodes_spacing;
+	BBox3f& @('a') node_bbox;
+	bool use_fast_but_incorrect_reachability_check;
+
+	size_type first_node_index;
+	size_type num_nodes;
+
+	op()( this ) : GraphEdgesBuildResult
+	{
+		return
+			BuildGraphEdgesPartImpl(
+				map_data,
+				broken_quad_bits,
+				nodes_hierarchy,
+				nodes,
+				nodes_spacing,
+				node_bbox,
+				use_fast_but_incorrect_reachability_check,
+				first_node_index,
+				num_nodes );
+	}
+}
+
+struct GraphEdgesBuildResult
+{
+	struct NodeOutputEdges
+	{
+		u32 first_output_edge;
+		u8 num_output_edges;
+	}
+
+	size_type first_node_index;
+	size_type num_nodes;
+	ust::vector</NodeOutputEdges/> node_output_edges;
+	ust::vector</GlobalNavigationGraph::OutputEdge/> edges;
+}
+
+fn BuildGraphEdgesPartImpl(
+	GameMapData& map_data,
+	BitArrayView broken_quad_bits,
+	GlobalNavigationGraph::NodesHierarchy& nodes_hierarchy,
+	ust::array_view_imut</GlobalNavigationGraph::Node/> nodes,
+	f32 nodes_spacing,
+	BBox3f& node_bbox,
+	bool use_fast_but_incorrect_reachability_check,
+	size_type first_node_index,
+	size_type num_nodes ) : GraphEdgesBuildResult
+{
+	var GraphEdgesBuildResult mut result{ .first_node_index= first_node_index, .num_nodes= num_nodes };
+
+	result.node_output_edges.resize(
+		num_nodes,
+		ust::make_zeroed</GraphEdgesBuildResult::NodeOutputEdges/>() );
+
+	// Use slightly smaller bbox for reachability check - to avoid some numerical errors.
+	var f32 node_bbox_descrease_eps= 1.0f / 4.0f;
+	var BBox3f node_bbox_for_reachability_check
+	{
+		.min= node_bbox.min + Vec3f( node_bbox_descrease_eps, node_bbox_descrease_eps, node_bbox_descrease_eps ),
+		.max= node_bbox.max - Vec3f( node_bbox_descrease_eps, node_bbox_descrease_eps, node_bbox_descrease_eps ),
+	};
+
+	// These values were tuned so that it's possible to create diagonal connections like (+1, +1), (+1, +2), (+2, +1).
+	var f32 max_horizontal_distance= 3.1f * nodes_spacing;
+	var f32 max_vertical_distance= c_maximum_step_height_for_climbing * 10.0f;
+
+	// Disallow connections with angle between them less than 11.25 degree.
+	var f32 max_angle_cos_for_collinear_connections= ust::cos( c_tau / 32.0f );
+
+	var Vec3f fetch_box_half_size( max_horizontal_distance, max_horizontal_distance, max_vertical_distance );
+
+	var ust::vector</ GlobalNavigationGraph::NodeIndex /> mut candidate_dst_nodes;
+
+	for( auto mut i= 0s; i < num_nodes; ++i )
+	{
+		var size_type src_dst_node_index= first_node_index + i;
+
+		var Vec3f src_node_position= nodes[ src_dst_node_index ].position;
+
+		candidate_dst_nodes.clear();
+
+		VisitBoundingBoxesHierarchyForBBox(
+			nodes_hierarchy,
+			BBox3f
+			{
+				.min= src_node_position - fetch_box_half_size,
+				.max= src_node_position + fetch_box_half_size,
+			},
+			lambda[&]( GlobalNavigationGraph::NodeIndex dst_node_index )
+			{
+				if( size_type( dst_node_index ) == src_dst_node_index )
+				{
+					return;
+				}
+
+				var Vec3f& dst_node_position= nodes[ size_type( dst_node_index ) ].position;
+
+				var f32 horizontal_square_distance= ( src_node_position.xy() - dst_node_position.xy() ).SquareLength();
+				var f32 vertical_distance= ust::abs( src_node_position.z - dst_node_position.z );
+				if( horizontal_square_distance <= max_horizontal_distance * max_horizontal_distance &&
+					vertical_distance <= max_vertical_distance )
+				{
+					candidate_dst_nodes.push_back( dst_node_index );
+				}
+			} );
+
+		// Sort connections by squared horizontal distance.
+		// It's necessary to add closest connections first.
+		ust::sort_by_key(
+			candidate_dst_nodes.range(),
+			lambda[&]( GlobalNavigationGraph::NodeIndex dst_node_index ) : f32
+			{
+				var Vec3f& dst_node_position= nodes[ size_type( dst_node_index ) ].position;
+				return ( src_node_position.xy() - dst_node_position.xy() ).SquareLength();
+			} );
+
+		var size_type first_output_edge= result.edges.size();
+		var size_type mut num_output_edges= 0s;
+
+		foreach( &candidate_dst_node : candidate_dst_nodes ) label candidates
+		{
+			// Check if direction to this connection isn't almost the same as to some previously-added connection.
+
+			var Vec3f dst_node_position= nodes[ size_type( candidate_dst_node ) ].position;
+
+			var Vec2f horizontal_vector_to_candidate= dst_node_position.xy() - src_node_position.xy();
+			var f32 horizontal_distance_to_candidate= horizontal_vector_to_candidate.Length();
+			if( horizontal_distance_to_candidate <= 0.0f )
+			{
+				continue;
+			}
+
+			for( auto mut i= 0s; i < num_output_edges; ++i )
+			{
+				var GlobalNavigationGraph::OutputEdge& prev_edge= result.edges[ first_output_edge + i ];
+				var Vec3f& prev_dst_node_position= nodes[ size_type( prev_edge.dst_node_index ) ].position;
+
+				var Vec2f horizontal_vector_to_prev_node= prev_dst_node_position.xy() - src_node_position.xy();
+
+				var f32 horizontal_distance_to_prev_node= horizontal_vector_to_prev_node.Length();
+				if( horizontal_distance_to_prev_node > 0.0f )
+				{
+					var f32 angle_cos=
+						horizontal_vector_to_candidate.Dot( horizontal_vector_to_prev_node ) /
+							( horizontal_distance_to_candidate * horizontal_distance_to_prev_node );
+
+					if( angle_cos > max_angle_cos_for_collinear_connections )
+					{
+						continue label candidates; // Direction is almost the same - skip it.
+					}
+				}
+			}
+
+			// After making sure that this connection has its own direction, check for reachability.
+
+			auto reachability_distance_opt=
+				( use_fast_but_incorrect_reachability_check
+					? GetNodeReachabilityDistanceFastButIncorrect(
+						map_data,
+						broken_quad_bits,
+						src_node_position,
+						dst_node_position,
+						node_bbox_for_reachability_check )
+					: GetNodeReachabilityDistance(
+						map_data,
+						broken_quad_bits,
+						src_node_position,
+						dst_node_position,
+						node_bbox_for_reachability_check ) );
+
+			if_var( reachability_distance : reachability_distance_opt )
+			{
+				result.edges.push_back(
+					GlobalNavigationGraph::OutputEdge
+					{
+						.dst_node_index= candidate_dst_node,
+						.length( ust::min( ust::ceil( reachability_distance ), 65535.0f ) ),
+					} );
+				++num_output_edges;
+			}
+		}
+
+		var GraphEdgesBuildResult::NodeOutputEdges &mut out_node= result.node_output_edges[i];
+		out_node.first_output_edge= u32( first_output_edge );
+
+		debug_assert( num_output_edges <= 255s );
+		out_node.num_output_edges= u8( num_output_edges );
+	}
+
+	return result;
+}
+
+// Returns empty optional if destination can't be reached.
+fn GetNodeReachabilityDistance(
+	GameMapData& map_data,
+	BitArrayView broken_quad_bits,
+	Vec3f& start,
+	Vec3f& destination,
+	BBox3f& node_bbox ) : ust::optional</f32/>
+{
+	// Perform fast and (almost) correct check first (as an optimization measure).
+	// If the start point and the destination point are on the same Z level, check direct tracing.
+	// If it works, it means, that there is no obstacles or even steps between given points.
+	// To make sure walking is possible, perform a couple of ground tests inbetween, to prevent falling down.
+	// This ground test isn't perfect, but is mostly fine.
+	// Generally this check should cover the majority of edges created in a navigation graph,
+	// since there are many flat planes covered with many nodes with nothing inbetween.
+	var f32 c_max_z_difference_for_fast_reachability_check= 2.0f;
+	if( ust::abs( start.z - destination.z ) <= c_max_z_difference_for_fast_reachability_check )
+	{
+		var Vec3f movement_vector= destination - start;
+
+		var TraceCollisionResult trace_collision_result=
+			CollisionTrace(
+				map_data, broken_quad_bits, ust::empty_range, ust::empty_range, node_bbox, start, movement_vector );
+
+		if( trace_collision_result.clipped_move_distance >= 1.0f )
+		{
+			// Perform a couple of ground checks.
+			// Check positions between start and destination nodes.
+			var Vec3f bbox_dimensions= node_bbox.GetDimensions();
+			var u32 length_boxes(
+				ust::ceil(
+					ust::max(
+						ust::abs( start.x - destination.x ) / bbox_dimensions.x,
+						ust::abs( start.y - destination.y ) / bbox_dimensions.y ) ) );
+
+			var bool mut is_on_ground= true;
+
+			// Use a small box as ground probe.
+			var BBox3f ground_probe_bbox{ .min( -1.0f, -1.0f, -2.0f ), .max(  1.0f,  1.0f,  2.0f ) };
+
+			// Start this loop from 1 and doesn't reach the destination.
+			// Performing ground check at start/destination nodes isn't necessary, such check should be performed earlier.
+			for( auto mut i= 1u; i < length_boxes; ++i )
+			{
+				var Vec3f probe_position= start + movement_vector * ( f32(i) / f32(length_boxes) );
+				is_on_ground&= TestBBoxMapIntersection( map_data, probe_position, ground_probe_bbox );
+			}
+
+			if( is_on_ground )
+			{
+				return ( start.xy() - destination.xy() ).Length();
+			}
+		}
+	}
+
+	// Perform walking movement simulation.
+	// It's necessary to be able to find reachability considering steps and ramps climbing.
+	// It's also necessary to avoid creating edges between nodes where movement results into falling down.
+
+	// Warning!
+	// This code should match entity movement code as close as possible!
+
+	// Typical speed for walking/patrolling enemies.
+	// It shouldn't be too high, since greater speed allows climbing steeper ramps, but we shouldn't allow it,
+	// because enemies with actual speed lower than that can't climb them and thus reachability for them would be wrong.
+	var f32 speed= 4.0f;
+
+	var f32 c_reach_horizontal_distance= 2.0f;
+	var f32 c_reach_vertical_distance= c_maximum_step_height_for_climbing;
+	var f32 c_min_movement_progress= 0.1f;
+
+	// Estimate the number of iterations based on distance and movement speed and some constant factor.
+	// Multiplying by such factor is necessary, since speed is lower while climbing inclined surfaces or bumping around corners.
+	var u32 max_iterations=
+		ust::max( 2u, u32( ust::ceil( ( start.xy()  - destination.xy() ).Length() / speed * 3.0f ) ) );
+
+	var Vec3f mut position= start;
+
+	var f32 mut velocity_z= 0.0f;
+
+	var f32 mut prev_distance_to_target= ust::plus_inf</f32/>();
+
+	var f32 mut accumulated_distance= 0.0f;
+
+	for( auto mut i= 0u; i < max_iterations; ++i )
+	{
+		var Vec2f direction_to_target= destination.xy() - position.xy();
+		var f32 distance_to_target= direction_to_target.Length();
+
+		if( prev_distance_to_target - distance_to_target < c_min_movement_progress )
+		{
+			// Doesn't do any progress to reach the target - there is no reason to continue trying.
+			// This condition allows speeding-up reachability check significantly.
+			break;
+		}
+		prev_distance_to_target= distance_to_target;
+
+		// Accumulate distance by assuming we can move the whole step towards the target.
+		// It isn't true in case of bumping into a wall, which gives less true distance.
+		// But we don't care about true distance, but more about travelling time
+		// and such distance accumulation gives a good estimation for it.
+		accumulated_distance+= ust::min( distance_to_target, speed );
+
+		if( distance_to_target <= c_reach_horizontal_distance )
+		{
+			var f32 vertical_distance= ust::abs( position.z - destination.z );
+			if( vertical_distance <= c_reach_vertical_distance )
+			{
+				// Reached the destination.
+				// Return accumulated distance and make sure it isn't smaller than true distance.
+				return ust::max( accumulated_distance, ( start.xy() - destination.xy() ).Length() );
+			}
+			else
+			{
+				// Fail to reach - has fallen down or is staying on a floor above the target node.
+				return ust::null_optional;
+			}
+		}
+
+		// It's important to include gravity downwards movement here.
+		// It's necessary for climbing steps.
+		// Also it's necessary to consider falling.
+		velocity_z+= c_gravity_per_step;
+
+		var Vec3f move_vector( direction_to_target * ust::min( 1.0f, speed / distance_to_target ), velocity_z );
+
+		var CollisionStepMoveResult collision_step_move_result=
+			CollisionStepMove(
+				map_data,
+				broken_quad_bits,
+				ust::empty_range,
+				ust::empty_range,
+				node_bbox,
+				position,
+				position + move_vector );
+
+		position= collision_step_move_result.trace_clip_result.position_clipped;
+
+		// Clamp vertical velocity if necessary.
+		for( auto mut i= 0u; i < collision_step_move_result.trace_clip_result.num_collision_events; ++i )
+		{
+			ClampVerticalVelocity(
+				velocity_z, collision_step_move_result.trace_clip_result.collision_events[i].plane_normal );
+		}
+
+		// TODO - detect if this movement requires too much free fall.
+		// If so - assume the target isn't reachable.
+		// It's needed to prevent enemies jumping down too deep.
+	}
+
+	// Can't reach the target.
+	return ust::null_optional;
+}
+
+// Fast but not fully correct reachability check function.
+// Use for debugging only.
+// Returns empty optional if destination can't be reached.
+fn GetNodeReachabilityDistanceFastButIncorrect(
+	GameMapData& map_data,
+	BitArrayView broken_quad_bits,
+	Vec3f& start,
+	Vec3f& destination,
+	BBox3f& node_bbox ) : ust::optional</f32/>
+{
+	var f32 height_difference= destination.z - start.z;
+	if( height_difference > c_maximum_step_height_for_climbing * 4.0f ||
+		height_difference < c_maximum_step_height_for_climbing * -1.5f )
+	{
+		return ust::null_optional;
+	}
+
+	// Fast line of sight check between bbox centers.
+	// It's incorrect in many cases.
+	// It can't handle stairs in many cases, bumping into walls and falling down.
+
+	if_var( &trace_result :
+		LineTrace(
+			map_data,
+			broken_quad_bits,
+			ust::empty_range,
+			start + node_bbox.GetCenter(),
+			destination - start ) )
+	{
+		if( trace_result.distance < 1.0f )
+		{
+			return ust::null_optional;
+		}
+	}
+
+	return ( start.xy() - destination.xy() ).Length();
+}
+
+fn BuildEntityNavigationInfos(
+	GameMapData& map_data,
+	BitArrayView broken_quad_bits,
+	ust::array_view_imut</GlobalNavigationGraph::Node/> nodes,
+	GlobalNavigationGraph::NodesHierarchy& nodes_hierarchy,
+	BBox3f& node_bbox,
+	f32 nodes_spacing ) : ust::vector</GlobalNavigationGraph::EntityNavigationInfo/>
+{
+	var ust::array_view_imut</ZpozEntityNavigationInfo/> in_infos= map_data.zpoz_data.deref().entity_navigation_infos;
+
+	var ust::vector</GlobalNavigationGraph::EntityNavigationInfo/> mut result(
+		in_infos.size(),
+		GlobalNavigationGraph::EntityNavigationInfo
+		{
+			.patrolling_nodes[ GlobalNavigationGraph::c_invalid_node_index ... ],
+			.large_patrolling_nodes[ GlobalNavigationGraph::c_invalid_node_index ... ],
+		} );
+
+	for( auto mut i= 0s; i < in_infos.size(); ++i )
+	{
+		var ZpozEntityNavigationInfo& in_info= in_infos[i];
+		var GlobalNavigationGraph::EntityNavigationInfo &mut out_info= result[i];
+
+		for( auto mut point_index= 0u; point_index < in_info.num_patrolling_points; ++point_index )
+		{
+			var Vec3f position(
+				f32( in_info.patrolling_point_coords[ point_index +  0u ] ),
+				f32( in_info.patrolling_point_coords[ point_index + 16u ] ),
+				f32( in_info.patrolling_point_coords[ point_index + 32u ] ) );
+
+			out_info.patrolling_nodes[ point_index ]=
+				FindNearestNavigationGraphNode(
+					map_data,
+					broken_quad_bits,
+					nodes,
+					nodes_hierarchy,
+					node_bbox,
+					nodes_spacing,
+					position,
+					false ).deref_or( GlobalNavigationGraph::c_invalid_node_index );
+
+			out_info.large_patrolling_nodes[ point_index ]=
+				FindNearestNavigationGraphNode(
+					map_data,
+					broken_quad_bits,
+					nodes,
+					nodes_hierarchy,
+					node_bbox,
+					nodes_spacing,
+					position,
+					true ).deref_or( GlobalNavigationGraph::c_invalid_node_index );
+		}
+	}
+
+	return result;
+}
+
+// Allow maximum 8 nodes in hierarchy node.
+// It seems to be near the optimal (but it wasn't precisely measured).
+var size_type c_max_navigation_graph_nodes_in_bounding_boxes_hierarchy_node= 8s;
+
+} // namespace PM

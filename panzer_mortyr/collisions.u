@@ -1,5 +1,7 @@
 import "bounding_boxes_hierarchy_visiting.iu"
 import "collisions.iu"
+import "game_constants.iu"
+import "physics_utils.iu"
 
 namespace PM
 {
@@ -229,6 +231,64 @@ fn CalculateIntersectionWithQuad(
 	}
 
 	return closest_distance;
+}
+
+fn TestBBoxMapIntersection( GameMapData& map_data, Vec3f& position, BBox3f& bbox ) : bool
+{
+	var CompactPolyhedron mut intersection_polyhedron
+	{
+		.num_planes= 0u,
+		.primary_planes_mask= 0u,
+		.planes[ { .normal= Vec3f::MakeZero(), .distance= 0.0f } ... ],
+	};
+
+	var BBox3f test_bbox
+	{
+		.min= bbox.min + position,
+		.max= bbox.max + position,
+	};
+
+	var bool mut has_intersection= false;
+
+	auto& clusters= map_data.zvox_data.deref().clusters;
+	auto& quads= map_data.zmap_data.deref().quads;
+
+	VisitBoundingBoxesHierarchyForBBox(
+		map_data.collider_quads_hierarchy,
+		test_bbox,
+		lambda[&]( PackedQuadIndex packed_quad_index )
+		{
+			var size_type c= packed_quad_index.GetClusterIndex();
+			var size_type q= packed_quad_index.GetQuadIndex();
+
+			var ZmapQuad& quad= quads[q];
+
+			// TODO - check for broken quads?
+
+			auto& center= clusters[c].c.center;
+			auto& in_vertices= quad.vertices;
+
+			var [ Vec3f, 4 ] vertices
+			[
+				( f32( center[0] + i32( in_vertices[0][0] ) ), f32( center[1] + i32( in_vertices[0][1] ) ), f32( center[2] + i32( in_vertices[0][2] ) ) ),
+				( f32( center[0] + i32( in_vertices[1][0] ) ), f32( center[1] + i32( in_vertices[1][1] ) ), f32( center[2] + i32( in_vertices[1][2] ) ) ),
+				( f32( center[0] + i32( in_vertices[2][0] ) ), f32( center[1] + i32( in_vertices[2][1] ) ), f32( center[2] + i32( in_vertices[2][2] ) ) ),
+				( f32( center[0] + i32( in_vertices[3][0] ) ), f32( center[1] + i32( in_vertices[3][1] ) ), f32( center[2] + i32( in_vertices[3][2] ) ) ),
+			];
+
+			CreateBBoxAndQuadMinkowskiSum( bbox, vertices, intersection_polyhedron );
+
+			if( intersection_polyhedron.num_planes >= 4u &&
+				IsPointInsidePolyhedron(
+					position,
+					ust::array_view_imut</Planef/>( intersection_polyhedron.planes ).subrange_end(
+						size_type( intersection_polyhedron.num_planes ) ) ) )
+			{
+				has_intersection= true;
+			}
+		} );
+
+	return has_intersection;
 }
 
 fn CollisionTrace(
@@ -708,13 +768,10 @@ fn CollisionStepMove(
 	for( auto mut i= 0u; i < collision_trace_clip_result.num_collision_events; ++i )
 	{
 		var Vec3f& normal= collision_trace_clip_result.collision_events[i].plane_normal;
-		var f32 normal_length= normal.Length();
-		if( normal_length > 0.0f )
+
+		if( IsGroundSurface( normal ) )
 		{
-			if( (-normal.z) / normal_length >= c_ground_plane_min_normal_z )
-			{
-				ground_planes_mask|= 1u << i;
-			}
+			ground_planes_mask|= 1u << i;
 		}
 
 		// Assume only exactly vertical polygons to be walls.
@@ -728,11 +785,8 @@ fn CollisionStepMove(
 	{
 		var Vec3f mut position_with_step_movement= movement_start_position;
 
-		// Original game has steps with height 16. Add one extra unit to make sure we can climb all stairs.
-		var f32 constexpr c_step_height= 17.0f;
-
 		// Try performing movement up.
-		var Vec3f up_movement_vector( 0.0f, 0.0f, -c_step_height );
+		var Vec3f up_movement_vector( 0.0f, 0.0f, -c_maximum_step_height_for_climbing );
 
 		var TraceCollisionResult up_trace_result=
 			CollisionTrace(
@@ -750,7 +804,7 @@ fn CollisionStepMove(
 
 			// Do not move up the whole distance to avoid landing exactly on edge of some collider.
 			var f32 up_movement_distance=
-				ust::max( 0.0f, ust::min( 1.0f, up_trace_result.clipped_move_distance ) * c_step_height - c_collider_plane_push_eps );
+				ust::max( 0.0f, ust::min( 1.0f, up_trace_result.clipped_move_distance ) * c_maximum_step_height_for_climbing - c_collider_plane_push_eps );
 
 			position_with_step_movement.z-= up_movement_distance;
 
@@ -779,7 +833,7 @@ fn CollisionStepMove(
 
 				// Move also down - in case if a step is small or if we just hit a solid wall (not a step).
 
-				var Vec3f down_movement_vector( 0.0f, 0.0f, ust::max( 0.0f, c_step_height + extra_z_movement ) );
+				var Vec3f down_movement_vector( 0.0f, 0.0f, ust::max( 0.0f, c_maximum_step_height_for_climbing + extra_z_movement ) );
 
 				var TraceCollisionResult down_trace_result=
 					CollisionTrace(
@@ -819,13 +873,9 @@ fn CollisionStepMove(
 				for( auto mut i= 0u; i < tweaked_collision_trace_clip_result.num_collision_events; ++i )
 				{
 					var Vec3f& normal= tweaked_collision_trace_clip_result.collision_events[i].plane_normal;
-					var f32 normal_length= normal.Length();
-					if( normal_length > 0.0f )
+					if( IsGroundSurface( normal ) )
 					{
-						if( (-normal.z) / normal_length >= c_ground_plane_min_normal_z )
-						{
-							new_ground_planes_mask|= 1u << i;
-						}
+						new_ground_planes_mask|= 1u << i;
 					}
 
 					// Assume only exactly vertical polygons to be walls.
@@ -859,9 +909,5 @@ fn CollisionStepMove(
 // Push collision result slightly from collider planes using this amout.
 // It's necessary to avoid numerical precision issues when even a clopped collision leads to result position inside a collider.
 var f32 c_collider_plane_push_eps= 1.0f / 32.0f;
-
-// Assume ground surfaces all surfaces with normal pointing mostly up.
-// This value is tuned so that it's possible to jump on some steap ramps, where it's possible to jump in the original.
-var f32 c_ground_plane_min_normal_z= 0.67f;
 
 } // namespace PM

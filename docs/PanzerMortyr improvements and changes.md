@@ -50,6 +50,10 @@ Changes:
 
 ### Gameplay
 
+Improvements:
+
+* Enemies navigation is slightly better - they are able to go in places impossible for enemies in the original game, they can follow the player far away from their start positions, their movement is generally smoother.
+
 Fixed bugs:
 
 * Game speed doesn't depend on screen refresh rate.
@@ -58,7 +62,6 @@ Fixed bugs:
 Changes:
 
 * Crouching height seems to be slightly less compared to the original.
-* Enemy navigation behavior may be somewhat different from the original game, since it's mostly guessed and not recreated exactly.
 * Enemy movement and rotation speed may be different, since it's mostly guessed.
 * Player movement works in a different way. Basic movement speed is the same, but acceleration/deceleration/turning may work differently.
 * Swimming speed/acceleration/deceleration behavior is mostly guessed.

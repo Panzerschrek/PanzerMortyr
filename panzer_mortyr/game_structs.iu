@@ -1,6 +1,7 @@
 import "bit_array.iu"
 import "caching_game_resources_loader.iu"
 import "game_things_container.iu"
+import "global_navigation_graph.iu"
 import "quads_hierarchy.iu"
 import "random.iu"
 import "room_clusters_hierarchy.iu"
@@ -26,6 +27,11 @@ struct GameState
 	// Entities should not be removed from this cotainer, they can be only appeded or emptied.
 	// All map entities are mapped to this container 1 to 1 so that original indices are matching.
 	ust::vector</ ust::optional</EntityState/> /> entities;
+
+	// The original game stores separate navigation infos for moving entity kinds.
+	// An entity requiring such info has an index to a separate table.
+	// We do basically the same, since it's wasteful to store navigation infos for non-moving entities (like pick-ups).
+	ust::vector</EntityNavigationState/> entity_navigation_states;
 
 	// Compact vector (with no gaps) of all colliders.
 	// Entities hold an index into this container.
@@ -106,19 +112,12 @@ struct EntityState
 	// If not ~0u renresents navigation info index (and also navigation graph index).
 	u32 navigation_info_index;
 
-	// If not ~0u represents navigation graph node used for moving.
-	u32 target_navigation_graph_node;
-
-	// If not ~0u represents navigation graph node to which this entity is attached.
-	// This node should be changed only while navigating the graph.
-	// Re-calculated the nearest one can't work properly in any cases,
-	// because original navigation graphs are somewhat buggy.
-	u32 current_navigation_graph_node;
-
 	// true if is avare of player presense (has seen him).
 	// Once an enemy is alarmed, he can't be calm anymore and will be chasing the player as long as he (the enemy) is alive.
+	// TODO - store it in navigation state?
 	bool alarmed;
 
+	// TODO - store it in navigation state?
 	bool player_is_in_sight;
 
 	bool lost_energy_in_current_operation;
@@ -136,6 +135,36 @@ struct EntityState
 
 	// Where this enemy last time has seen the player.
 	ust::optional</Vec3f/> last_seen_player_position;
+}
+
+// Extra data used for entity navigation.
+// Use separate structure, since many entities don't move at all (like pick-ups).
+struct EntityNavigationState
+{
+	// Memorize the time point at which the last route search was invokated.
+	// Do this in order to avoid searching for a route too often, since it's pretty costly.
+	u32 last_route_search_step_index;
+
+	// Represents navigation graph node used for moving or invalid node index.
+	GlobalNavigationGraph::NodeIndex target_navigation_graph_node;
+
+	// Represents navigation graph node to which this entity is attached or invalid index.
+	// Store it in order to avoid recalculating it each time it's required.
+	GlobalNavigationGraph::NodeIndex current_navigation_graph_node;
+
+	// First serval nodes of the route to the target.
+	// Use fixed-size array for nodes, since using something like "vector" would be too costly.
+	// It should be big enough to avoid executing route search too often.
+	// But storing too many nodes is wasteful, since in many cases a route may become non-actual before its end point is reached.
+	// Routes longer than capacity of this array are truncated.
+	// Unused values are filled with invalid node index.
+	// The last valid entry may be target node index.
+	// Current node should not be stored in this structure.
+	// When the first node in this route is reached, the whole array is shifted.
+	[ GlobalNavigationGraph::NodeIndex, 16 ] route;
+
+	// Used for patrolling mode.
+	u8 current_patrolling_point_index;
 }
 
 struct PlayerState
@@ -449,11 +478,11 @@ struct GameMapData
 	GameResourcePtr</ZmapData/> zmap_data;
 	GameResourcePtr</ZvoxData/> zvox_data;
 	GameResourcePtr</ZpozData/> zpoz_data;
-	GameResourcePtr</MapaWayData/> mapa_way_data;
 	QuadsHierarchy collider_quads_hierarchy;
 	GameResourcePtr</RoomClustersHierarchy/> room_clusters_hierarchy;
 	ust::vector</NoteVolume/> note_volumes;
 	ust::vector</ResourceString/> used_models;
+	GlobalNavigationGraph global_navigation_graph;
 }
 
 } // namespace PM

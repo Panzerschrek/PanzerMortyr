@@ -1,0 +1,128 @@
+import "debug_visualization.iu"
+import "global_navigation_graph_debug_visualization.iu"
+
+namespace PM
+{
+
+fn VisualizeGlobalNavigationGraph(
+	GlobalNavigationGraph& global_navigation_graph, ust::vector</WorldDrawingInfo::TestLine/> &mut out_lines )
+{
+	for( auto mut i= 0s; i < global_navigation_graph.nodes.size(); ++i )
+	{
+		VisualizeNavigationGraphNode( global_navigation_graph, i, out_lines );
+	}
+}
+
+fn VisualizeGlobalNavigationGraphNearGivenPoint(
+	GlobalNavigationGraph& global_navigation_graph,
+	Vec3f& position,
+	ust::vector</WorldDrawingInfo::TestLine/> &mut out_lines )
+{
+	if( global_navigation_graph.nodes.empty() )
+	{
+		return;
+	}
+
+	// Use here linear search for closest node.
+	// For debug purposes it's fine enough.
+
+	var f32 mut min_square_distance= ust::plus_inf</f32/>();
+	var size_type mut nearest_node_index= 0s;
+
+	for( auto mut i= 0s; i < global_navigation_graph.nodes.size(); ++i )
+	{
+		var f32 square_distance= ( global_navigation_graph.nodes[i].position - position ).SquareLength();
+		if( square_distance < min_square_distance )
+		{
+			min_square_distance= square_distance;
+			nearest_node_index= i;
+		}
+	}
+
+	VisualizeNavigationGraphNode( global_navigation_graph, nearest_node_index, out_lines );
+}
+
+fn VisualizeGlobalNavigationGraphPatrollingPoints(
+	GlobalNavigationGraph& global_navigation_graph, ust::vector</WorldDrawingInfo::TestLine/> &mut out_lines )
+{
+	var [ u8, 3 ] color[ 200u8,  32u8,  32u8 ];
+
+	foreach( &info : global_navigation_graph.entity_navigation_infos )
+	{
+		var ust::optional</Vec3f/> mut prev_position;
+
+		foreach( node_index : info.patrolling_nodes )
+		{
+			if( size_type( node_index ) < global_navigation_graph.nodes.size() )
+			{
+				var Vec3f& node_position= global_navigation_graph.nodes[ size_type( node_index ) ].position;
+				CreateBBoxLines(
+					BBox3f
+					{
+						.min= node_position - Vec3f( 8.0f, 8.0f, 16.0f ),
+						.max= node_position + Vec3f( 8.0f, 8.0f,  0.0f ),
+					},
+					color,
+					out_lines );
+
+				var Vec3f line_position( node_position.xy(), node_position.z - 8.0f );
+				if_var( &p : prev_position )
+				{
+					out_lines.push_back( WorldDrawingInfo::TestLine{ .vertices[ p, line_position ], .color= color } );
+				}
+
+				prev_position= line_position;
+			}
+		}
+	}
+}
+
+fn VisualizeNavigationGraphNode(
+	GlobalNavigationGraph& global_navigation_graph,
+	size_type node_index,
+	ust::vector</WorldDrawingInfo::TestLine/> &mut out_lines )
+{
+	var GlobalNavigationGraph::Node& node= global_navigation_graph.nodes[ node_index ];
+
+	var [ u8, 3 ] small_node_color[  32u8, 200u8,  32u8 ];
+	var [ u8, 3 ] large_node_color[  16u8, 144u8,  16u8 ];
+	var [ u8, 3 ]& node_color= ( node.large ? large_node_color : small_node_color );
+
+	var [ u8, 3 ] edge_color[ 200u8, 200u8,  32u8 ];
+
+	var BBox3f& bbox= ( node.large ? global_navigation_graph.large_node_bbox : global_navigation_graph.node_bbox );
+
+	var [ Vec3f, 6 ] vertices
+	[
+		node.position + 0.5f * Vec3f( bbox.min.x, bbox.min.y, bbox.max.z ),
+		node.position + 0.5f * Vec3f( bbox.min.x, bbox.max.y, bbox.max.z ),
+		node.position + 0.5f * Vec3f( bbox.max.x, bbox.min.y, bbox.max.z ),
+		node.position + 0.5f * Vec3f( bbox.max.x, bbox.max.y, bbox.max.z ),
+		node.position + 0.5f * Vec3f( 0.0f, 0.0f, bbox.min.z ),
+		node.position + 0.5f * Vec3f( 0.0f, 0.0f, bbox.max.z ),
+	];
+
+	out_lines.push_back( WorldDrawingInfo::TestLine{ .vertices[ vertices[0], vertices[1] ], .color= node_color } );
+	out_lines.push_back( WorldDrawingInfo::TestLine{ .vertices[ vertices[0], vertices[2] ], .color= node_color } );
+	out_lines.push_back( WorldDrawingInfo::TestLine{ .vertices[ vertices[2], vertices[3] ], .color= node_color } );
+	out_lines.push_back( WorldDrawingInfo::TestLine{ .vertices[ vertices[1], vertices[3] ], .color= node_color } );
+	out_lines.push_back( WorldDrawingInfo::TestLine{ .vertices[ vertices[0], vertices[4] ], .color= node_color } );
+	out_lines.push_back( WorldDrawingInfo::TestLine{ .vertices[ vertices[1], vertices[4] ], .color= node_color } );
+	out_lines.push_back( WorldDrawingInfo::TestLine{ .vertices[ vertices[2], vertices[4] ], .color= node_color } );
+	out_lines.push_back( WorldDrawingInfo::TestLine{ .vertices[ vertices[3], vertices[4] ], .color= node_color } );
+	out_lines.push_back( WorldDrawingInfo::TestLine{ .vertices[ vertices[4], vertices[5] ], .color= node_color } );
+
+	for( auto mut i= 0s; i < size_type( node.num_output_edges ); ++i )
+	{
+		var GlobalNavigationGraph::OutputEdge& output_edge=
+			global_navigation_graph.node_output_edges[ size_type( node.first_output_edge ) + i ];
+
+		var Vec3f& output_node_position=
+			global_navigation_graph.nodes[ size_type( output_edge.dst_node_index ) ].position;
+
+		out_lines.push_back(
+			WorldDrawingInfo::TestLine{ .vertices[ vertices[4], output_node_position ], .color= edge_color } );
+	}
+}
+
+} // namespace PM

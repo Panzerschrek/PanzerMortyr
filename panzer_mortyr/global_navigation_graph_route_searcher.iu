@@ -1,0 +1,384 @@
+import "/assert.iu"
+import "/binary_heap.iu"
+import "global_navigation_graph.iu"
+
+namespace PM
+{
+
+// This class performs route search based on global navigation graph.
+class GlobalNavigationGraphRouteSearcher
+{
+public:
+	// Find a route from start to target.
+	// Result route includes target node, but not start node.
+	// Returns empty range if found no route.
+	// Result route range references an internal container, which remains valid until next route search.
+	template</ type NodeVisitingFunc />
+	fn PerformDirectedSearch(
+		mut this,
+		GlobalNavigationGraph& graph,
+		GlobalNavigationGraph::NodeIndex start_node,
+		GlobalNavigationGraph::NodeIndex target_node,
+		bool use_only_large_nodes,
+		// Given function should have single parameter - node index.
+		// It should return a boolean value.
+		// True means the search should be continued and false means the search should be stopped.
+		NodeVisitingFunc mut node_visiting_func )
+			: ust::array_view_imut</GlobalNavigationGraph::NodeIndex/> @( ust::reference_notation::return_inner_references::param0 )
+	{
+		// Instantiate two versions of the function performing actual search - with and without only large nodes flag.
+		// This allows to speed-up its code by avoiding checking for this condition in a loop.
+		if( use_only_large_nodes )
+		{
+			return PerformDirectedSearchImpl</true/>( graph, start_node, target_node, move(node_visiting_func) );
+		}
+		else
+		{
+			return PerformDirectedSearchImpl</false/>( graph, start_node, target_node, move(node_visiting_func) );
+		}
+	}
+
+	// Enumerate all nodes coming from given node in their distance order (starting from nearest).
+	// A node can be visited at most once.
+	// After performing this call it's possible to reconstruct a route to any visited node.
+	template</type Func/>
+	fn EnumerateOutputNodes(
+		mut this,
+		GlobalNavigationGraph& graph,
+		GlobalNavigationGraph::NodeIndex start_node,
+		bool use_only_large_nodes,
+		// Given function should have two parameters - node index and distance (using "u32" type).
+		// It should return a boolean value.
+		// True means the search should be continued and false means the search should be stopped.
+		Func mut node_processing_func )
+	{
+		// Instantiate two versions of the function performing actual nodes enumeration - with and without only large nodes flag.
+		// This allows to speed-up its code by avoiding checking for this condition in a loop.
+		if( use_only_large_nodes )
+		{
+			EnumerateOutputNodesImpl</true/>( graph, start_node, move(node_processing_func) );
+		}
+		else
+		{
+			EnumerateOutputNodesImpl</false/>( graph, start_node, move(node_processing_func) );
+		}
+	}
+
+	// After performing output nodes enumeration, reconstruct a route to given node.
+	// Given node should be enumerated in the last enumeration call.
+	// Target node is included, but not the start node.
+	// Result route range references an internal container, which remains valid until next route reconstruction.
+	fn ReconstructRouteAfterNodesEnumeration( mut this, GlobalNavigationGraph::NodeIndex target_node_index )
+		: ust::array_view_imut</GlobalNavigationGraph::NodeIndex/> @( ust::reference_notation::return_inner_references::param0 )
+	{
+		result_route_.clear();
+
+		var ust::array_view_imut</NodeTableEntry/> node_table= node_table_;
+
+		var u32 search_sequentional_index= search_sequentional_index_ - 1u;
+
+		for( auto mut n= target_node_index; ; )
+		{
+			var NodeTableEntry& table_entry= node_table[ size_type(n) ];
+			if( table_entry.search_sequentional_index != search_sequentional_index )
+			{
+				return ust::empty_range; // This node wasn't visited in the last search.
+			}
+			if( table_entry.prev_node == GlobalNavigationGraph::c_invalid_node_index )
+			{
+				break; // Don't include the start node.
+			}
+
+			result_route_.push_back( n );
+
+			n= table_entry.prev_node;
+		}
+
+		// Reverse the result route so that it has start to target order.
+		result_route_.range().reverse();
+
+		return result_route_;
+	}
+
+private:
+	template</ bool use_only_large_nodes, type NodeVisitingFunc />
+	fn PerformDirectedSearchImpl(
+		mut this,
+		GlobalNavigationGraph& graph,
+		GlobalNavigationGraph::NodeIndex start_node,
+		GlobalNavigationGraph::NodeIndex target_node,
+		NodeVisitingFunc mut node_visiting_func )
+			: ust::array_view_imut</GlobalNavigationGraph::NodeIndex/> @( ust::reference_notation::return_inner_references::param0 )
+	{
+		// An implementation of A* algorithm.
+		// It's better for almost all cases, since it visits way less nodes compared to Dijkstra's algorithm.
+		// In case if a direct way exists between two points almost no unnecessary nodes are visited at all.
+
+		// Perform search from the start node.
+		// Stop if the target node is reached.
+		// Then reconstruct the route using target to start order.
+
+		var u32 search_sequentional_index= search_sequentional_index_;
+		++search_sequentional_index_;
+
+		// For slight speed-up read ranges of nodes and edges and save them in local variables.
+		var ust::array_view_imut</GlobalNavigationGraph::Node/> graph_nodes= graph.nodes;
+		var ust::array_view_imut</GlobalNavigationGraph::OutputEdge/> graph_node_output_edges= graph.node_output_edges;
+
+		var Vec2f start_position= graph_nodes[ size_type( start_node ) ].position.xy();
+		var Vec2f target_position= graph_nodes[ size_type( target_node ) ].position.xy();
+
+		node_table_.resize(
+			graph_nodes.size(),
+			NodeTableEntry{ .search_sequentional_index= 0u, .prev_node= GlobalNavigationGraph::c_invalid_node_index } );
+		var ust::array_view_mut</NodeTableEntry/> node_table= node_table_;
+
+		var ust::vector</DirectedSearchElement/> &mut search_queue= directed_search_queue_;
+		search_queue.clear();
+		search_queue.push_back(
+			DirectedSearchElement
+			{
+				.node_index= start_node,
+				.prev_node_index= GlobalNavigationGraph::c_invalid_node_index,
+				.distance= 0.0f,
+				// Use euclidian distance in XY plane as estimated remaining distance.
+				.estimated_total_distance= ( target_position - start_position ).Length(),
+			} );
+
+		var SearchElementCompare compare;
+
+		while( !search_queue.empty() )
+		{
+			ust::binary_heap::pop_heap( search_queue.range(), compare );
+			auto { node_index, prev_node_index, distance } = search_queue.pop_back();
+
+			{
+				var NodeTableEntry &mut node_table_entry= node_table[ size_type( node_index ) ];
+
+				if( node_table_entry.search_sequentional_index == search_sequentional_index )
+				{
+					continue; // Already visited this node.
+				}
+
+				node_table_entry.search_sequentional_index= search_sequentional_index;
+				node_table_entry.prev_node= prev_node_index;
+			}
+
+			if( !node_visiting_func( node_index ) )
+			{
+				break; // Processing function wants to end the search.
+			}
+
+			if( node_index == target_node )
+			{
+				// Managed to find a route.
+				// Reconstruct it using target to start order.
+				// Don't include the start node.
+				result_route_.clear();
+				for( auto mut n= node_index; n != start_node; n= node_table[ size_type(n) ].prev_node )
+				{
+					result_route_.push_back( n );
+				}
+
+				// Reverse the result route so that it has start to target order.
+				result_route_.range().reverse();
+
+				return result_route_;
+			}
+
+			var GlobalNavigationGraph::Node& node= graph_nodes[ size_type( node_index ) ];
+
+			foreach( &edge :
+				graph_node_output_edges.subrange(
+					size_type( node.first_output_edge ),
+					size_type( node.first_output_edge ) + size_type( node.num_output_edges ) ) )
+			{
+				if( use_only_large_nodes && !graph_nodes[ size_type( edge.dst_node_index ) ].large )
+				{
+					continue;
+				}
+
+				// Avoid adding a node into the search queue if it was already visited.
+				// This allows saving some time by not doing not-so-trivial binary heap operations.
+				if( node_table[ size_type( edge.dst_node_index ) ].search_sequentional_index != search_sequentional_index )
+				{
+					var f32 next_distance= distance + f32( edge.length );
+
+					// Use euclidian distance in XY plane as estimated remaining distance.
+					var f32 estimated_remaining_distance=
+						( target_position - graph_nodes[ size_type( edge.dst_node_index ) ].position.xy() ).Length();
+
+					search_queue.push_back(
+						DirectedSearchElement
+						{
+							.node_index= edge.dst_node_index,
+							.prev_node_index= node_index,
+							.distance= next_distance,
+							.estimated_total_distance= next_distance + estimated_remaining_distance,
+						} );
+
+					ust::binary_heap::push_heap( search_queue.range(), compare );
+				}
+			}
+		}
+
+		// Failed to found a route.
+		return ust::empty_range;
+	}
+
+	template</ bool use_only_large_nodes, type Func />
+	fn EnumerateOutputNodesImpl(
+		mut this,
+		GlobalNavigationGraph& graph,
+		GlobalNavigationGraph::NodeIndex start_node,
+		Func mut node_processing_func )
+	{
+		// An implementation of Dijkstra's algorithm.
+
+		var u32 search_sequentional_index= search_sequentional_index_;
+		++search_sequentional_index_;
+
+		// For slight speed-up read ranges of nodes and edges and save them in local variables.
+		var ust::array_view_imut</GlobalNavigationGraph::Node/> graph_nodes= graph.nodes;
+		var ust::array_view_imut</GlobalNavigationGraph::OutputEdge/> graph_node_output_edges= graph.node_output_edges;
+
+		node_table_.resize(
+			graph_nodes.size(),
+			NodeTableEntry{ .search_sequentional_index= 0u, .prev_node= GlobalNavigationGraph::c_invalid_node_index } );
+		var ust::array_view_mut</NodeTableEntry/> node_table= node_table_;
+
+		var ust::vector</ObservingSearchElement/> &mut search_queue= observing_search_queue_;
+		search_queue.clear();
+		search_queue.push_back(
+			ObservingSearchElement
+			{
+				.node_index= start_node,
+				.prev_node_index= GlobalNavigationGraph::c_invalid_node_index,
+				.distance(0)
+			} );
+
+		var SearchElementCompare compare;
+
+		while( !search_queue.empty() )
+		{
+			ust::binary_heap::pop_heap( search_queue.range(), compare );
+			auto { node_index, prev_node_index, distance } = search_queue.pop_back();
+
+			{
+				var NodeTableEntry &mut node_table_entry= node_table[ size_type( node_index ) ];
+
+				if( node_table_entry.search_sequentional_index == search_sequentional_index )
+				{
+					continue; // Already visited this node.
+				}
+
+				node_table_entry.search_sequentional_index= search_sequentional_index;
+				node_table_entry.prev_node= prev_node_index;
+			}
+
+			if( !node_processing_func( node_index, u32( distance ) ) )
+			{
+				break; // Processing function wants to end the search.
+			}
+
+			var GlobalNavigationGraph::Node& node= graph_nodes[ size_type( node_index ) ];
+
+			foreach( &edge :
+				graph_node_output_edges.subrange(
+					size_type( node.first_output_edge ),
+					size_type( node.first_output_edge ) + size_type( node.num_output_edges ) ) )
+			{
+				if( use_only_large_nodes && !graph_nodes[ size_type( edge.dst_node_index ) ].large )
+				{
+					continue;
+				}
+
+				// Avoid adding a node into the search queue if it was already visited.
+				// This allows saving some time by not doing not-so-trivial binary heap operations.
+				if( node_table[ size_type( edge.dst_node_index ) ].search_sequentional_index != search_sequentional_index )
+				{
+					search_queue.push_back(
+						ObservingSearchElement
+						{
+							.node_index= edge.dst_node_index,
+							.prev_node_index= node_index,
+							.distance( u32( distance ) + u32( edge.length ) )
+						} );
+					ust::binary_heap::push_heap( search_queue.range(), compare );
+				}
+			}
+		}
+	}
+
+private:
+	// Search element used for route search from start to target.
+	struct DirectedSearchElement
+	{
+		GlobalNavigationGraph::NodeIndex node_index;
+		GlobalNavigationGraph::NodeIndex prev_node_index; // Store prev node index to reconstruct the route.
+
+		// Actual graph distance.
+		f32 distance;
+
+		// Distance combined from actual graph distance for given node and estimated distance to search target.
+		f32 estimated_total_distance;
+	}
+
+	// Search element used for nearby nodes observing.
+	struct ObservingSearchElement
+	{
+		GlobalNavigationGraph::NodeIndex node_index;
+		GlobalNavigationGraph::NodeIndex prev_node_index; // Store prev node index to reconstruct the route.
+
+		// Use 16-bit integer distance. It should be enough.
+		// Edges in the global navigation graph use 16-bit distance and overall distance shouldn't be that big.
+		u16 distance;
+	}
+
+	// Comparator for reverse order.
+	struct SearchElementCompare
+	{
+		op()( this, DirectedSearchElement& l, DirectedSearchElement& r ) : bool
+		{
+			// Use reverse order.
+			return l.estimated_total_distance > r.estimated_total_distance;
+		}
+
+		op()( this, ObservingSearchElement& l, ObservingSearchElement& r ) : bool
+		{
+			// Use reverse order.
+			return l.distance > r.distance;
+		}
+	}
+
+	struct NodeTableEntry
+	{
+		// Index of last search this node was visited.
+		u32 search_sequentional_index;
+		GlobalNavigationGraph::NodeIndex prev_node; // May be invalid index for the source node.
+	}
+
+private:
+	// Reuse container with search elements across searches.
+	// It's necessary to avoid reallocating it on each search.
+	ust::vector</DirectedSearchElement/> directed_search_queue_;
+
+	// Reuse container with search elements across searches.
+	// It's necessary to avoid reallocating it on each search.
+	ust::vector</ObservingSearchElement/> observing_search_queue_;
+
+	// Reuse node table container across searches.
+	// It's necessary to avoid reallocating it on each search.
+	ust::vector</NodeTableEntry/> node_table_;
+
+	// Increment this counter each time search is performed.
+	// We use it to detect nodes already visited in current search invocation.
+	// Such approach is faster than marking all nodes as unvisited at the start of each search,
+	// considering only small fraction of nodes is visited on each search.
+	u32 search_sequentional_index_= 1u;
+
+	// Reuse container with result route to avoid reallocating it on each search.
+	ust::vector</GlobalNavigationGraph::NodeIndex/> result_route_;
+}
+
+} // namespace PM

@@ -5,8 +5,10 @@ import "collisions.iu"
 import "game_constants.iu"
 import "game_logic.iu"
 import "geometry_utils.iu"
+import "global_navigation_graph_utils.iu"
 import "mat.iu"
 import "math_constants.iu"
+import "physics_utils.iu"
 
 namespace PM
 {
@@ -17,7 +19,8 @@ fn CreateNewMapGameState(
 	var GameState mut game_state
 	{
 		.skill= skill,
-		.step_index= 0u,
+		// Use pretty large initial step index to be able to use 0 for representing some time step in the past.
+		.step_index= 4096u,
 		.player
 		{
 			.position= Vec3f::MakeZero(),
@@ -125,8 +128,6 @@ fn CreateNewMapGameState(
 				.current_operation= c_start_operation,
 				.num_steps_since_operation_start= 0u,
 				.navigation_info_index( navigation_info_index ),
-				.target_navigation_graph_node= ~0u,
-				.current_navigation_graph_node= ~0u,
 				.alarmed= false,
 				.player_is_in_sight= false,
 				.lost_energy_in_current_operation= false,
@@ -136,6 +137,18 @@ fn CreateNewMapGameState(
 				.collider_index= ~0u,
 			};
 	}
+
+	// Map entity navigation infos 1 to 1 to what is stored in the map data.
+	game_state.entity_navigation_states.resize(
+		zpoz_data.entity_navigation_infos.size(),
+		EntityNavigationState
+		{
+			.last_route_search_step_index= 0u,
+			.target_navigation_graph_node= GlobalNavigationGraph::c_invalid_node_index,
+			.current_navigation_graph_node= GlobalNavigationGraph::c_invalid_node_index,
+			.route[ GlobalNavigationGraph::c_invalid_node_index ... ],
+			.current_patrolling_point_index= 0u8,
+		} );
 
 	// Build colliders for entities.
 	game_state.colliders.clear();
@@ -313,7 +326,11 @@ fn CreateNewMapGameState(
 }
 
 fn nodiscard ProcessGameLogicStep(
-	GameGlobalData& global_data, GameMapData& map_data, PlayerInput& player_input, GameState &mut game_state ) : u32
+	GameGlobalData& global_data,
+	GameMapData& map_data,
+	PlayerInput& player_input,
+	GameState &mut game_state,
+	GlobalNavigationGraphRouteSearcher &mut route_searcher ) : u32
 {
 	PerformPlayerWeaponLogic( map_data, player_input, game_state );
 
@@ -327,7 +344,13 @@ fn nodiscard ProcessGameLogicStep(
 	// Spawn new entities before entity update step, so that they are properly animated.
 	TriggerEntitiesSpawn( map_data, game_state );
 
-	ProcessEntitiesLogicStep( global_data, map_data, game_state );
+	var RouteSearchContext mut route_search_context
+	{
+		.route_searcher= route_searcher,
+		.num_nodes_visited= 0s,
+	};
+
+	ProcessEntitiesLogicStep( global_data, map_data, game_state, route_search_context );
 
 	ProcessDynamicClustersLogicStep( map_data, game_state );
 
@@ -1580,28 +1603,6 @@ fn IsMapQuadBreakable( GameGlobalData& global_data, GameMapData& map_data, ZmapQ
 	return false;
 }
 
-// Result vector is not normalized!
-fn CalculateQuadNormal( ZmapQuad& quad ) : Vec3f
-{
-	auto& in_vertices= quad.vertices;
-
-	var [ Vec3f, 4 ] quad_vertices
-	[
-		( f32( in_vertices[0][0] ), f32( in_vertices[0][1] ), f32( in_vertices[0][2] ) ),
-		( f32( in_vertices[1][0] ), f32( in_vertices[1][1] ), f32( in_vertices[1][2] ) ),
-		( f32( in_vertices[2][0] ), f32( in_vertices[2][1] ), f32( in_vertices[2][2] ) ),
-		( f32( in_vertices[3][0] ), f32( in_vertices[3][1] ), f32( in_vertices[3][2] ) ),
-	];
-
-	// Average normal calculated based on 4 quad vertices.
-	// This is needed to handle quads with two vertices equal to each other.
-	return
-		( quad_vertices[0] - quad_vertices[1] ).Cross( quad_vertices[1] - quad_vertices[2] ) +
-		( quad_vertices[1] - quad_vertices[2] ).Cross( quad_vertices[2] - quad_vertices[3] ) +
-		( quad_vertices[2] - quad_vertices[3] ).Cross( quad_vertices[3] - quad_vertices[0] ) +
-		( quad_vertices[3] - quad_vertices[0] ).Cross( quad_vertices[0] - quad_vertices[1] );
-}
-
 fn TriggerEntitiesSpawn( GameMapData& map_data, GameState &mut game_state )
 {
 	// Spawn enemies behind the player's back.
@@ -1694,8 +1695,6 @@ fn TriggerEntitiesSpawn( GameMapData& map_data, GameState &mut game_state )
 				.current_operation= c_start_operation,
 				.num_steps_since_operation_start= 0u,
 				.navigation_info_index( navigation_info_index ),
-				.target_navigation_graph_node= ~0u,
-				.current_navigation_graph_node= ~0u,
 				.alarmed= true, // Spawn triggered entities in alarmed state.
 				.player_is_in_sight= false,
 				.lost_energy_in_current_operation= false,
@@ -1716,7 +1715,11 @@ struct DelayedExplosionSplashDamage
 	f32 splash_base_damage;
 }
 
-fn ProcessEntitiesLogicStep( GameGlobalData& game_global_data, GameMapData& map_data, GameState &mut game_state )
+fn ProcessEntitiesLogicStep(
+	GameGlobalData& game_global_data,
+	GameMapData& map_data,
+	GameState &mut game_state,
+	RouteSearchContext &mut route_search_context )
 {
 	var GameParams& game_params= game_global_data.game_params.deref();
 	var EntitiesDescription& entities_description= map_data.entities_description.deref();
@@ -1746,11 +1749,18 @@ fn ProcessEntitiesLogicStep( GameGlobalData& game_global_data, GameMapData& map_
 		{
 			var EntityState &mut entity= game_state.entities[entity_index].try_deref();
 
+			var ust::optional_ref_mut</EntityNavigationState/> mut entity_navigation_state_opt;
+			if( size_type( entity.navigation_info_index ) < game_state.entity_navigation_states.size() )
+			{
+				entity_navigation_state_opt=
+					game_state.entity_navigation_states[ size_type( entity.navigation_info_index ) ];
+			}
+
 			var EntitiesDescription::EntityDescription& entity_description=
 				entities_description.entities[ size_type( entity.kind ) ];
 
-			// Check for player visibility and update movement target only on even steps for even entities and on odd steps for odd entities.
-			// Such sparse update is needed, since these calculations are costly.
+			// Check for player visibility only on even steps for even entities and on odd steps for odd entities.
+			// Such sparse update is needed, since this calculation are costly.
 			// Doing this only each second step isn't that problematic, it means only that enemies react slightly slower.
 			if( ( entity_index & 1s ) == ( size_type( game_state.step_index ) & 1s ) )
 			{
@@ -1761,14 +1771,22 @@ fn ProcessEntitiesLogicStep( GameGlobalData& game_global_data, GameMapData& map_
 					entity_description,
 					entity,
 					game_state.player );
+			}
 
+			// For now update movement target each step.
+			// It's necessary to select new target just afer reaching the old one.
+			if_var( &mut entity_navigation_state : entity_navigation_state_opt )
+			{
 				UpdateEntityMovementTarget(
 					map_data,
 					game_state.broken_quad_bits,
 					game_state.dynamic_cluster_colliders,
+					route_search_context,
 					entity_description,
 					entity,
-					game_state.random );
+					entity_navigation_state,
+					game_state.random,
+					game_state.step_index );
 			}
 
 			if( entity.player_is_in_sight )
@@ -2122,8 +2140,6 @@ fn ProcessEntitiesLogicStep( GameGlobalData& game_global_data, GameMapData& map_
 										.current_operation= c_start_operation,
 										.num_steps_since_operation_start= 0u,
 										.navigation_info_index= ~0u,
-										.target_navigation_graph_node= ~0u,
-										.current_navigation_graph_node= ~0u,
 										.alarmed= false,
 										.player_is_in_sight= false,
 										.lost_energy_in_current_operation= false,
@@ -2254,6 +2270,7 @@ fn ProcessEntitiesLogicStep( GameGlobalData& game_global_data, GameMapData& map_
 				game_state.projectiles,
 				game_state.projectile_hit_events,
 				entity,
+				entity_navigation_state_opt,
 				u32(entity_index),
 				entity_description,
 				operation );
@@ -4356,13 +4373,24 @@ fn UpdateEntityPlayerInSightFlag(
 	}
 }
 
+struct RouteSearchContext
+{
+	GlobalNavigationGraphRouteSearcher &mut route_searcher;
+
+	// Total number of nodes visited within this game logic step.
+	size_type num_nodes_visited;
+}
+
 fn UpdateEntityMovementTarget(
 	GameMapData& map_data,
 	BitArrayView broken_quad_bits,
 	ust::array_view_imut</DynamicClusterCollider/> dynamic_cluster_colliders,
+	RouteSearchContext &mut route_search_context,
 	EntitiesDescription::EntityDescription& entity_description,
-	EntityState &mut entity,
-	PseudoRandomGenerator& mut random )
+	EntityState& entity,
+	EntityNavigationState &mut navigation_state,
+	PseudoRandomGenerator& mut random,
+	u32 current_step_index )
 {
 	if( entity.energy == 0u )
 	{
@@ -4373,367 +4401,942 @@ fn UpdateEntityMovementTarget(
 	var EntitiesDescription::Operation& operation=
 		entity_description.operations[ size_type( entity.current_operation ) ];
 
-	if( operation.operation_control.empty() ||
-		operation.operation_control.try_deref().speed == 0u )
+	if_var( &operation_control : operation.operation_control )
 	{
-		// Don't care selecting movement target if has zero speed.
-		// Select it later if movement is possible.
+		if( operation_control.speed == 0u )
+		{
+			// Don't care selecting movement target if has zero speed.
+			// Select it later if movement is possible.
+			return;
+		}
+		if( operation_control.functioning_mode == EntitiesDescription::OperationControl::c_functioning_mode_sky_decoration )
+		{
+			// Sky decorations don't use global navigation graph for their movement.
+			return;
+		}
+	}
+	else
+	{
+		// Don't require movement target if has no operation control.
 		return;
 	}
 
-	var MapaWayData& mapa_way_data= map_data.mapa_way_data.deref();
+	var bool mut large_entity= false;
 
-	if( size_type( entity.navigation_info_index ) >= mapa_way_data.navigation_graphs.size() )
+	if( operation.animation_kind != EntitiesDescription::Operation::AnimationKind::None )
 	{
-		return;
+		var Vec3f bbox_half_size(
+			f32( operation.animation.bounding_box_half_size_x ),
+			f32( operation.animation.bounding_box_half_size_y ),
+			f32( operation.animation.bounding_box_half_size_z ) );
+
+		var Vec3f bbox_center(
+			f32( operation.animation.bounding_box_center_x ),
+			f32( operation.animation.bounding_box_center_y ),
+			f32( operation.animation.bounding_box_center_z ) );
+
+		var BBox3f bbox{ .min= bbox_center - bbox_half_size, .max= bbox_center + bbox_half_size };
+
+		large_entity= !map_data.global_navigation_graph.node_bbox.Contains( bbox );
 	}
 
-	var MapaWayNavigationGraph& navigation_graph=
-		mapa_way_data.navigation_graphs[ size_type( entity.navigation_info_index ) ];
-
-	if( navigation_graph.num_nodes == 0u )
+	if( navigation_state.current_navigation_graph_node == GlobalNavigationGraph::c_invalid_node_index )
 	{
-		return;
+		// Attach to the navigation graph if has no current node.
+		if_var( node_index : FindNearestNavigationGraphNode( map_data, broken_quad_bits, entity.position, large_entity ) )
+		{
+			navigation_state.current_navigation_graph_node= node_index;
+		}
+
+		if( navigation_state.current_navigation_graph_node == GlobalNavigationGraph::c_invalid_node_index )
+		{
+			// Failed to attach.
+			return;
+		}
+	}
+	else
+	{
+		// Re-attach to the navigation graph if is too far away from the current navigation graph node.
+		// It's necessary for non-graph-based movement modes (like movement towards the player).
+		// It's also needed for rare cases if an enemy has fallen down.
+
+		var Vec3f& node_position=
+			map_data.global_navigation_graph.nodes[ size_type( navigation_state.current_navigation_graph_node ) ].position;
+
+		var f32 max_distance= 1.5f * map_data.global_navigation_graph.nodes_spacing;
+
+		var f32 square_distance= ( node_position - entity.position ).SquareLength();
+
+		if( square_distance > max_distance * max_distance )
+		{
+			if_var( node_index : FindNearestNavigationGraphNode( map_data, broken_quad_bits, entity.position, large_entity ) )
+			{
+				if( node_index != navigation_state.current_navigation_graph_node )
+				{
+					navigation_state.current_navigation_graph_node= node_index;
+
+					var GlobalNavigationGraph::NodeIndex next_waypoint= navigation_state.route[0];
+
+					if( next_waypoint != GlobalNavigationGraph::c_invalid_node_index &&
+						next_waypoint != node_index )
+					{
+						// Check if it's still possible to move to the next waypoint from the newly-identified current node.
+						// If it's not possible - reset it to trigger route recalculation.
+
+						var bool mut next_waypoint_is_reachable= false;
+
+						var GlobalNavigationGraph::Node& current_node=
+							map_data.global_navigation_graph.nodes[ size_type( navigation_state.current_navigation_graph_node ) ];
+
+						foreach( &edge :
+							map_data.global_navigation_graph.node_output_edges.range().subrange(
+								size_type( current_node.first_output_edge ),
+								size_type( current_node.first_output_edge ) + size_type( current_node.num_output_edges ) ) )
+						{
+							next_waypoint_is_reachable|= edge.dst_node_index == next_waypoint;
+						}
+
+						if( !next_waypoint_is_reachable )
+						{
+							SaveEntityRoute( ust::empty_range, navigation_state );
+						}
+					}
+				}
+			}
+		}
 	}
 
-	if( entity.alarmed )
+	if( navigation_state.target_navigation_graph_node != GlobalNavigationGraph::c_invalid_node_index &&
+		navigation_state.current_navigation_graph_node == navigation_state.target_navigation_graph_node )
 	{
-		if_var( &player_position : entity.last_seen_player_position )
+		// Reached the target. Reset it to select new target.
+		navigation_state.target_navigation_graph_node= GlobalNavigationGraph::c_invalid_node_index;
+	}
+
+	if( entity.alarmed && !entity.last_seen_player_position.empty() )
+	{
+		var Vec3f& player_position= entity.last_seen_player_position.try_deref();
+
+		if( navigation_state.target_navigation_graph_node != GlobalNavigationGraph::c_invalid_node_index &&
+			navigation_state.route[0] == GlobalNavigationGraph::c_invalid_node_index )
+		{
+			// No intermediate points are left.
+			// Just reset the target in such case.
+			// We don't care preserving the target in alarmed mode in any cost.
+			// If we need to recalculate a route, use this opportunity to select more actual target.
+			navigation_state.target_navigation_graph_node= GlobalNavigationGraph::c_invalid_node_index;
+		}
+
+		var EntityDistanceRanges distance_ranges= GetEntityDistanceRanges( entity_description );
+
+		var f32 optimal_square_distance_min=
+			distance_ranges.optimal.distance_min * distance_ranges.optimal.distance_min;
+		var f32 optimal_square_distance_max=
+			distance_ranges.optimal.distance_max * distance_ranges.optimal.distance_max;
+		var f32 good_enough_square_distance_min=
+			distance_ranges.good_enough.distance_min * distance_ranges.good_enough.distance_min;
+		var f32 good_enough_square_distance_max=
+			distance_ranges.good_enough.distance_max * distance_ranges.good_enough.distance_max;
+
+		var bool is_in_panic_mode=
+			// First condition is necessary to disable out-of-ammo panic if panic is disabled.
+			entity_description.panic > 0u &&
+			// TODO - make sure <= should be used here instead of <.
+			( entity.energy <= entity_description.panic || entity.ammo == 0u );
+
+		if( is_in_panic_mode )
+		{
+			var f32 min_square_distance_for_panic_mode= good_enough_square_distance_max;
+
+			var bool mut navigation_target_needs_update= false;
+
+			if( navigation_state.target_navigation_graph_node != GlobalNavigationGraph::c_invalid_node_index )
+			{
+				// Check if current target is close enough to the player.
+				// If so - request navigation target recalculation.
+
+				var GlobalNavigationGraph::Node& node=
+					map_data.global_navigation_graph.nodes[ size_type( navigation_state.target_navigation_graph_node ) ];
+
+				var f32 square_distance= ( node.position - player_position ).SquareLength();
+
+				if( square_distance < min_square_distance_for_panic_mode )
+				{
+					navigation_target_needs_update= true;
+				}
+			}
+			else
+			{
+				navigation_target_needs_update= true;
+			}
+
+			if( navigation_target_needs_update )
+			{
+				// First check nodes connected to current one.
+				// Select a node leading away from the player.
+
+				var Vec2f direction_to_player= player_position.xy() - entity.position.xy();
+				var Vec2f direction_to_player_normalized= direction_to_player / ( direction_to_player.Length() + 0.0001f );
+
+				var GlobalNavigationGraph::Node& current_node=
+					map_data.global_navigation_graph.nodes[ size_type( navigation_state.current_navigation_graph_node ) ];
+
+				var GlobalNavigationGraph::NodeIndex mut best_node_index= GlobalNavigationGraph::c_invalid_node_index;
+				var f32 mut smallest_angle_cos= ust::plus_inf</f32/>();
+
+				foreach( &edge :
+					map_data.global_navigation_graph.node_output_edges.range().subrange(
+						size_type( current_node.first_output_edge ),
+						size_type( current_node.first_output_edge ) + size_type( current_node.num_output_edges ) ) )
+				{
+					var GlobalNavigationGraph::Node& node=
+						map_data.global_navigation_graph.nodes[ size_type( edge.dst_node_index ) ];
+
+					if( large_entity && !node.large )
+					{
+						continue;
+					}
+
+					var Vec2f direction_to_node= node.position.xy() - entity.position.xy();
+					var f32 dot= direction_to_node.Dot( direction_to_player_normalized );
+
+					if( dot < 0.0f ) // Consider only nodes leading away from the player.
+					{
+						var f32 angle_cos= dot / direction_to_node.Length();
+						if( angle_cos < smallest_angle_cos )
+						{
+							smallest_angle_cos= angle_cos;
+							best_node_index= edge.dst_node_index;
+						}
+					}
+				}
+
+				if( best_node_index != GlobalNavigationGraph::c_invalid_node_index )
+				{
+					SaveEntityRoute( ust::single_element_array_view( best_node_index ), navigation_state );
+					navigation_state.target_navigation_graph_node= best_node_index;
+				}
+				else if(
+					current_step_index >= navigation_state.last_route_search_step_index + EntityNavigationConstants::min_steps_between_route_searches &&
+					route_search_context.num_nodes_visited < EntityNavigationConstants::max_nodes_to_visit_in_single_game_logic_step )
+				{
+					// A fallback for cases when an enemy is pushed into a corner with no way to move away from the player.
+					// Perform more complex nearby nodes enumeration to find a way from this corner.
+
+					var GlobalNavigationGraph::NodeIndex mut new_navigation_target_node=
+						GlobalNavigationGraph::c_invalid_node_index;
+
+					var size_type mut num_nodes_visited= 0s;
+
+					route_search_context.route_searcher.EnumerateOutputNodes(
+						map_data.global_navigation_graph,
+						navigation_state.current_navigation_graph_node,
+						large_entity,
+						lambda[&]( GlobalNavigationGraph::NodeIndex node_index, u32 graph_distance ) : bool
+						{
+							ust::ignore_unused(graph_distance);
+
+							if( node_index != navigation_state.current_navigation_graph_node )
+							{
+								var GlobalNavigationGraph::Node& node=
+									map_data.global_navigation_graph.nodes[ size_type( node_index ) ];
+
+								var f32 square_distance_from_node_to_player=
+									( node.position - player_position ).SquareLength();
+
+								if( square_distance_from_node_to_player >= min_square_distance_for_panic_mode )
+								{
+									// Found a node which is far enough from the player.
+									// Select is as target and end the search.
+									new_navigation_target_node= node_index;
+									return false;
+								}
+							}
+
+							++num_nodes_visited;
+							return num_nodes_visited < EntityNavigationConstants::max_nodes_to_visit_for_panic_mode_search;
+						} );
+
+					// Remember time point at which a route search/nodes enumeration for this entity was executed.
+					navigation_state.last_route_search_step_index= current_step_index;
+
+					route_search_context.num_nodes_visited+= num_nodes_visited;
+
+					if( new_navigation_target_node != GlobalNavigationGraph::c_invalid_node_index )
+					{
+						// Reconstruct a route after nodes enumeration.
+						var ust::array_view_imut</GlobalNavigationGraph::NodeIndex/> route=
+							route_search_context.route_searcher.ReconstructRouteAfterNodesEnumeration( new_navigation_target_node );
+
+						if( !route.empty() )
+						{
+							SaveEntityRoute( route, navigation_state );
+							navigation_state.target_navigation_graph_node= new_navigation_target_node;
+						}
+					}
+				}
+			}
+		}
+		else if( entity.player_is_in_sight )
 		{
 			var f32 player_crouching_phase= 0.0f; // For line of sight check assume that the player is staying.
 
-			var EntityDistanceRanges distance_ranges= GetEntityDistanceRanges( entity_description );
+			var bool mut navigation_target_needs_update= false;
 
-			var f32 optimal_square_distance_min=
-				distance_ranges.optimal.distance_min * distance_ranges.optimal.distance_min;
-			var f32 optimal_square_distance_max=
-				distance_ranges.optimal.distance_max * distance_ranges.optimal.distance_max;
-			var f32 good_enough_square_distance_min=
-				distance_ranges.good_enough.distance_min * distance_ranges.good_enough.distance_min;
-			var f32 good_enough_square_distance_max=
-				distance_ranges.good_enough.distance_max * distance_ranges.good_enough.distance_max;
-
-			var bool is_in_panic_mode=
-				 // First condition is necessary to disable out-of-ammo panic if panic is disabled.
-				entity_description.panic > 0u &&
-				// TODO - make sure <= should be used here instead of <.
-				( entity.energy <= entity_description.panic || entity.ammo == 0u );
-
-			if( is_in_panic_mode )
+			if( navigation_state.target_navigation_graph_node != GlobalNavigationGraph::c_invalid_node_index )
 			{
-				// Panic mode - try run away from the player as far as possible.
+				// Check if current target node is good enough and if the player is still visible from it.
+				// If it's not the case - request navigation target update.
 
-				if( entity.target_navigation_graph_node != ~0u )
+				var GlobalNavigationGraph::Node& node=
+					map_data.global_navigation_graph.nodes[ size_type( navigation_state.target_navigation_graph_node ) ];
+
+				var f32 square_distance= ( node.position - player_position ).SquareLength();
+
+				var bool distance_good_enough=
+					square_distance >= good_enough_square_distance_min &&
+					square_distance <= good_enough_square_distance_max;
+
+				if( distance_good_enough )
 				{
-					// If target node is too close to the player - reset it to trigger its recalculation.
+					var Vec3f trace_start=
+						GetPlayerPointForEntityVisibilityTrace( player_position, player_crouching_phase );
 
-					var MapaWayNavigationGraphNode& node= navigation_graph.nodes[ entity.target_navigation_graph_node ];
-					var Vec3f node_position( f32( node.position[0] ), f32( node.position[1] ), f32( node.position[2] ) );
-					var f32 square_distance= ( node_position - player_position ).SquareLength();
+					var Vec3f trace_end= GetEntityPointForPlayerVisibilityTrace( node.position, operation.animation );
 
-					if( square_distance < good_enough_square_distance_max )
+					if( trace_end != trace_start )
 					{
-						entity.target_navigation_graph_node= ~0u;
+						var Vec3f trace_vector= trace_end - trace_start;
+						if_var( &trace_result :
+								LineTrace(
+									map_data,
+									broken_quad_bits,
+									dynamic_cluster_colliders,
+									trace_start,
+									trace_vector ) )
+						{
+							if( trace_result.distance < 1.0f )
+							{
+								// Player is no longer visible from this target.
+								navigation_target_needs_update= true;
+							}
+						}
 					}
 				}
-
-				if( entity.target_navigation_graph_node == ~0u )
+				else
 				{
-					// Search for the most distant from the player node as target node.
-					var f32 mut largest_square_distance= 0.0f;
-					var u32 mut most_distant_node= ~0u;
-
-					for( auto mut i= 0u; i < navigation_graph.num_nodes; ++i )
-					{
-						if( i == entity.current_navigation_graph_node )
-						{
-							// Avoid selecting current navigation node as target.
-							continue;
-						}
-
-						var MapaWayNavigationGraphNode& node= navigation_graph.nodes[i];
-						var Vec3f node_position( f32( node.position[0] ), f32( node.position[1] ), f32( node.position[2] ) );
-						var f32 square_distance= ( node_position - player_position ).SquareLength();
-
-						if( square_distance > largest_square_distance )
-						{
-							largest_square_distance= square_distance;
-							most_distant_node= i;
-						}
-					}
-
-					entity.target_navigation_graph_node= most_distant_node;
+					navigation_target_needs_update= true;
 				}
 			}
-			else if( entity.player_is_in_sight )
+			else
 			{
-				// Check if currnet target node is good enough. If so - preserve it, otherwise reset it.
-				// Also check if player is still visible from it.
-				if( entity.target_navigation_graph_node != ~0u )
+				navigation_target_needs_update= true;
+			}
+
+			if( navigation_target_needs_update &&
+				current_step_index >= navigation_state.last_route_search_step_index + EntityNavigationConstants::min_steps_between_route_searches &&
+				route_search_context.num_nodes_visited < EntityNavigationConstants::max_nodes_to_visit_in_single_game_logic_step )
+			{
+				// Need a new target and a route to it.
+
+				var f32 square_distance_to_player= ( player_position - entity.position ).SquareLength();
+
+				if( square_distance_to_player < good_enough_square_distance_min )
 				{
-					var MapaWayNavigationGraphNode& node= navigation_graph.nodes[ entity.target_navigation_graph_node ];
-					var Vec3f node_position( f32( node.position[0] ), f32( node.position[1] ), f32( node.position[2] ) );
-					var f32 square_distance= ( node_position - player_position ).SquareLength();
+					// Is too close to the player.
+					// Search for the nearest node (in graph distance units), which isn't too close to the player.
 
-					var bool good_enough=
-						square_distance >= good_enough_square_distance_min &&
-						square_distance <= good_enough_square_distance_max;
+					// In the worst case we need to go to the player and past it. It's roughly 2 minimal distances.
+					var u32 max_graph_distance_to_observe( distance_ranges.good_enough.distance_min * 2.5f );
 
-					if( good_enough )
-					{
-						var Vec3f trace_start=
-							GetPlayerPointForEntityVisibilityTrace( player_position, player_crouching_phase );
+					var GlobalNavigationGraph::NodeIndex mut new_navigation_target_node=
+						GlobalNavigationGraph::c_invalid_node_index;
 
-						var Vec3f trace_end= GetEntityPointForPlayerVisibilityTrace( node_position, operation.animation );
+					var size_type mut num_nodes_visited= 0s;
 
-						if( trace_end != trace_start )
+					route_search_context.route_searcher.EnumerateOutputNodes(
+						map_data.global_navigation_graph,
+						navigation_state.current_navigation_graph_node,
+						large_entity,
+						lambda[&]( GlobalNavigationGraph::NodeIndex node_index, u32 graph_distance ) : bool
 						{
-							var Vec3f trace_vector= trace_end - trace_start;
-							if_var( &trace_result :
-									LineTrace(
-										map_data,
-										broken_quad_bits,
-										dynamic_cluster_colliders,
-										trace_start,
-										trace_vector ) )
+							++num_nodes_visited;
+
+							if( graph_distance > max_graph_distance_to_observe )
 							{
-								if( trace_result.distance < 1.0f )
+								// Avoid observing the entire graph if failed to find a good position nearby.
+								return false;
+							}
+
+							if( node_index == navigation_state.current_navigation_graph_node )
+							{
+								// Avoid selecting the current node as target.
+								return true;
+							}
+
+							var GlobalNavigationGraph::Node& node=
+								map_data.global_navigation_graph.nodes[ size_type( node_index ) ];
+
+							var f32 square_distance_to_player= ( node.position - player_position ).SquareLength();
+
+							if( square_distance_to_player >= good_enough_square_distance_min &&
+								square_distance_to_player <= good_enough_square_distance_max )
+							{
+								// Find a node which is far enough from the player.
+								// Check if it's possible to see the player from it.
+								var Vec3f trace_start=
+									GetPlayerPointForEntityVisibilityTrace( player_position, player_crouching_phase );
+
+								var Vec3f trace_end= GetEntityPointForPlayerVisibilityTrace( node.position, operation.animation );
+
+								if( trace_end != trace_start )
 								{
-									entity.target_navigation_graph_node= ~0u;
-								}
-							}
-						}
-					}
-					else
-					{
-						entity.target_navigation_graph_node= ~0u;
-					}
-				}
-
-				if( entity.target_navigation_graph_node == ~0u )
-				{
-					// Try selecting a position near the player.
-
-					// First fetch all nodes which are optimal by distance criteria.
-
-					var u32 c_max_candidate_nodes= 64u;
-					var [ u8, c_max_candidate_nodes ] mut candidate_nodes[ 255u8 ... ];
-					var u32 mut num_candidate_nodes= 0u;
-
-					for( auto mut i= 0u; i < navigation_graph.num_nodes; ++i )
-					{
-						if( i == entity.current_navigation_graph_node )
-						{
-							// Avoid selecting current navigation node as target.
-							continue;
-						}
-
-						var MapaWayNavigationGraphNode& node= navigation_graph.nodes[i];
-						var Vec3f node_position( f32( node.position[0] ), f32( node.position[1] ), f32( node.position[2] ) );
-						var f32 square_distance= ( node_position - player_position ).SquareLength();
-
-						var bool optimal_distance=
-							square_distance >= optimal_square_distance_min &&
-							square_distance <= optimal_square_distance_max;
-
-						if( optimal_distance )
-						{
-							// Check if moving from current position to this node in a straight line doesn't cause to walk to the player too close.
-
-							var Vec3f vec_from_entity_to_node= node_position - entity.position;
-							var Vec3f vec_from_node_to_player= player_position - node_position;
-							var Vec3f vec_from_entity_to_player= player_position - entity.position;
-
-							var bool mut too_close= false;
-
-							var bool projection_is_within_line=
-								vec_from_entity_to_node.Dot( vec_from_node_to_player ) <= 0.0f &&
-								vec_from_entity_to_node.Dot( vec_from_entity_to_player ) >= 0.0f;
-
-							if( projection_is_within_line )
-							{
-								var f32 square_distance_from_entity_to_node= vec_from_entity_to_node.SquareLength();
-								if( square_distance_from_entity_to_node > 0.0f )
-								{
-									var f32 closest_square_distance=
-										vec_from_node_to_player.Cross( vec_from_entity_to_player ).SquareLength() /
-										square_distance_from_entity_to_node;
-
-									too_close= closest_square_distance < good_enough_square_distance_min;
-								}
-							}
-
-							if( !too_close )
-							{
-								candidate_nodes[ num_candidate_nodes ] = u8(i);
-								++num_candidate_nodes;
-								if( num_candidate_nodes == c_max_candidate_nodes )
-								{
-									break;
-								}
-							}
-						}
-					}
-
-					if( num_candidate_nodes > 0u )
-					{
-						var Vec3f trace_start=
-							GetPlayerPointForEntityVisibilityTrace( player_position, player_crouching_phase );
-
-						for( auto mut i= 0u; i < num_candidate_nodes; ++i )
-						{
-							// Select random point from remaining candidates.
-							{
-								var u32 random_index= i + random.Next() % ( num_candidate_nodes - i );
-								auto prev= candidate_nodes[i];
-								candidate_nodes[i]= candidate_nodes[ random_index ];
-								candidate_nodes[ random_index ]= prev;
-							}
-
-							var u32 candidate_node( candidate_nodes[i] );
-
-							// Check if player is visible from the position of this node.
-							// It's necessary to avoid taking a position from which the player can't be seen.
-
-							var MapaWayNavigationGraphNode& node= navigation_graph.nodes[ candidate_node ];
-							var Vec3f node_position( f32( node.position[0] ), f32( node.position[1] ), f32( node.position[2] ) );
-
-							var Vec3f trace_end= GetEntityPointForPlayerVisibilityTrace( node_position, operation.animation );
-
-							var bool mut is_visible= true;
-
-							if( trace_end != trace_start )
-							{
-								var Vec3f trace_vector= trace_end - trace_start;
-								if_var( &trace_result :
+									var Vec3f trace_vector= trace_end - trace_start;
+									auto trace_result=
 										LineTrace(
 											map_data,
 											broken_quad_bits,
 											dynamic_cluster_colliders,
 											trace_start,
-											trace_vector ) )
-								{
-									is_visible= trace_result.distance >= 1.0f;
+											trace_vector );
+
+									if( trace_result.empty() || trace_result.try_deref().distance >= 1.0f )
+									{
+										// Found a good target. Stop graph nodes enumeration.
+										new_navigation_target_node= node_index;
+										return false;
+									}
 								}
 							}
 
-							if( is_visible )
+							return true;
+						} );
+
+					// Remember time point at which a route search/nodes enumeration for this entity was executed.
+					navigation_state.last_route_search_step_index= current_step_index;
+
+					route_search_context.num_nodes_visited+= num_nodes_visited;
+
+					if( new_navigation_target_node != GlobalNavigationGraph::c_invalid_node_index )
+					{
+						// Reconstruct a route after nodes enumeration.
+						var ust::array_view_imut</GlobalNavigationGraph::NodeIndex/> route=
+							route_search_context.route_searcher.ReconstructRouteAfterNodesEnumeration( new_navigation_target_node );
+
+						if( !route.empty() )
+						{
+							SaveEntityRoute( route, navigation_state );
+							navigation_state.target_navigation_graph_node= new_navigation_target_node;
+						}
+					}
+				}
+				else if( square_distance_to_player > good_enough_square_distance_max )
+				{
+					// Is too far away from the player. Search a direct route towards him.
+
+					if_var( player_node_index : FindNearestNavigationGraphNode( map_data, broken_quad_bits, player_position, large_entity ) )
+					{
+						var size_type mut num_nodes_visited= 0s;
+
+						var ust::array_view_imut</GlobalNavigationGraph::NodeIndex/> route=
+							route_search_context.route_searcher.PerformDirectedSearch(
+								map_data.global_navigation_graph,
+								navigation_state.current_navigation_graph_node,
+								player_node_index,
+								large_entity,
+								lambda[&]( GlobalNavigationGraph::NodeIndex node_index ) : bool
+								{
+									ust::ignore_unused( node_index );
+									++num_nodes_visited;
+									return num_nodes_visited < EntityNavigationConstants::max_nodes_to_visit_for_direct_route_search;
+								} );
+
+						// Remember time point at which a route search/nodes enumeration for this entity was executed.
+						navigation_state.last_route_search_step_index= current_step_index;
+
+						route_search_context.num_nodes_visited+= num_nodes_visited;
+
+						if( !route.empty() )
+						{
+							// Found a route to the player.
+							// Search for nodes in this route which are in optimal and good enough distance to the player.
+
+							var size_type max_route_indices= 16s;
+							var [ [ u16, max_route_indices ], 2 ] mut route_indices[ [ ~0u16 ... ] ... ]; // Optimal and good enough indices.
+							var [ size_type, 2 ] mut num_indices[ 0s ... ]; // Optimal and good enough indices.
+
+							for( auto mut i= 0s; i < route.size(); ++i )
 							{
-								entity.target_navigation_graph_node= candidate_node;
-								break;
+								var GlobalNavigationGraph::Node& node=
+									map_data.global_navigation_graph.nodes[ size_type( route[i] ) ];
+
+								var f32 node_square_distance_to_player= ( node.position - player_position ).SquareLength();
+
+								if( node_square_distance_to_player >= optimal_square_distance_min &&
+									node_square_distance_to_player <= optimal_square_distance_max )
+								{
+									if( num_indices[0] < max_route_indices )
+									{
+										route_indices[0][ num_indices[0] ]= u16(i);
+										++num_indices[0];
+									}
+								}
+								else if( node_square_distance_to_player >= good_enough_square_distance_min &&
+									node_square_distance_to_player >= good_enough_square_distance_max )
+								{
+									if( num_indices[1] < max_route_indices )
+									{
+										route_indices[1][ num_indices[1] ]= u16(i);
+										++num_indices[1];
+									}
+								}
+							}
+
+							var size_type mut end_index= route.size() - 1s;
+
+							// Check optimal nodes in the route, then good enough ones.
+							// If the player can be seen from the position of this node - select it as target.
+							for( auto mut range_index= 0s; range_index < 2s; ++range_index ) label select_movement_target_loop
+							{
+								auto& range_route_indices= route_indices[ range_index ];
+								var size_type range_num_indices= num_indices[ range_index ];
+
+								for( auto mut i= 0s; i < range_num_indices; ++i )
+								{
+									// Check if the player is visible from the position of this node.
+
+									var size_type index( range_route_indices[i] );
+									var GlobalNavigationGraph::Node& node=
+										map_data.global_navigation_graph.nodes[ size_type( route[index] ) ];
+
+									var Vec3f trace_start=
+										GetPlayerPointForEntityVisibilityTrace( player_position, player_crouching_phase );
+
+									var Vec3f trace_end= GetEntityPointForPlayerVisibilityTrace( node.position, operation.animation );
+
+									if( trace_end != trace_start )
+									{
+										var Vec3f trace_vector= trace_end - trace_start;
+										auto trace_result=
+											LineTrace(
+												map_data,
+												broken_quad_bits,
+												dynamic_cluster_colliders,
+												trace_start,
+												trace_vector );
+
+										if( trace_result.empty() || trace_result.try_deref().distance >= 1.0f )
+										{
+											end_index= index;
+											break label select_movement_target_loop;
+										}
+									}
+								}
+							}
+
+							navigation_state.target_navigation_graph_node= route[ end_index ];
+							SaveEntityRoute( route.subrange_end( end_index + 1s ), navigation_state );
+						}
+						else
+						{
+							// Can't find a route towards the player.
+							// It's actually not so rare case,
+							// since many enemies are placed in areas without straight connection to the player's location.
+
+							// Just select a nearby node which is the closest to the player.
+
+							var GlobalNavigationGraph::Node& current_node=
+								map_data.global_navigation_graph.nodes[ size_type( navigation_state.current_navigation_graph_node ) ];
+
+							var GlobalNavigationGraph::NodeIndex mut best_node_index= GlobalNavigationGraph::c_invalid_node_index;
+							var f32 mut smallest_square_distance= ust::plus_inf</f32/>();
+
+							foreach( &edge :
+								map_data.global_navigation_graph.node_output_edges.range().subrange(
+									size_type( current_node.first_output_edge ),
+									size_type( current_node.first_output_edge ) + size_type( current_node.num_output_edges ) ) )
+							{
+								var GlobalNavigationGraph::Node& node=
+									map_data.global_navigation_graph.nodes[ size_type( edge.dst_node_index ) ];
+
+								if( large_entity && !node.large )
+								{
+									continue;
+								}
+
+								var f32 square_distance_to_player= ( node.position - player_position ).SquareLength();
+
+								if( square_distance_to_player < smallest_square_distance )
+								{
+									smallest_square_distance= square_distance_to_player;
+									best_node_index= edge.dst_node_index;
+								}
+							}
+
+							if( best_node_index != GlobalNavigationGraph::c_invalid_node_index )
+							{
+								SaveEntityRoute( ust::single_element_array_view( best_node_index ), navigation_state );
+								navigation_state.target_navigation_graph_node= best_node_index;
+							}
+						}
+					}
+				}
+				else
+				{
+					// Is in good enough distance to the player.
+					// Enumerate nearby nodes.
+					// Collect nodes in optimal distance and in good enough distance.
+
+					var size_type max_nodes_collected= 16s;
+
+					var [ [ GlobalNavigationGraph::NodeIndex, max_nodes_collected ], 2 ] mut nodes_collected
+						[ [ GlobalNavigationGraph::c_invalid_node_index ... ] ... ]; // Optimal and good enough indices.
+
+					var [ size_type, 2 ] mut num_nodes_collected[ 0s ... ]; // Optimal and good enough indices.
+
+					var size_type mut num_nodes_visited= 0s;
+
+					route_search_context.route_searcher.EnumerateOutputNodes(
+						map_data.global_navigation_graph,
+						navigation_state.current_navigation_graph_node,
+						large_entity,
+						lambda[&]( GlobalNavigationGraph::NodeIndex node_index, u32 graph_distance ) : bool
+						{
+							ust::ignore_unused( graph_distance );
+
+							++num_nodes_visited;
+
+							if( node_index == navigation_state.current_navigation_graph_node )
+							{
+								return true;
+							}
+
+							var GlobalNavigationGraph::Node& node=
+									map_data.global_navigation_graph.nodes[ size_type( node_index ) ];
+
+							var f32 node_square_distance_to_player= ( player_position - node.position ).SquareLength();
+
+							if( node_square_distance_to_player >= good_enough_square_distance_min &&
+								node_square_distance_to_player <= good_enough_square_distance_max )
+							{
+								// Check if moving from current position to this node in a straight line doesn't cause to walk to the player too close.
+
+								var Vec3f vec_from_entity_to_node= node.position - entity.position;
+								var Vec3f vec_from_node_to_player= player_position - node.position;
+								var Vec3f vec_from_entity_to_player= player_position - entity.position;
+
+								var bool mut too_close= false;
+
+								var bool projection_is_within_line=
+									vec_from_entity_to_node.Dot( vec_from_node_to_player ) <= 0.0f &&
+									vec_from_entity_to_node.Dot( vec_from_entity_to_player ) >= 0.0f;
+
+								if( projection_is_within_line )
+								{
+									var f32 square_distance_from_entity_to_node= vec_from_entity_to_node.SquareLength();
+									if( square_distance_from_entity_to_node > 0.0f )
+									{
+										var f32 closest_square_distance=
+											vec_from_node_to_player.Cross( vec_from_entity_to_player ).SquareLength() /
+											square_distance_from_entity_to_node;
+
+										too_close= closest_square_distance < good_enough_square_distance_min;
+									}
+								}
+
+								if( !too_close )
+								{
+									if( node_square_distance_to_player >= optimal_square_distance_min &&
+										node_square_distance_to_player <= optimal_square_distance_max )
+									{
+										if( num_nodes_collected[0] < max_nodes_collected )
+										{
+											nodes_collected[0][ num_nodes_collected[0] ]= node_index;
+											++num_nodes_collected[0];
+										}
+									}
+									else
+									{
+										if( num_nodes_collected[1] < max_nodes_collected )
+										{
+											nodes_collected[1][ num_nodes_collected[1] ]= node_index;
+											++num_nodes_collected[1];
+										}
+									}
+								}
+							}
+
+							return num_nodes_visited < EntityNavigationConstants::max_nodes_to_visit_for_nearby_target_search;
+						} );
+
+					// Remember time point at which a route search/nodes enumeration for this entity was executed.
+					navigation_state.last_route_search_step_index= current_step_index;
+
+					route_search_context.num_nodes_visited+= num_nodes_visited;
+
+					// Proccess first optimal nodes, then good enough.
+					// On each step select a random node from the list.
+					// Check if this node if the player is visible from the position of this node.
+
+					var GlobalNavigationGraph::NodeIndex mut new_navigation_target_node=
+						GlobalNavigationGraph::c_invalid_node_index;
+
+					for( auto mut range_index= 0s; range_index < 2s; ++range_index ) label select_movement_target_loop
+					{
+						auto &mut range_nodes= nodes_collected[ range_index ];
+						var size_type num_nodes= num_nodes_collected[ range_index ];
+
+						for( auto mut i= 0s; i < num_nodes; ++i )
+						{
+							// Select random point from remaining candidates.
+							{
+								var size_type random_index= i + size_type( random.Next() ) % ( num_nodes - i );
+								auto prev= range_nodes[i];
+								range_nodes[i]= range_nodes[ random_index ];
+								range_nodes[ random_index ]= prev;
+							}
+
+							var GlobalNavigationGraph::NodeIndex node_index= range_nodes[i];
+
+							var GlobalNavigationGraph::Node& node=
+								map_data.global_navigation_graph.nodes[ size_type( node_index ) ];
+
+							var Vec3f trace_start=
+								GetPlayerPointForEntityVisibilityTrace( player_position, player_crouching_phase );
+
+							var Vec3f trace_end=
+								GetEntityPointForPlayerVisibilityTrace( node.position, operation.animation );
+
+							if( trace_end != trace_start )
+							{
+								var Vec3f trace_vector= trace_end - trace_start;
+								auto trace_result=
+									LineTrace(
+										map_data,
+										broken_quad_bits,
+										dynamic_cluster_colliders,
+										trace_start,
+										trace_vector );
+
+								if( trace_result.empty() || trace_result.try_deref().distance >= 1.0f )
+								{
+									new_navigation_target_node= node_index;
+									break label select_movement_target_loop;
+								}
 							}
 						}
 					}
 
-					if( entity.target_navigation_graph_node == ~0u )
+					if( new_navigation_target_node != GlobalNavigationGraph::c_invalid_node_index )
 					{
-						// Fallback for some complex cases.
-						// Select just good enough node.
+						// Reconstruct a route after nodes enumeration.
+						var ust::array_view_imut</GlobalNavigationGraph::NodeIndex/> route=
+							route_search_context.route_searcher.ReconstructRouteAfterNodesEnumeration( new_navigation_target_node );
 
-						num_candidate_nodes= 0u;
-
-						for( auto mut i= 0u; i < navigation_graph.num_nodes; ++i )
+						if( !route.empty() )
 						{
-							if( i == entity.current_navigation_graph_node )
-							{
-								// Avoid selecting current navigation node as target.
-								continue;
-							}
-
-							var MapaWayNavigationGraphNode& node= navigation_graph.nodes[i];
-							var Vec3f node_position( f32( node.position[0] ), f32( node.position[1] ), f32( node.position[2] ) );
-							var f32 square_distance= ( node_position - player_position ).SquareLength();
-
-							var bool good_enough_distance=
-								square_distance >= good_enough_square_distance_min &&
-								square_distance <= good_enough_square_distance_max;
-
-							if( good_enough_distance )
-							{
-								candidate_nodes[ num_candidate_nodes ] = u8(i);
-								++num_candidate_nodes;
-								if( num_candidate_nodes == c_max_candidate_nodes )
-								{
-									break;
-								}
-							}
-						}
-
-						if( num_candidate_nodes > 0u )
-						{
-							// Select random point from candidates.
-							// Don't even bother checking player visibility from this point.
-							entity.target_navigation_graph_node=
-								u32( candidate_nodes[ random.Next() % num_candidate_nodes ] );
+							SaveEntityRoute( route, navigation_state );
+							navigation_state.target_navigation_graph_node= new_navigation_target_node;
 						}
 					}
 				}
 			}
+		}
+		else
+		{
+			// If the player isn't visible, just go to the last position where he was seen.
 
-			if( ( !entity.player_is_in_sight && !is_in_panic_mode ) ||
-				entity.target_navigation_graph_node == ~0u )
+			if( current_step_index >= navigation_state.last_route_search_step_index + EntityNavigationConstants::min_steps_between_route_searches &&
+				route_search_context.num_nodes_visited < EntityNavigationConstants::max_nodes_to_visit_in_single_game_logic_step )
 			{
-				// If player is not visible or if failed to find even good enough target,
-				// select the node nearest to last seen player position.
-				// This approach allows enemies reaching the player even if he is now out of the view.
-
-				var f32 mut smallest_square_distance= ust::plus_inf</f32/>();
-				var u32 mut nearest_to_player_node_index= ~0u;
-
-				for( auto mut i= 0u; i < navigation_graph.num_nodes; ++i )
+				if_var( player_node_index : FindNearestNavigationGraphNode( map_data, broken_quad_bits, player_position, large_entity ) )
 				{
-					if( i == entity.current_navigation_graph_node )
+					if( navigation_state.target_navigation_graph_node != player_node_index ||
+						navigation_state.route[0] == GlobalNavigationGraph::c_invalid_node_index )
 					{
-						// Avoid selecting current navigation node as target.
-						// Doing so allows enemies to travel between two nearest points instead of staying at single nearest point.
-						continue;
-					}
+						var size_type mut num_nodes_visited= 0s;
 
-					// Navigation graph nodes are stored on floor.
-					// Player position is stored on floor too.
-					// So it has sense to measure distance between these positions.
-					var MapaWayNavigationGraphNode& node= navigation_graph.nodes[i];
-					var Vec3f node_position( f32( node.position[0] ), f32( node.position[1] ), f32( node.position[2] ) );
-					var f32 square_distance= ( node_position - player_position ).SquareLength();
-					if( square_distance < smallest_square_distance )
-					{
-						smallest_square_distance= square_distance;
-						nearest_to_player_node_index= i;
+						var ust::array_view_imut</GlobalNavigationGraph::NodeIndex/> route=
+							route_search_context.route_searcher.PerformDirectedSearch(
+								map_data.global_navigation_graph,
+								navigation_state.current_navigation_graph_node,
+								player_node_index,
+								large_entity,
+								lambda[&]( GlobalNavigationGraph::NodeIndex node_index ) : bool
+								{
+									ust::ignore_unused( node_index );
+									++num_nodes_visited;
+									return num_nodes_visited < EntityNavigationConstants::max_nodes_to_visit_for_direct_route_search;
+								} );
+
+						// Remember time point at which a route search/nodes enumeration for this entity was executed.
+						navigation_state.last_route_search_step_index= current_step_index;
+
+						route_search_context.num_nodes_visited+= num_nodes_visited;
+
+						if( !route.empty() )
+						{
+							SaveEntityRoute( route, navigation_state );
+							navigation_state.target_navigation_graph_node= route.back();
+						}
+						else
+						{
+							// If no route is found, just use the default fallback for the target (calculated later).
+						}
 					}
 				}
+			}
+		}
+	}
+	else
+	{
+		// Perform movement between patrolling points if is not alarmed or is alarmed, but has not seen the player yet.
+		// It's necessary to do so for enemies with trigger-based spawn.
 
-				entity.target_navigation_graph_node= nearest_to_player_node_index;
+		var bool mut need_to_recalculate_route= false;
+
+		if( navigation_state.target_navigation_graph_node == GlobalNavigationGraph::c_invalid_node_index )
+		{
+			navigation_state.target_navigation_graph_node=
+				SelectNextPatrollingNode(
+					map_data.global_navigation_graph.entity_navigation_infos[ size_type( entity.navigation_info_index ) ],
+					navigation_state.current_navigation_graph_node,
+					large_entity );
+
+			need_to_recalculate_route= true;
+		}
+
+		if( navigation_state.target_navigation_graph_node != GlobalNavigationGraph::c_invalid_node_index &&
+			navigation_state.route[0] == GlobalNavigationGraph::c_invalid_node_index )
+		{
+			// Need to recalculate the route, since no intermediate points are left.
+			need_to_recalculate_route= true;
+		}
+
+		if( need_to_recalculate_route &&
+			current_step_index >= navigation_state.last_route_search_step_index + EntityNavigationConstants::min_steps_between_patrolling_route_searches &&
+			route_search_context.num_nodes_visited < EntityNavigationConstants::max_nodes_to_visit_in_single_game_logic_step )
+		{
+			// Search for a route to target.
+
+			var bool mut found_route= false;
+
+			if( navigation_state.target_navigation_graph_node != GlobalNavigationGraph::c_invalid_node_index )
+			{
+				var size_type mut num_nodes_visited= 0s;
+
+				var ust::array_view_imut</GlobalNavigationGraph::NodeIndex/> route=
+					route_search_context.route_searcher.PerformDirectedSearch(
+						map_data.global_navigation_graph,
+						navigation_state.current_navigation_graph_node,
+						navigation_state.target_navigation_graph_node,
+						large_entity,
+						lambda[&]( GlobalNavigationGraph::NodeIndex node_index ) : bool
+						{
+							ust::ignore_unused( node_index );
+							++num_nodes_visited;
+							return num_nodes_visited < EntityNavigationConstants::max_nodes_to_visit_for_patrolling_target_search;
+						} );
+
+				// Remember time point at which a route search/nodes enumeration for this entity was executed.
+				navigation_state.last_route_search_step_index= current_step_index;
+
+				route_search_context.num_nodes_visited+= num_nodes_visited;
+
+				if( !route.empty() )
+				{
+					SaveEntityRoute( route, navigation_state );
+					found_route= true;
+				}
+			}
+
+			if( !found_route )
+			{
+				// Can't find a route to the target patrolling point.
+				// Try selecting the next patrolling point as target and finding a route to it.
+
+				navigation_state.target_navigation_graph_node=
+					SelectNextPatrollingNode(
+						map_data.global_navigation_graph.entity_navigation_infos[ size_type( entity.navigation_info_index ) ],
+						navigation_state.target_navigation_graph_node,
+						large_entity );
+
+				if( navigation_state.target_navigation_graph_node != GlobalNavigationGraph::c_invalid_node_index )
+				{
+					var size_type mut num_nodes_visited= 0s;
+
+					var ust::array_view_imut</GlobalNavigationGraph::NodeIndex/> route=
+						route_search_context.route_searcher.PerformDirectedSearch(
+							map_data.global_navigation_graph,
+							navigation_state.current_navigation_graph_node,
+							navigation_state.target_navigation_graph_node,
+							large_entity,
+							lambda[&]( GlobalNavigationGraph::NodeIndex node_index ) : bool
+						{
+							ust::ignore_unused( node_index );
+							++num_nodes_visited;
+							return num_nodes_visited < EntityNavigationConstants::max_nodes_to_visit_for_patrolling_target_search;
+						} );
+
+					// Remember time point at which a route search/nodes enumeration for this entity was executed.
+					navigation_state.last_route_search_step_index= current_step_index;
+
+					route_search_context.num_nodes_visited+= num_nodes_visited;
+
+					if( !route.empty() )
+					{
+						SaveEntityRoute( route, navigation_state );
+						found_route= true;
+					}
+				}
 			}
 		}
 	}
 
-	if( entity.target_navigation_graph_node == ~0u )
+	// A fallback for cases where no target can be selected and/or no route can be found.
+	// Just select a nearby navigation graph node based on current direction as target.
+	// In the worst case this will result in a straigh movement until next obstacle is reached, than turning will take place.
+	if( navigation_state.target_navigation_graph_node == GlobalNavigationGraph::c_invalid_node_index )
 	{
-		// If still has no target (like if not alarmed) - select next patrolling node.
+		var GlobalNavigationGraph::Node& current_node=
+			map_data.global_navigation_graph.nodes[ size_type( navigation_state.current_navigation_graph_node ) ];
 
-		if( entity.current_navigation_graph_node != ~0u )
+		var GlobalNavigationGraph::NodeIndex mut best_node_index= GlobalNavigationGraph::c_invalid_node_index;
+		var f32 mut best_angle_cos= ust::minus_inf</f32/>();
+
+		var Vec2f entity_direction_normalized= GetEntityDirectionNormalizedVector( entity );
+
+		foreach( &edge :
+			map_data.global_navigation_graph.node_output_edges.range().subrange(
+				size_type( current_node.first_output_edge ),
+				size_type( current_node.first_output_edge ) + size_type( current_node.num_output_edges ) ) )
 		{
-			// If has current patrolling node, select next patrolling node.
-			for( auto mut i= entity.current_navigation_graph_node + 1u; i < navigation_graph.num_nodes; ++i )
+			var GlobalNavigationGraph::Node& node=
+				map_data.global_navigation_graph.nodes[ size_type( edge.dst_node_index ) ];
+
+			if( large_entity && !node.large )
 			{
-				if( navigation_graph.nodes[i].unknown3 == -1 )
+				continue;
+			}
+
+			var Vec2f vector_to_node= ( node.position.xy() - entity.position.xy() );
+
+			var f32 vector_to_node_length= vector_to_node.Length();
+			if( vector_to_node_length > 0.0f )
+			{
+				var f32 angle_cos= vector_to_node.Dot( entity_direction_normalized ) / vector_to_node_length;
+				if( angle_cos > best_angle_cos )
 				{
-					entity.target_navigation_graph_node= i;
-					break;
+					best_node_index= edge.dst_node_index;
+					best_angle_cos= angle_cos;
 				}
 			}
 		}
 
-		if( entity.target_navigation_graph_node == ~0u )
+		if( best_node_index != GlobalNavigationGraph::c_invalid_node_index )
 		{
-			for( auto mut i= 0u; i < navigation_graph.num_nodes; ++i )
-			{
-				if( navigation_graph.nodes[i].unknown3 == -1 )
-				{
-					entity.target_navigation_graph_node= i;
-					break;
-				}
-			}
+			SaveEntityRoute( ust::single_element_array_view( best_node_index ), navigation_state );
+			navigation_state.target_navigation_graph_node= best_node_index;
 		}
 	}
 }
@@ -4790,6 +5393,63 @@ struct EntityDistanceRange
 {
 	f32 distance_min;
 	f32 distance_max;
+}
+
+// May return invalid node index.
+fn SelectNextPatrollingNode(
+	GlobalNavigationGraph::EntityNavigationInfo& entity_navigation_info,
+	GlobalNavigationGraph::NodeIndex current_node,
+	bool use_large_nodes ) : GlobalNavigationGraph::NodeIndex
+{
+	auto& patrolling_nodes=
+		( use_large_nodes ? entity_navigation_info.large_patrolling_nodes : entity_navigation_info.patrolling_nodes );
+
+	var size_type max_points= typeinfo</ typeof( patrolling_nodes ) />.element_count;
+
+	// Find index of current node.
+	auto mut i= 0s;
+	for( ; i < max_points; ++i )
+	{
+		if( current_node == patrolling_nodes[i] )
+		{
+			++i;
+			break;
+		}
+	}
+
+	// Search the remaing array after current node.
+	for( ; i < max_points; ++i )
+	{
+		var GlobalNavigationGraph::NodeIndex node_index= patrolling_nodes[i];
+		if( node_index != GlobalNavigationGraph::c_invalid_node_index )
+		{
+			return node_index;
+		}
+	}
+
+	// If given node was the last one in the patrolling nodes array or if it's invalid - search from start.
+	foreach( node_index : patrolling_nodes )
+	{
+		if( node_index != GlobalNavigationGraph::c_invalid_node_index )
+		{
+			return node_index;
+		}
+	}
+
+	return GlobalNavigationGraph::c_invalid_node_index;
+}
+
+fn SaveEntityRoute(
+	ust::array_view_imut</GlobalNavigationGraph::NodeIndex/> route, EntityNavigationState &mut navigation_state )
+{
+	var ust::array_view_mut</GlobalNavigationGraph::NodeIndex/> dst_route= navigation_state.route;
+
+	dst_route.copy_from( route );
+
+	foreach( &mut n : dst_route.subrange_start( route.size() ) )
+	{
+		n= GlobalNavigationGraph::c_invalid_node_index;
+	}
 }
 
 struct DelayedShotAlarm
@@ -4990,13 +5650,17 @@ fn MoveEntity(
 	ProjectilesContainer &mut projectiles,
 	ust::vector</ProjectileHitEvent/> &mut projectile_hit_events,
 	EntityState &mut entity,
+	ust::optional_ref_mut</EntityNavigationState/> navigation_state_opt,
 	u32 entity_index,
 	EntitiesDescription::EntityDescription& entity_description,
 	EntitiesDescription::Operation& current_operation )
 {
+	// Warning!
+	// This code should match code performing navigation graph building as close as possible!
+
 	var Vec3f old_position= entity.position;
 
-	PerformEntityOwnMovement( map_data.mapa_way_data.deref(), entity, current_operation );
+	PerformEntityOwnMovement( map_data, entity, navigation_state_opt, current_operation );
 
 	var Vec3f mut new_position= entity.position;
 
@@ -5104,13 +5768,7 @@ fn MoveEntity(
 	// Clamp vertical velocity if necessary.
 	for( auto mut i= 0u; i < move_result.trace_clip_result.num_collision_events; ++i )
 	{
-		var Vec3f& normal= move_result.trace_clip_result.collision_events[i].plane_normal;
-
-		var f32 dot= entity.velocity_z * normal.z;
-		if( dot < 0.0f )
-		{
-			 entity.velocity_z-= normal.z * dot / normal.SquareLength();
-		}
+		ClampVerticalVelocity( entity.velocity_z, move_result.trace_clip_result.collision_events[i].plane_normal );
 	}
 
 	entity.position= move_result.trace_clip_result.position_clipped;
@@ -5136,13 +5794,18 @@ fn MoveEntity(
 }
 
 fn PerformEntityOwnMovement(
-	MapaWayData& mapa_way_data,
+	GameMapData& map_data,
 	EntityState &mut entity,
+	ust::optional_ref_mut</EntityNavigationState/> navigation_state_opt,
 	EntitiesDescription::Operation& current_operation )
 {
 	if_var( &operation_control : current_operation.operation_control )
 	{
-		PerformEntityOperationControlBasedMovement( mapa_way_data, entity, operation_control );
+		if( !navigation_state_opt.empty() )
+		{
+			PerformEntityOperationControlBasedMovement(
+				map_data, entity, navigation_state_opt.try_deref(), operation_control );
+		}
 	}
 	else
 	{
@@ -5163,57 +5826,50 @@ fn PerformEntityOwnMovement(
 }
 
 fn PerformEntityOperationControlBasedMovement(
-	MapaWayData& mapa_way_data,
+	GameMapData& map_data,
 	EntityState &mut entity,
+	EntityNavigationState &mut navigation_state,
 	EntitiesDescription::OperationControl& operation_control )
 {
-	if( size_type( entity.navigation_info_index ) >= mapa_way_data.navigation_graphs.size() )
-	{
-		return;
-	}
-
-	var MapaWayNavigationGraph& navigation_graph=
-		mapa_way_data.navigation_graphs[ size_type( entity.navigation_info_index ) ];
-
-	if( navigation_graph.num_nodes == 0u )
-	{
-		return;
-	}
-
 	var ust::optional</Vec2f/> mut movement_target_opt;
-	var u32 mut waypoint_node_index= ~0u;
 
-	if( operation_control.functioning_mode == EntitiesDescription::OperationControl::c_functioning_mode_move_towards_waypoint ||
-		operation_control.functioning_mode == EntitiesDescription::OperationControl::c_functioning_mode_sky_decoration )
+	if( operation_control.functioning_mode == EntitiesDescription::OperationControl::c_functioning_mode_move_towards_waypoint )
 	{
-		if( entity.target_navigation_graph_node == ~0u )
+		if( navigation_state.route[0] != GlobalNavigationGraph::c_invalid_node_index )
 		{
-			return;
+			movement_target_opt=
+				map_data.global_navigation_graph.nodes[ size_type( navigation_state.route[0] ) ].position.xy();
 		}
-
-		if( entity.current_navigation_graph_node == ~0u )
-		{
-			// Attach to the navigation graph if has no current node.
-			// TODO - maybe do this in cases where current position is way too far away from the current node?
-			AttachEntityToNavigationGraph( entity, navigation_graph );
-		}
-
-		// Perform lookup from routing matrix to find next waypoint node which will eventually lead to the target node.
-		waypoint_node_index=
-			( entity.current_navigation_graph_node == entity.target_navigation_graph_node
-				? entity.target_navigation_graph_node
-				: u32 ( navigation_graph.routing_matrix[ entity.current_navigation_graph_node ][ entity.target_navigation_graph_node ] ) );
-
-		var MapaWayNavigationGraphNode& waypoint_node= navigation_graph.nodes[ waypoint_node_index ];
-
-		movement_target_opt= Vec2f( f32( waypoint_node.position[0] ), f32( waypoint_node.position[1] ) );
-
 	}
 	else if( operation_control.functioning_mode == EntitiesDescription::OperationControl::c_functioning_mode_move_towards_player )
 	{
 		if_var( &player_position : entity.last_seen_player_position )
 		{
 			movement_target_opt= player_position.xy();
+		}
+	}
+	else if( operation_control.functioning_mode == EntitiesDescription::OperationControl::c_functioning_mode_sky_decoration )
+	{
+		// For sky decorations don't use the global navigation graph at all.
+		// Use initial patrolling points for them directly.
+
+		var ust::array_view_imut</ZpozEntityNavigationInfo/> navigation_infos=
+			map_data.zpoz_data.deref().entity_navigation_infos;
+		if( size_type( entity.navigation_info_index ) < navigation_infos.size() )
+		{
+			var ZpozEntityNavigationInfo& navigation_info= navigation_infos[ size_type( entity.navigation_info_index ) ];
+			if( navigation_info.num_patrolling_points > 0u )
+			{
+				navigation_state.current_patrolling_point_index=
+					u8( u32( navigation_state.current_patrolling_point_index ) % navigation_info.num_patrolling_points );
+
+				var u32 point_index( navigation_state.current_patrolling_point_index );
+
+				movement_target_opt=
+					Vec2f(
+						f32( navigation_info.patrolling_point_coords[ point_index +  0u ] ),
+						f32( navigation_info.patrolling_point_coords[ point_index + 16u ] ) );
+			}
 		}
 	}
 	else
@@ -5227,12 +5883,12 @@ fn PerformEntityOperationControlBasedMovement(
 		return;
 	}
 
+	var Vec2f& movement_target= movement_target_opt.try_deref();
+
 	var f32 turn_speed=
 		( operation_control.functioning_mode == EntitiesDescription::OperationControl::c_functioning_mode_sky_decoration
 			? c_sky_decoration_entity_turn_speed
 			: c_entity_turn_speed );
-
-	var Vec2f& movement_target= movement_target_opt.try_deref();
 
 	var f32 mut move_fraction= 1.0f;
 
@@ -5282,28 +5938,26 @@ fn PerformEntityOperationControlBasedMovement(
 
 	if( square_distance_to_movement_target <= base_move_distance * base_move_distance )
 	{
-		if( operation_control.functioning_mode == EntitiesDescription::OperationControl::c_functioning_mode_move_towards_waypoint ||
-			operation_control.functioning_mode == EntitiesDescription::OperationControl::c_functioning_mode_sky_decoration )
+		if( operation_control.functioning_mode == EntitiesDescription::OperationControl::c_functioning_mode_move_towards_waypoint )
 		{
-			// Reached the waypoint.
+			// Reached the next route point.
 			// Mark it as current node.
-			entity.current_navigation_graph_node= waypoint_node_index;
 
-			if( waypoint_node_index == entity.target_navigation_graph_node )
+			navigation_state.current_navigation_graph_node= navigation_state.route[0];
+
+			// Shift the route.
+			var size_type max_route_nodes= typeinfo</ typeof( navigation_state.route ) />.element_count;
+			for( auto mut i= 0s; i < max_route_nodes - 1s; ++i )
 			{
-				// Reached the target node - reset it to trigger selection of new one on next step.
-				entity.target_navigation_graph_node= ~0u;
+				navigation_state.route[i]= navigation_state.route[ i + 1s ];
 			}
-		}
-	}
 
-	if( operation_control.functioning_mode == EntitiesDescription::OperationControl::c_functioning_mode_move_towards_player &&
-		base_move_distance > 0.0f )
-	{
-		// If moving towards the player re-attach to the navigation graph on each step.
-		// It's necessary, since in this mode movements aren't constrained by the navigation graph.
-		// But it's rarely needed, since almost all enemies don't move while turning towards the player.
-		AttachEntityToNavigationGraph( entity, navigation_graph );
+			navigation_state.route[ max_route_nodes - 1s ]= GlobalNavigationGraph::c_invalid_node_index;
+		}
+		else if( operation_control.functioning_mode == EntitiesDescription::OperationControl::c_functioning_mode_sky_decoration )
+		{
+			++navigation_state.current_patrolling_point_index;
+		}
 	}
 }
 
@@ -5364,24 +6018,6 @@ fn PerformEntityRotationForShot( EntityState &mut entity, EntitiesDescription::R
 	{
 		entity.azimuth= target_azimuth;
 	}
-}
-
-fn AttachEntityToNavigationGraph( EntityState& mut entity, MapaWayNavigationGraph& navigation_graph )
-{
-	var u32 mut nearest_node_index= ~0u;
-	var f32 mut nearest_node_square_distance= 1.0e64f;
-	for( auto mut i= 0u; i < navigation_graph.num_nodes; ++i )
-	{
-		var MapaWayNavigationGraphNode& node= navigation_graph.nodes[i];
-		var Vec3f vec_to_node= entity.position - Vec3f( f32( node.position[0] ), f32( node.position[1] ), f32( node.position[2] ) );
-		var f32 square_distance_to_node= vec_to_node.SquareLength();
-		if( square_distance_to_node < nearest_node_square_distance )
-		{
-			nearest_node_square_distance= square_distance_to_node;
-			nearest_node_index= i;
-		}
-	}
-	entity.current_navigation_graph_node= nearest_node_index;
 }
 
 fn GetEntityDirectionNormalizedVector( EntityState& entity ) : Vec2f
