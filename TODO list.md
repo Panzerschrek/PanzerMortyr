@@ -97,8 +97,6 @@ PanzerMortyr game logic:
 * Spawn bubble sprites while swimming in water.
 * Spawn bubble sprites for projectiles moving in water.
 * Do something with unconditional entity state transition "w_zasiegu_strzalu_b" - try making it somewhat random.
-* Try dealing with cases where two enemies move in exactly opposite directions and block each other.
-* Consider calculating and using a better navigation graph (maybe even single graph for an entire map), which isn't so buggy as original per-entity navigation graphs.
 * Perform alarm-based enemy state transition with a delay (investigate how this delay is specified).
 * Consider creating patches for ZINF-files for fixing some errors in them.
 * Implement misfire - sometimes enemies don't shoot, even if shooting animation is playing.
@@ -117,6 +115,9 @@ PanzerMortyr game logic:
 * Consider reducing brightness of Volkssturm smoking lights - they are way to bright.
 * Perform camera rotation upon player's death as the original game does. It seems to be full circle azimuth rotation and a rotation to some fixed elevation.
 * Consider disabling burning effect for non-enemy entities. It doesn't look well for things made of iron or other non-burnable materials.
+* Implement some sort of collision avoidance for enemies - to fix cases where enemies block each other in their movement. Maybe use global navigation graph for this and mark occupied edges or nodes.
+* Consider optimizing global navigation graph calculation even more - to reduce map loading time.
+* Consider not creating edges in global navigation graph requiring jumping down too deep (to avoid fall damage).
 
 PanzerMortyr rendering:
 
