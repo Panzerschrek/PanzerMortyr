@@ -4460,18 +4460,48 @@ fn UpdateEntityMovementTarget(
 		// It's necessary for non-graph-based movement modes (like movement towards the player).
 		// It's also needed for rare cases if an enemy has fallen down.
 
-		var GlobalNavigationGraph::Node& current_node=
-			map_data.global_navigation_graph.nodes[ size_type( navigation_state.current_navigation_graph_node ) ];
+		var Vec3f& node_position=
+			map_data.global_navigation_graph.nodes[ size_type( navigation_state.current_navigation_graph_node ) ].position;
 
 		var f32 max_distance= 1.5f * map_data.global_navigation_graph.nodes_spacing;
 
-		var f32 square_distance= ( current_node.position - entity.position ).SquareLength();
+		var f32 square_distance= ( node_position - entity.position ).SquareLength();
 
 		if( square_distance > max_distance * max_distance )
 		{
 			if_var( node_index : FindNearestNavigationGraphNode( map_data, broken_quad_bits, entity.position, large_entity ) )
 			{
-				navigation_state.current_navigation_graph_node= node_index;
+				if( node_index != navigation_state.current_navigation_graph_node )
+				{
+					navigation_state.current_navigation_graph_node= node_index;
+
+					var GlobalNavigationGraph::NodeIndex next_waypoint= navigation_state.route[0];
+
+					if( next_waypoint != GlobalNavigationGraph::c_invalid_node_index &&
+						next_waypoint != node_index )
+					{
+						// Check if it's still possible to move to the next waypoint from the newly-identified current node.
+						// If it's not possible - reset it to trigger route recalculation.
+
+						var bool mut next_waypoint_is_reachable= false;
+
+						var GlobalNavigationGraph::Node& current_node=
+							map_data.global_navigation_graph.nodes[ size_type( navigation_state.current_navigation_graph_node ) ];
+
+						foreach( &edge :
+							map_data.global_navigation_graph.node_output_edges.range().subrange(
+								size_type( current_node.first_output_edge ),
+								size_type( current_node.first_output_edge ) + size_type( current_node.num_output_edges ) ) )
+						{
+							next_waypoint_is_reachable|= edge.dst_node_index == next_waypoint;
+						}
+
+						if( !next_waypoint_is_reachable )
+						{
+							SaveEntityRoute( ust::empty_range, navigation_state );
+						}
+					}
+				}
 			}
 		}
 	}
