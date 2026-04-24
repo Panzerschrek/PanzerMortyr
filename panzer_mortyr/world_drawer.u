@@ -342,61 +342,50 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 			],
 		};
 
-		var Vec3f normal_in_view_space= normal * rotation_matrix;
+		var Vec3f normal_in_view_space= (-normal) * rotation_matrix;
 		var f32 mut min_distance_in_view_space= ust::plus_inf</f32/>();
 		foreach( &vertex : vertices )
 		{
 			var Vec3f camera_space_position= Vec3f( vertex.position ) * camera_space_matrix;
 			ust::min_assign( min_distance_in_view_space, normal_in_view_space.Dot( camera_space_position ) );
 		}
-		var f32 view_space_distance= min_distance_in_view_space;
 
-		auto sign=
-			lambda( f32 x ) : f32
+		var Planef view_space_mirror_plane{ .normal= normal_in_view_space, .distance= -min_distance_in_view_space };
+
+		if( view_space_mirror_plane.distance < 0.0f )
+		{
+			var Mat4f raw_perspective_matrix
 			{
-				if( x > 0.0f ) { return  1.0f; }
-				if( x < 0.0f ) { return -1.0f; }
-				return 0.0f;
+				.values
+				[
+					[ 1.0f, 0.0f, 2.0f * view_space_mirror_plane.normal.x, 0.0f ],
+					[ 0.0f, 1.0f, 2.0f * view_space_mirror_plane.normal.y, 0.0f ],
+					[ 0.0f, 0.0f, 2.0f * view_space_mirror_plane.normal.z - 1.0f, 1.0f ],
+					[ 0.0f, 0.0f, 2.0f * view_space_mirror_plane.distance, 0.0f ],
+				],
 			};
 
-		var [ f32, 4 ] q
-		[
-			f32( sign( normal_in_view_space.x ) + camera_projection_matrix.values[2][0] ) / camera_projection_matrix.values[0][0],
-			f32( sign( normal_in_view_space.y ) + camera_projection_matrix.values[2][1] ) / camera_projection_matrix.values[1][1],
-			-1.0f,
-			f32( 1.0f + camera_projection_matrix.values[2][2] ) / camera_projection_matrix.values[3][2],
-		];
+			var f32 half_fov_inv_tan= 1.0f / ust::tan( 0.5f * drawing_info.camera_params.fov_x );
 
-		var f32 clip_plane_q_dot= normal_in_view_space.Dot( Vec3f( q[0], q[1], q[2] ) ) + view_space_distance * q[3];
+			var Mat4f aspect_and_fov_matrix= Mat4f::MakeScale( Vec3f(half_fov_inv_tan, half_fov_inv_tan * viewport_info.view_aspect, 1.0f ) );
 
-		var [ f32, 4 ] c
-		[
-			normal_in_view_space.x * ( 2.0f / clip_plane_q_dot ),
-			normal_in_view_space.y * ( 2.0f / clip_plane_q_dot ),
-			normal_in_view_space.z * ( 2.0f / clip_plane_q_dot ),
-			view_space_distance * ( 2.0f / clip_plane_q_dot ),
-		];
+			var Mat4f projection_matrix_for_mirrored_geometry= raw_perspective_matrix * aspect_and_fov_matrix;
 
-		var Mat4f mut projection_matrix_for_mirrored_geometry= camera_projection_matrix;
-		projection_matrix_for_mirrored_geometry.values[0][2]= c[0];
-		projection_matrix_for_mirrored_geometry.values[1][2]= c[1];
-		projection_matrix_for_mirrored_geometry.values[2][2]= c[2] + 1.0f;
-		projection_matrix_for_mirrored_geometry.values[3][2]= c[3];
+			var Mat4f mirrored_geometry_matrix= mirror_matrix * camera_space_matrix * projection_matrix_for_mirrored_geometry;
 
-		var Mat4f mirrored_geometry_matrix= mirror_matrix * camera_space_matrix * projection_matrix_for_mirrored_geometry;
-
-		DrawMapPolygons(
-			map_data,
-			drawing_info.dynamic_cluster_objects,
-			drawing_info.highligted_cluster_indices,
-			breakable_polygons_buffer_,
-			map_shader_,
-			mirrored_geometry_matrix,
-			/*draw_water_clusters_as_normal*/ true,
-			drawing_info.game_time_s,
-			global_light_params,
-			drawing_stats,
-			true );
+			DrawMapPolygons(
+				map_data,
+				drawing_info.dynamic_cluster_objects,
+				drawing_info.highligted_cluster_indices,
+				breakable_polygons_buffer_,
+				map_shader_,
+				mirrored_geometry_matrix,
+				/*draw_water_clusters_as_normal*/ true,
+				drawing_info.game_time_s,
+				global_light_params,
+				drawing_stats,
+				true );
+		}
 	}
 
 	ResetDynamicPolygonsBuffer( breakable_polygons_buffer_ );
