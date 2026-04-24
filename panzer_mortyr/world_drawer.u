@@ -54,6 +54,9 @@ fn WorldDrawer::constructor(
 		map_shader_(
 			embed</char8/>( "shaders/map.vert.glsl" ),
 			embed</char8/>( "shaders/map.frag.glsl" ) ),
+		map_mirror_shader_(
+			embed</char8/>( "shaders/map.vert.glsl" ),
+			embed</char8/>( "shaders/map_mirror.frag.glsl" ) ),
 		map_caustics_shader_(
 			embed</char8/>( "shaders/map.vert.glsl" ),
 			embed</char8/>( "shaders/map_caustics.frag.glsl" ) ),
@@ -417,6 +420,31 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 				global_light_params,
 				drawing_stats,
 				true );
+
+			{
+				SetGLState( g_mirror_polygons_drawing_gl_state );
+
+				var u32 texture_slot= 0u;
+
+				unsafe( glActiveTexture( GLenum( GL_TEXTURE0 ) + GLenum(texture_slot) ) );
+				map_data.map_textures_array.Bind();
+
+				map_mirror_shader_.Bind();
+				map_mirror_shader_.SetUniform( "vu_matrix", view_matrix );
+				map_mirror_shader_.SetUniform( "fu_texture", texture_slot );
+
+				map_mirror_shader_.SetUniform( "vu_light_add", Vec3f( global_light_params.light_add ) );
+				map_mirror_shader_.SetUniform( "vu_light_scale", Vec3f( global_light_params.light_scale ) );
+
+				mirror_polygons_buffer_.vertex_array_object.Bind();
+				mirror_polygons_buffer_.index_buffer.Bind();
+
+				unsafe( glDrawElements(
+					GLenum( GL_TRIANGLES ),
+					GLsizei( ust::min( mirror_polygons_buffer_.indices.size(), mirror_polygons_buffer_.max_indices ) ),
+					GLenum( GL_UNSIGNED_SHORT ),
+					ust::nullptr</byte8/>() ) );
+			}
 		}
 	}
 
@@ -3422,6 +3450,22 @@ var GLState g_map_dynamic_lights_drawing_gl_state
 	.blending_enabled= true,
 	.blend_source_factor( GL_ONE ),
 	.blend_destination_factor( GL_ONE ),
+};
+
+var GLState g_mirror_polygons_drawing_gl_state
+{
+	.color_write_enabled= true,
+	// Ignore depth test while drawing mirror polygons.
+	// We should overwrite depth.
+	.depth_test_enabled= true,
+	.depth_test_func( GL_ALWAYS ),
+	.depth_write_enabled= true,
+	.cull_face_enabled= true,
+	.cull_face( GL_FRONT ),
+	// Use alpha-blending.
+	.blending_enabled= true,
+	.blend_source_factor( GL_SRC_ALPHA ),
+	.blend_destination_factor( GL_ONE_MINUS_SRC_ALPHA ),
 };
 
 var GLState g_semitransparent_geometry_drawing_gl_state
