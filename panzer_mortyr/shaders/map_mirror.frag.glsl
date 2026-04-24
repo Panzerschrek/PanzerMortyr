@@ -1,6 +1,7 @@
 #version 330
 
 uniform sampler2DArray fu_texture;
+uniform float fu_mirror_alpha;
 
 in vec2 f_texture_coordinates;
 in vec3 f_light;
@@ -12,6 +13,6 @@ void main()
 {
 	vec3 texture_color= texture( fu_texture, vec3( f_texture_coordinates, f_texture_layer ) ).rgb;
 
-	// Use 0.5 alpha for drawing mirror polygons.
-	color= vec4( texture_color * f_light, 0.5 );
+	// Use custom alpha for drawing mirror polygons.
+	color= vec4( texture_color * f_light, fu_mirror_alpha );
 }
