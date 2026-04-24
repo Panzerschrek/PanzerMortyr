@@ -281,6 +281,20 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 	// Calculate map visibility as first drawing step.
 	map_data.map_visibility_calculator.CalculateVisibility( drawing_info.camera_params.position, view_matrix );
 
+	ResetDynamicPolygonsBuffer( mirror_polygons_buffer_ );
+
+	if( size_type( map_index_ ) < maps_description.maps.size() )
+	{
+		var MapsDescription::MapDescription& map_description= maps_description.maps[ size_type( map_index_ ) ];
+		var MaterialsDescription::Block& materials_block=
+			materials_description_.deref().blocks[ map_description.materials_block ]; // Halts if not found.
+
+		CreateMirrorMapPolygons(
+			map_data, materials_block, mirror_polygons_buffer_.vertices, mirror_polygons_buffer_.indices );
+	}
+
+	UploadDynamicPolygonsBuffer( mirror_polygons_buffer_ );
+
 	ResetDynamicPolygonsBuffer( breakable_polygons_buffer_ );
 
 	CreateBreakableMapPolygons(
@@ -1413,6 +1427,60 @@ fn CreateSemitransparentMapPolygons(
 
 		CreateLightShaftsBoxPolygons( light_shafts_box, vertices, indices );
 	}
+}
+
+fn CreateMirrorMapPolygons(
+	MapDrawData& map_data,
+	MaterialsDescription::Block& materials_block,
+	ust::vector</MapVertex/> &mut vertices,
+	ust::vector</u16/> &mut indices )
+{
+	var ust::array_view_imut</ZmapQuad/> quads= map_data.zmap_data.deref().quads;
+	var ust::array_view_imut</ZvoxCluster/> clusters= map_data.zvox_data.deref().clusters;
+	var ZmapLamData& zmap_lam_data= map_data.zmap_lam_data.deref();
+
+	var MapVisibilityCalculator::VisibleRoomClusterFlags visible_room_cluster_flags=
+		map_data.map_visibility_calculator.GetVisibleRoomClusterFlags();
+
+	for( auto mut i= 0s; i < clusters.size(); )
+	{
+		var ZvoxCluster& room_cluster= clusters[i];
+		if( room_cluster.c.num_children_clusters < 0 )
+		{
+			++i;
+			continue;
+		}
+
+		// This room cluster and all his children.
+		var size_type num_clusters_in_group= size_type( room_cluster.c.num_children_clusters ) + 1s;
+
+		if( visible_room_cluster_flags[i] )
+		{
+			for( auto mut j= 0s; j < num_clusters_in_group; ++j )
+			{
+				var size_type cluster_index= i + j;
+
+				var ZvoxCluster& cluster= clusters[ cluster_index ];
+
+				if( !(
+					cluster.cluster_type == ZvoxCluster::c_cluster_type_regular |
+					cluster.cluster_type == ZvoxCluster::c_cluster_type_notes ) )
+				{
+					// Draw dynamic clusters later.
+					continue;
+				}
+
+				if( map_data.clusters_draw_data[ cluster_index ].has_mirror_quads )
+				{
+					CreateClusterMirrorPolygons( cluster, quads, zmap_lam_data, materials_block, vertices, indices );
+				}
+			}
+		}
+
+		i+= num_clusters_in_group;
+	}
+
+	// Don't care about dynamic clusters - they seem to never have mirror quads.
 }
 
 fn CreateBreakableMapPolygons(
