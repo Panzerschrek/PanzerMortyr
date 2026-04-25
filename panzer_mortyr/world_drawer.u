@@ -277,7 +277,8 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 
 	// Calculate map visibility as first drawing step.
 
-	map_data_.try_deref().map_visibility_calculator.CalculateVisibility( drawing_info.camera_params.position, view_matrix );
+	map_data_.try_deref().map_visibility_calculators[0].CalculateVisibility(
+		drawing_info.camera_params.position, view_matrix );
 
 	ResetDynamicPolygonsBuffer( mirror_polygons_buffer_ );
 
@@ -291,14 +292,11 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 				materials_description_.deref().blocks[ map_description.materials_block ]; // Halts if not found.
 
 			var MapFullDrawData &mut map_full_draw_data= map_data_.try_deref();
-
 			var MapDrawData& map_data= map_full_draw_data.map_draw_data;
-
-			var MapVisibilityCalculator &mut visibility_calculator= map_full_draw_data.map_visibility_calculator;
 
 			CreateMirrorMapPolygons(
 				map_data,
-				visibility_calculator,
+				map_full_draw_data.map_visibility_calculators[0],
 				materials_block,
 				mirror_polygons_buffer_.vertices,
 				mirror_polygons_buffer_.indices );
@@ -378,16 +376,27 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 				camera_clip_planes[4] * mirror_planes_matrix,
 			];
 
+			var Vec3f camera_position_mirrored= drawing_info.camera_params.position * mirror_matrix;
+
+			var Mat4f view_matrix_for_mirrored_geometry= mirror_matrix * camera_space_matrix * projection_matrix_for_mirrored_geometry;
+
+			// Calculate visibility from mirror point.
+			// TODO - make tweak this to mark room clusters BSP tree leafs where mirror quads are located as visible.
+			var size_type visibility_calculator_index= 1s;
+			map_data_.try_deref().map_visibility_calculators[ visibility_calculator_index ].CalculateVisibility(
+				camera_position_mirrored, view_matrix_for_mirrored_geometry );
+
 			DrawPartial(
+				visibility_calculator_index,
 				drawing_info,
 				viewport_info.viewport_size,
-				drawing_info.camera_params.position * mirror_matrix,
+				camera_position_mirrored,
 				CameraMatrices
 				{
 					.camera_space_matrix= mirror_matrix * camera_space_matrix,
 					.rotation_and_projection_matrix= mirror_rotation_matrix * rotation_matrix * projection_matrix_for_mirrored_geometry,
 					.camera_projection_matrix= projection_matrix_for_mirrored_geometry,
-					.view_matrix= mirror_matrix * camera_space_matrix * projection_matrix_for_mirrored_geometry,
+					.view_matrix= view_matrix_for_mirrored_geometry,
 					.camera_inverse_projection_matrix= ust::null_optional,
 				},
 				camera_clip_planes_mirrored,
@@ -432,6 +441,7 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 	}
 
 	DrawPartial(
+		0s,
 		drawing_info,
 		viewport_info.viewport_size,
 		drawing_info.camera_params.position,
@@ -456,6 +466,7 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 
 fn WorldDrawer::DrawPartial(
 	mut this,
+	size_type visibility_calculator_index,
 	WorldDrawingInfo& drawing_info,
 	[ u32, 2 ] viewport_size,
 	Vec3f& camera_position,
@@ -486,7 +497,8 @@ fn WorldDrawer::DrawPartial(
 
 	var RoomClustersHierarchy& room_clusters_hierarchy= map_data.room_clusters_hierarchy.deref();
 
-	var MapVisibilityCalculator &mut visibility_calculator= map_full_draw_data.map_visibility_calculator;
+	var MapVisibilityCalculator &mut visibility_calculator=
+		map_full_draw_data.map_visibility_calculators[ visibility_calculator_index ];
 
 	ResetDynamicPolygonsBuffer( breakable_polygons_buffer_ );
 
@@ -1536,7 +1548,7 @@ fn WorldDrawer::SetMap( mut this, u32 map_index )
 				.global_fog_enabled= map_description.linear_fog_enabled,
 				.breakable_material_bits= move(breakable_material_bits),
 			},
-			.map_visibility_calculator( room_clusters_bsp_tree ),
+			.map_visibility_calculators[ ( room_clusters_bsp_tree ) ... ],
 		} );
 }
 
