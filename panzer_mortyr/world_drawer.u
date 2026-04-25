@@ -390,6 +390,7 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 					global_light_params,
 					model_light_params,
 					first_person_weapon_model_light_params,
+					true,
 					drawing_stats );
 
 			{
@@ -443,6 +444,7 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 		global_light_params,
 		model_light_params,
 		first_person_weapon_model_light_params,
+		false,
 		drawing_stats );
 
 	return drawing_stats;
@@ -458,6 +460,7 @@ fn WorldDrawer::DrawPartial(
 	GlobalLightParams& global_light_params,
 	GlobalLightParams& model_light_params,
 	GlobalLightParams& first_person_weapon_model_light_params,
+	bool mirrored,
 	WorldDrawingStats &mut drawing_stats )
 {
 	if( map_data_.empty() )
@@ -507,8 +510,8 @@ fn WorldDrawer::DrawPartial(
 		draw_water_clusters_as_normal,
 		drawing_info.game_time_s,
 		global_light_params,
-		drawing_stats,
-		false );
+		mirrored,
+		drawing_stats );
 
 	if( caustics_enabled )
 	{
@@ -520,6 +523,7 @@ fn WorldDrawer::DrawPartial(
 			camera_matrices.view_matrix,
 			drawing_info.game_time_s,
 			global_light_params,
+			mirrored,
 			drawing_stats );
 	}
 
@@ -551,6 +555,7 @@ fn WorldDrawer::DrawPartial(
 			drawing_info.dynamic_light_sources,
 			dynamic_light_scissor_rects,
 			global_light_params.light_scale,
+			mirrored,
 			drawing_stats );
 
 		// Don't care applying dynamic lights for breakable polygons.
@@ -730,6 +735,7 @@ fn WorldDrawer::DrawPartial(
 		( drawing_info.fullscreen_effect == WorldDrawingInfo::FullscreenEffect::InfraredVision
 			? ust::optional_ref_imut</Texture/>( stub_white_texture_ )
 			: ust::optional_ref_imut</Texture/>() ),
+		mirrored,
 		drawing_stats );
 
 	if( drawing_info.fullscreen_effect != WorldDrawingInfo::FullscreenEffect::InfraredVision )
@@ -737,7 +743,12 @@ fn WorldDrawer::DrawPartial(
 		// Draw burning models, unless infrared vision is activated.
 		// Models in this mode are already bright enough, so, applying burning effect for them isn't necessary.
 		DrawBurningModels(
-			models_, models_to_draw_, model_burning_shader_, caustics_and_fire_texture_, drawing_info.game_time_s );
+			models_,
+			models_to_draw_,
+			model_burning_shader_,
+			caustics_and_fire_texture_,
+			mirrored,
+			drawing_info.game_time_s );
 	}
 
 	models_to_draw_.clear();
@@ -908,6 +919,7 @@ fn WorldDrawer::DrawPartial(
 				camera_position,
 				camera_matrices.view_matrix,
 				m,
+				mirrored,
 				fog_color_additive );
 		}
 	}
@@ -1075,7 +1087,7 @@ fn WorldDrawer::DrawPartial(
 	ResetDynamicPolygonsBuffer( semitransparent_polygons_buffer_ );
 
 	// Draw first person weapon models as last step.
-	DrawFirstPersonWeaponModels( models_, first_person_weapon_models_to_draw_, model_shader_, drawing_stats );
+	DrawFirstPersonWeaponModels( models_, first_person_weapon_models_to_draw_, model_shader_, mirrored, drawing_stats );
 	first_person_weapon_models_to_draw_.clear();
 }
 
@@ -1754,8 +1766,8 @@ fn DrawMapPolygons(
 	bool draw_water_clusters_as_normal,
 	f32 time_s,
 	GlobalLightParams& global_light_params,
-	WorldDrawingStats &mut drawing_stats,
-	bool mirrored )
+	bool mirrored,
+	WorldDrawingStats &mut drawing_stats )
 {
 	var ust::array_view_imut</ZvoxCluster/> clusters= map_data.zvox_data.deref().clusters.range();
 
@@ -1904,6 +1916,7 @@ fn DrawMapPolygonsWithCaustics(
 	Mat4f& view_matrix,
 	f32 time_s,
 	GlobalLightParams& global_light_params,
+	bool mirrored,
 	WorldDrawingStats &mut drawing_stats )
 {
 	var f32 constexpr c_caustics_speed= 1.0f / 2.0f;
@@ -1913,7 +1926,14 @@ fn DrawMapPolygonsWithCaustics(
 	var MapVisibilityCalculator::VisibleRoomClusterFlags visible_room_cluster_flags=
 		visibility_calculator.GetVisibleRoomClusterFlags();
 
-	SetGLState( g_map_drawing_gl_state );
+	if( mirrored )
+	{
+		SetGLState( GetMirroredGLState( g_map_drawing_gl_state ) );
+	}
+	else
+	{
+		SetGLState( g_map_drawing_gl_state );
+	}
 
 	var u32 map_texture_slot= 0u, caustics_texture_slot= 1u;
 
@@ -1989,6 +2009,7 @@ fn DrawMapPolygonsWithDynamicLights(
 	ust::array_view_imut</WorldDrawingInfo::DynamicLightSource/> dynamic_light_sources,
 	ust::array_view_imut</ScissorRect/> dynamic_light_scissor_rects,
 	[ f32, 3 ]& light_scale,
+	bool mirrored,
 	WorldDrawingStats &mut drawing_stats )
 {
 	if( dynamic_light_sources.empty() )
@@ -2030,6 +2051,11 @@ fn DrawMapPolygonsWithDynamicLights(
 		var GLState mut gl_state= g_map_dynamic_lights_drawing_gl_state;
 		gl_state.scissor_test_enabled= true;
 		gl_state.scissor_rect= scissor_rect;
+
+		if( mirrored )
+		{
+			gl_state= GetMirroredGLState( gl_state );
+		}
 
 		SetGLState( gl_state );
 
@@ -2173,11 +2199,19 @@ fn DrawModels(
 	ust::array_view_imut</ModelToDraw/> models_to_draw,
 	ShaderProgram &mut shader,
 	ust::optional_ref_imut</Texture/> stub_texture,
+	bool mirrored,
 	WorldDrawingStats &mut drawing_stats )
 {
 	var ResourceString mut prev_model_file_name= zero_init;
 
-	SetGLState( g_models_drawing_gl_state );
+	if( mirrored )
+	{
+		SetGLState( GetMirroredGLState( g_models_drawing_gl_state ) );
+	}
+	else
+	{
+		SetGLState( g_models_drawing_gl_state );
+	}
 
 	var u32 texture_slot= 0u;
 
@@ -2268,9 +2302,17 @@ fn DrawBurningModels(
 	ust::array_view_imut</ModelToDraw/> models_to_draw,
 	ShaderProgram &mut shader,
 	Texture& texture,
+	bool mirrored,
 	f32 time_s )
 {
-	SetGLState( g_burning_models_drawing_gl_state );
+	if( mirrored )
+	{
+		SetGLState( GetMirroredGLState( g_burning_models_drawing_gl_state ) );
+	}
+	else
+	{
+		SetGLState( g_burning_models_drawing_gl_state );
+	}
 
 	var u32 texture_slot= 0u;
 	unsafe( glActiveTexture( GLenum( GL_TEXTURE0 ) + GLenum(texture_slot) ) );
@@ -2333,12 +2375,20 @@ fn DrawFirstPersonWeaponModels(
 	ModelsMap& models_map,
 	ust::array_view_imut</ModelToDraw/> models_to_draw,
 	ShaderProgram &mut shader,
+	bool mirrored,
 	WorldDrawingStats &mut drawing_stats )
 {
 	// First draw all models with depth test disabled.
 	// This clears depth buffer with model depth values.
 
-	SetGLState( g_first_person_weapon_models_depth_clear_gl_state );
+	if( mirrored )
+	{
+		SetGLState( GetMirroredGLState( g_first_person_weapon_models_depth_clear_gl_state ) );
+	}
+	else
+	{
+		SetGLState( g_first_person_weapon_models_depth_clear_gl_state );
+	}
 
 	var u32 texture_slot= 0u;
 
@@ -2392,7 +2442,7 @@ fn DrawFirstPersonWeaponModels(
 
 	// Then draw all models as usual.
 
-	DrawModels( models_map, models_to_draw, shader, ust::null_optional_ref, drawing_stats );
+	DrawModels( models_map, models_to_draw, shader, ust::null_optional_ref, mirrored, drawing_stats );
 }
 
 fn DrawSnowOrRain(
@@ -3078,6 +3128,7 @@ fn DrawLocalFog(
 	Vec3f& camera_position,
 	Mat4f& view_matrix,
 	Mat4f& camera_inverse_projection_matrix,
+	bool mirrored,
 	[ f32, 3 ]& fog_color_additive )
 {
 	var u32 texture_slot= 0u;
@@ -3085,7 +3136,14 @@ fn DrawLocalFog(
 	unsafe( glActiveTexture( GLenum( GL_TEXTURE0 ) + GLenum(texture_slot) ) );
 	depth_buffer_copy_texture.Bind();
 
-	SetGLState( g_local_fog_gl_state );
+	if( mirrored )
+	{
+		SetGLState(  GetMirroredGLState( g_local_fog_gl_state ) );
+	}
+	else
+	{
+		SetGLState( g_local_fog_gl_state );
+	}
 
 	shader.Bind();
 	shader.SetUniform( "vu_matrix", view_matrix );
