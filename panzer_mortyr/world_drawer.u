@@ -244,12 +244,6 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 		}
 	}
 
-	var MapFullDrawData &mut map_full_draw_data= map_data_.try_deref();
-
-	var MapDrawData& map_data= map_full_draw_data.map_draw_data;
-
-	var MapVisibilityCalculator &mut visibility_calculator= map_full_draw_data.map_visibility_calculator;
-
 	// Clear only depth buffer, but not color buffer.
 	// Clearing color isn't necessary, since we draw sky background geometry.
 	unsafe( glClear( GLbitfield( GL_DEPTH_BUFFER_BIT ) ) );
@@ -271,37 +265,39 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 
 	var Mat4f view_matrix= translation_matrix * rotation_and_projection_matrix;
 
-	var Mat4f firt_person_weapon_distortion_matrix= CalculateFirstPersonWeaponDistortionMatrix();
+	var Mat4f first_person_weapon_distortion_matrix= CalculateFirstPersonWeaponDistortionMatrix();
 
 	var CameraClipPlanes camera_clip_planes=
 		CreateCameraClipPlanes( drawing_info.camera_params, viewport_info.view_aspect );
 
-	var MapsDescription& maps_description= maps_description_.deref();
-
-	var ust::array_view_imut</ZvoxCluster/> clusters= map_data.zvox_data.deref().clusters;
-
-	var ust::array_view_imut</ZmapLemClusterSkyLightData/> clusters_sky_light_data=
-		map_data.zmap_lem_data.deref().clusters_sky_light_data;
-
-	var RoomClustersHierarchy& room_clusters_hierarchy= map_data.room_clusters_hierarchy.deref();
-
 	// Calculate map visibility as first drawing step.
-	visibility_calculator.CalculateVisibility( drawing_info.camera_params.position, view_matrix );
+
+	map_data_.try_deref().map_visibility_calculator.CalculateVisibility( drawing_info.camera_params.position, view_matrix );
 
 	ResetDynamicPolygonsBuffer( mirror_polygons_buffer_ );
 
-	if( size_type( map_index_ ) < maps_description.maps.size() )
 	{
-		var MapsDescription::MapDescription& map_description= maps_description.maps[ size_type( map_index_ ) ];
-		var MaterialsDescription::Block& materials_block=
-			materials_description_.deref().blocks[ map_description.materials_block ]; // Halts if not found.
+		var MapsDescription& maps_description= maps_description_.deref();
 
-		CreateMirrorMapPolygons(
-			map_data,
-			visibility_calculator,
-			materials_block,
-			mirror_polygons_buffer_.vertices,
-			mirror_polygons_buffer_.indices );
+		if( size_type( map_index_ ) < maps_description.maps.size() )
+		{
+			var MapsDescription::MapDescription& map_description= maps_description.maps[ size_type( map_index_ ) ];
+			var MaterialsDescription::Block& materials_block=
+				materials_description_.deref().blocks[ map_description.materials_block ]; // Halts if not found.
+
+			var MapFullDrawData &mut map_full_draw_data= map_data_.try_deref();
+
+			var MapDrawData& map_data= map_full_draw_data.map_draw_data;
+
+			var MapVisibilityCalculator &mut visibility_calculator= map_full_draw_data.map_visibility_calculator;
+
+			CreateMirrorMapPolygons(
+				map_data,
+				visibility_calculator,
+				materials_block,
+				mirror_polygons_buffer_.vertices,
+				mirror_polygons_buffer_.indices );
+		}
 	}
 
 	UploadDynamicPolygonsBuffer( mirror_polygons_buffer_ );
@@ -372,6 +368,12 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 			var Mat4f mirrored_geometry_matrix=
 				mirror_matrix * camera_space_matrix * projection_matrix_for_mirrored_geometry;
 
+			var MapFullDrawData &mut map_full_draw_data= map_data_.try_deref();
+
+			var MapDrawData& map_data= map_full_draw_data.map_draw_data;
+
+			var MapVisibilityCalculator &mut visibility_calculator= map_full_draw_data.map_visibility_calculator;
+
 			DrawMapPolygons(
 				map_data,
 				visibility_calculator,
@@ -417,6 +419,60 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 		}
 	}
 
+	DrawPartial(
+		drawing_info,
+		viewport_info.viewport_size,
+		drawing_info.camera_params.position,
+		CameraMatrices
+		{
+			.camera_space_matrix= camera_space_matrix,
+			.rotation_and_projection_matrix= rotation_and_projection_matrix,
+			.camera_projection_matrix= camera_projection_matrix,
+			.view_matrix= view_matrix,
+			.camera_inverse_projection_matrix= camera_inverse_projection_matrix,
+			.first_person_weapon_distortion_matrix= first_person_weapon_distortion_matrix,
+		},
+		camera_clip_planes,
+		global_light_params,
+		model_light_params,
+		first_person_weapon_model_light_params,
+		drawing_stats );
+
+	return drawing_stats;
+}
+
+fn WorldDrawer::DrawPartial(
+	mut this,
+	WorldDrawingInfo& drawing_info,
+	[ u32, 2 ] viewport_size,
+	Vec3f& camera_position,
+	CameraMatrices& camera_matrices,
+	CameraClipPlanes& camera_clip_planes,
+	GlobalLightParams& global_light_params,
+	GlobalLightParams& model_light_params,
+	GlobalLightParams& first_person_weapon_model_light_params,
+	WorldDrawingStats &mut drawing_stats )
+{
+	if( map_data_.empty() )
+	{
+		return;
+	}
+
+	var MapFullDrawData &mut map_full_draw_data= map_data_.try_deref();
+
+	var MapDrawData& map_data= map_full_draw_data.map_draw_data;
+
+	var MapsDescription& maps_description= maps_description_.deref();
+
+	var ust::array_view_imut</ZvoxCluster/> clusters= map_data.zvox_data.deref().clusters;
+
+	var ust::array_view_imut</ZmapLemClusterSkyLightData/> clusters_sky_light_data=
+		map_data.zmap_lem_data.deref().clusters_sky_light_data;
+
+	var RoomClustersHierarchy& room_clusters_hierarchy= map_data.room_clusters_hierarchy.deref();
+
+	var MapVisibilityCalculator &mut visibility_calculator= map_full_draw_data.map_visibility_calculator;
+
 	ResetDynamicPolygonsBuffer( breakable_polygons_buffer_ );
 
 	CreateBreakableMapPolygons(
@@ -440,7 +496,7 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 		drawing_info.highligted_cluster_indices,
 		breakable_polygons_buffer_,
 		map_shader_,
-		view_matrix,
+		camera_matrices.view_matrix,
 		draw_water_clusters_as_normal,
 		drawing_info.game_time_s,
 		global_light_params,
@@ -454,7 +510,7 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 			visibility_calculator,
 			caustics_and_fire_texture_,
 			map_caustics_shader_,
-			view_matrix,
+			camera_matrices.view_matrix,
 			drawing_info.game_time_s,
 			global_light_params,
 			drawing_stats );
@@ -470,9 +526,9 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 				{
 					return
 						CalculateScissorRectForSphere(
-							camera_space_matrix,
-							camera_projection_matrix,
-							viewport_info.viewport_size,
+							camera_matrices.camera_space_matrix,
+							camera_matrices.camera_projection_matrix,
+							viewport_size,
 							dynamic_light_source.position,
 							GetDynamicLightRadius( dynamic_light_source ) );
 				} ) );
@@ -483,7 +539,7 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 			visibility_calculator,
 			drawing_info.dynamic_cluster_objects,
 			map_dynamic_light_shader_,
-			view_matrix,
+			camera_matrices.view_matrix,
 			drawing_info.game_time_s,
 			drawing_info.dynamic_light_sources,
 			dynamic_light_scissor_rects,
@@ -523,7 +579,8 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 
 		if( model_object.first_person_weapon )
 		{
-			model_transormation_matrix= firt_person_weapon_distortion_matrix * model_transormation_matrix;
+			model_transormation_matrix=
+				camera_matrices.first_person_weapon_distortion_matrix * model_transormation_matrix;
 		}
 
 		// It looks like frame numbers above maximum are replaced with zeros.
@@ -559,7 +616,7 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 			}
 		}
 
-		var Mat4f model_full_matrix= model_transormation_matrix * view_matrix;
+		var Mat4f model_full_matrix= model_transormation_matrix * camera_matrices.view_matrix;
 
 		var SphericalHarmonicsRGB mut light
 		[
@@ -685,21 +742,20 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 		test_primitive_vertex_array_object_,
 		test_primitive_vertex_buffer_object_,
 		test_primitive_shader_,
-		view_matrix );
+		camera_matrices.view_matrix );
 
 	if( settings_.lock_imut().deref().r_debug_show_room_clusters_bsp_tree )
 	{
 		var ust::vector</WorldDrawingInfo::TestLine/> mut lines;
 
-		VisualizeRoomClustersBSPTree(
-			map_data.room_clusters_bsp_tree.deref(), drawing_info.camera_params.position, lines );
+		VisualizeRoomClustersBSPTree( map_data.room_clusters_bsp_tree.deref(), camera_position, lines );
 
 		DrawTestLines(
 			lines,
 			test_primitive_vertex_array_object_,
 			test_primitive_vertex_buffer_object_,
 			test_primitive_shader_,
-			view_matrix );
+			camera_matrices.view_matrix );
 	}
 	if( settings_.lock_imut().deref().r_debug_show_room_clusters_bsp_tree_projected_portals )
 	{
@@ -771,8 +827,8 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 			GLenum( GL_DEPTH_COMPONENT ),
 			GLint(0),
 			GLint(0),
-			GLsizei( viewport_info.viewport_size[0] ),
-			GLsizei( viewport_info.viewport_size[1] ),
+			GLsizei( viewport_size[0] ),
+			GLsizei( viewport_size[1] ),
 			GLint(0) ) );
 	}
 
@@ -794,7 +850,10 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 
 	if( fog_enabled && map_data.global_fog_enabled )
 	{
-		DrawGlobalFog( depth_buffer_copy_texture_, global_fog_shader_, camera_inverse_projection_matrix, fog_color );
+		if_var( &m : camera_matrices.camera_inverse_projection_matrix )
+		{
+			DrawGlobalFog( depth_buffer_copy_texture_, global_fog_shader_, m, fog_color );
+		}
 	}
 
 	// Draw sky after global fog.
@@ -802,7 +861,7 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 	DrawSkyBackground(
 		map_data.sky_background_buffer,
 		sky_background_shader_,
-		rotation_and_projection_matrix,
+		camera_matrices.rotation_and_projection_matrix,
 		// Scale sky light but not add constant factor. Black sky should remain black.
 		global_light_params.light_scale );
 
@@ -813,7 +872,7 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 			clouds_shader_,
 			map_data.map_textures_array,
 			map_data.clouds_texture_layer,
-			rotation_and_projection_matrix,
+			camera_matrices.rotation_and_projection_matrix,
 			drawing_info.game_time_s );
 	}
 
@@ -822,7 +881,7 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 		map_data.stars_buffer,
 		stars_shader_,
 		map_data.map_textures_array,
-		rotation_and_projection_matrix,
+		camera_matrices.rotation_and_projection_matrix,
 		// Scale stars and sun light, but not add constant factor, since additive blending is used for them.
 		global_light_params.light_scale );
 
@@ -832,15 +891,18 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 	// On all maps of the original game local fog volumes look mostly fine even considering incorrect interaction with global fog.
 	if( fog_enabled && !visible_local_fog_volumes_.empty() )
 	{
-		DrawLocalFog(
-			depth_buffer_copy_texture_,
-			local_fog_shader_,
-			visible_local_fog_volumes_,
-			viewport_info.viewport_size,
-			drawing_info.camera_params.position,
-			view_matrix,
-			camera_inverse_projection_matrix,
-			fog_color_additive );
+		if_var( &m : camera_matrices.camera_inverse_projection_matrix )
+		{
+			DrawLocalFog(
+				depth_buffer_copy_texture_,
+				local_fog_shader_,
+				visible_local_fog_volumes_,
+				viewport_size,
+				camera_position,
+				camera_matrices.view_matrix,
+				m,
+				fog_color_additive );
+		}
 	}
 
 	// Draw snow/rain before other simitransparent geometry.
@@ -873,8 +935,8 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 					snow_shader_,
 					map_data.map_textures_array,
 					billboard_description,
-					view_matrix,
-					drawing_info.camera_params.position,
+					camera_matrices.view_matrix,
+					camera_position,
 					movement_distance,
 					global_light_params.light_scale,
 					fog_color,
@@ -904,8 +966,8 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 					rain_shader_,
 					map_data.map_textures_array,
 					billboards_description_[ size_type( BillboardConstants::c_id_rain ) ],
-					view_matrix,
-					drawing_info.camera_params.position,
+					camera_matrices.view_matrix,
+					camera_position,
 					movement_distance,
 					rain_light_scale,
 					fog_color,
@@ -923,7 +985,8 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 		BuildBillboardPolygons(
 			drawing_info.billboards,
 			billboards_description_,
-			drawing_info.camera_params,
+			camera_position,
+			drawing_info.camera_params.fov_x,
 			camera_clip_planes,
 			visibility_calculator.GetVisibleLeafsBBox(),
 			semitransparent_polygons_buffer_.vertices,
@@ -968,20 +1031,20 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 		if( map_data.global_fog_enabled )
 		{
 			CalculateFogForSemitransparentGeometryVertices(
-				drawing_info.camera_params.position, semitransparent_polygons_buffer_.vertices );
+				camera_position, semitransparent_polygons_buffer_.vertices );
 		}
 
 		if( !visible_local_fog_volumes_.empty() )
 		{
 			CalculateLocalFogForSemitransparentGeometryVertices(
-				drawing_info.camera_params.position,
+				camera_position,
 				visible_local_fog_volumes_,
 				semitransparent_polygons_buffer_.vertices );
 		}
 	}
 
 	SortTrianglesFarToNearOrder(
-		drawing_info.camera_params.position,
+		camera_position,
 		semitransparent_polygons_buffer_.vertices,
 		semitransparent_polygons_buffer_.indices,
 		triangles_for_sorting_ );
@@ -994,7 +1057,7 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 		semitransparent_polygons_buffer_,
 		semitransparent_geometry_shader_,
 		map_data.map_textures_array,
-		view_matrix,
+		camera_matrices.view_matrix,
 		// Only scale light for semitransparent polygons, but not add it.
 		global_light_params.light_scale,
 		fog_color,
@@ -1007,8 +1070,6 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 	// Draw first person weapon models as last step.
 	DrawFirstPersonWeaponModels( models_, first_person_weapon_models_to_draw_, model_shader_, drawing_stats );
 	first_person_weapon_models_to_draw_.clear();
-
-	return drawing_stats;
 }
 
 fn WorldDrawer::SetMap( mut this, u32 map_index )
