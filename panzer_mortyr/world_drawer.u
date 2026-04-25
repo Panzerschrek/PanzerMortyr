@@ -304,25 +304,22 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 
 	if( !mirror_polygons_buffer_.vertices.empty() && !mirror_polygons_buffer_.indices.empty() )
 	{
-		var ust::array_view_imut</MapVertex/> vertices= mirror_polygons_buffer_.vertices;
-		var ust::array_view_imut</u16/> indices= mirror_polygons_buffer_.indices;
-
 		var Vec3f mut normals_sum= Vec3f::MakeZero();
 
-		for( auto mut i= 0s; i + 3s <= indices.size(); i+= 3s )
+		for( auto mut i= 0s; i + 3s <= mirror_polygons_buffer_.indices.size(); i+= 3s )
 		{
 			var [ size_type, 3 ] trianlge_indices
 			[
-				( indices[ i + 0s ] ),
-				( indices[ i + 1s ] ),
-				( indices[ i + 2s ] ),
+				( mirror_polygons_buffer_.indices[ i + 0s ] ),
+				( mirror_polygons_buffer_.indices[ i + 1s ] ),
+				( mirror_polygons_buffer_.indices[ i + 2s ] ),
 			];
 
 			var [ Vec3f, 3 ] triangle_vertices
 			[
-				( vertices[ trianlge_indices[0] ].position ),
-				( vertices[ trianlge_indices[1] ].position ),
-				( vertices[ trianlge_indices[2] ].position ),
+				( mirror_polygons_buffer_.vertices[ trianlge_indices[0] ].position ),
+				( mirror_polygons_buffer_.vertices[ trianlge_indices[1] ].position ),
+				( mirror_polygons_buffer_.vertices[ trianlge_indices[2] ].position ),
 			];
 
 			normals_sum+=
@@ -333,7 +330,7 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 
 		var f32 mut min_distance= ust::plus_inf</f32/>();
 
-		foreach( &vertex : vertices )
+		foreach( &vertex : mirror_polygons_buffer_.vertices )
 		{
 			ust::min_assign( min_distance, normal.Dot( Vec3f( vertex.position ) ) );
 		}
@@ -349,9 +346,20 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 			],
 		};
 
+		var Mat4f mirror_rotation_matrix
+		{
+			.values
+			[
+				mirror_matrix.values[0],
+				mirror_matrix.values[1],
+				mirror_matrix.values[2],
+				[ 0.0f, 0.0f, 0.0f, 1.0f ]
+			],
+		};
+
 		var Vec3f normal_in_view_space= (-normal) * rotation_matrix;
 		var f32 mut min_distance_in_view_space= ust::plus_inf</f32/>();
-		foreach( &vertex : vertices )
+		foreach( &vertex : mirror_polygons_buffer_.vertices )
 		{
 			var Vec3f camera_space_position= Vec3f( vertex.position ) * camera_space_matrix;
 			ust::min_assign( min_distance_in_view_space, normal_in_view_space.Dot( camera_space_position ) );
@@ -365,30 +373,29 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 				Mat4f::MakePerspectiveWithCustomNearPlane(
 					viewport_info.view_aspect, drawing_info.camera_params.fov_x, view_space_mirror_plane, c_z_far );
 
-			var Mat4f mirrored_geometry_matrix=
-				mirror_matrix * camera_space_matrix * projection_matrix_for_mirrored_geometry;
-
-			var MapFullDrawData &mut map_full_draw_data= map_data_.try_deref();
-
-			var MapDrawData& map_data= map_full_draw_data.map_draw_data;
-
-			var MapVisibilityCalculator &mut visibility_calculator= map_full_draw_data.map_visibility_calculator;
-
-			DrawMapPolygons(
-				map_data,
-				visibility_calculator,
-				drawing_info.dynamic_cluster_objects,
-				drawing_info.highligted_cluster_indices,
-				breakable_polygons_buffer_,
-				map_shader_,
-				mirrored_geometry_matrix,
-				/*draw_water_clusters_as_normal*/ true,
-				drawing_info.game_time_s,
-				global_light_params,
-				drawing_stats,
-				true );
+			DrawPartial(
+					drawing_info,
+					viewport_info.viewport_size,
+					drawing_info.camera_params.position,
+					CameraMatrices
+					{
+						.camera_space_matrix= mirror_matrix * camera_space_matrix,
+						.rotation_and_projection_matrix= mirror_rotation_matrix * rotation_matrix * projection_matrix_for_mirrored_geometry,
+						.camera_projection_matrix= projection_matrix_for_mirrored_geometry,
+						.view_matrix= mirror_matrix * camera_space_matrix * projection_matrix_for_mirrored_geometry,
+						.camera_inverse_projection_matrix= ust::null_optional,
+						.first_person_weapon_distortion_matrix= first_person_weapon_distortion_matrix,
+					},
+					camera_clip_planes,
+					global_light_params,
+					model_light_params,
+					first_person_weapon_model_light_params,
+					drawing_stats );
 
 			{
+
+				var MapDrawData& map_data= map_data_.try_deref().map_draw_data;
+
 				SetGLState( g_mirror_polygons_drawing_gl_state );
 
 				var u32 texture_slot= 0u;
