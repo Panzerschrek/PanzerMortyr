@@ -280,6 +280,9 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 	map_data_.try_deref().map_visibility_calculators[0].CalculateVisibility(
 		drawing_info.camera_params.position, view_matrix );
 
+	// Collect mirror polygons.
+	// Do this as early step in order to perform mirror drawing pass prior to drawing other geometry.
+
 	ResetDynamicPolygonsBuffer( mirror_polygons_buffer_ );
 
 	{
@@ -307,38 +310,8 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 
 	if( !mirror_polygons_buffer_.vertices.empty() && !mirror_polygons_buffer_.indices.empty() )
 	{
-		var Vec3f mut normals_sum= Vec3f::MakeZero();
-
-		for( auto mut i= 0s; i + 3s <= mirror_polygons_buffer_.indices.size(); i+= 3s )
-		{
-			var [ size_type, 3 ] trianlge_indices
-			[
-				( mirror_polygons_buffer_.indices[ i + 0s ] ),
-				( mirror_polygons_buffer_.indices[ i + 1s ] ),
-				( mirror_polygons_buffer_.indices[ i + 2s ] ),
-			];
-
-			var [ Vec3f, 3 ] triangle_vertices
-			[
-				( mirror_polygons_buffer_.vertices[ trianlge_indices[0] ].position ),
-				( mirror_polygons_buffer_.vertices[ trianlge_indices[1] ].position ),
-				( mirror_polygons_buffer_.vertices[ trianlge_indices[2] ].position ),
-			];
-
-			normals_sum+=
-				( triangle_vertices[0] - triangle_vertices[1] ).Cross( triangle_vertices[1] - triangle_vertices[2] );
-		}
-
-		var Vec3f normal= normals_sum / ( normals_sum.Length() + 0.00001f );
-
-		var f32 mut min_distance= ust::plus_inf</f32/>();
-
-		foreach( &vertex : mirror_polygons_buffer_.vertices )
-		{
-			ust::min_assign( min_distance, normal.Dot( Vec3f( vertex.position ) ) );
-		}
-
-		var Planef mirror_plane{ .normal= normal, .distance= -min_distance };
+		var Planef mirror_plane=
+			CalculateMirrorPlane( mirror_polygons_buffer_.vertices, mirror_polygons_buffer_.indices );
 
 		var Planef camera_space_mirror_plane= mirror_plane * camera_space_planes_matrix;
 
@@ -1718,6 +1691,48 @@ fn CreateMirrorMapPolygons(
 	}
 
 	// Don't care about dynamic clusters - they seem to never have mirror quads.
+}
+
+// Returns plane with normalized normal.
+// Input vertices and indices shouldn't be empty.
+// It works properly only for geometry lying in single plane.
+fn CalculateMirrorPlane( ust::array_view_imut</MapVertex/> vertices, ust::array_view_imut</u16/> indices ) : Planef
+{
+	debug_assert( !vertices.empty() );
+	debug_assert( !indices.empty() );
+
+	var Vec3f mut normals_sum= Vec3f::MakeZero();
+
+	for( auto mut i= 0s; i + 3s <= indices.size(); i+= 3s )
+	{
+		var [ size_type, 3 ] trianlge_indices
+		[
+			( indices[ i + 0s ] ),
+			( indices[ i + 1s ] ),
+			( indices[ i + 2s ] ),
+		];
+
+		var [ Vec3f, 3 ] triangle_vertices
+		[
+			( vertices[ trianlge_indices[0] ].position ),
+			( vertices[ trianlge_indices[1] ].position ),
+			( vertices[ trianlge_indices[2] ].position ),
+		];
+
+		normals_sum+=
+			( triangle_vertices[0] - triangle_vertices[1] ).Cross( triangle_vertices[1] - triangle_vertices[2] );
+	}
+
+	var Vec3f normal= normals_sum / ( normals_sum.Length() + 0.00000001f );
+
+	var f32 mut min_distance= ust::plus_inf</f32/>();
+
+	foreach( &vertex : vertices )
+	{
+		ust::min_assign( min_distance, normal.Dot( Vec3f( vertex.position ) ) );
+	}
+
+	return Planef{ .normal= normal, .distance= -min_distance };
 }
 
 fn CreateBreakableMapPolygons(
