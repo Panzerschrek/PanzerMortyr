@@ -263,6 +263,13 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 
 	var Mat4f camera_space_matrix= translation_matrix * rotation_matrix;
 
+	// A matrix inverse to a space matrix performs opposite rotation and movement.
+	// Use transpose for the rotation matrix since for such kind of matrix it's equivalent but faster way of inversion.
+	var Mat4f camera_inverse_space_matrix=
+		rotation_matrix.Transpose() * Mat4f::MakeTranslation( drawing_info.camera_params.position );
+
+	var Mat4f camera_space_planes_matrix= camera_inverse_space_matrix.Transpose();
+
 	var Mat4f view_matrix= translation_matrix * rotation_and_projection_matrix;
 
 	var CameraClipPlanes camera_clip_planes=
@@ -333,7 +340,9 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 			ust::min_assign( min_distance, normal.Dot( Vec3f( vertex.position ) ) );
 		}
 
-		var Mat4f mirror_matrix= Mat4f::MakeMirroring( Planef{ .normal= normal, .distance= -min_distance } );
+		var Planef mirror_plane{ .normal= normal, .distance= -min_distance };
+
+		var Mat4f mirror_matrix= Mat4f::MakeMirroring( mirror_plane );
 
 		var Mat4f mirror_rotation_matrix
 		{
@@ -346,21 +355,16 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 			],
 		};
 
-		var Vec3f normal_in_view_space= (-normal) * rotation_matrix;
-		var f32 mut min_distance_in_view_space= ust::plus_inf</f32/>();
-		foreach( &vertex : mirror_polygons_buffer_.vertices )
-		{
-			var Vec3f camera_space_position= Vec3f( vertex.position ) * camera_space_matrix;
-			ust::min_assign( min_distance_in_view_space, normal_in_view_space.Dot( camera_space_position ) );
-		}
+		var Planef camera_space_mirror_plane= mirror_plane * camera_space_planes_matrix;
 
-		var Planef view_space_mirror_plane{ .normal= normal_in_view_space, .distance= -min_distance_in_view_space };
-
-		if( view_space_mirror_plane.distance < 0.0f )
+		if( camera_space_mirror_plane.distance > 0.0f )
 		{
 			var Mat4f projection_matrix_for_mirrored_geometry=
 				Mat4f::MakePerspectiveWithCustomNearPlane(
-					viewport_info.view_aspect, drawing_info.camera_params.fov_x, view_space_mirror_plane, c_z_far );
+					viewport_info.view_aspect,
+					drawing_info.camera_params.fov_x,
+					-camera_space_mirror_plane, // It should be inverted to allow only geometry behind mirror plane.
+					c_z_far );
 
 			DrawPartial(
 				drawing_info,
