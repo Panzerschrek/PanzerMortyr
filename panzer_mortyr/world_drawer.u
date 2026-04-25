@@ -244,7 +244,11 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 		}
 	}
 
-	var MapDrawData &mut map_data= map_data_.try_deref();
+	var MapFullDrawData &mut map_full_draw_data= map_data_.try_deref();
+
+	var MapDrawData& map_data= map_full_draw_data.map_draw_data;
+
+	var MapVisibilityCalculator &mut visibility_calculator= map_full_draw_data.map_visibility_calculator;
 
 	// Clear only depth buffer, but not color buffer.
 	// Clearing color isn't necessary, since we draw sky background geometry.
@@ -282,7 +286,7 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 	var RoomClustersHierarchy& room_clusters_hierarchy= map_data.room_clusters_hierarchy.deref();
 
 	// Calculate map visibility as first drawing step.
-	map_data.map_visibility_calculator.CalculateVisibility( drawing_info.camera_params.position, view_matrix );
+	visibility_calculator.CalculateVisibility( drawing_info.camera_params.position, view_matrix );
 
 	ResetDynamicPolygonsBuffer( mirror_polygons_buffer_ );
 
@@ -293,7 +297,11 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 			materials_description_.deref().blocks[ map_description.materials_block ]; // Halts if not found.
 
 		CreateMirrorMapPolygons(
-			map_data, materials_block, mirror_polygons_buffer_.vertices, mirror_polygons_buffer_.indices );
+			map_data,
+			visibility_calculator,
+			materials_block,
+			mirror_polygons_buffer_.vertices,
+			mirror_polygons_buffer_.indices );
 	}
 
 	UploadDynamicPolygonsBuffer( mirror_polygons_buffer_ );
@@ -366,6 +374,7 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 
 			DrawMapPolygons(
 				map_data,
+				visibility_calculator,
 				drawing_info.dynamic_cluster_objects,
 				drawing_info.highligted_cluster_indices,
 				breakable_polygons_buffer_,
@@ -412,6 +421,7 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 
 	CreateBreakableMapPolygons(
 		map_data,
+		visibility_calculator,
 		drawing_info.broken_quad_bits,
 		breakable_polygons_buffer_.vertices,
 		breakable_polygons_buffer_.indices );
@@ -425,6 +435,7 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 
 	DrawMapPolygons(
 		map_data,
+		visibility_calculator,
 		drawing_info.dynamic_cluster_objects,
 		drawing_info.highligted_cluster_indices,
 		breakable_polygons_buffer_,
@@ -440,6 +451,7 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 	{
 		DrawMapPolygonsWithCaustics(
 			map_data,
+			visibility_calculator,
 			caustics_and_fire_texture_,
 			map_caustics_shader_,
 			view_matrix,
@@ -468,6 +480,7 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 		DrawMapPolygonsWithDynamicLights(
 			game_params_.deref(),
 			map_data,
+			visibility_calculator,
 			drawing_info.dynamic_cluster_objects,
 			map_dynamic_light_shader_,
 			view_matrix,
@@ -534,8 +547,7 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 				Vec3f( frame_bbox.max.x, frame_bbox.max.y, frame_bbox.max.z ) * model_transormation_matrix,
 			];
 
-			if( !model_object.disable_culling &&
-				!map_data.map_visibility_calculator.IsBoxVisible( bbox_corners_transformed ) )
+			if( !model_object.disable_culling && !visibility_calculator.IsBoxVisible( bbox_corners_transformed ) )
 			{
 				continue;
 			}
@@ -693,7 +705,7 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 	{
 		var ust::vector</WorldDrawingInfo::TestLine/> mut lines;
 
-		VisualizeProjectedPortals( map_data.map_visibility_calculator.GetPortalsProjected(), lines );
+		VisualizeProjectedPortals( visibility_calculator.GetPortalsProjected(), lines );
 
 		DrawTestLines(
 			lines,
@@ -706,7 +718,7 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 	{
 		var ust::vector</WorldDrawingInfo::TestLine/> mut lines;
 
-		VisualizeLeafProjectedBounds( map_data.map_visibility_calculator.GetLeafProjectedBounds(), lines );
+		VisualizeLeafProjectedBounds( visibility_calculator.GetLeafProjectedBounds(), lines );
 
 		DrawTestLines(
 			lines,
@@ -737,7 +749,7 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 			};
 
 			if( !AreBoxVerticesClippedByAtLeastOneCameraClipPlane( camera_clip_planes, bbox.CreateCornerVertices() ) &&
-				map_data.map_visibility_calculator.IsBoxVisible( bbox.CreateCornerVertices() ) )
+				visibility_calculator.IsBoxVisible( bbox.CreateCornerVertices() ) )
 			{
 				visible_local_fog_volumes_.push_back( bbox );
 			}
@@ -913,7 +925,7 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 			billboards_description_,
 			drawing_info.camera_params,
 			camera_clip_planes,
-			map_data.map_visibility_calculator.GetVisibleLeafsBBox(),
+			visibility_calculator.GetVisibleLeafsBBox(),
 			semitransparent_polygons_buffer_.vertices,
 			semitransparent_polygons_buffer_.indices );
 
@@ -925,6 +937,7 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 
 		CreateSemitransparentMapPolygons(
 			map_data,
+			visibility_calculator,
 			materials_block,
 			drawing_info.broken_quad_bits,
 			drawing_info.dynamic_cluster_objects,
@@ -1395,48 +1408,52 @@ fn WorldDrawer::SetMap( mut this, u32 map_index )
 		BuildRoomClustersBSPTree( zvox_data.clusters ) );
 
 	map_data_.reset(
-		MapDrawData
+		MapFullDrawData
 		{
-			.zmap_data= zmap_data_ptr,
-			.zvox_data= zvox_data_ptr,
-			.zmap_lam_data= zmap_lam_data_ptr,
-			.zmap_lem_data= zmap_lem_data_ptr,
-			.room_clusters_hierarchy= room_clusters_hierarchy_ptr,
-			.room_clusters_bsp_tree= room_clusters_bsp_tree,
+			.map_draw_data
+			{
+				.zmap_data= zmap_data_ptr,
+				.zvox_data= zvox_data_ptr,
+				.zmap_lam_data= zmap_lam_data_ptr,
+				.zmap_lem_data= zmap_lem_data_ptr,
+				.room_clusters_hierarchy= room_clusters_hierarchy_ptr,
+				.room_clusters_bsp_tree= room_clusters_bsp_tree,
+				.light_sources= move(light_sources),
+				.vertex_array_object= move(vertex_array_object),
+				.vertex_buffer= move(vertex_buffer),
+				.index_buffer= move(index_buffer),
+				// Do not bother using caching for map textures, since almost all maps (with a couple of exceptions) use their own texture files.
+				.map_textures_array=
+					LoadMapTextures(
+						materials_block,
+						game_filesystem_ptr_,
+						console_out_,
+						settings_.lock_imut().deref(),
+						gl_capabilities_ ),
+				.clouds_texture_layer= materials_block.special_material_indices[ size_type( MaterialsDescription::SpecialMaterial::Sky ) ],
+				.clusters_draw_data= move(clusters_draw_data),
+				.special_material_valve_meshes= move(special_material_valve_meshes),
+				.special_material_film_meshes= move(special_material_film_meshes),
+				.sky_background_buffer= CreateSkyBackgroundBuffer( map_description ),
+				.stars_buffer= CreateStarsBuffer( map_description, billboards_description_ ),
+				.sky_clouds_params= CreateSkyCloudsParams( map_description ),
+				.snow_rain_buffer= CreateSnowRainBuffer( zmap_lam_data ),
+				.fog_color
+				[
+					f32( map_description.fog_color[2] ) / 255.0f,
+					f32( map_description.fog_color[1] ) / 255.0f,
+					f32( map_description.fog_color[0] ) / 255.0f
+				],
+				.global_fog_enabled= map_description.linear_fog_enabled,
+				.breakable_material_bits= move(breakable_material_bits),
+			},
 			.map_visibility_calculator( room_clusters_bsp_tree ),
-			.light_sources= move(light_sources),
-			.vertex_array_object= move(vertex_array_object),
-			.vertex_buffer= move(vertex_buffer),
-			.index_buffer= move(index_buffer),
-			// Do not bother using caching for map textures, since almost all maps (with a couple of exceptions) use their own texture files.
-			.map_textures_array=
-				LoadMapTextures(
-					materials_block,
-					game_filesystem_ptr_,
-					console_out_,
-					settings_.lock_imut().deref(),
-					gl_capabilities_ ),
-			.clouds_texture_layer= materials_block.special_material_indices[ size_type( MaterialsDescription::SpecialMaterial::Sky ) ],
-			.clusters_draw_data= move(clusters_draw_data),
-			.special_material_valve_meshes= move(special_material_valve_meshes),
-			.special_material_film_meshes= move(special_material_film_meshes),
-			.sky_background_buffer= CreateSkyBackgroundBuffer( map_description ),
-			.stars_buffer= CreateStarsBuffer( map_description, billboards_description_ ),
-			.sky_clouds_params= CreateSkyCloudsParams( map_description ),
-			.snow_rain_buffer= CreateSnowRainBuffer( zmap_lam_data ),
-			.fog_color
-			[
-				f32( map_description.fog_color[2] ) / 255.0f,
-				f32( map_description.fog_color[1] ) / 255.0f,
-				f32( map_description.fog_color[0] ) / 255.0f
-			],
-			.global_fog_enabled= map_description.linear_fog_enabled,
-			.breakable_material_bits= move(breakable_material_bits),
 		} );
 }
 
 fn CreateSemitransparentMapPolygons(
 	MapDrawData& map_data,
+	MapVisibilityCalculator& visibility_calculator,
 	MaterialsDescription::Block& materials_block,
 	BitArrayView broken_quad_bits,
 	ust::array_view_imut</WorldDrawingInfo::DynamicClusterObject/> dynamic_cluster_objects,
@@ -1449,7 +1466,7 @@ fn CreateSemitransparentMapPolygons(
 	var ZmapLamData& zmap_lam_data= map_data.zmap_lam_data.deref();
 
 	var MapVisibilityCalculator::VisibleRoomClusterFlags visible_room_cluster_flags=
-		map_data.map_visibility_calculator.GetVisibleRoomClusterFlags();
+		visibility_calculator.GetVisibleRoomClusterFlags();
 
 	for( auto mut i= 0s; i < clusters.size(); )
 	{
@@ -1538,7 +1555,7 @@ fn CreateSemitransparentMapPolygons(
 				f32( light_shafts_box.center[2] + light_shafts_box.bounding_box_half_size[2] ) ),
 		};
 
-		if( !map_data.map_visibility_calculator.IsBoxVisible( bbox.CreateCornerVertices() ) )
+		if( !visibility_calculator.IsBoxVisible( bbox.CreateCornerVertices() ) )
 		{
 			continue;
 		}
@@ -1549,6 +1566,7 @@ fn CreateSemitransparentMapPolygons(
 
 fn CreateMirrorMapPolygons(
 	MapDrawData& map_data,
+	MapVisibilityCalculator& visibility_calculator,
 	MaterialsDescription::Block& materials_block,
 	ust::vector</MapVertex/> &mut vertices,
 	ust::vector</u16/> &mut indices )
@@ -1558,7 +1576,7 @@ fn CreateMirrorMapPolygons(
 	var ZmapLamData& zmap_lam_data= map_data.zmap_lam_data.deref();
 
 	var MapVisibilityCalculator::VisibleRoomClusterFlags visible_room_cluster_flags=
-		map_data.map_visibility_calculator.GetVisibleRoomClusterFlags();
+		visibility_calculator.GetVisibleRoomClusterFlags();
 
 	for( auto mut i= 0s; i < clusters.size(); )
 	{
@@ -1603,6 +1621,7 @@ fn CreateMirrorMapPolygons(
 
 fn CreateBreakableMapPolygons(
 	MapDrawData& map_data,
+	MapVisibilityCalculator& visibility_calculator,
 	BitArrayView broken_quad_bits,
 	ust::vector</MapVertex/> &mut vertices,
 	ust::vector</u16/> &mut indices )
@@ -1612,7 +1631,7 @@ fn CreateBreakableMapPolygons(
 	var ZmapLamData& zmap_lam_data= map_data.zmap_lam_data.deref();
 
 	var MapVisibilityCalculator::VisibleRoomClusterFlags visible_room_cluster_flags=
-		map_data.map_visibility_calculator.GetVisibleRoomClusterFlags();
+		visibility_calculator.GetVisibleRoomClusterFlags();
 
 	for( auto mut i= 0s; i < clusters.size(); )
 	{
@@ -1658,6 +1677,7 @@ fn CreateBreakableMapPolygons(
 
 fn DrawMapPolygons(
 	MapDrawData& map_data,
+	MapVisibilityCalculator& visibility_calculator,
 	ust::array_view_imut</WorldDrawingInfo::DynamicClusterObject/> dynamic_cluster_objects,
 	ust::array_view_imut</u32/> highlighted_cluster_indices,
 	DynamicPolygonsBuffer& breakable_polygons_buffer,
@@ -1672,7 +1692,7 @@ fn DrawMapPolygons(
 	var ust::array_view_imut</ZvoxCluster/> clusters= map_data.zvox_data.deref().clusters.range();
 
 	var MapVisibilityCalculator::VisibleRoomClusterFlags visible_room_cluster_flags=
-		map_data.map_visibility_calculator.GetVisibleRoomClusterFlags();
+		visibility_calculator.GetVisibleRoomClusterFlags();
 
 	if( mirrored )
 	{
@@ -1761,7 +1781,7 @@ fn DrawMapPolygons(
 		bbox.min+= dynamic_cluster_object.translation;
 		bbox.max+= dynamic_cluster_object.translation;
 
-		if( !map_data.map_visibility_calculator.IsBoxVisible( bbox.CreateCornerVertices() ) )
+		if( !visibility_calculator.IsBoxVisible( bbox.CreateCornerVertices() ) )
 		{
 			continue;
 		}
@@ -1786,7 +1806,7 @@ fn DrawMapPolygons(
 
 		foreach( cluster_index : highlighted_cluster_indices )
 		{
-			if( map_data.map_visibility_calculator.IsBoxVisible(
+			if( visibility_calculator.IsBoxVisible(
 					CreateClusterBBox( clusters[ size_type( cluster_index ) ] ).CreateCornerVertices() ) )
 			{
 				ExecuteClusterMeshDrawing(
@@ -1810,6 +1830,7 @@ fn DrawMapPolygons(
 
 fn DrawMapPolygonsWithCaustics(
 	MapDrawData& map_data,
+	MapVisibilityCalculator& visibility_calculator,
 	Texture& caustics_texture,
 	ShaderProgram &mut shader,
 	Mat4f& view_matrix,
@@ -1822,7 +1843,7 @@ fn DrawMapPolygonsWithCaustics(
 	var ust::array_view_imut</ZvoxCluster/> clusters= map_data.zvox_data.deref().clusters.range();
 
 	var MapVisibilityCalculator::VisibleRoomClusterFlags visible_room_cluster_flags=
-		map_data.map_visibility_calculator.GetVisibleRoomClusterFlags();
+		visibility_calculator.GetVisibleRoomClusterFlags();
 
 	SetGLState( g_map_drawing_gl_state );
 
@@ -1892,6 +1913,7 @@ fn DrawMapPolygonsWithCaustics(
 fn DrawMapPolygonsWithDynamicLights(
 	GameParams& game_params,
 	MapDrawData& map_data,
+	MapVisibilityCalculator& visibility_calculator,
 	ust::array_view_imut</WorldDrawingInfo::DynamicClusterObject/> dynamic_cluster_objects,
 	ShaderProgram &mut shader,
 	Mat4f& view_matrix,
@@ -1909,7 +1931,7 @@ fn DrawMapPolygonsWithDynamicLights(
 	var ust::array_view_imut</ZvoxCluster/> clusters= map_data.zvox_data.deref().clusters.range();
 
 	var MapVisibilityCalculator::VisibleRoomClusterFlags visible_room_cluster_flags=
-		map_data.map_visibility_calculator.GetVisibleRoomClusterFlags();
+		visibility_calculator.GetVisibleRoomClusterFlags();
 
 	shader.Bind();
 	shader.SetUniform( "vu_matrix", view_matrix );
@@ -2026,7 +2048,7 @@ fn DrawMapPolygonsWithDynamicLights(
 				continue;
 			}
 
-			if( !map_data.map_visibility_calculator.IsBoxVisible( bbox.CreateCornerVertices() ) )
+			if( !visibility_calculator.IsBoxVisible( bbox.CreateCornerVertices() ) )
 			{
 				continue;
 			}
