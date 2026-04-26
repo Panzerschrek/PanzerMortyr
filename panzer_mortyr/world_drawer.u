@@ -247,11 +247,6 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 		}
 	}
 
-	// Clear only depth buffer, but not color buffer.
-	// Clearing color isn't necessary, since we draw sky background geometry.
-	unsafe( glClearDepth( 1.0 ) );
-	unsafe( glClear( GLbitfield( GL_DEPTH_BUFFER_BIT ) ) );
-
 	var Mat4f rotation_matrix=
 		CalculateCameraRotationMatrix( drawing_info.camera_params.azimuth, drawing_info.camera_params.elevation );
 
@@ -410,45 +405,48 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 				first_person_weapon_model_light_params,
 				true,
 				drawing_stats );
-
-			// Clear depth with maximum value to finsih mirror drawing.
-			SetGLState( g_buffer_clear_gl_state );
-			unsafe( glClearDepth( 1.0 ) );
-			unsafe( glClear( GLbitfield( GL_DEPTH_BUFFER_BIT ) ) );
-
-			{
-				var MapDrawData& map_data= map_data_.try_deref().map_draw_data;
-
-				SetGLState( g_mirror_polygons_drawing_gl_state );
-
-				var u32 texture_slot= 0u;
-
-				unsafe( glActiveTexture( GLenum( GL_TEXTURE0 ) + GLenum(texture_slot) ) );
-				map_data.map_textures_array.Bind();
-
-				map_mirror_shader_.Bind();
-				map_mirror_shader_.SetUniform( "vu_matrix", view_matrix );
-				map_mirror_shader_.SetUniform( "fu_texture", texture_slot );
-
-				map_mirror_shader_.SetUniform( "vu_light_add", Vec3f( global_light_params.light_add ) );
-				map_mirror_shader_.SetUniform( "vu_light_scale", Vec3f( global_light_params.light_scale ) );
-
-				map_mirror_shader_.SetUniform(
-					"fu_mirror_alpha",
-					ust::max( 0.01f, ust::min( f32( settings_.lock_imut().deref().r_mirror_alpha ) / 100.0f, 0.99f ) ) );
-
-				mirror_polygons_buffer_.vertex_array_object.Bind();
-				mirror_polygons_buffer_.index_buffer.Bind();
-
-				unsafe( glDrawElements(
-					GLenum( GL_TRIANGLES ),
-					GLsizei( ust::min( mirror_polygons_buffer_.indices.size(), mirror_polygons_buffer_.max_indices ) ),
-					GLenum( GL_UNSIGNED_SHORT ),
-					ust::nullptr</byte8/>() ) );
-			}
 		}
 	}
 
+	// Clear depth with maximum value before performing main pass drawing.
+	// This will clear depth from previous frame or from mirror drawing.
+	SetGLState( g_buffer_clear_gl_state );
+	unsafe( glClearDepth( 1.0 ) );
+	unsafe( glClear( GLbitfield( GL_DEPTH_BUFFER_BIT ) ) );
+
+	// Draw mirror surfaces.
+	// This will write mirror's depth into the depth buffer and thus avoid overwritting contents of the mirror with some other depth.
+	if( !mirror_polygons_buffer_.vertices.empty() && !mirror_polygons_buffer_.indices.empty() )
+	{
+		SetGLState( g_mirror_polygons_drawing_gl_state );
+
+		var u32 texture_slot= 0u;
+
+		unsafe( glActiveTexture( GLenum( GL_TEXTURE0 ) + GLenum(texture_slot) ) );
+		map_data_.try_deref().map_draw_data.map_textures_array.Bind();
+
+		map_mirror_shader_.Bind();
+		map_mirror_shader_.SetUniform( "vu_matrix", view_matrix );
+		map_mirror_shader_.SetUniform( "fu_texture", texture_slot );
+
+		map_mirror_shader_.SetUniform( "vu_light_add", Vec3f( global_light_params.light_add ) );
+		map_mirror_shader_.SetUniform( "vu_light_scale", Vec3f( global_light_params.light_scale ) );
+
+		map_mirror_shader_.SetUniform(
+			"fu_mirror_alpha",
+			ust::max( 0.01f, ust::min( f32( settings_.lock_imut().deref().r_mirror_alpha ) / 100.0f, 0.99f ) ) );
+
+		mirror_polygons_buffer_.vertex_array_object.Bind();
+		mirror_polygons_buffer_.index_buffer.Bind();
+
+		unsafe( glDrawElements(
+			GLenum( GL_TRIANGLES ),
+			GLsizei( ust::min( mirror_polygons_buffer_.indices.size(), mirror_polygons_buffer_.max_indices ) ),
+			GLenum( GL_UNSIGNED_SHORT ),
+			ust::nullptr</byte8/>() ) );
+	}
+
+	// Perform main pass drawing.
 	DrawPartial(
 		0s,
 		drawing_info,
