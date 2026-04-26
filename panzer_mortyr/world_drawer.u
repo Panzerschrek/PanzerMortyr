@@ -54,6 +54,9 @@ fn WorldDrawer::constructor(
 		map_shader_(
 			embed</char8/>( "shaders/map.vert.glsl" ),
 			embed</char8/>( "shaders/map.frag.glsl" ) ),
+		mirror_depth_clear_shader_(
+			embed</char8/>( "shaders/mirror_depth_clear.vert.glsl" ),
+			embed</char8/>( "shaders/mirror_depth_clear.frag.glsl" ) ),
 		map_mirror_shader_(
 			embed</char8/>( "shaders/map.vert.glsl" ),
 			embed</char8/>( "shaders/map_mirror.frag.glsl" ) ),
@@ -246,6 +249,7 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 
 	// Clear only depth buffer, but not color buffer.
 	// Clearing color isn't necessary, since we draw sky background geometry.
+	unsafe( glClearDepth( 1.0 ) );
 	unsafe( glClear( GLbitfield( GL_DEPTH_BUFFER_BIT ) ) );
 
 	var Mat4f rotation_matrix=
@@ -314,6 +318,36 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 
 		if( camera_space_mirror_plane.distance > 0.0f )
 		{
+			// Clear depth to minimum value to avoid drawing anything outside mirror.
+			SetGLState( g_buffer_clear_gl_state );
+			unsafe( glClearDepth( 0.0 ) );
+			unsafe( glClear( GLbitfield( GL_DEPTH_BUFFER_BIT ) ) );
+
+			// Clear mirror geometry with maximum depth value to allow drawing inside mirror.
+			{
+				var Mat4f mut mirror_depth_clear_projection_matrix= camera_projection_matrix;
+				mirror_depth_clear_projection_matrix.values[0][2]= 0.0f;
+				mirror_depth_clear_projection_matrix.values[1][2]= 0.0f;
+				mirror_depth_clear_projection_matrix.values[2][2]= 1.0f - 1.0f / 4096.0f; // Use almost 1, not strictly 1 to avoid clipping.
+				mirror_depth_clear_projection_matrix.values[3][2]= 0.0f;
+
+				var Mat4f mirror_depth_clear_view_matrix= camera_space_matrix * mirror_depth_clear_projection_matrix;
+
+				SetGLState( g_mirror_depth_clear_gl_state );
+
+				mirror_depth_clear_shader_.Bind();
+				mirror_depth_clear_shader_.SetUniform( "vu_matrix", mirror_depth_clear_view_matrix );
+
+				mirror_polygons_buffer_.vertex_array_object.Bind();
+				mirror_polygons_buffer_.index_buffer.Bind();
+
+				unsafe( glDrawElements(
+					GLenum( GL_TRIANGLES ),
+					GLsizei( ust::min( mirror_polygons_buffer_.indices.size(), mirror_polygons_buffer_.max_indices ) ),
+					GLenum( GL_UNSIGNED_SHORT ),
+					ust::nullptr</byte8/>() ) );
+			}
+
 			var Mat4f mirror_matrix= Mat4f::MakeMirroring( mirror_plane );
 
 			// Mirror matrix is it's own inverse. So, calculating planes martrix for mirror matrix requires only transposing it.
@@ -376,6 +410,11 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 				first_person_weapon_model_light_params,
 				true,
 				drawing_stats );
+
+			// Clear depth with maximum value to finsih mirror drawing.
+			SetGLState( g_buffer_clear_gl_state );
+			unsafe( glClearDepth( 1.0 ) );
+			unsafe( glClear( GLbitfield( GL_DEPTH_BUFFER_BIT ) ) );
 
 			{
 				var MapDrawData& map_data= map_data_.try_deref().map_draw_data;
@@ -3598,6 +3637,21 @@ var GLState g_map_dynamic_lights_drawing_gl_state
 	.blending_enabled= true,
 	.blend_source_factor( GL_ONE ),
 	.blend_destination_factor( GL_ONE ),
+};
+
+var GLState g_mirror_depth_clear_gl_state
+{
+	// Don't bother rewriting color.
+	.color_write_enabled= false,
+	// Alwasy rewrite depth.
+	.depth_test_enabled= true,
+	.depth_test_func( GL_ALWAYS ),
+	.depth_write_enabled= true,
+	.cull_face_enabled= true,
+	.cull_face( GL_FRONT ),
+	.blending_enabled= false,
+	.blend_source_factor( GL_INVALID_ENUM ),
+	.blend_destination_factor( GL_INVALID_ENUM ),
 };
 
 var GLState g_mirror_polygons_drawing_gl_state
