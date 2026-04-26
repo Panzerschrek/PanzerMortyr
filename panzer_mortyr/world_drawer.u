@@ -422,6 +422,11 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 	// This will write mirror's depth into the depth buffer and thus avoid overwritting contents of the mirror with some other depth.
 	if( !mirror_polygons_buffer_.vertices.empty() && !mirror_polygons_buffer_.indices.empty() )
 	{
+		var f32 mirror_alpha=
+			( mirrors_enabled
+				? ust::max( 0.01f, ust::min( f32( settings_.lock_imut().deref().r_mirror_alpha ) / 100.0f, 0.99f ) )
+				: 1.0f );
+
 		var GLState mut gl_state= g_mirror_polygons_drawing_gl_state;
 		gl_state.blending_enabled= mirrors_enabled; // Disable blending if no mirrors are enabled.
 		SetGLState( gl_state );
@@ -438,9 +443,7 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 		map_mirror_shader_.SetUniform( "vu_light_add", Vec3f( global_light_params.light_add ) );
 		map_mirror_shader_.SetUniform( "vu_light_scale", Vec3f( global_light_params.light_scale ) );
 
-		map_mirror_shader_.SetUniform(
-			"fu_mirror_alpha",
-			ust::max( 0.01f, ust::min( f32( settings_.lock_imut().deref().r_mirror_alpha ) / 100.0f, 0.99f ) ) );
+		map_mirror_shader_.SetUniform( "fu_mirror_alpha", mirror_alpha );
 
 		mirror_polygons_buffer_.vertex_array_object.Bind();
 		mirror_polygons_buffer_.index_buffer.Bind();
@@ -450,6 +453,43 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 			GLsizei( ust::min( mirror_polygons_buffer_.indices.size(), mirror_polygons_buffer_.max_indices ) ),
 			GLenum( GL_UNSIGNED_SHORT ),
 			ust::nullptr</byte8/>() ) );
+
+		if( settings_.lock_imut().deref().r_dynamic_lights_enabled )
+		{
+			// Draw dynamic lights affecting mirror surface.
+
+			scoped_array ScissorRect dynamic_light_scissor_rects[ drawing_info.dynamic_light_sources.size() ](
+				drawing_info.dynamic_light_sources.iter().map(
+					lambda[&]( WorldDrawingInfo::DynamicLightSource& dynamic_light_source ) : ScissorRect
+					{
+						return
+							CalculateScissorRectForSphere(
+								camera_space_matrix,
+								camera_projection_matrix,
+								viewport_info.viewport_size,
+								dynamic_light_source.position,
+								GetDynamicLightRadius( dynamic_light_source ) );
+					} ) );
+
+			// Scale dynamic light power by mirror alpha.
+			var [ f32, 3 ] light_scale
+			[
+				global_light_params.light_scale[0] * mirror_alpha,
+				global_light_params.light_scale[1] * mirror_alpha,
+				global_light_params.light_scale[2] * mirror_alpha,
+			];
+
+			DrawDynamicPolygonsWithDynamicLights(
+				game_params_.deref(),
+				mirror_polygons_buffer_,
+				map_dynamic_light_shader_,
+				map_data_.try_deref().map_draw_data.map_textures_array,
+				view_matrix,
+				drawing_info.dynamic_light_sources,
+				dynamic_light_scissor_rects,
+				light_scale,
+				false );
+		}
 	}
 
 	// Perform main pass drawing.
@@ -2254,6 +2294,77 @@ fn DrawMapPolygonsWithDynamicLights(
 	}
 
 	unsafe( glDisable( GLenum( GL_SCISSOR_TEST ) ) );
+}
+
+fn DrawDynamicPolygonsWithDynamicLights(
+	GameParams& game_params,
+	DynamicPolygonsBuffer& dynamic_polygons_buffer,
+	ShaderProgram &mut shader,
+	Texture& map_textures_array,
+	Mat4f& view_matrix,
+	ust::array_view_imut</WorldDrawingInfo::DynamicLightSource/> dynamic_light_sources,
+	ust::array_view_imut</ScissorRect/> dynamic_light_scissor_rects,
+	[ f32, 3 ]& light_scale,
+	bool mirrored )
+{
+	if( dynamic_light_sources.empty() )
+	{
+		return;
+	}
+
+	dynamic_polygons_buffer.vertex_array_object.Bind();
+	dynamic_polygons_buffer.index_buffer.Bind();
+
+	shader.Bind();
+	shader.SetUniform( "vu_matrix", view_matrix );
+
+	var u32 texture_slot= 0u;
+	unsafe( glActiveTexture( GLenum( GL_TEXTURE0 ) + GLenum(texture_slot) ) );
+	map_textures_array.Bind();
+
+	shader.SetUniform( "fu_texture", texture_slot );
+
+	foreach( pair : dynamic_light_sources.iter().zip( dynamic_light_scissor_rects.iter() ) )
+	{
+		var WorldDrawingInfo::DynamicLightSource& light_source= pair.first;
+
+		var ScissorRect& scissor_rect= pair.second;
+
+		if( scissor_rect.size[0] == 0u | scissor_rect.size[1] == 0u )
+		{
+			continue;
+		}
+
+		// Use scissor test for dynamic lights to reduce fillrate.
+		var GLState mut gl_state= g_map_dynamic_lights_drawing_gl_state;
+		gl_state.scissor_test_enabled= true;
+		gl_state.scissor_rect= scissor_rect;
+
+		if( mirrored )
+		{
+			gl_state= GetMirroredGLState( gl_state );
+		}
+
+		SetGLState( gl_state );
+
+		shader.SetUniform( "fu_light_position", light_source.position );
+		shader.SetUniform( "fu_light_power", light_source.power );
+
+		// Swap BGR to RGB here.
+		auto& in_color= game_params.light_colors[ light_source.color_index & 31u ];
+		var Vec3f color(
+			f32( in_color[2] ) / 255.0f * light_scale[0],
+			f32( in_color[1] ) / 255.0f * light_scale[1],
+			f32( in_color[0] ) / 255.0f * light_scale[2] );
+
+		shader.SetUniform( "fu_light_color", color );
+
+		unsafe( glDrawElements(
+			GLenum( GL_TRIANGLES ),
+			GLsizei( ust::min( dynamic_polygons_buffer.indices.size(), dynamic_polygons_buffer.max_indices ) ),
+			GLenum( GL_UNSIGNED_SHORT ),
+			ust::nullptr</byte8/>() ) );
+	}
 }
 
 fn ExecuteClusterMeshDrawing( GeometryBufferChunk& geometry_buffer_chunk )
