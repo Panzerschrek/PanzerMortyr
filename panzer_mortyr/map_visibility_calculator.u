@@ -3,20 +3,15 @@ import "map_visibility_calculator.iu"
 namespace PM
 {
 
-fn MapVisibilityCalculator::constructor( ust::array_view_imut</ZvoxCluster/> clusters )
+fn MapVisibilityCalculator::constructor( ust::shared_ptr_final</RoomClustersBSPTree/> mut room_clusters_bsp_tree )
 	(
-		room_clusters_bsp_tree_= BuildRoomClustersBSPTree( clusters ),
-		leaf_bounds_( room_clusters_bsp_tree_.leaf_nodes.size() ),
-		portals_projected_( room_clusters_bsp_tree_.portals.size() ),
-		visible_room_cluster_flags_( clusters.size(), false ),
+		room_clusters_bsp_tree_= move(room_clusters_bsp_tree),
+		leaf_bounds_( room_clusters_bsp_tree_.deref().leaf_nodes.size() ),
+		portals_projected_( room_clusters_bsp_tree_.deref().portals.size() ),
+		visible_room_cluster_flags_( room_clusters_bsp_tree_.deref().num_clusters, false ),
 		visible_leafs_bbox_= MakeInvalidBBox(),
 	)
 {}
-
-fn MapVisibilityCalculator::GetRoomClustersBSPTree( this ) : RoomClustersBSPTree
-{
-	return room_clusters_bsp_tree_;
-}
 
 fn MapVisibilityCalculator::GetLeafProjectedBounds( this )
 	: ust::array_view_imut</ LeafProjectedBounds /> @( ust::reference_notation::return_inner_references::param0 )
@@ -44,7 +39,78 @@ fn MapVisibilityCalculator::GetVisibleLeafsBBox( this ) : BBox3f&
 fn MapVisibilityCalculator::CalculateVisibility( mut this, Vec3f& camera_position, Mat4f& view_matrix )
 {
 	// Reset visibility information calculated previously.
+	ResetVisibility();
 
+	// Find the tree leaf where camera is located.
+	var size_type camera_leaf_index= GetLeafIndexForPoint( room_clusters_bsp_tree_.deref(), camera_position );
+
+	// Visible bounds for camera leaf is the whole screen.
+	leaf_bounds_[ camera_leaf_index ]= GetWholeScreenBounds();
+
+	// Launch recursive BSP tree traversal.
+	CalculateLeafsAndPortalsVisibility_r( camera_position, view_matrix, RoomClustersBSPTree::c_root_node_index );
+
+	// Finalize result.
+	FinalizeVisibilityCalculation();
+
+	var ust::array_view_imut</RoomClustersBSPTree::LeafNode/> leaf_nodes= room_clusters_bsp_tree_.deref().leaf_nodes;
+
+	if( !leaf_nodes[ camera_leaf_index ].bbox.PointIsInsideOrOnFace( camera_position ) )
+	{
+		// If camera is somewhere in void space (outside a cluster) - mark all room clusters as visible.
+		// It's useful for noclip mode, in other cases this should not happen.
+		foreach( &leaf : leaf_nodes )
+		{
+			visible_room_cluster_flags_[ size_type( leaf.clustrer_index ) ]= true;
+		}
+
+		var f32 inf= 1000000.0f;
+		visible_leafs_bbox_= BBox3f{ .min= Vec3f( -inf, -inf, -inf ), .max= Vec3f(  inf,  inf,  inf ), };
+	}
+}
+
+fn MapVisibilityCalculator::CalculateVisibilityForMirror(
+	mut this, BBox3f& mirror_bounds, Vec3f& camera_position, Mat4f& view_matrix )
+{
+	// Reset visibility information calculated previously.
+	ResetVisibility();
+
+	// Extend given bounds slightly to avoid silly edge conditions.
+	var f32 extend_eps= 0.5f;
+	var BBox3f mirror_bounds_extended
+	{
+		.min= mirror_bounds.min - Vec3f( extend_eps, extend_eps, extend_eps ),
+		.max= mirror_bounds.max + Vec3f( extend_eps, extend_eps, extend_eps ),
+	};
+
+	if_var( &mirror_bounds_projected : ProjectBBox( mirror_bounds_extended, view_matrix ) )
+	{
+		var ClippingPolygon mirror_bounds_projected_and_clipped_to_screen=
+			mirror_bounds_projected.CalculateIntersection( GetWholeScreenBounds() );
+
+		if( mirror_bounds_projected_and_clipped_to_screen.IsValidAndNonEmpty() )
+		{
+			MarkLeafsContainingBBoxAsVisible_r(
+				mirror_bounds_extended,
+				mirror_bounds_projected_and_clipped_to_screen,
+				RoomClustersBSPTree::c_root_node_index );
+
+			// Launch recursive BSP tree traversal.
+			CalculateLeafsAndPortalsVisibility_r( camera_position, view_matrix, RoomClustersBSPTree::c_root_node_index );
+
+			// Finalize result.
+			FinalizeVisibilityCalculation();
+		}
+	}
+}
+
+fn MapVisibilityCalculator::IsBoxVisible( this, [ Vec3f, 8 ]& box_vertices ) : bool
+{
+	return IsBoxVisible_r( box_vertices, RoomClustersBSPTree::c_root_node_index );
+}
+
+fn MapVisibilityCalculator::ResetVisibility( mut this )
+{
 	foreach( &mut c : leaf_bounds_ )
 	{
 		c.reset();
@@ -61,20 +127,11 @@ fn MapVisibilityCalculator::CalculateVisibility( mut this, Vec3f& camera_positio
 	}
 
 	visible_leafs_bbox_= MakeInvalidBBox();
+}
 
-	// Find the tree leaf where camera is located.
-
-	var size_type camera_leaf_index= GetLeafIndexForPoint( room_clusters_bsp_tree_, camera_position );
-
-	// Bounds for camera leaf is the whole screen.
-	// It's from -1 to 1, since normalized coordinates are used (as in OpenGL).
-	leaf_bounds_[ camera_leaf_index ]= ClippingPolygon::CreateFromBox( Vec2f( -1.0f, -1.0f ), Vec2f( 1.0f, 1.0f ) );
-
-	// Launch recursive BSP tree traversal.
-
-	CalculateLeafsAndPortalsVisibility_r( camera_position, view_matrix, RoomClustersBSPTree::c_root_node_index );
-
-	foreach( pair : room_clusters_bsp_tree_.leaf_nodes.iter().zip( leaf_bounds_.iter() ) )
+fn MapVisibilityCalculator::FinalizeVisibilityCalculation( mut this )
+{
+	foreach( pair : room_clusters_bsp_tree_.deref().leaf_nodes.iter().zip( leaf_bounds_.iter() ) )
 	{
 		if( !pair.second.empty() )
 		{
@@ -87,24 +144,58 @@ fn MapVisibilityCalculator::CalculateVisibility( mut this, Vec3f& camera_positio
 			visible_leafs_bbox_.ExtendWithOther( leaf_node.bbox );
 		}
 	}
-
-	if( !room_clusters_bsp_tree_.leaf_nodes[ camera_leaf_index ].bbox.PointIsInsideOrOnFace( camera_position ) )
-	{
-		// If camera is somewhere in void space (outside a cluster) - mark all room clusters as visible.
-		// It's useful for noclip mode, in other cases this should not happen.
-		foreach( &leaf : room_clusters_bsp_tree_.leaf_nodes )
-		{
-			visible_room_cluster_flags_[ size_type( leaf.clustrer_index ) ]= true;
-		}
-
-		var f32 inf= 1000000.0f;
-		visible_leafs_bbox_= BBox3f{ .min= Vec3f( -inf, -inf, -inf ), .max= Vec3f(  inf,  inf,  inf ), };
-	}
 }
 
-fn MapVisibilityCalculator::IsBoxVisible( this, [ Vec3f, 8 ]& box_vertices ) : bool
+fn MapVisibilityCalculator::MarkLeafsContainingBBoxAsVisible_r(
+	mut this,
+	BBox3f& bbox,
+	ClippingPolygon& visible_screen_bounds,
+	RoomClustersBSPTree::NodeIndex node_index )
 {
-	return IsBoxVisible_r( box_vertices, RoomClustersBSPTree::c_root_node_index );
+	if( node_index >= RoomClustersBSPTree::c_first_leaf_node )
+	{
+		var size_type leaf_index= size_type( node_index ) - size_type( RoomClustersBSPTree::c_first_leaf_node );
+
+		if( room_clusters_bsp_tree_.deref().leaf_nodes[ leaf_index ].bbox.InstersectsOrTouches( bbox ) )
+		{
+			leaf_bounds_[ leaf_index ]= visible_screen_bounds;
+		}
+	}
+	else
+	{
+		// Test vertices of given box against split plane to reject whole branches of leafs.
+
+		var RoomClustersBSPTree::BranchNode branch_node=
+			room_clusters_bsp_tree_.deref().branch_nodes[ size_type( node_index ) ];
+
+		var size_type mut num_vertices_front= 0s, mut num_vertices_back= 0s;
+		foreach( &v : bbox.CreateCornerVertices() )
+		{
+			var f32 dist= branch_node.plane.GetDistanceForPoint( v );
+			if( dist > 0.0f )
+			{
+				++num_vertices_front;
+			}
+			if( dist < 0.0f )
+			{
+				++num_vertices_back;
+			}
+		}
+
+		if( num_vertices_front == 0s )
+		{
+			MarkLeafsContainingBBoxAsVisible_r( bbox, visible_screen_bounds, branch_node.children[1] );
+		}
+		else if( num_vertices_back == 0s )
+		{
+			MarkLeafsContainingBBoxAsVisible_r( bbox, visible_screen_bounds, branch_node.children[0] );
+		}
+		else
+		{
+			MarkLeafsContainingBBoxAsVisible_r( bbox, visible_screen_bounds, branch_node.children[0] );
+			MarkLeafsContainingBBoxAsVisible_r( bbox, visible_screen_bounds, branch_node.children[1] );
+		}
+	}
 }
 
 fn MapVisibilityCalculator::CalculateLeafsAndPortalsVisibility_r(
@@ -114,11 +205,13 @@ fn MapVisibilityCalculator::CalculateLeafsAndPortalsVisibility_r(
 	{
 		// Reached some leaf.
 
+		var RoomClustersBSPTree& room_clusters_bsp_tree= room_clusters_bsp_tree_.deref();
+
 		var size_type leaf_node_index= size_type( node_index ) - size_type( RoomClustersBSPTree::c_first_leaf_node );
-		var RoomClustersBSPTree::LeafNode& leaf_node= room_clusters_bsp_tree_.leaf_nodes[ leaf_node_index ];
+		var RoomClustersBSPTree::LeafNode& leaf_node= room_clusters_bsp_tree.leaf_nodes[ leaf_node_index ];
 
 		auto leaf_portals_range=
-			room_clusters_bsp_tree_.leaf_portals.range().subrange(
+			room_clusters_bsp_tree.leaf_portals.range().subrange(
 				size_type( leaf_node.first_leaf_portal ),
 				size_type( leaf_node.first_leaf_portal ) + size_type( leaf_node.num_leaf_portals ) );
 
@@ -157,7 +250,7 @@ fn MapVisibilityCalculator::CalculateLeafsAndPortalsVisibility_r(
 				{
 					var MapVisibilityCalculator::PortalProjected mut portal_projected_opt=
 						ProjectPortal(
-							room_clusters_bsp_tree_.portals[ size_type( portal_index ) ],
+							room_clusters_bsp_tree.portals[ size_type( portal_index ) ],
 							camera_position,
 							view_matrix );
 
@@ -178,7 +271,7 @@ fn MapVisibilityCalculator::CalculateLeafsAndPortalsVisibility_r(
 		// Branch node - visit both children with order dependent on camera position relative to the node's plane.
 
 		// Take here branch node copy to allow further recursive call with mutable "this".
-		var RoomClustersBSPTree::BranchNode node= room_clusters_bsp_tree_.branch_nodes[ size_type( node_index ) ];
+		var RoomClustersBSPTree::BranchNode node= room_clusters_bsp_tree_.deref().branch_nodes[ size_type( node_index ) ];
 
 		// Select recursive traversal order based on camera position relative to the node plane - to ensure front-to back order.
 		var [ RoomClustersBSPTree::NodeIndex, 2 ] children_order=
@@ -195,6 +288,8 @@ fn MapVisibilityCalculator::CalculateLeafsAndPortalsVisibility_r(
 
 fn MapVisibilityCalculator::IsBoxVisible_r( this, [ Vec3f, 8 ]& box_vertices, RoomClustersBSPTree::NodeIndex node_index ) : bool
 {
+	var RoomClustersBSPTree& room_clusters_bsp_tree= room_clusters_bsp_tree_.deref();
+
 	if( node_index >= RoomClustersBSPTree::c_first_leaf_node )
 	{
 		// Found leaf node where given box is at least partially located.
@@ -209,7 +304,7 @@ fn MapVisibilityCalculator::IsBoxVisible_r( this, [ Vec3f, 8 ]& box_vertices, Ro
 
 		// Perform last check if given box actually lies within bounding box of this leaf.
 
-		var RoomClustersBSPTree::LeafNode& leaf_node= room_clusters_bsp_tree_.leaf_nodes[ leaf_node_index ];
+		var RoomClustersBSPTree::LeafNode& leaf_node= room_clusters_bsp_tree.leaf_nodes[ leaf_node_index ];
 
 		var BBox3f mut input_vertices_bbox{ .min= box_vertices[0], .max= box_vertices[0] };
 		foreach( &v : box_vertices )
@@ -227,7 +322,7 @@ fn MapVisibilityCalculator::IsBoxVisible_r( this, [ Vec3f, 8 ]& box_vertices, Ro
 
 		// Test vertices of given box against split plane.
 		var RoomClustersBSPTree::BranchNode& branch_node=
-			room_clusters_bsp_tree_.branch_nodes[ size_type( node_index ) ];
+			room_clusters_bsp_tree.branch_nodes[ size_type( node_index ) ];
 
 		var size_type mut num_vertices_front= 0s, mut num_vertices_back= 0s;
 		foreach( &v : box_vertices )
@@ -278,6 +373,12 @@ fn GetLeafIndexForPoint( RoomClustersBSPTree& tree, Vec3f& point ) : size_type
 
 		node_index= ( node.plane.GetDistanceForPoint( point ) >= 0.0f ? node.children[0] : node.children[1] );
 	}
+}
+
+fn GetWholeScreenBounds() : ClippingPolygon
+{
+	// It's from -1 to 1, since normalized coordinates are used (as in OpenGL).
+	return ClippingPolygon::CreateFromBox( Vec2f( -1.0f, -1.0f ), Vec2f( 1.0f, 1.0f ) );
 }
 
 fn ProjectPortal(

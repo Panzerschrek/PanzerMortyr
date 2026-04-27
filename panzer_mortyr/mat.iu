@@ -1,5 +1,6 @@
+import "/minmax.iu"
 import "/optional.iu"
-import "vec.iu"
+import "plane.iu"
 
 namespace PM
 {
@@ -284,6 +285,55 @@ struct Mat4
 		};
 	}
 
+	fn MakePerspectiveWithCustomNearPlane( T aspect, T fov_x, Plane</T/>& near_plane, T z_far ) : ThisType
+	{
+		var T half_fov_inv_tan= T(1) / ust::tan( fov_x * T(0.5) );
+
+		var T scale_x= half_fov_inv_tan;
+		var T scale_y= half_fov_inv_tan * aspect;
+
+		// Calculate scale for Z column of the projected matrix so that depth at frustum corners is less or equal to 1.
+		// TODO - check if it's correct.
+		var T z_components_scale=
+			T(2) /
+				ust::max(
+					T( 0.0000001 ),
+					ust::abs( near_plane.normal.x ) * scale_x +
+					ust::abs( near_plane.normal.y ) * scale_y +
+					near_plane.normal.z +
+					near_plane.distance / z_far );
+
+		return ThisType
+		{
+			.values
+			[
+				[ scale_x,    T(0), z_components_scale * near_plane.normal.x       , T(0) ],
+				[    T(0), scale_y, z_components_scale * near_plane.normal.y       , T(0) ],
+				[    T(0),    T(0), z_components_scale * near_plane.normal.z - T(1), T(1) ],
+				[    T(0),    T(0), z_components_scale * near_plane.distance       , T(0) ],
+			],
+		};
+	}
+
+	// Create normal for mirroring relative to the given plane.
+	// The normal of the given plane should be normalized!
+	fn MakeMirroring( Plane</T/>& mirror_plane ) : ThisType
+	{
+		var Vec3</T/>& n= mirror_plane.normal;
+		var T d= mirror_plane.distance;
+
+		return ThisType
+		{
+			.values
+			[
+				[ T(1) - T(2) * n.x * n.x,      - T(2) * n.x * n.y,      - T(2) * n.x * n.z, T(0) ],
+				[      - T(2) * n.x * n.y, T(1) - T(2) * n.y * n.y,      - T(2) * n.y * n.z, T(0) ],
+				[      - T(2) * n.x * n.z,      - T(2) * n.y * n.z, T(1) - T(2) * n.z * n.z, T(0) ],
+				[      - T(2) *   d * n.x,      - T(2) *   d * n.y,      - T(2) *   d * n.z, T(1) ]
+			],
+		};
+	}
+
 	fn MakeRotationX( T rotation_angle ) : ThisType
 	{
 		var T c= ust::cos( rotation_angle );
@@ -335,13 +385,13 @@ struct Mat4
 		};
 	}
 
-	fn MakeRotationAroundNormalizedAxis( Vec3</T/>& normalized_axis, f32 rotation_angle ) : ThisType
+	fn MakeRotationAroundNormalizedAxis( Vec3</T/>& normalized_axis, T rotation_angle ) : ThisType
 	{
 		var T c= ust::cos( rotation_angle );
 		var T s= ust::sin( rotation_angle );
 
-		var Vec3f normalized_axis_scaled_c1= normalized_axis * ( T(1) - c );
-		var Vec3f normalized_axis_scaled_s= normalized_axis * s;
+		var Vec3</T/> normalized_axis_scaled_c1= normalized_axis * ( T(1) - c );
+		var Vec3</T/> normalized_axis_scaled_s= normalized_axis * s;
 
 		return ThisType
 		{
@@ -422,6 +472,21 @@ struct Mat4
 			l.x * r.values[0][1] + l.y * r.values[1][1] + l.z * r.values[2][1] + r.values[3][1],
 			l.x * r.values[0][2] + l.y * r.values[1][2] + l.z * r.values[2][2] + r.values[3][2]
 		);
+	}
+
+	// Plane by matrix multiplication.
+	// Use it if the matrix is proper matrix for planes transformation.
+	op*( Plane</T/>& p, ThisType& r ) : Plane</T/>
+	{
+		return Plane</T/>
+		{
+			.normal(
+				p.normal.x * r.values[0][0] + p.normal.y * r.values[1][0] + p.normal.z * r.values[2][0] + p.distance * r.values[3][0],
+				p.normal.x * r.values[0][1] + p.normal.y * r.values[1][1] + p.normal.z * r.values[2][1] + p.distance * r.values[3][1],
+				p.normal.x * r.values[0][2] + p.normal.y * r.values[1][2] + p.normal.z * r.values[2][2] + p.distance * r.values[3][2] ),
+			.distance=
+				p.normal.x * r.values[0][3] + p.normal.y * r.values[1][3] + p.normal.z * r.values[2][3] + p.distance * r.values[3][3]
+		};
 	}
 
 	// Row-by-row values.

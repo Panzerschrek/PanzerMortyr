@@ -122,7 +122,6 @@ PanzerMortyr game logic:
 PanzerMortyr rendering:
 
 * Apply additional tessellation for tessellated polygons in order to perform smoother light values interpolation (naively triangulating them doesn't produce good result always).
-* Draw reflections in reflective surfaces (usually floors).
 * Use smooth animation for animated models (with two or more frames interpolation).
 * Draw decals (bullet holes, blood, footsteps).
 * Draw animated water circle decals on map quads with "wet" property enabled in points where a rain particle hits such quad.
@@ -142,6 +141,7 @@ PanzerMortyr rendering:
 * Consider optimizing dynamic lighting even more by using stencil test for them.
 * Consider limiting the number of active dynamic light sources - to avoid huge performance drops.
 * Consider applying dynamic light to glass quads.
+* Consider applying dynamic light to breakable polygons.
 * Consider optimizing drawing snow/rain - reject snow/rain particles for non-visible clusters and clusters located far away.
 * Allow turning global fog for snow/rain off.
 
