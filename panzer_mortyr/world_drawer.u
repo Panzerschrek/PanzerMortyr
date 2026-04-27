@@ -58,10 +58,10 @@ fn WorldDrawer::constructor(
 			embed</char8/>( "shaders/mirror_depth_clear.vert.glsl" ),
 			embed</char8/>( "shaders/mirror_depth_clear.frag.glsl" ) ),
 		map_mirror_shader_(
-			embed</char8/>( "shaders/map.vert.glsl" ),
+			embed</char8/>( "shaders/map.vert.glsl" ), // Use the same vertex shader as for map polygons.
 			embed</char8/>( "shaders/map_mirror.frag.glsl" ) ),
 		map_caustics_shader_(
-			embed</char8/>( "shaders/map.vert.glsl" ),
+			embed</char8/>( "shaders/map.vert.glsl" ), // Use the same vertex shader as for map polygons
 			embed</char8/>( "shaders/map_caustics.frag.glsl" ) ),
 		map_dynamic_light_shader_(
 			embed</char8/>( "shaders/map_dynamic_light.vert.glsl" ),
@@ -294,10 +294,9 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 				materials_description_.deref().blocks[ map_description.materials_block ]; // Halts if not found.
 
 			var MapFullDrawData &mut map_full_draw_data= map_data_.try_deref();
-			var MapDrawData& map_data= map_full_draw_data.map_draw_data;
 
 			CreateMirrorMapPolygons(
-				map_data,
+				map_full_draw_data.map_draw_data,
 				map_full_draw_data.map_visibility_calculators[0],
 				materials_block,
 				mirror_polygons_buffer_.vertices,
@@ -329,6 +328,7 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 			// Mirror matrix is it's own inverse. So, calculating planes martrix for mirror matrix requires only transposing it.
 			var Mat4f mirror_planes_matrix= mirror_matrix.Transpose();
 
+			// For mirror rotation matrix just take mirror matrix and zero its translation components.
 			var Mat4f mirror_rotation_matrix
 			{
 				.values
@@ -340,6 +340,8 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 				],
 			};
 
+			// Create special projection matrix with near clip plane equal to mirror plane
+			// in order to clip anythyng at front of the mirror plane.
 			var Mat4f projection_matrix_for_mirrored_geometry=
 				Mat4f::MakePerspectiveWithCustomNearPlane(
 					viewport_info.view_aspect,
@@ -361,7 +363,6 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 			var Mat4f view_matrix_for_mirrored_geometry= mirror_matrix * camera_space_matrix * projection_matrix_for_mirrored_geometry;
 
 			// Calculate visibility from mirror point.
-			// TODO - make tweak this to mark room clusters BSP tree leafs where mirror quads are located as visible.
 			var size_type visibility_calculator_index= 1s;
 			map_data_.try_deref().map_visibility_calculators[ visibility_calculator_index ].CalculateVisibilityForMirror(
 				CalculateMirrorBounds( mirror_polygons_buffer_.vertices ),
@@ -379,7 +380,7 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 					.rotation_and_projection_matrix= mirror_rotation_matrix * rotation_matrix * projection_matrix_for_mirrored_geometry,
 					.camera_projection_matrix= projection_matrix_for_mirrored_geometry,
 					.view_matrix= view_matrix_for_mirrored_geometry,
-					.camera_inverse_projection_matrix= ust::null_optional,
+					.camera_inverse_projection_matrix= ust::null_optional, // For now can't calculate such matrix.
 				},
 				camera_clip_planes_mirrored,
 				false, // Don't draw first person weapon in mirrors.
@@ -401,7 +402,7 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 	unsafe( glClear( GLbitfield( GL_DEPTH_BUFFER_BIT ) ) );
 
 	// Draw mirror surfaces.
-	// This will write mirror's depth into the depth buffer and thus avoid overwritting contents of the mirror with some other depth.
+	// This will write mirror's depth into the depth buffer and thus avoid overwritting contents of the mirror with some other depth later.
 	if( !mirror_polygons_buffer_.vertices.empty() && !mirror_polygons_buffer_.indices.empty() )
 	{
 		var f32 mirror_alpha=
@@ -1352,23 +1353,23 @@ fn WorldDrawer::SetMap( mut this, u32 map_index )
 				has_glass_quads= true;
 			}
 			else if(
-				size_type( texture_id ) < breakable_material_bits.GetSize() &&
-				breakable_material_bits.GetBit( size_type( texture_id ) ) )
-			{
-				has_breakable_quads= true;
-			}
-
-			if( texture_id == MaterialsDescription::c_special_material_texture_indices[ size_type( MaterialsDescription::SpecialMaterial::Water ) ] |
+				texture_id == MaterialsDescription::c_special_material_texture_indices[ size_type( MaterialsDescription::SpecialMaterial::Water ) ] |
 				texture_id == MaterialsDescription::c_special_material_texture_indices[ size_type( MaterialsDescription::SpecialMaterial::Acid ) ] |
 				texture_id == MaterialsDescription::c_special_material_texture_indices[ size_type( MaterialsDescription::SpecialMaterial::AcidAlternative ) ] |
 				texture_id == MaterialsDescription::c_special_material_texture_indices[ size_type( MaterialsDescription::SpecialMaterial::Lava ) ]  )
 			{
 				has_liquid_quads= true;
 			}
-
-			if( texture_id == MaterialsDescription::c_special_material_texture_indices[ size_type( MaterialsDescription::SpecialMaterial::Mirror ) ] )
+			else if(
+				texture_id == MaterialsDescription::c_special_material_texture_indices[ size_type( MaterialsDescription::SpecialMaterial::Mirror ) ] )
 			{
 				has_mirror_quads= true;
+			}
+			else if(
+				size_type( texture_id ) < breakable_material_bits.GetSize() &&
+				breakable_material_bits.GetBit( size_type( texture_id ) ) )
+			{
+				has_breakable_quads= true;
 			}
 		}
 
@@ -1738,7 +1739,7 @@ fn CreateMirrorMapPolygons(
 	// Don't care about dynamic clusters - they seem to never have mirror quads.
 }
 
-// Returns plane with normalized normal or nothing in case of no geometry given or if it's degenrate.
+// Returns plane with normalized normal or nothing in case if no geometry given or if it's degenerated.
 // It works properly only for geometry lying in single plane.
 fn CalculateMirrorPlane(
 	ust::array_view_imut</MapVertex/> vertices, ust::array_view_imut</u16/> indices ) : ust::optional</Planef/>
@@ -2713,6 +2714,7 @@ fn ClearMirrorDepth(
 	ShaderProgram &mut shader,
 	DynamicPolygonsBuffer& mirror_polygons )
 {
+	// Modify projection matrix to always produce constant depth.
 	var Mat4f mut mirror_depth_clear_projection_matrix= camera_projection_matrix;
 	mirror_depth_clear_projection_matrix.values[0][2]= 0.0f;
 	mirror_depth_clear_projection_matrix.values[1][2]= 0.0f;
@@ -2749,7 +2751,6 @@ fn DrawMirrorPolygons(
 	SetGLState( gl_state );
 
 	var u32 texture_slot= 0u;
-
 	unsafe( glActiveTexture( GLenum( GL_TEXTURE0 ) + GLenum(texture_slot) ) );
 	map_textures_array.Bind();
 
