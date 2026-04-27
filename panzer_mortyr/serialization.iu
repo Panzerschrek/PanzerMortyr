@@ -1,0 +1,66 @@
+import "/vector.iu"
+
+namespace PM
+{
+
+class Serializer
+{
+public:
+	fn SerializeBytes( mut this, ust::array_view_imut</byte8/> bytes )
+	{
+		// TODO - speed-up this, resize the bytes container and copy all bytes in one memory copy call.
+		bytes_.append( bytes.iter() );
+	}
+
+	fn TakeBytes( byval mut this ) : ust::vector</byte8/>
+	{
+		return take(bytes_);
+	}
+
+private:
+	ust::vector</byte8/> bytes_;
+}
+
+template</type T/>
+fn Serialize( Serializer &mut serializer, T& value )
+{
+	auto& ti= typeinfo</T/>;
+	static_if( ti.is_fundamental )
+	{
+		static_if( same_type</T, bool/> )
+		{
+			var byte8 bool_byte( ( value ? 1u8 : 0u8 ) );
+			serializer.SerializeBytes( ust::single_element_array_view( bool_byte ) );
+		}
+		else
+		{
+			serializer.SerializeBytes( ust::single_element_array_view( value ).to_byte8_range() );
+		}
+	}
+	else static_if( ti.is_array )
+	{
+		// Just serialize all elements of an array sequentially.
+		for( auto mut i= 0s; i < ti.element_count; ++i )
+		{
+			Serialize( serializer, value[i] );
+		}
+	}
+	else static_if( ti.is_tuple )
+	{
+		// Just serialize all elements of a tuple sequentially.
+		foreach( &el : value )
+		{
+			Serialize( serializer, el );
+		}
+	}
+	else static_if( ti.is_class )
+	{
+		static_assert( false, "Classes for now are unsupported!" );
+	}
+	else
+	{
+		static_assert( false, "Unsupported type kind!" );
+	}
+}
+
+} // namespace PM
