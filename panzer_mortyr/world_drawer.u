@@ -406,32 +406,13 @@ fn WorldDrawer::Draw( mut this, WorldDrawingInfo& drawing_info, WorldDrawingView
 				? ust::max( 0.01f, ust::min( f32( settings_.lock_imut().deref().r_mirror_alpha ) / 100.0f, 0.99f ) )
 				: 1.0f );
 
-		var GLState mut gl_state= g_mirror_polygons_drawing_gl_state;
-		gl_state.blending_enabled= mirrors_enabled; // Disable blending if no mirrors are enabled.
-		SetGLState( gl_state );
-
-		var u32 texture_slot= 0u;
-
-		unsafe( glActiveTexture( GLenum( GL_TEXTURE0 ) + GLenum(texture_slot) ) );
-		map_data_.try_deref().map_draw_data.map_textures_array.Bind();
-
-		map_mirror_shader_.Bind();
-		map_mirror_shader_.SetUniform( "vu_matrix", view_matrix );
-		map_mirror_shader_.SetUniform( "fu_texture", texture_slot );
-
-		map_mirror_shader_.SetUniform( "vu_light_add", Vec3f( global_light_params.light_add ) );
-		map_mirror_shader_.SetUniform( "vu_light_scale", Vec3f( global_light_params.light_scale ) );
-
-		map_mirror_shader_.SetUniform( "fu_mirror_alpha", mirror_alpha );
-
-		mirror_polygons_buffer_.vertex_array_object.Bind();
-		mirror_polygons_buffer_.index_buffer.Bind();
-
-		unsafe( glDrawElements(
-			GLenum( GL_TRIANGLES ),
-			GLsizei( ust::min( mirror_polygons_buffer_.indices.size(), mirror_polygons_buffer_.max_indices ) ),
-			GLenum( GL_UNSIGNED_SHORT ),
-			ust::nullptr</byte8/>() ) );
+		DrawMirrorPolygons(
+			map_data_.try_deref().map_draw_data.map_textures_array,
+			map_mirror_shader_,
+			mirror_polygons_buffer_,
+			view_matrix,
+			global_light_params,
+			mirror_alpha );
 
 		if( settings_.lock_imut().deref().r_dynamic_lights_enabled )
 		{
@@ -2739,6 +2720,42 @@ fn ClearMirrorDepth(
 
 	shader.Bind();
 	shader.SetUniform( "vu_matrix", mirror_depth_clear_view_matrix );
+
+	mirror_polygons.vertex_array_object.Bind();
+	mirror_polygons.index_buffer.Bind();
+
+	unsafe( glDrawElements(
+		GLenum( GL_TRIANGLES ),
+		GLsizei( ust::min( mirror_polygons.indices.size(), mirror_polygons.max_indices ) ),
+		GLenum( GL_UNSIGNED_SHORT ),
+		ust::nullptr</byte8/>() ) );
+}
+
+fn DrawMirrorPolygons(
+	Texture& map_textures_array,
+	ShaderProgram &mut shader,
+	DynamicPolygonsBuffer& mirror_polygons,
+	Mat4f& view_matrix,
+	GlobalLightParams& global_light_params,
+	f32 mirror_alpha )
+{
+	var GLState mut gl_state= g_mirror_polygons_drawing_gl_state;
+	gl_state.blending_enabled= mirror_alpha < 1.0f; // Disable blending if alpha is one.
+	SetGLState( gl_state );
+
+	var u32 texture_slot= 0u;
+
+	unsafe( glActiveTexture( GLenum( GL_TEXTURE0 ) + GLenum(texture_slot) ) );
+	map_textures_array.Bind();
+
+	shader.Bind();
+	shader.SetUniform( "vu_matrix", view_matrix );
+	shader.SetUniform( "fu_texture", texture_slot );
+
+	shader.SetUniform( "vu_light_add", Vec3f( global_light_params.light_add ) );
+	shader.SetUniform( "vu_light_scale", Vec3f( global_light_params.light_scale ) );
+
+	shader.SetUniform( "fu_mirror_alpha", mirror_alpha );
 
 	mirror_polygons.vertex_array_object.Bind();
 	mirror_polygons.index_buffer.Bind();
