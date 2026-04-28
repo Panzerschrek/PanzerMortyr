@@ -321,44 +321,190 @@ fn constexpr BuildSerializationSchemeFull() : SerializationScheme
 template</type T/>
 fn constexpr BuildSerializationScheme( SerializationSchemeBuilder &mut builder )
 {
+	// Build here a crude JSON describing serialization scheme.
+	// Use this format to simplify debugging, since a regular JSON parser/formatter can be used to read it.
 	auto& ti= typeinfo</T/>;
 	static_if( ti.is_fundamental )
 	{
-		builder+= "some_fundametal";
+		// Save name of a fundamental type.
+
+			 static_if( same_type</T,    void/> ){ builder+=    "\"void\""; }
+		else static_if( same_type</T,    bool/> ){ builder+=    "\"bool\""; }
+		else static_if( same_type</T,      i8/> ){ builder+=      "\"i8\""; }
+		else static_if( same_type</T,      u8/> ){ builder+=      "\"u8\""; }
+		else static_if( same_type</T,     i16/> ){ builder+=     "\"i16\""; }
+		else static_if( same_type</T,     u16/> ){ builder+=     "\"u16\""; }
+		else static_if( same_type</T,     i32/> ){ builder+=     "\"i32\""; }
+		else static_if( same_type</T,     u32/> ){ builder+=     "\"u32\""; }
+		else static_if( same_type</T,     i64/> ){ builder+=     "\"i64\""; }
+		else static_if( same_type</T,     u64/> ){ builder+=     "\"u64\""; }
+		else static_if( same_type</T,    i128/> ){ builder+=    "\"i128\""; }
+		else static_if( same_type</T,    u128/> ){ builder+=    "\"u128\""; }
+		else static_if( same_type</T,     f32/> ){ builder+=     "\"f32\""; }
+		else static_if( same_type</T,     f64/> ){ builder+=     "\"f64\""; }
+		else static_if( same_type</T,   char8/> ){ builder+=   "\"char8\""; }
+		else static_if( same_type</T,  char16/> ){ builder+=  "\"char16\""; }
+		else static_if( same_type</T,  char32/> ){ builder+=  "\"char32\""; }
+		else static_if( same_type</T,   byte8/> ){ builder+=   "\"byte8\""; }
+		else static_if( same_type</T,  byte16/> ){ builder+=  "\"byte16\""; }
+		else static_if( same_type</T,  byte32/> ){ builder+=  "\"byte32\""; }
+		else static_if( same_type</T,  byte64/> ){ builder+=  "\"byte64\""; }
+		else static_if( same_type</T, byte128/> ){ builder+= "\"byte128\""; }
+		else
+		{
+			static_assert( false, "Unsupported type!" );
+		}
 	}
 	else static_if( ti.is_enum )
 	{
-		builder+= "some_enum";
+		// Save underlying type and element names for enums.
+		// Changing enum element names, their order oder amount should produce different scheme.
+
+		builder+= "{";
+		builder+= "\"kind\":\"enum\",";
+		builder+= "\"underlying_type\":";
+		BuildSerializationScheme</ typeof( ti.underlying_type )::src_type />( builder );
+		builder+= ",";
+		builder+= "\"elements\":";
+		builder+= "[";
+
+		var size_type mut index= 0s;
+		for( & element_type_typeinfo : ti.elements_list )
+		{
+			if( index > 0s )
+			{
+				builder+= ",";
+			}
+
+			builder+= "\"" + element_type_typeinfo.name + "\"";
+
+			++index;
+		}
+
+		builder+= "]";
+		builder+= "}";
 	}
 	else static_if( ti.is_array )
 	{
-		builder+= "some_array";
+		// Save array size and element type.
+		builder+= "{";
+		builder+= "\"kind\":\"array\",";
+		builder+= "\"size\":";
+		builder.append_decimal_number( ti.element_count );
+		builder+= ",";
+		builder+= "\"element_type\":";
+		BuildSerializationScheme</ typeof( ti.element_type )::src_type />( builder );
+		builder+= "}";
 	}
 	else static_if( ti.is_tuple )
 	{
-		mixin( SerializationImpl::CreateMixinTextForTupleDeserialization</T/>() );
+		// Save tuple element types.
+
+		builder+= "{";
+		builder+= "\"kind\":\"tuple\",";
+		builder+= "\"element_types\":";
+		builder+= "[";
+
+		var size_type mut index= 0s;
+		for( & element_type_typeinfo : ti.elements_list )
+		{
+			if( index > 0s )
+			{
+				builder+= ",";
+			}
+
+			BuildSerializationScheme</ typeof( element_type_typeinfo.type )::src_type />( builder );
+
+			++index;
+		}
+
+		builder+= "]";
+		builder+= "}";
 	}
 	else static_if( ti.is_class )
 	{
 		static_if( SerializationImpl::IsOptional</T/>::value )
 		{
-			builder+= "optional";
+			// For optional save element type.
+
+			builder+= "{";
+			builder+= "\"kind\":\"optional\",";
+			builder+= "\"element_type\":";
+			BuildSerializationScheme</ SerializationImpl::GetOptionalElementType</T/> />( builder );
+			builder+= "}";
 		}
 		else static_if( SerializationImpl::IsVector</T/>::value )
 		{
-			builder+= "vector";
+			// For vector save element type.
+
+			builder+= "{";
+			builder+= "\"kind\":\"vector\",";
+			builder+= "\"element_type\":";
+			BuildSerializationScheme</ SerializationImpl::GetVectorElementType</T/> />( builder );
+			builder+= "}";
 		}
 		else static_if( SerializationImpl::IsVariant</T/>::value )
 		{
-			builder+= "variant";
+			// For variant save all element types in their order.
+
+			builder+= "{";
+			builder+= "\"kind\":\"variant\",";
+			builder+= "\"element_types\":";
+			builder+= "[";
+
+			var size_type mut index= 0s;
+			for( & element_type_typeinfo : typeinfo</ T::elements_tuple />.elements_list )
+			{
+				if( index > 0s )
+				{
+					builder+= ",";
+				}
+
+				BuildSerializationScheme</ typeof( element_type_typeinfo.type )::src_type />( builder );
+
+				++index;
+			}
+
+			builder+= "]";
+			builder+= "}";
 		}
 		else static_if( SerializationImpl::ClassHasSerializeMethod</T/>() )
 		{
-			builder+= "some_custom_class";
+			builder+= "\"some_custom_class\"";
 		}
 		else
 		{
-			builder+= "some_struct";
+			// For structs save all fields (including names) in their order.
+
+			builder+= "{";
+			builder+= "\"kind\":\"struct\",";
+
+			builder+= "\"fields\":[";
+
+			var size_type mut index= 0s;
+			foreach( &field_info : ti.fields_list )
+			{
+				static_assert( !field_info.is_reference, "References serialization isn't supported!" );
+
+				if( index > 0s )
+				{
+					builder+= ",";
+				}
+
+				builder+= "{";
+
+				builder+= "\"name\":\"" + field_info.name + "\",";
+				builder+= "\"type\":";
+				BuildSerializationScheme</ typeof( field_info.type )::src_type />( builder );
+
+				builder+= "}";
+
+				++index;
+			}
+
+			builder+= "]";
+
+			builder+= "}";
 		}
 	}
 	else
