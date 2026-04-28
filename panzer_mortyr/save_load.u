@@ -1,0 +1,105 @@
+import "/enum_string_conversions.iu"
+import "/file_helpers.iu"
+import "save_load.iu"
+
+namespace PM
+{
+
+fn nodiscard SaveGameExtendedState(
+	ConsoleOutPtr& console_out,
+	ust::string_view8 save_name,
+	u32 map_index,
+	GameState& game_state,
+	GlobalNavigationGraph& global_navigation_graph ) : bool
+{
+	ConsoleOutAddTextLine( console_out, BuildSerializationSchemeFull</GameState/>() );
+
+	ConsoleOutAddTextLine( console_out, BuildSerializationSchemeFull</GlobalNavigationGraph/>() );
+
+	var Serializer mut serializer;
+
+	// Serialize map index to know which map to load.
+	Serialize( serializer, map_index );
+
+	// Serialize the whole game state structure.
+	Serialize( serializer, game_state );
+
+	// Save global navigation graph in order to avoid recalculating it upon loading.
+	// Such recalculation isn't safe, since it may produce a result different from one calculated previously,
+	// but we need the exactly same graph, since indices to its nodes are stored in game state structures.
+	Serialize( serializer, global_navigation_graph );
+
+	var ust::filesystem_path save_file_path= ust::concat( save_name, c_save_file_extension );
+
+	result_match( ust::write_byte8_range_to_file( save_file_path, move(serializer).TakeBytes() ) )
+	{
+		Ok(v) ->
+		{
+			ust::ignore_unused(v);
+			ConsoleOutAddTextLine( console_out, ust::concat( "Successfully saved game into \"", save_file_path, "\".\n" ) );
+			return true;
+		},
+		Err(e) ->
+		{
+			ConsoleOutAddTextLine( console_out, ust::concat( "Failed to save game! Error: ", ust::enum_to_string(e) ) );
+			return false;
+		},
+	}
+}
+
+fn LoadGameExtendedState(
+	ConsoleOutPtr& console_out, ust::string_view8 save_name ) : ust::optional</GameExtendedState/>
+{
+	var ust::filesystem_path save_file_path= ust::concat( save_name, c_save_file_extension );
+
+	ConsoleOutAddTextLine( console_out, ust::concat( "Loading game from \"", save_file_path, "\".\n" ) );
+
+	result_match( ust::read_file_to_byte8_vector( save_file_path ) )
+	{
+		Ok( file_contents ) ->
+		{
+			var Deserializer mut deserializer( file_contents );
+
+			var ust::optional</u32/> mut map_index_opt= Deserialize</u32/>( deserializer );
+
+			if( map_index_opt.empty() )
+			{
+				ConsoleOutAddTextLine( console_out, "Failed to deserialize map index!" );
+				return ust::null_optional;
+			}
+
+			var ust::optional</GameState/> mut game_state_opt= Deserialize</GameState/>( deserializer );
+
+			if( game_state_opt.empty() )
+			{
+				ConsoleOutAddTextLine( console_out, "Failed to deserialize game state!" );
+				return ust::null_optional;
+			}
+
+			var ust::optional</GlobalNavigationGraph/> mut global_navigation_graph_opt=
+				Deserialize</ GlobalNavigationGraph />( deserializer );
+
+			if( global_navigation_graph_opt.empty() )
+			{
+				ConsoleOutAddTextLine( console_out, "Failed to deserialize global navigation graph!" );
+				return ust::null_optional;
+			}
+
+			return GameExtendedState
+			{
+				.map_index= map_index_opt.try_take(),
+				.game_state= game_state_opt.try_take(),
+				.global_navigation_graph= global_navigation_graph_opt.try_take(),
+			};
+		},
+		Err(e) ->
+		{
+			ConsoleOutAddTextLine( console_out, ust::concat( "Failed to load saved game! Error: ", ust::enum_to_string(e) ) );
+			return ust::null_optional;
+		}
+	}
+}
+
+auto& c_save_file_extension= ".pms";
+
+} // namespace PM
