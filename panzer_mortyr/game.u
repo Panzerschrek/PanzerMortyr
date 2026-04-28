@@ -233,6 +233,11 @@ fn Game::process_load( mut this )
 	{
 		Ok( file_contents ) ->
 		{
+			// Reset game state and map data prior to loading new ones.
+			// Avoid maintaining two copies of these structures in memory.
+			map_data_.reset();
+			game_state_.reset();
+
 			var Deserializer mut deserializer( file_contents );
 
 			var ust::optional</u32/> mut map_index_opt= Deserialize</u32/>( deserializer );
@@ -261,60 +266,14 @@ fn Game::process_load( mut this )
 				return;
 			}
 
-			var MapsDescription& maps_description= global_data_.maps_description.deref();
+			LoadBasicMapData( map_index );
 
-			if( size_type(map_index) >= maps_description.maps.size() )
-			{
-				ConsoleOutAddTextLine( console_out_, ust::concat( "Map with index ", ust::to_string8( map_index ), " not found!" ) );
-				return;
-			}
-
-			var MapsDescription::MapDescription& map_description= maps_description.maps[ size_type( map_index ) ];
-
-			auto mut lock= caching_game_resources_loader_ptr_.lock_mut();
-			var CachingGameResourcesLoader &mut caching_game_resources_loader= lock.deref();
-
-			// Some maps don't specify entities description file name.
-			// In such case use some default value.
-			var ResourceString& entities_info_file=
-				( map_description.entities_info_file[0] == '\0'
-					? c_default_entities_description_file_name
-					: map_description.entities_info_file );
-
-			var GameResourcePtr</EntitiesDescription/> entities_description_ptr=
-				caching_game_resources_loader.LoadEntitiesDescription( entities_info_file );
-
-			var GameResourceNullablePtr</ZmapData/> zmap_data_nullable= caching_game_resources_loader.LoadZmapFile( map_index );
-			var GameResourceNullablePtr</ZvoxData/> zvox_data_nullable= caching_game_resources_loader.LoadZvoxFile( map_index );
-			var GameResourceNullablePtr</ZpozData/> zpoz_data_nullable= caching_game_resources_loader.LoadZpozFile( map_index );
-			var GameResourceNullablePtr</RoomClustersHierarchy/> room_clusters_hierarchy_nullable= caching_game_resources_loader.LoadRoomClustersHierarchy( map_index );
-
-			if( zmap_data_nullable.empty() ||
-				zvox_data_nullable.empty() ||
-				zpoz_data_nullable.empty() ||
-				room_clusters_hierarchy_nullable.empty() )
+			if( map_data_.empty() )
 			{
 				return;
 			}
 
-			var GameResourcePtr</ZvoxData/> mut zvox_data= zvox_data_nullable.try_to_non_nullable();
-			var GameResourcePtr</ZmapData/> mut zmap_data= zmap_data_nullable.try_to_non_nullable();
-			var GameResourcePtr</ZpozData/> mut zpoz_data= zpoz_data_nullable.try_to_non_nullable();
-
-			map_data_=
-				GameMapData
-				{
-					.map_index= map_index,
-					.entities_description= entities_description_ptr,
-					.collider_quads_hierarchy= BuildColliderQuadsHierarchy( zvox_data.deref().clusters, zmap_data.deref().quads ),
-					.room_clusters_hierarchy= room_clusters_hierarchy_nullable.try_to_non_nullable(),
-					.note_volumes= CreateNoteVolumesList( zvox_data.deref().clusters ),
-					.used_models= CreateMapUsedModelsList( zpoz_data.deref().entities, entities_description_ptr.deref() ),
-					.zmap_data= move(zmap_data),
-					.zvox_data= move(zvox_data),
-					.zpoz_data= move(zpoz_data),
-					.global_navigation_graph= global_navigation_graph_opt.try_take(),
-				};
+			map_data_.try_deref().global_navigation_graph= global_navigation_graph_opt.try_take();
 
 			game_state_= game_state_opt.try_take();
 
@@ -630,74 +589,24 @@ fn Game::PerformMapTransition(
 
 	if( map_data_.empty() || map_index != map_data_.try_deref().map_index )
 	{
-		// Load map data if teleporting to a map different from current one.
+		// Load map data if transitioning to a map different from current one.
 
-		map_data_.reset();
+		LoadBasicMapData( map_index );
 
-		var MapsDescription& maps_description= global_data_.maps_description.deref();
-
-		if( size_type(map_index) >= maps_description.maps.size() )
-		{
-			ConsoleOutAddTextLine( console_out_, ust::concat( "Map with index ", ust::to_string8( map_index ), " not found!" ) );
-			return;
-		}
-
-		var MapsDescription::MapDescription& map_description= maps_description.maps[ size_type( map_index ) ];
-
-		auto mut lock= caching_game_resources_loader_ptr_.lock_mut();
-		var CachingGameResourcesLoader &mut caching_game_resources_loader= lock.deref();
-
-		// Some maps don't specify entities description file name.
-		// In such case use some default value.
-		var ResourceString& entities_info_file=
-			( map_description.entities_info_file[0] == '\0'
-				? c_default_entities_description_file_name
-				: map_description.entities_info_file );
-
-		var GameResourcePtr</EntitiesDescription/> entities_description_ptr=
-			caching_game_resources_loader.LoadEntitiesDescription( entities_info_file );
-
-		var GameResourceNullablePtr</ZmapData/> zmap_data_nullable= caching_game_resources_loader.LoadZmapFile( map_index );
-		var GameResourceNullablePtr</ZvoxData/> zvox_data_nullable= caching_game_resources_loader.LoadZvoxFile( map_index );
-		var GameResourceNullablePtr</ZpozData/> zpoz_data_nullable= caching_game_resources_loader.LoadZpozFile( map_index );
-		var GameResourceNullablePtr</RoomClustersHierarchy/> room_clusters_hierarchy_nullable= caching_game_resources_loader.LoadRoomClustersHierarchy( map_index );
-
-		if( zmap_data_nullable.empty() ||
-			zvox_data_nullable.empty() ||
-			zpoz_data_nullable.empty() ||
-			room_clusters_hierarchy_nullable.empty() )
+		if( map_data_.empty() )
 		{
 			return;
 		}
-
-		var GameResourcePtr</ZvoxData/> mut zvox_data= zvox_data_nullable.try_to_non_nullable();
-		var GameResourcePtr</ZmapData/> mut zmap_data= zmap_data_nullable.try_to_non_nullable();
-		var GameResourcePtr</ZpozData/> mut zpoz_data= zpoz_data_nullable.try_to_non_nullable();
-
-		var GameMapData mut map_data
-		{
-			.map_index= map_index,
-			.entities_description= entities_description_ptr,
-			.collider_quads_hierarchy= BuildColliderQuadsHierarchy( zvox_data.deref().clusters, zmap_data.deref().quads ),
-			.room_clusters_hierarchy= room_clusters_hierarchy_nullable.try_to_non_nullable(),
-			.note_volumes= CreateNoteVolumesList( zvox_data.deref().clusters ),
-			.used_models= CreateMapUsedModelsList( zpoz_data.deref().entities, entities_description_ptr.deref() ),
-			.zmap_data= move(zmap_data),
-			.zvox_data= move(zvox_data),
-			.zpoz_data= move(zpoz_data),
-		};
 
 		// Build global navigation graph after preparing other map data.
 		var GlobalNavigationGraph mut global_navigation_graph=
 			BuildGlobalNavigationGraph(
-				map_data,
+				map_data_.try_deref(),
 				console_out_,
 				performance_counter_,
 				settings_.lock_imut().deref().g_debug_global_navigation_graph_use_fast_but_incorrect_reachability_check );
 
-		map_data.global_navigation_graph= move(global_navigation_graph);
-
-		map_data_= move( map_data );
+		map_data_.try_deref().global_navigation_graph= move(global_navigation_graph);
 	}
 
 	// Reset game state.
@@ -710,6 +619,66 @@ fn Game::PerformMapTransition(
 	camera_controller_= CameraController( settings_, game_state_.try_deref().player.azimuth );
 	player_movement_controller_.Reset();
 	player_tool_controller_.Reset();
+}
+
+fn Game::LoadBasicMapData( mut this, u32 map_index )
+{
+	// Avoid mainaining two copies of map data in memory while performing map loading.
+	map_data_.reset();
+
+	var MapsDescription& maps_description= global_data_.maps_description.deref();
+
+	if( size_type(map_index) >= maps_description.maps.size() )
+	{
+		ConsoleOutAddTextLine( console_out_, ust::concat( "Map with index ", ust::to_string8( map_index ), " not found!" ) );
+		return;
+	}
+
+	var MapsDescription::MapDescription& map_description= maps_description.maps[ size_type( map_index ) ];
+
+	auto mut lock= caching_game_resources_loader_ptr_.lock_mut();
+	var CachingGameResourcesLoader &mut caching_game_resources_loader= lock.deref();
+
+	// Some maps don't specify entities description file name.
+	// In such case use some default value.
+	var ResourceString& entities_info_file=
+		( map_description.entities_info_file[0] == '\0'
+			? c_default_entities_description_file_name
+			: map_description.entities_info_file );
+
+	var GameResourcePtr</EntitiesDescription/> entities_description_ptr=
+		caching_game_resources_loader.LoadEntitiesDescription( entities_info_file );
+
+	var GameResourceNullablePtr</ZmapData/> zmap_data_nullable= caching_game_resources_loader.LoadZmapFile( map_index );
+	var GameResourceNullablePtr</ZvoxData/> zvox_data_nullable= caching_game_resources_loader.LoadZvoxFile( map_index );
+	var GameResourceNullablePtr</ZpozData/> zpoz_data_nullable= caching_game_resources_loader.LoadZpozFile( map_index );
+	var GameResourceNullablePtr</RoomClustersHierarchy/> room_clusters_hierarchy_nullable= caching_game_resources_loader.LoadRoomClustersHierarchy( map_index );
+
+	if( zmap_data_nullable.empty() ||
+		zvox_data_nullable.empty() ||
+		zpoz_data_nullable.empty() ||
+		room_clusters_hierarchy_nullable.empty() )
+	{
+		return;
+	}
+
+	var GameResourcePtr</ZvoxData/> mut zvox_data= zvox_data_nullable.try_to_non_nullable();
+	var GameResourcePtr</ZmapData/> mut zmap_data= zmap_data_nullable.try_to_non_nullable();
+	var GameResourcePtr</ZpozData/> mut zpoz_data= zpoz_data_nullable.try_to_non_nullable();
+
+	map_data_=
+		GameMapData
+		{
+			.map_index= map_index,
+			.entities_description= entities_description_ptr,
+			.collider_quads_hierarchy= BuildColliderQuadsHierarchy( zvox_data.deref().clusters, zmap_data.deref().quads ),
+			.room_clusters_hierarchy= room_clusters_hierarchy_nullable.try_to_non_nullable(),
+			.note_volumes= CreateNoteVolumesList( zvox_data.deref().clusters ),
+			.used_models= CreateMapUsedModelsList( zpoz_data.deref().entities, entities_description_ptr.deref() ),
+			.zmap_data= move(zmap_data),
+			.zvox_data= move(zvox_data),
+			.zpoz_data= move(zpoz_data),
+		};
 }
 
 fn LoadGlobalData( CachingGameResourcesLoaderPtr& caching_game_resources_loader_ptr ) : GameGlobalData
