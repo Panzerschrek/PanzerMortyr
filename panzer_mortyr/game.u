@@ -43,6 +43,121 @@ fn Game::TeleportToMap( mut this, u32 map_index, u32 skill )
 	PerformMapTransition( map_index, skill, ust::null_optional_ref );
 }
 
+
+fn Game::Save( this, ust::string_view8 save_name )
+{
+	if( map_data_.empty() || game_state_.empty() )
+	{
+		ConsoleOutAddTextLine( console_out_, "Can't save - no game is active" );
+		return;
+	}
+
+	var GameMapData& map_data= map_data_.try_deref();
+	var GameState& game_state= game_state_.try_deref();
+
+	if( game_state.player.energy <= 0u )
+	{
+		ConsoleOutAddTextLine( console_out_, "Can't save - the player is dead" );
+		return;
+	}
+
+	var Serializer mut serializer;
+
+	// Serialize map index to know which map to load.
+	Serialize( serializer, map_data.map_index );
+
+	// Serialize the whole game state structure.
+	Serialize( serializer, game_state );
+
+	// Save global navigation graph in order to avoid recalculating it upon loading.
+	// Such recalculation isn't safe, since it may produce a result different from one calculated previously,
+	// but we need the exactly same graph, since indices to its nodes are stored in game state structures.
+	Serialize( serializer, map_data.global_navigation_graph );
+
+	var ust::filesystem_path save_file_path= ust::concat( save_name, c_save_file_extension );
+
+	result_match( ust::write_byte8_range_to_file( save_file_path, move(serializer).TakeBytes() ) )
+	{
+		Ok(v) ->
+		{
+			ust::ignore_unused(v);
+			ConsoleOutAddTextLine( console_out_, ust::concat( "Successfully saved game into \"", save_file_path, "\".\n" ) );
+		},
+		Err(e) ->
+		{
+			ConsoleOutAddTextLine( console_out_, ust::concat( "Failed to save game! Error: ", ust::enum_to_string(e) ) );
+		},
+	}
+}
+
+fn Game::Load( mut this, ust::string_view8 save_name )
+{
+	var ust::filesystem_path save_file_path= ust::concat( save_name, c_save_file_extension );
+
+	ConsoleOutAddTextLine( console_out_, ust::concat( "Loading game from \"", save_file_path, "\".\n" ) );
+
+	result_match( ust::read_file_to_byte8_vector( save_file_path ) )
+	{
+		Ok( file_contents ) ->
+		{
+			// Reset game state and map data prior to loading new ones.
+			// Avoid maintaining two copies of these structures in memory.
+			map_data_.reset();
+			game_state_.reset();
+
+			var Deserializer mut deserializer( file_contents );
+
+			var ust::optional</u32/> mut map_index_opt= Deserialize</u32/>( deserializer );
+
+			if( map_index_opt.empty() )
+			{
+				ConsoleOutAddTextLine( console_out_, "Failed to deserialize map index!" );
+				return;
+			}
+			var u32 map_index= map_index_opt.try_take();
+
+			var ust::optional</GameState/> mut game_state_opt= Deserialize</GameState/>( deserializer );
+
+			if( game_state_opt.empty() )
+			{
+				ConsoleOutAddTextLine( console_out_, "Failed to deserialize game state!" );
+				return;
+			}
+
+			var ust::optional</GlobalNavigationGraph/> mut global_navigation_graph_opt=
+				Deserialize</ GlobalNavigationGraph />( deserializer );
+
+			if( global_navigation_graph_opt.empty() )
+			{
+				ConsoleOutAddTextLine( console_out_, "Failed to deserialize global navigation graph!" );
+				return;
+			}
+
+			LoadBasicMapData( map_index );
+
+			if( map_data_.empty() )
+			{
+				return;
+			}
+
+			map_data_.try_deref().global_navigation_graph= global_navigation_graph_opt.try_take();
+
+			game_state_= game_state_opt.try_take();
+
+			prev_time_steps_= 0.0f;
+
+			// Reset possible rotation and movement state.
+			camera_controller_= CameraController( settings_, game_state_.try_deref().player.azimuth );
+			player_movement_controller_.Reset();
+			player_tool_controller_.Reset();
+		},
+		Err(e) ->
+		{
+			ConsoleOutAddTextLine( console_out_, ust::concat( "Failed to load saved game! Error: ", ust::enum_to_string(e) ) );
+		}
+	}
+}
+
 fn Game::Update(
 	mut this,
 	f32 time_delta_s,
@@ -178,136 +293,6 @@ fn Game::GetGameEventNotificationsDrawingInfo( this ) : ust::optional</GameEvent
 fn Game::GetCrosshairDrawingInfo( this ) : CrosshairDrawingInfo
 {
 	return ConstructCrosshairDrawingInfo( camera_controller_, map_data_.as_ref(), game_state_.as_ref() );
-}
-
-fn Game::process_save( this, ust::iterator</ WordsIterator /> mut args )
-{
-	var ust::optional</ust::string_view8/> save_name_opt= args.next();
-	if( save_name_opt.empty() )
-	{
-		ConsoleOutAddTextLine( console_out_, "Save name is expected" );
-		return;
-	}
-	var ust::string_view8 save_name= save_name_opt.try_deref();
-
-	if( map_data_.empty() || game_state_.empty() )
-	{
-		ConsoleOutAddTextLine( console_out_, "Can't save - no game is active" );
-		return;
-	}
-
-	var GameMapData& map_data= map_data_.try_deref();
-	var GameState& game_state= game_state_.try_deref();
-
-	if( game_state.player.energy <= 0u )
-	{
-		ConsoleOutAddTextLine( console_out_, "Can't save - the player is dead" );
-		return;
-	}
-
-	var Serializer mut serializer;
-
-	// Serialize map index to know which map to load.
-	Serialize( serializer, map_data.map_index );
-
-	// Serialize the whole game state structure.
-	Serialize( serializer, game_state );
-
-	// Save global navigation graph in order to avoid recalculating it upon loading.
-	// Such recalculation isn't safe, since it may produce a result different from one calculated previously,
-	// but we need the exactly same graph, since indices to its nodes are stored in game state structures.
-	Serialize( serializer, map_data.global_navigation_graph );
-
-	var ust::filesystem_path save_file_path= ust::concat( save_name, c_save_file_extension );
-
-	result_match( ust::write_byte8_range_to_file( save_file_path, move(serializer).TakeBytes() ) )
-	{
-		Ok(v) ->
-		{
-			ust::ignore_unused(v);
-			ConsoleOutAddTextLine( console_out_, ust::concat( "Successfully saved game into \"", save_file_path, "\".\n" ) );
-		},
-		Err(e) ->
-		{
-			ConsoleOutAddTextLine( console_out_, ust::concat( "Failed to save game! Error: ", ust::enum_to_string(e) ) );
-		},
-	}
-}
-
-fn Game::process_load( mut this, ust::iterator</ WordsIterator /> mut args )
-{
-	var ust::optional</ust::string_view8/> save_name_opt= args.next();
-	if( save_name_opt.empty() )
-	{
-		ConsoleOutAddTextLine( console_out_, "Save name is expected" );
-		return;
-	}
-	var ust::string_view8 save_name= save_name_opt.try_deref();
-
-	var ust::filesystem_path save_file_path= ust::concat( save_name, c_save_file_extension );
-
-	ConsoleOutAddTextLine( console_out_, ust::concat( "Loading game from \"", save_file_path, "\".\n" ) );
-
-	result_match( ust::read_file_to_byte8_vector( save_file_path ) )
-	{
-		Ok( file_contents ) ->
-		{
-			// Reset game state and map data prior to loading new ones.
-			// Avoid maintaining two copies of these structures in memory.
-			map_data_.reset();
-			game_state_.reset();
-
-			var Deserializer mut deserializer( file_contents );
-
-			var ust::optional</u32/> mut map_index_opt= Deserialize</u32/>( deserializer );
-
-			if( map_index_opt.empty() )
-			{
-				ConsoleOutAddTextLine( console_out_, "Failed to deserialize map index!" );
-				return;
-			}
-			var u32 map_index= map_index_opt.try_take();
-
-			var ust::optional</GameState/> mut game_state_opt= Deserialize</GameState/>( deserializer );
-
-			if( game_state_opt.empty() )
-			{
-				ConsoleOutAddTextLine( console_out_, "Failed to deserialize game state!" );
-				return;
-			}
-
-			var ust::optional</GlobalNavigationGraph/> mut global_navigation_graph_opt=
-				Deserialize</ GlobalNavigationGraph />( deserializer );
-
-			if( global_navigation_graph_opt.empty() )
-			{
-				ConsoleOutAddTextLine( console_out_, "Failed to deserialize global navigation graph!" );
-				return;
-			}
-
-			LoadBasicMapData( map_index );
-
-			if( map_data_.empty() )
-			{
-				return;
-			}
-
-			map_data_.try_deref().global_navigation_graph= global_navigation_graph_opt.try_take();
-
-			game_state_= game_state_opt.try_take();
-
-			prev_time_steps_= 0.0f;
-
-			// Reset possible rotation and movement state.
-			camera_controller_= CameraController( settings_, game_state_.try_deref().player.azimuth );
-			player_movement_controller_.Reset();
-			player_tool_controller_.Reset();
-		},
-		Err(e) ->
-		{
-			ConsoleOutAddTextLine( console_out_, ust::concat( "Failed to load saved game! Error: ", ust::enum_to_string(e) ) );
-		}
-	}
 }
 
 fn Game::process_noclip( mut this )
