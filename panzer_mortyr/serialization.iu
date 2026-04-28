@@ -1,3 +1,4 @@
+import "/mixin_utils.iu"
 import "/variant.iu"
 import "/vector.iu"
 
@@ -203,6 +204,10 @@ fn Deserialize( Deserializer &mut deserializer ) : ust::optional</T/>
 
 		return result;
 	}
+	else static_if( ti.is_tuple )
+	{
+		mixin( SerializationImpl::CreateMixinTextForTupleDeserialization</T/>() );
+	}
 	else
 	{
 		// TODO
@@ -244,6 +249,63 @@ fn NextIndex( size_type &mut i ) : size_type
 	var size_type result= i;
 	++i;
 	return result;
+}
+
+template</type T/>
+fn constexpr CreateMixinTextForTupleDeserialization() : [ char8, 1024 ]
+{
+	var ust::mixin_utils::static_string</1024s/> mut s;
+
+	// First extract all tuple elements into a tuple of optionals.
+
+	s+= " var tup[ ";
+
+	var size_type mut index= 0s;
+
+	foreach( &element_info : typeinfo</T/>.elements_list )
+	{
+		s+= "ust::optional</ ";
+		s+= " typeof( typeinfo</T/>.elements_list[ "; s.append_decimal_number(index); s+= " ].type )::src_type ";
+		s+= " />";
+		if( index + 1s < typeinfo</T/>.element_count )
+		{
+			s+= ", ";
+		}
+		++index;
+	}
+
+	s+= " ] mut optionals_tuple[ ";
+
+	index= 0s;
+	foreach( &element_info : typeinfo</T/>.elements_list )
+	{
+		s+= " Deserialize</ ";
+		s+= " typeof( typeinfo</T/>.elements_list[ "; s.append_decimal_number(index); s+= " ].type )::src_type ";
+		s+= " />( deserializer ), ";
+		++index;
+	}
+
+	s+= " ];\n";
+
+	// Then check if all these optionals aren't empty.
+
+	s+= "foreach( &el : optionals_tuple ) { if( el.empty() ) { return ust::null_optional; } }\n";
+
+	// Lastly take all elements to form the result.
+
+	s+= " var T result[ ";
+
+	index= 0s;
+	foreach( &element_info : typeinfo</T/>.elements_list )
+	{
+		s+= " optionals_tuple[ "; s.append_decimal_number(index); s+= " ].try_take(), ";
+		++index;
+	}
+
+	s+= " ];";
+	s+= " return result;";
+
+	return s.buffer;
 }
 
 } // namespace SerializationImpl
