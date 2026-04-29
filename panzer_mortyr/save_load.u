@@ -15,17 +15,18 @@ fn nodiscard SaveGameExtendedState(
 {
 	var Serializer mut serializer;
 
+	// Serialize scheme hash first.
+	Serialize( serializer, c_serialization_scheme_hash );
+
 	// Serialize map index to know which map to load.
 	Serialize( serializer, map_index );
 
 	// Serialize the whole game state structure.
-	Serialize( serializer, c_game_state_serialization_scheme_hash );
 	Serialize( serializer, game_state );
 
 	// Save global navigation graph in order to avoid recalculating it upon loading.
 	// Such recalculation isn't safe, since it may produce a result different from one calculated previously,
 	// but we need the exactly same graph, since indices to its nodes are stored in game state structures.
-	Serialize( serializer, c_global_navigation_graph_serialization_scheme_hash );
 	Serialize( serializer, global_navigation_graph );
 
 	var ust::filesystem_path save_file_path= ust::concat( save_name, c_save_file_extension );
@@ -59,6 +60,28 @@ fn LoadGameExtendedState(
 		{
 			var Deserializer mut deserializer( file_contents );
 
+			var ust::optional</SerializationSchemeHashType/> scheme_hash_opt=
+				Deserialize</SerializationSchemeHashType/>( deserializer );
+
+			if( scheme_hash_opt.empty() )
+			{
+				ConsoleOutAddTextLine( console_out, "Failed to deserialize serialization scheme hash!" );
+				return ust::null_optional;
+			}
+
+			if( scheme_hash_opt.try_deref() != c_serialization_scheme_hash )
+			{
+				ConsoleOutAddTextLine(
+					console_out,
+					ust::concat(
+						"Serialization scheme hash mismatch! Expected ",
+						ust::to_string8( c_serialization_scheme_hash ),
+						" got ",
+						ust::to_string8( scheme_hash_opt.try_deref() ),
+						"." ) );
+				return ust::null_optional;
+			}
+
 			var ust::optional</u32/> mut map_index_opt= Deserialize</u32/>( deserializer );
 
 			if( map_index_opt.empty() )
@@ -67,55 +90,11 @@ fn LoadGameExtendedState(
 				return ust::null_optional;
 			}
 
-			var ust::optional</SerializationSchemeHashType/> game_state_scheme_hash_opt=
-				Deserialize</SerializationSchemeHashType/>( deserializer );
-
-			if( game_state_scheme_hash_opt.empty() )
-			{
-				ConsoleOutAddTextLine( console_out, "Failed to deserialize game state scheme hash!" );
-				return ust::null_optional;
-			}
-
-			if( game_state_scheme_hash_opt.try_deref() != c_game_state_serialization_scheme_hash )
-			{
-				ConsoleOutAddTextLine(
-					console_out,
-					ust::concat(
-						"Game state scheme hash mismatch! Expected ",
-						ust::to_string8( c_game_state_serialization_scheme_hash ),
-						" got ",
-						ust::to_string8( game_state_scheme_hash_opt.try_deref() ),
-						"." ) );
-				return ust::null_optional;
-			}
-
 			var ust::optional</GameState/> mut game_state_opt= Deserialize</GameState/>( deserializer );
 
 			if( game_state_opt.empty() )
 			{
 				ConsoleOutAddTextLine( console_out, "Failed to deserialize game state!" );
-				return ust::null_optional;
-			}
-
-			var ust::optional</SerializationSchemeHashType/> global_navigation_graph_scheme_hash_opt=
-				Deserialize</SerializationSchemeHashType/>( deserializer );
-
-			if( global_navigation_graph_scheme_hash_opt.empty() )
-			{
-				ConsoleOutAddTextLine( console_out, "Failed to deserialize global navigation graph schema hash!" );
-				return ust::null_optional;
-			}
-
-			if( global_navigation_graph_scheme_hash_opt.try_deref() != c_global_navigation_graph_serialization_scheme_hash )
-			{
-				ConsoleOutAddTextLine(
-					console_out,
-					ust::concat(
-						"Game state schema hash mismatch! Expected ",
-						ust::to_string8( c_global_navigation_graph_serialization_scheme_hash ),
-						" got ",
-						ust::to_string8( global_navigation_graph_scheme_hash_opt.try_deref() ),
-						"." ) );
 				return ust::null_optional;
 			}
 
@@ -188,16 +167,15 @@ fn constexpr CalculateNonSecureHashSlow( [ char8, S ]& data ) : u32
 	return h;
 }
 
-// Save in save files hashes of serialization schemes for data structures serialized.
-// This allows to detect if a save file uses a scheme different from current one (an save file from an old PanzerMortyr version).
+// Save in save files a hashe of the serialization scheme for data structures serialized.
+// This allows to detect if a save file uses a scheme different from current one (a save file from an old PanzerMortyr version).
 // It's not a 100% protection, since hash-collisions are still possible, but with 32-bit hashes they are extremely unlikely.
 type SerializationSchemeHashType= u32;
 
-var SerializationSchemeHashType constexpr c_game_state_serialization_scheme_hash=
-	CalculateNonSecureHashSlow( BuildSerializationSchemeFull</GameState/>() );
-
-var SerializationSchemeHashType constexpr c_global_navigation_graph_serialization_scheme_hash=
-	CalculateNonSecureHashSlow( BuildSerializationSchemeFull</GlobalNavigationGraph/>() );
+var SerializationSchemeHashType constexpr c_serialization_scheme_hash=
+	CalculateNonSecureHashSlow(
+		BuildSerializationSchemeFull</GameState/>() +
+		BuildSerializationSchemeFull</GlobalNavigationGraph/>() );
 
 auto& c_save_file_extension= ".pms";
 
