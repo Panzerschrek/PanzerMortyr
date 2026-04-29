@@ -47,6 +47,26 @@ private:
 type SerializationScheme= [ char8, 16384s ]; // Increase this size if building serialization scheme halts.
 type SerializationSchemeBuilder= ust::mixin_utils::static_string</ typeinfo</SerializationScheme/>.element_count />;
 
+// The main recursive routine for data serialization.
+// It uses simple binary serialization with host bytes order.
+//
+// Fundamental types are written as is, including size_type written in platform-dependent way (32-bit or 64-bit).
+// For enums their underlying type is serialized.
+// Arrays and tuples are serialized elementwise and with no padding.
+// ust::optional is serialized as a boolean flag and its payload, which is skipped if the given optional instance is empty.
+// ust::vector is serialized as number of elements (size_type) followed by elements serialization.
+// ust::variant is serialized as type index and current element.
+// Regular structures serialized field-by-field using typeinfo fields order and no padding.
+// Some special classes (having "Serialize" method) use their custom serialization approaches.
+//
+// No serialization scheme is stored, so that it's possible to deserialize serialized data only by knowing its exact scheme.
+// This allows avoiding wasting computational time writing scheme-related data and reducing serialized data size.
+//
+// The approach used for serialization isn't portable across 32/64-bit platforms and platforms with different bytes order.
+// Missing serialization scheme makes it also impossible to implement backward-compatibility.
+//
+// WARNING! If this function is changed, code doing deserialization and serialization scheme building schould be changed too!
+//
 template</type T/>
 fn Serialize( Serializer &mut serializer, T& value )
 {
@@ -55,12 +75,12 @@ fn Serialize( Serializer &mut serializer, T& value )
 	{
 		static_if( same_type</T, bool/> )
 		{
+			// Write "bool" as "byte8", since it's impossible to create byte8 array view for booleans.
 			var byte8 bool_byte( ( value ? 1u8 : 0u8 ) );
 			serializer.SerializeBytes( ust::single_element_array_view( bool_byte ) );
 		}
 		else
 		{
-			// TODO - maybe handle "size_type" in a special way?
 			serializer.SerializeBytes( ust::single_element_array_view( value ).to_byte8_range() );
 		}
 	}
@@ -99,7 +119,7 @@ fn Serialize( Serializer &mut serializer, T& value )
 		}
 		else static_if( SerializationImpl::IsVector</T/>::value )
 		{
-			// Serialize size for vectors. TODO - maybe save it in platform-independent way (not via size_type)?
+			// Serialize size for vectors.
 			Serialize( serializer, value.size() );
 			// Serialize all vector elements sequentially.
 			foreach( &el : value )
@@ -130,7 +150,7 @@ fn Serialize( Serializer &mut serializer, T& value )
 			{
 				static_assert( !field_info.is_reference, "References serialization isn't supported!" );
 
-				Serialize( serializer, mixin( "value." + field_info.name ) );
+				Serialize( serializer, mixin( "value." + field_info.name ) ); // This may fail to compile if a private field is accessed.
 			}
 		}
 	}
@@ -140,6 +160,10 @@ fn Serialize( Serializer &mut serializer, T& value )
 	}
 }
 
+// The main recursive routine for data serialization.
+//
+// WARNING! If this function is changed, code doing serialization and serialization scheme building schould be changed too!
+//
 template</type T/>
 fn Deserialize( Deserializer &mut deserializer ) : ust::optional</T/>
 {
@@ -148,6 +172,7 @@ fn Deserialize( Deserializer &mut deserializer ) : ust::optional</T/>
 	{
 		static_if( same_type</T, bool/> )
 		{
+			// Handle bool specially, since it's impossible to cast a range of bools into a range of bytes.
 			if_var( b : Deserialize</byte8/>( deserializer ) )
 			{
 				return b != byte8(0u8);
@@ -171,9 +196,9 @@ fn Deserialize( Deserializer &mut deserializer ) : ust::optional</T/>
 	{
 		if_var( underlying_value : Deserialize</ typeof( ti.underlying_type )::src_type />( deserializer ) )
 		{
-			// Use linear search for find enum value for given underlying value.
+			// Use linear search for finding an enum value for given underlying value.
 			// This is the only way to do so without using "unsafe".
-			// Hopefully compiler can optimize this.
+			// Hopefully the compiler can optimize this.
 			foreach( &element_info : ti.elements_list )
 			{
 				if( underlying_value == element_info.value )
@@ -204,9 +229,7 @@ fn Deserialize( Deserializer &mut deserializer ) : ust::optional</T/>
 
 		// Lastly form the target array by taking values from optionals array.
 		var size_type mut i= 0s;
-		var [ ElementType, element_count ] result
-			[ optionals_array[ SerializationImpl::NextIndex(i) ].try_take() ... ];
-
+		var [ ElementType, element_count ] result[ optionals_array[ SerializationImpl::NextIndex(i) ].try_take() ... ];
 		return result;
 	}
 	else static_if( ti.is_tuple )
@@ -318,6 +341,10 @@ fn constexpr BuildSerializationSchemeFull() : SerializationScheme
 	return builder.buffer;
 }
 
+// The main recursive routine for building serialization scheme.
+//
+// WARNING! If this function is changed, code doing serialization and deserialization schould be changed too!
+//
 template</type T/>
 fn constexpr BuildSerializationScheme( SerializationSchemeBuilder &mut builder )
 {
@@ -326,8 +353,7 @@ fn constexpr BuildSerializationScheme( SerializationSchemeBuilder &mut builder )
 	auto& ti= typeinfo</T/>;
 	static_if( ti.is_fundamental )
 	{
-		// Save name of a fundamental type.
-
+		// Save the name of a fundamental type.
 			 static_if( same_type</T,    void/> ){ builder+=    "\"void\""; }
 		else static_if( same_type</T,    bool/> ){ builder+=    "\"bool\""; }
 		else static_if( same_type</T,      i8/> ){ builder+=      "\"i8\""; }
@@ -352,7 +378,7 @@ fn constexpr BuildSerializationScheme( SerializationSchemeBuilder &mut builder )
 		else static_if( same_type</T, byte128/> ){ builder+= "\"byte128\""; }
 		else
 		{
-			static_assert( false, "Unsupported type!" );
+			static_assert( false, "Unhandled fundamental type!" );
 		}
 	}
 	else static_if( ti.is_enum )
