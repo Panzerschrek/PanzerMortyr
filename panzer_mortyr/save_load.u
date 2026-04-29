@@ -15,8 +15,14 @@ fn nodiscard SaveGameExtendedState(
 {
 	var Serializer mut serializer;
 
-	// Serialize scheme hash first.
-	Serialize( serializer, c_serialization_scheme_hash );
+	// Serialize header first.
+	serializer.SerializeBytes(
+		ust::single_element_array_view(
+			SaveFileHeader
+			{
+				.signature= SaveFileHeader::c_expected_signature,
+				.scheme_hash= c_serialization_scheme_hash
+			} ).to_byte8_range() );
 
 	// Serialize map index to know which map to load.
 	Serialize( serializer, map_index );
@@ -60,16 +66,24 @@ fn LoadGameExtendedState(
 		{
 			var Deserializer mut deserializer( file_contents );
 
-			var ust::optional</SerializationSchemeHashType/> scheme_hash_opt=
-				Deserialize</SerializationSchemeHashType/>( deserializer );
+			var SaveFileHeader mut header= zero_init;
 
-			if( scheme_hash_opt.empty() )
+			var Deserializer::BytesView header_bytes= deserializer.ExtractBytes( typeinfo</SaveFileHeader/>.size_of );
+			if( header_bytes.size() != typeinfo</SaveFileHeader/>.size_of )
 			{
-				ConsoleOutAddTextLine( console_out, "Failed to deserialize serialization scheme hash!" );
+				ConsoleOutAddTextLine( console_out, "Failed to deserialize save header!" );
 				return ust::null_optional;
 			}
 
-			if( scheme_hash_opt.try_deref() != c_serialization_scheme_hash )
+			ust::single_element_array_view( header ).to_byte8_range().copy_from( header_bytes );
+
+			if( header.signature != SaveFileHeader::c_expected_signature )
+			{
+				ConsoleOutAddTextLine( console_out, "Unexpected save file signature!" );
+				return ust::null_optional;
+			}
+
+			if( header.scheme_hash != c_serialization_scheme_hash )
 			{
 				ConsoleOutAddTextLine(
 					console_out,
@@ -77,7 +91,7 @@ fn LoadGameExtendedState(
 						"Serialization scheme hash mismatch! Expected ",
 						ust::to_string8( c_serialization_scheme_hash ),
 						" got ",
-						ust::to_string8( scheme_hash_opt.try_deref() ),
+						ust::to_string8( header.scheme_hash ),
 						"." ) );
 				return ust::null_optional;
 			}
@@ -176,6 +190,17 @@ var SerializationSchemeHashType constexpr c_serialization_scheme_hash=
 	CalculateNonSecureHashSlow(
 		BuildSerializationSchemeFull</GameState/>() +
 		BuildSerializationSchemeFull</GlobalNavigationGraph/>() );
+
+// This struct is saved directly into the save file.
+struct SaveFileHeader ordered
+{
+	var [ char8, 16 ]& c_expected_signature= "PanzerMortyrSave";
+
+	[ char8, 16 ] signature;
+	SerializationSchemeHashType scheme_hash;
+}
+
+static_assert( typeinfo</SaveFileHeader/>.size_of == 20s, "Unexpected save file header size!" );
 
 auto& c_save_file_extension= ".pms";
 
