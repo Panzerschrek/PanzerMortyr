@@ -8,6 +8,7 @@ import "game_state_view_construction.iu"
 import "global_navigation_graph_building.iu"
 import "global_navigation_graph_utils.iu"
 import "debug_visualization.iu"
+import "save_load.iu"
 
 namespace PM
 {
@@ -21,7 +22,7 @@ fn Game::constructor(
 		console_out_= move(console_out),
 		global_data_= LoadGlobalData( caching_game_resources_loader_ptr ),
 		caching_game_resources_loader_ptr_= move( caching_game_resources_loader_ptr ),
-		camera_controller_( settings_, 0.0f ),
+		camera_controller_( settings_, CameraController::State{ .azimuth= 0.0f } ),
 		player_movement_controller_( settings_ ),
 		player_tool_controller_( settings_ ),
 		prev_time_steps_= 0.0f,
@@ -38,6 +39,71 @@ fn Game::StartNewGame( mut this, u32 skill )
 fn Game::TeleportToMap( mut this, u32 map_index, u32 skill )
 {
 	PerformMapTransition( map_index, skill, ust::null_optional_ref );
+}
+
+fn Game::Save( this, ust::string_view8 save_name )
+{
+	if( map_data_.empty() || game_state_.empty() )
+	{
+		ConsoleOutAddTextLine( console_out_, "Can't save - no game is active" );
+		return;
+	}
+
+	var GameMapData& map_data= map_data_.try_deref();
+	var GameState& game_state= game_state_.try_deref();
+
+	if( game_state.player.energy <= 0u )
+	{
+		ConsoleOutAddTextLine( console_out_, "Can't save - the player is dead" );
+		return;
+	}
+
+	var bool ok=
+		SaveGameExtendedState(
+			console_out_,
+			save_name,
+			map_data.map_index,
+			game_state,
+			camera_controller_.GetState(),
+			map_data.global_navigation_graph );
+
+	ust::ignore_unused( ok );
+}
+
+fn Game::Load( mut this, ust::string_view8 save_name )
+{
+	// Reset game state and map data prior to loading new ones.
+	// Avoid maintaining two copies of these structures in memory.
+	map_data_.reset();
+	game_state_.reset();
+
+	auto mut game_extended_state_opt= LoadGameExtendedState( console_out_, save_name );
+	if( game_extended_state_opt.empty() )
+	{
+		return;
+	}
+
+	auto { map_index, mut game_state, mut camera_controller_state, mut global_navigation_graph }=
+		game_extended_state_opt.try_take();
+
+	LoadBasicMapData( map_index );
+
+	if( map_data_.empty() )
+	{
+		return;
+	}
+
+	map_data_.try_deref().global_navigation_graph= move(global_navigation_graph);
+
+	game_state_= move(game_state);
+
+	camera_controller_= CameraController( settings_, move(camera_controller_state) );
+
+	prev_time_steps_= 0.0f;
+
+	// Reset movement and tool controllers.
+	player_movement_controller_.Reset();
+	player_tool_controller_.Reset();
 }
 
 fn Game::Update(
@@ -196,7 +262,7 @@ fn Game::process_reset_position( mut this )
 		game_state.player.position= Vec3f::MakeZero();
 		game_state.player.velocity= Vec3f::MakeZero();
 	}
-	camera_controller_= CameraController( settings_, 0.0f );
+	camera_controller_= CameraController( settings_, CameraController::State{ .azimuth= 0.0f } );
 	player_movement_controller_.Reset();
 }
 
@@ -475,51 +541,88 @@ fn Game::PerformMapTransition(
 
 	if( map_data_.empty() || map_index != map_data_.try_deref().map_index )
 	{
-		// Load map data if teleporting to a map different from current one.
+		// Load map data if transitioning to a map different from current one.
 
-		map_data_.reset();
+		LoadBasicMapData( map_index );
 
-		var MapsDescription& maps_description= global_data_.maps_description.deref();
-
-		if( size_type(map_index) >= maps_description.maps.size() )
-		{
-			ConsoleOutAddTextLine( console_out_, ust::concat( "Map with index ", ust::to_string8( map_index ), " not found!" ) );
-			return;
-		}
-
-		var MapsDescription::MapDescription& map_description= maps_description.maps[ size_type( map_index ) ];
-
-		auto mut lock= caching_game_resources_loader_ptr_.lock_mut();
-		var CachingGameResourcesLoader &mut caching_game_resources_loader= lock.deref();
-
-		// Some maps don't specify entities description file name.
-		// In such case use some default value.
-		var ResourceString& entities_info_file=
-			( map_description.entities_info_file[0] == '\0'
-				? c_default_entities_description_file_name
-				: map_description.entities_info_file );
-
-		var GameResourcePtr</EntitiesDescription/> entities_description_ptr=
-			caching_game_resources_loader.LoadEntitiesDescription( entities_info_file );
-
-		var GameResourceNullablePtr</ZmapData/> zmap_data_nullable= caching_game_resources_loader.LoadZmapFile( map_index );
-		var GameResourceNullablePtr</ZvoxData/> zvox_data_nullable= caching_game_resources_loader.LoadZvoxFile( map_index );
-		var GameResourceNullablePtr</ZpozData/> zpoz_data_nullable= caching_game_resources_loader.LoadZpozFile( map_index );
-		var GameResourceNullablePtr</RoomClustersHierarchy/> room_clusters_hierarchy_nullable= caching_game_resources_loader.LoadRoomClustersHierarchy( map_index );
-
-		if( zmap_data_nullable.empty() ||
-			zvox_data_nullable.empty() ||
-			zpoz_data_nullable.empty() ||
-			room_clusters_hierarchy_nullable.empty() )
+		if( map_data_.empty() )
 		{
 			return;
 		}
 
-		var GameResourcePtr</ZvoxData/> mut zvox_data= zvox_data_nullable.try_to_non_nullable();
-		var GameResourcePtr</ZmapData/> mut zmap_data= zmap_data_nullable.try_to_non_nullable();
-		var GameResourcePtr</ZpozData/> mut zpoz_data= zpoz_data_nullable.try_to_non_nullable();
+		// Build global navigation graph after preparing other map data.
+		var GlobalNavigationGraph mut global_navigation_graph=
+			BuildGlobalNavigationGraph(
+				map_data_.try_deref(),
+				console_out_,
+				performance_counter_,
+				settings_.lock_imut().deref().g_debug_global_navigation_graph_use_fast_but_incorrect_reachability_check );
 
-		var GameMapData mut map_data
+		map_data_.try_deref().global_navigation_graph= move(global_navigation_graph);
+	}
+
+	// Reset game state.
+
+	prev_time_steps_= 0.0f;
+
+	game_state_= CreateNewMapGameState( map_data_.try_deref(), skill, prev_player_state );
+
+	// Reset camera controller state and set its azimuth to player's azimuth (so that he faces the direction of the spawn point).
+	camera_controller_=
+		CameraController( settings_, CameraController::State{ .azimuth= game_state_.try_deref().player.azimuth } );
+
+	// Reset movement state.
+	player_movement_controller_.Reset();
+	player_tool_controller_.Reset();
+}
+
+fn Game::LoadBasicMapData( mut this, u32 map_index )
+{
+	// Avoid mainaining two copies of map data in memory while performing map loading.
+	map_data_.reset();
+
+	var MapsDescription& maps_description= global_data_.maps_description.deref();
+
+	if( size_type(map_index) >= maps_description.maps.size() )
+	{
+		ConsoleOutAddTextLine( console_out_, ust::concat( "Map with index ", ust::to_string8( map_index ), " not found!" ) );
+		return;
+	}
+
+	var MapsDescription::MapDescription& map_description= maps_description.maps[ size_type( map_index ) ];
+
+	auto mut lock= caching_game_resources_loader_ptr_.lock_mut();
+	var CachingGameResourcesLoader &mut caching_game_resources_loader= lock.deref();
+
+	// Some maps don't specify entities description file name.
+	// In such case use some default value.
+	var ResourceString& entities_info_file=
+		( map_description.entities_info_file[0] == '\0'
+			? c_default_entities_description_file_name
+			: map_description.entities_info_file );
+
+	var GameResourcePtr</EntitiesDescription/> entities_description_ptr=
+		caching_game_resources_loader.LoadEntitiesDescription( entities_info_file );
+
+	var GameResourceNullablePtr</ZmapData/> zmap_data_nullable= caching_game_resources_loader.LoadZmapFile( map_index );
+	var GameResourceNullablePtr</ZvoxData/> zvox_data_nullable= caching_game_resources_loader.LoadZvoxFile( map_index );
+	var GameResourceNullablePtr</ZpozData/> zpoz_data_nullable= caching_game_resources_loader.LoadZpozFile( map_index );
+	var GameResourceNullablePtr</RoomClustersHierarchy/> room_clusters_hierarchy_nullable= caching_game_resources_loader.LoadRoomClustersHierarchy( map_index );
+
+	if( zmap_data_nullable.empty() ||
+		zvox_data_nullable.empty() ||
+		zpoz_data_nullable.empty() ||
+		room_clusters_hierarchy_nullable.empty() )
+	{
+		return;
+	}
+
+	var GameResourcePtr</ZvoxData/> mut zvox_data= zvox_data_nullable.try_to_non_nullable();
+	var GameResourcePtr</ZmapData/> mut zmap_data= zmap_data_nullable.try_to_non_nullable();
+	var GameResourcePtr</ZpozData/> mut zpoz_data= zpoz_data_nullable.try_to_non_nullable();
+
+	map_data_=
+		GameMapData
 		{
 			.map_index= map_index,
 			.entities_description= entities_description_ptr,
@@ -531,30 +634,6 @@ fn Game::PerformMapTransition(
 			.zvox_data= move(zvox_data),
 			.zpoz_data= move(zpoz_data),
 		};
-
-		// Build global navigation graph after preparing other map data.
-		var GlobalNavigationGraph mut global_navigation_graph=
-			BuildGlobalNavigationGraph(
-				map_data,
-				console_out_,
-				performance_counter_,
-				settings_.lock_imut().deref().g_debug_global_navigation_graph_use_fast_but_incorrect_reachability_check );
-
-		map_data.global_navigation_graph= move(global_navigation_graph);
-
-		map_data_= move( map_data );
-	}
-
-	// Reset game state.
-
-	prev_time_steps_= 0.0f;
-
-	game_state_= CreateNewMapGameState( map_data_.try_deref(), skill, prev_player_state );
-
-	// Reset possible rotation and movement state.
-	camera_controller_= CameraController( settings_, game_state_.try_deref().player.azimuth );
-	player_movement_controller_.Reset();
-	player_tool_controller_.Reset();
 }
 
 fn LoadGlobalData( CachingGameResourcesLoaderPtr& caching_game_resources_loader_ptr ) : GameGlobalData

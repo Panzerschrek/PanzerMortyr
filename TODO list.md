@@ -59,10 +59,10 @@ PanzerMortyr general:
 * Consider performing even more advanced game data search - with more hardcoded paths, Windows registry fetches, etc.
 * Ensure PanzerMortyr works properly on Wayland-based systems.
 * Consider writing console messages into a file - to simplify troubleshooting.
+* Consider optimizing code performing serialization/deserialization (for game saving) - read/write scalars and arrays of scalars as byte arrays.
 
 PanzerMortyr game logic:
 
-* Implement game state save/loading.
 * Implement multiplayer game logic with client/server.
 * Implement multiplayer-specific game modes.
 * Make singleplayer mode tweaks for cooperative mode support.
@@ -147,7 +147,7 @@ PanzerMortyr rendering:
 PanzerMortyr menus and HUD:
 
 * Implement loading screen.
-* Implement game save and loading menus.
+* Implement game save and loading menus with named save slots, brief save summary (level name, skill, number of kills) and a small screenshot.
 * Implement video modes menu.
 * Implement key bindings menu.
 * Make sound options menu functional.

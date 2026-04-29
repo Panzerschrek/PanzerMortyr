@@ -1,0 +1,693 @@
+import "/mixin_utils.iu"
+import "/variant.iu"
+import "/vector.iu"
+
+namespace PM
+{
+
+class Serializer
+{
+public:
+	fn SerializeBytes( mut this, ust::array_view_imut</byte8/> bytes )
+	{
+		// TODO - speed-up this, resize the bytes container and copy all bytes in one memory copy call.
+		bytes_.append( bytes.iter() );
+	}
+
+	fn TakeBytes( byval mut this ) : ust::vector</byte8/>
+	{
+		return take(bytes_);
+	}
+
+private:
+	ust::vector</byte8/> bytes_;
+}
+
+class Deserializer
+{
+public:
+	type BytesView= ust::array_view_imut</byte8/>;
+
+	fn constructor( BytesView bytes ) @( ust::reference_notation::pollution::param0_param_1_inner_reference )
+		( bytes_= bytes )
+	{}
+
+	// May return less than expected if has no bytes left.
+	fn ExtractBytes( mut this, size_type num_bytes ) : BytesView @( ust::reference_notation::return_inner_references::param0_inner_reference0 )
+	{
+		var BytesView result= bytes_.subrange_end( num_bytes );
+		bytes_= bytes_.subrange_start( num_bytes );
+		return result;
+	}
+
+private:
+	BytesView bytes_;
+}
+
+// Serialization scheme is basically just a string calculated in compilation time.
+type SerializationScheme= [ char8, 16384s ]; // Increase this size if building serialization scheme halts.
+type SerializationSchemeBuilder= ust::mixin_utils::static_string</ typeinfo</SerializationScheme/>.element_count />;
+
+// The main recursive routine for data serialization.
+// It uses simple binary serialization with host bytes order.
+//
+// Fundamental types are written as is, including size_type written in platform-dependent way (32-bit or 64-bit).
+// For enums their underlying type is serialized.
+// Arrays and tuples are serialized elementwise and with no padding.
+// ust::optional is serialized as a boolean flag and its payload, which is skipped if the given optional instance is empty.
+// ust::vector is serialized as number of elements (size_type) followed by elements serialization.
+// ust::variant is serialized as type index and current element.
+// Regular structures serialized field-by-field using typeinfo fields order and no padding.
+// Some special classes (having "Serialize" method) use their custom serialization approaches.
+//
+// No serialization scheme is stored, so that it's possible to deserialize serialized data only by knowing its exact scheme.
+// This allows avoiding wasting computational time writing scheme-related data and reducing serialized data size.
+//
+// The approach used for serialization isn't portable across 32/64-bit platforms and platforms with different bytes order.
+// Missing serialization scheme makes it also impossible to implement backward-compatibility.
+//
+// WARNING! If this function is changed, code doing deserialization and serialization scheme building schould be changed too!
+//
+template</type T/>
+fn Serialize( Serializer &mut serializer, T& value )
+{
+	auto& ti= typeinfo</T/>;
+	static_if( ti.is_fundamental )
+	{
+		static_if( same_type</T, bool/> )
+		{
+			// Write "bool" as "byte8", since it's impossible to create byte8 array view for booleans.
+			var byte8 bool_byte( ( value ? 1u8 : 0u8 ) );
+			serializer.SerializeBytes( ust::single_element_array_view( bool_byte ) );
+		}
+		else
+		{
+			serializer.SerializeBytes( ust::single_element_array_view( value ).to_byte8_range() );
+		}
+	}
+	else static_if( ti.is_enum )
+	{
+		// Save enums as bytes.
+		serializer.SerializeBytes( ust::single_element_array_view( value ).to_byte8_range() );
+	}
+	else static_if( ti.is_array )
+	{
+		// Just serialize all elements of an array sequentially.
+		for( auto mut i= 0s; i < ti.element_count; ++i )
+		{
+			Serialize( serializer, value[i] );
+		}
+	}
+	else static_if( ti.is_tuple )
+	{
+		// Just serialize all elements of a tuple sequentially.
+		foreach( &el : value )
+		{
+			Serialize( serializer, el );
+		}
+	}
+	else static_if( ti.is_class )
+	{
+		static_if( SerializationImpl::IsOptional</T/>::value )
+		{
+			// Serialize non-empty flag.
+			Serialize( serializer, !value.empty() );
+			if_var( &stored_value : value )
+			{
+				// Serialize stored value if has it.
+				Serialize( serializer, stored_value );
+			}
+		}
+		else static_if( SerializationImpl::IsVector</T/>::value )
+		{
+			// Serialize size for vectors.
+			Serialize( serializer, value.size() );
+			// Serialize all vector elements sequentially.
+			foreach( &el : value )
+			{
+				Serialize( serializer, el );
+			}
+		}
+		else static_if( SerializationImpl::IsVariant</T/>::value )
+		{
+			// Serialize index of stored type for variants.
+			Serialize( serializer, value.index() );
+			// Then serialize current stored type.
+			variant_visit( &el : value )
+			{
+				Serialize( serializer, el );
+			}
+		}
+		else static_if( SerializationImpl::ClassHasCustomSerialization</T/>() )
+		{
+			// A class with "Serialize" method - call it.
+			value.Serialize( serializer );
+		}
+		else
+		{
+			// For other classes assume we can just serialize separate fields.
+			// Use typeinfo order of fields for serialization.
+			foreach( &field_info : ti.fields_list )
+			{
+				static_assert( !field_info.is_reference, "References serialization isn't supported!" );
+
+				Serialize( serializer, mixin( "value." + field_info.name ) ); // This may fail to compile if a private field is accessed.
+			}
+		}
+	}
+	else
+	{
+		static_assert( false, "Unsupported type kind!" );
+	}
+}
+
+// The main recursive routine for data deserialization.
+//
+// WARNING! If this function is changed, code doing serialization and serialization scheme building schould be changed too!
+//
+template</type T/>
+fn Deserialize( Deserializer &mut deserializer ) : ust::optional</T/>
+{
+	auto& ti= typeinfo</T/>;
+	static_if( ti.is_fundamental )
+	{
+		static_if( same_type</T, bool/> )
+		{
+			// Handle bool specially, since it's impossible to cast a range of bools into a range of bytes.
+			if_var( b : Deserialize</byte8/>( deserializer ) )
+			{
+				return b != byte8(0u8);
+			}
+			return ust::null_optional;
+		}
+		else
+		{
+			var Deserializer::BytesView bytes= deserializer.ExtractBytes( ti.size_of );
+			if( bytes.size() < ti.size_of )
+			{
+				return ust::null_optional;
+			}
+
+			var T mut result= zero_init;
+			ust::single_element_array_view( result ).to_byte8_range().copy_from( bytes );
+			return result;
+		}
+	}
+	else static_if( ti.is_enum )
+	{
+		if_var( underlying_value : Deserialize</ typeof( ti.underlying_type )::src_type />( deserializer ) )
+		{
+			// Use linear search for finding an enum value for given underlying value.
+			// This is the only way to do so without using "unsafe".
+			// Hopefully the compiler can optimize this.
+			foreach( &element_info : ti.elements_list )
+			{
+				if( underlying_value == element_info.value )
+				{
+					return mixin( "T::" + element_info.name );
+				}
+			}
+		}
+		return ust::null_optional;
+	}
+	else static_if( ti.is_array )
+	{
+		type ElementType= typeof( ti.element_type )::src_type;
+		var size_type element_count= ti.element_count;
+
+		// First extract all elements as optionals and store them in an intermediate array.
+		var [ ust::optional</ElementType/>, element_count ] mut optionals_array
+			[ Deserialize</ElementType/>( deserializer ) ... ];
+
+		// Then check if all optionals are non-empty.
+		for( auto mut i= 0s; i < element_count; ++i )
+		{
+			if( optionals_array[i].empty() )
+			{
+				return ust::null_optional;
+			}
+		}
+
+		// Lastly form the target array by taking values from optionals array.
+		var size_type mut i= 0s;
+		var [ ElementType, element_count ] result[ optionals_array[ SerializationImpl::NextIndex(i) ].try_take() ... ];
+		return result;
+	}
+	else static_if( ti.is_tuple )
+	{
+		mixin( SerializationImpl::CreateMixinTextForTupleDeserialization</T/>() );
+	}
+	else static_if( ti.is_class )
+	{
+		static_if( SerializationImpl::IsOptional</T/>::value )
+		{
+			if_var( has_value : Deserialize</bool/>( deserializer ) )
+			{
+				if( has_value )
+				{
+					type ElementType= SerializationImpl::GetOptionalElementType</T/>;
+					var ust::optional</ElementType/> mut result= Deserialize</ ElementType />( deserializer );
+					if( !result.empty() )
+					{
+						// Parsed non-empty optional.
+						return T( result.try_take() );
+					}
+					else
+					{
+						// Failed to parse.
+						return ust::null_optional;
+					}
+				}
+				else
+				{
+					// Parsed empty optional.
+					return T();
+				}
+			}
+			else
+			{
+				// Failed to parse.
+				return ust::null_optional;
+			}
+		}
+		else static_if( SerializationImpl::IsVector</T/>::value )
+		{
+			if_var( size : Deserialize</size_type/>( deserializer ) )
+			{
+				type ElementType= SerializationImpl::GetVectorElementType</T/>;
+				var ust::vector</ElementType/> mut result;
+
+				for( auto mut i= 0s; i < size; ++i )
+				{
+					var ust::optional</ElementType/> mut element= Deserialize</ElementType/>( deserializer );
+					if( element.empty() )
+					{
+						return ust::null_optional;
+					}
+					result.push_back( element.try_take() );
+				}
+
+				return result;
+			}
+			else
+			{
+				return ust::null_optional;
+			}
+		}
+		else static_if( SerializationImpl::IsVariant</T/>::value )
+		{
+			if_var( index : Deserialize</size_type/>( deserializer ) )
+			{
+				var size_type mut current_index= 0s;
+				for( & element_type_typeinfo : typeinfo</ T::elements_tuple />.elements_list )
+				{
+					if( current_index == index )
+					{
+						type ElementType= typeof(element_type_typeinfo.type)::src_type;
+						var ust::optional</ElementType/> mut element= Deserialize</ElementType/>( deserializer );
+						if( !element.empty() )
+						{
+							return T( element.try_take() );
+						}
+						else
+						{
+							return ust::null_optional;
+						}
+					}
+					++current_index;
+				}
+			}
+			return ust::null_optional;
+		}
+		else static_if( SerializationImpl::ClassHasCustomSerialization</T/>() )
+		{
+			return T::Deserialize( deserializer );
+		}
+		else
+		{
+			mixin( SerializationImpl::CreateMixinTextForStructDeserialization</T/>() );
+		}
+	}
+	else
+	{
+		static_assert( false, "Unsupported type kind!" );
+	}
+}
+
+template</type T/>
+fn constexpr BuildSerializationSchemeFull() : SerializationScheme
+{
+	var SerializationSchemeBuilder mut builder;
+	BuildSerializationScheme</T/>( builder );
+	return builder.buffer;
+}
+
+// The main recursive routine for building serialization scheme.
+//
+// WARNING! If this function is changed, code doing serialization and deserialization schould be changed too!
+//
+template</type T/>
+fn constexpr BuildSerializationScheme( SerializationSchemeBuilder &mut builder )
+{
+	// Build here a crude JSON describing serialization scheme.
+	// Use this format to simplify debugging, since a regular JSON parser/formatter can be used to read it.
+	auto& ti= typeinfo</T/>;
+	static_if( ti.is_fundamental )
+	{
+		// Save the name of a fundamental type.
+			 static_if( same_type</T,    void/> ){ builder+=    "\"void\""; }
+		else static_if( same_type</T,    bool/> ){ builder+=    "\"bool\""; }
+		else static_if( same_type</T,      i8/> ){ builder+=      "\"i8\""; }
+		else static_if( same_type</T,      u8/> ){ builder+=      "\"u8\""; }
+		else static_if( same_type</T,     i16/> ){ builder+=     "\"i16\""; }
+		else static_if( same_type</T,     u16/> ){ builder+=     "\"u16\""; }
+		else static_if( same_type</T,     i32/> ){ builder+=     "\"i32\""; }
+		else static_if( same_type</T,     u32/> ){ builder+=     "\"u32\""; }
+		else static_if( same_type</T,     i64/> ){ builder+=     "\"i64\""; }
+		else static_if( same_type</T,     u64/> ){ builder+=     "\"u64\""; }
+		else static_if( same_type</T,    i128/> ){ builder+=    "\"i128\""; }
+		else static_if( same_type</T,    u128/> ){ builder+=    "\"u128\""; }
+		else static_if( same_type</T,     f32/> ){ builder+=     "\"f32\""; }
+		else static_if( same_type</T,     f64/> ){ builder+=     "\"f64\""; }
+		else static_if( same_type</T,   char8/> ){ builder+=   "\"char8\""; }
+		else static_if( same_type</T,  char16/> ){ builder+=  "\"char16\""; }
+		else static_if( same_type</T,  char32/> ){ builder+=  "\"char32\""; }
+		else static_if( same_type</T,   byte8/> ){ builder+=   "\"byte8\""; }
+		else static_if( same_type</T,  byte16/> ){ builder+=  "\"byte16\""; }
+		else static_if( same_type</T,  byte32/> ){ builder+=  "\"byte32\""; }
+		else static_if( same_type</T,  byte64/> ){ builder+=  "\"byte64\""; }
+		else static_if( same_type</T, byte128/> ){ builder+= "\"byte128\""; }
+		else
+		{
+			static_assert( false, "Unhandled fundamental type!" );
+		}
+	}
+	else static_if( ti.is_enum )
+	{
+		// Save underlying type and element names for enums.
+		// Changing enum element names, their order oder amount should produce different scheme.
+
+		builder+= "{";
+		builder+= "\"kind\":\"enum\",";
+		builder+= "\"underlying_type\":";
+		BuildSerializationScheme</ typeof( ti.underlying_type )::src_type />( builder );
+		builder+= ",";
+		builder+= "\"elements\":";
+		builder+= "[";
+
+		var size_type mut index= 0s;
+		for( & element_type_typeinfo : ti.elements_list )
+		{
+			if( index > 0s )
+			{
+				builder+= ",";
+			}
+
+			builder+= "\"" + element_type_typeinfo.name + "\"";
+
+			++index;
+		}
+
+		builder+= "]";
+		builder+= "}";
+	}
+	else static_if( ti.is_array )
+	{
+		// Save array size and element type.
+		builder+= "{";
+		builder+= "\"kind\":\"array\",";
+		builder+= "\"size\":";
+		builder.append_decimal_number( ti.element_count );
+		builder+= ",";
+		builder+= "\"element_type\":";
+		BuildSerializationScheme</ typeof( ti.element_type )::src_type />( builder );
+		builder+= "}";
+	}
+	else static_if( ti.is_tuple )
+	{
+		// Save tuple element types.
+
+		builder+= "{";
+		builder+= "\"kind\":\"tuple\",";
+		builder+= "\"element_types\":";
+		builder+= "[";
+
+		var size_type mut index= 0s;
+		for( & element_type_typeinfo : ti.elements_list )
+		{
+			if( index > 0s )
+			{
+				builder+= ",";
+			}
+
+			BuildSerializationScheme</ typeof( element_type_typeinfo.type )::src_type />( builder );
+
+			++index;
+		}
+
+		builder+= "]";
+		builder+= "}";
+	}
+	else static_if( ti.is_class )
+	{
+		static_if( SerializationImpl::IsOptional</T/>::value )
+		{
+			// For optional save element type.
+
+			builder+= "{";
+			builder+= "\"kind\":\"optional\",";
+			builder+= "\"element_type\":";
+			BuildSerializationScheme</ SerializationImpl::GetOptionalElementType</T/> />( builder );
+			builder+= "}";
+		}
+		else static_if( SerializationImpl::IsVector</T/>::value )
+		{
+			// For vector save element type.
+
+			builder+= "{";
+			builder+= "\"kind\":\"vector\",";
+			builder+= "\"element_type\":";
+			BuildSerializationScheme</ SerializationImpl::GetVectorElementType</T/> />( builder );
+			builder+= "}";
+		}
+		else static_if( SerializationImpl::IsVariant</T/>::value )
+		{
+			// For variant save all element types in their order.
+
+			builder+= "{";
+			builder+= "\"kind\":\"variant\",";
+			builder+= "\"element_types\":";
+			builder+= "[";
+
+			var size_type mut index= 0s;
+			for( & element_type_typeinfo : typeinfo</ T::elements_tuple />.elements_list )
+			{
+				if( index > 0s )
+				{
+					builder+= ",";
+				}
+
+				BuildSerializationScheme</ typeof( element_type_typeinfo.type )::src_type />( builder );
+
+				++index;
+			}
+
+			builder+= "]";
+			builder+= "}";
+		}
+		else static_if( SerializationImpl::ClassHasCustomSerialization</T/>() )
+		{
+			T::BuildSerializationScheme( builder );
+		}
+		else
+		{
+			// For structs save all fields (including names) in their order.
+
+			builder+= "{";
+			builder+= "\"kind\":\"struct\",";
+
+			builder+= "\"fields\":[";
+
+			var size_type mut index= 0s;
+			foreach( &field_info : ti.fields_list )
+			{
+				static_assert( !field_info.is_reference, "References serialization isn't supported!" );
+
+				if( index > 0s )
+				{
+					builder+= ",";
+				}
+
+				builder+= "{";
+
+				builder+= "\"name\":\"" + field_info.name + "\",";
+				builder+= "\"type\":";
+				BuildSerializationScheme</ typeof( field_info.type )::src_type />( builder );
+
+				builder+= "}";
+
+				++index;
+			}
+
+			builder+= "]";
+
+			builder+= "}";
+		}
+	}
+	else
+	{
+		static_assert( false, "Unsupported type kind!" );
+	}
+}
+
+namespace SerializationImpl
+{
+
+struct FalseTypeStruct{ var bool value= false; }
+struct TrueTypeStruct { var bool value= true ; }
+
+template</type T/> type IsOptional</T/> = FalseTypeStruct;
+template</type T/> type IsOptional</ ust::optional</T/> /> = TrueTypeStruct;
+template</type T/> type GetOptionalElementType</ ust::optional</T/> />= T;
+
+template</type T/> type IsVector</T/> = FalseTypeStruct;
+template</type T/> type IsVector</ ust::vector</T/> /> = TrueTypeStruct;
+template</type T/> type GetVectorElementType</ ust::vector</T/> />= T;
+
+template</type T/> type IsVariant</T/> = FalseTypeStruct;
+template</type T/> type IsVariant</ ust::variant</T/> /> = TrueTypeStruct;
+
+template</ type T />
+fn constexpr ClassHasCustomSerialization() : bool
+{
+	var bool
+		mut has_serialize_method= false,
+		mut has_deserialize_method= false,
+		mut has_build_serialization_scheme_method= false;
+
+	for( &list_element : typeinfo</T/>.functions_list )
+	{
+		if( ust::constexpr_string_equals( list_element.name, "Serialize" ) )
+		{
+			has_serialize_method= true;
+		}
+		if( ust::constexpr_string_equals( list_element.name, "Deserialize" ) )
+		{
+			has_deserialize_method= true;
+		}
+		if( ust::constexpr_string_equals( list_element.name, "BuildSerializationScheme" ) )
+		{
+			has_build_serialization_scheme_method= true;
+		}
+	}
+
+	return has_serialize_method & has_deserialize_method & has_build_serialization_scheme_method;
+}
+
+fn NextIndex( size_type &mut i ) : size_type
+{
+	var size_type result= i;
+	++i;
+	return result;
+}
+
+template</type T/>
+fn constexpr CreateMixinTextForTupleDeserialization() : [ char8, 1024 ]
+{
+	var ust::mixin_utils::static_string</1024s/> mut s;
+
+	// First extract all tuple elements into a tuple of optionals.
+
+	s+= " var tup[ ";
+
+	var size_type mut index= 0s;
+
+	foreach( &element_info : typeinfo</T/>.elements_list )
+	{
+		s+= "ust::optional</ ";
+		s+= " typeof( typeinfo</T/>.elements_list[ "; s.append_decimal_number(index); s+= " ].type )::src_type ";
+		s+= " />";
+		if( index + 1s < typeinfo</T/>.element_count )
+		{
+			s+= ", ";
+		}
+		++index;
+	}
+
+	s+= " ] mut optionals_tuple[ ";
+
+	index= 0s;
+	foreach( &element_info : typeinfo</T/>.elements_list )
+	{
+		s+= " Deserialize</ ";
+		s+= " typeof( typeinfo</T/>.elements_list[ "; s.append_decimal_number(index); s+= " ].type )::src_type ";
+		s+= " />( deserializer ), ";
+		++index;
+	}
+
+	s+= " ];\n";
+
+	// Then check if all these optionals aren't empty.
+
+	s+= "foreach( &el : optionals_tuple ) { if( el.empty() ) { return ust::null_optional; } }\n";
+
+	// Lastly take all elements to form the result.
+
+	s+= " var T result[ ";
+
+	index= 0s;
+	foreach( &element_info : typeinfo</T/>.elements_list )
+	{
+		s+= " optionals_tuple[ "; s.append_decimal_number(index); s+= " ].try_take(), ";
+		++index;
+	}
+
+	s+= " ];";
+	s+= " return result;";
+
+	return s.buffer;
+}
+
+template</type T/>
+fn constexpr CreateMixinTextForStructDeserialization() : [ char8, 8192 ]
+{
+	var ust::mixin_utils::static_string</8192s/> mut s;
+
+	// First extract all struct elements into optionals.
+	// Return if such optional is empty.
+
+	var size_type mut index= 0s;
+	foreach( &field_info : typeinfo</T/>.fields_list )
+	{
+		s+= "auto mut ";
+		s+= field_info.name;
+		s+= "_opt= Deserialize</ typeof( typeinfo</T/>.fields_list[ ";
+		s.append_decimal_number( index );
+		s+= " ].type )::src_type />( deserializer );\n";
+
+		s+= "if( ";
+		s+= field_info.name;
+		s+= "_opt.empty() ) { return ust::null_optional; }";
+
+		++index;
+	}
+
+	// Construct result structure.
+
+	s+= "return T {";
+	foreach( &field_info : typeinfo</T/>.fields_list )
+	{
+		s+= ".";
+		s+= field_info.name;
+		s+= "= ";
+		s+= field_info.name;
+		s+= "_opt.try_take(),";
+	}
+	s+= "};";
+
+	return s.buffer;
+}
+
+} // namespace SerializationImpl
+
+} // namespace PM
