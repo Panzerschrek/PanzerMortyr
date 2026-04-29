@@ -22,7 +22,7 @@ fn Game::constructor(
 		console_out_= move(console_out),
 		global_data_= LoadGlobalData( caching_game_resources_loader_ptr ),
 		caching_game_resources_loader_ptr_= move( caching_game_resources_loader_ptr ),
-		camera_controller_( settings_, 0.0f ),
+		camera_controller_( settings_, CameraController::State{ .azimuth= 0.0f } ),
 		player_movement_controller_( settings_ ),
 		player_tool_controller_( settings_ ),
 		prev_time_steps_= 0.0f,
@@ -65,6 +65,7 @@ fn Game::Save( this, ust::string_view8 save_name )
 			save_name,
 			map_data.map_index,
 			game_state,
+			camera_controller_.GetState(),
 			map_data.global_navigation_graph );
 
 	ust::ignore_unused( ok );
@@ -84,7 +85,8 @@ fn Game::Load( mut this, ust::string_view8 save_name )
 		return;
 	}
 
-	auto { map_index, mut game_state, mut global_navigation_graph }= game_extended_state_opt.try_take();
+	auto { map_index, mut game_state, mut camera_controller_state, mut global_navigation_graph }=
+		game_extended_state_opt.try_take();
 
 	LoadBasicMapData( map_index );
 
@@ -97,10 +99,11 @@ fn Game::Load( mut this, ust::string_view8 save_name )
 
 	game_state_= move(game_state);
 
+	camera_controller_= CameraController( settings_, move(camera_controller_state) );
+
 	prev_time_steps_= 0.0f;
 
-	// Reset possible rotation and movement state.
-	camera_controller_= CameraController( settings_, game_state_.try_deref().player.azimuth );
+	// Reset movement and tool controllers.
 	player_movement_controller_.Reset();
 	player_tool_controller_.Reset();
 }
@@ -261,7 +264,7 @@ fn Game::process_reset_position( mut this )
 		game_state.player.position= Vec3f::MakeZero();
 		game_state.player.velocity= Vec3f::MakeZero();
 	}
-	camera_controller_= CameraController( settings_, 0.0f );
+	camera_controller_= CameraController( settings_, CameraController::State{ .azimuth= 0.0f } );
 	player_movement_controller_.Reset();
 }
 
@@ -566,8 +569,11 @@ fn Game::PerformMapTransition(
 
 	game_state_= CreateNewMapGameState( map_data_.try_deref(), skill, prev_player_state );
 
-	// Reset possible rotation and movement state.
-	camera_controller_= CameraController( settings_, game_state_.try_deref().player.azimuth );
+	// Reset camera controller state and set its azimuth to player's azimuth (so that he faces the direction of the spawn point).
+	camera_controller_=
+		CameraController( settings_, CameraController::State{ .azimuth= game_state_.try_deref().player.azimuth } );
+
+	// Reset movement state.
 	player_movement_controller_.Reset();
 	player_tool_controller_.Reset();
 }
