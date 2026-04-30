@@ -1,4 +1,5 @@
 import "/directory_iterator.iu"
+import "/enum_string_conversions.iu"
 import "/file_helpers.iu"
 import "/hash_set.iu"
 import "/path_utils.iu"
@@ -93,6 +94,105 @@ fn TestLoadAllSounds( ConsoleOutPtr& console_out )
 			s+= ", ";
 		}
 		ConsoleOutAddTextLine( console_out, s );
+	}
+}
+
+fn LoadSoundData(
+	ConsoleOutPtr& console_out,
+	GameFilesystem &mut game_filesystem,
+	ResourceString& file_name ) : ust::optional</SoundDataAbstract/>
+{
+	result_match( game_filesystem.LoadFileToByte8Vector( file_name ) )
+	{
+		Ok( mut file_contents ) ->
+		{
+			unsafe
+			{
+				// TODO - consider writing our own code loading WAV files, which doesn't require "unsafe" to be loaded.
+
+				var SDL_AudioSpec mut spec= zero_init;
+				var $(Uint8) mut audio_buf= zero_init;
+				var Uint32 mut audio_len= 0u;
+
+				auto call_res=
+					SDL_LoadWAV_RW(
+						SDL_RWFromMem( file_contents.data(), i32( file_contents.size() ) ),
+						1,
+						$<( spec ),
+						$<( audio_buf ),
+						$<( audio_len ) );
+
+				if( ust::is_nullptr( call_res ) )
+				{
+					safe( ConsoleOutAddTextLine(
+						console_out,
+						ust::concat(
+							"Failed to load WAV file\"",
+							ConvertResourceStringToStringView( file_name ),
+							"\"!" ) ) );
+					return ust::null_optional;
+				}
+
+				if( spec.channels != 1u8 )
+				{
+					safe( ConsoleOutAddTextLine(
+						console_out,
+						ust::concat(
+							"Unsupported number of channels in WAV file\"",
+							ConvertResourceStringToStringView( file_name ),
+							"\"! Expected exactly 1 channel." ) ) );
+					return ust::null_optional;
+				}
+
+				switch( i32( spec.format ) )
+				{
+					AUDIO_U8 ->
+					{
+						type SampleType= u8;
+						return
+							SoundDataAbstract(
+								SoundData</SampleType/>(
+									u32( spec.freq ),
+									ust::byte_ptr_cast</SampleType/>( ust::ptr_cast_to_byte8( audio_buf ) ),
+									u32( audio_len ) / u32( typeinfo</SampleType/>.size_of ) ) );
+					},
+					AUDIO_S16LSB ->
+					{
+						type SampleType= i16;
+						return
+							SoundDataAbstract(
+								SoundData</SampleType/>(
+									u32( spec.freq ),
+									ust::byte_ptr_cast</SampleType/>( ust::ptr_cast_to_byte8( audio_buf ) ),
+									u32( audio_len ) / u32( typeinfo</SampleType/>.size_of ) ) );
+					},
+					default ->
+					{
+						safe( ConsoleOutAddTextLine(
+							console_out,
+							ust::concat(
+								"Unsupported format ",
+									ust::to_string8( spec.format ),
+									" for WAV file\"",
+									ConvertResourceStringToStringView( file_name ),
+									"\"!" ) ) );
+						return ust::null_optional;
+					}
+				}
+			}
+		},
+		Err(e) ->
+		{
+			ConsoleOutAddTextLine(
+				console_out,
+				ust::concat(
+					"Failed to load file \"",
+					ConvertResourceStringToStringView( file_name ),
+					"\"! Error: ",
+					ust::enum_to_string(e) ) );
+
+			return ust::null_optional;
+		},
 	}
 }
 
