@@ -1,3 +1,4 @@
+import "math_constants.iu"
 import "audio_out.iu"
 
 namespace PM
@@ -6,7 +7,7 @@ namespace PM
 fn AudioOut::constructor( ConsoleOutPtr& console_out )
 	(
 		device_id_= zero_init /* set later */,
-		audio_spec_= zero_init /* set later */
+		audio_thread_data_( ust::make_zeroed</AudioThreadData/>() )
 	)
 {
 	unsafe
@@ -23,15 +24,17 @@ fn AudioOut::constructor( ConsoleOutPtr& console_out )
 			.padding= zero_init,
 			.size= 0u, // This will be filled by SDL_OpenAudioDevice call.
 			.callback( AudioCallback ),
-			.userdata= ust::nullptr</byte8/>(),
+			.userdata= ust::ptr_cast_to_byte8( audio_thread_data_.get_ptr() ),
 		};
+
+		var SDL_AudioSpec mut obtained_spec= zero_init;
 
 		device_id_=
 			SDL_OpenAudioDevice(
 				ust::nullptr</char8/>(), // Use default device name.
 				0, // Perform oudio playing, not recording.
 				$<( cast_mut( desired_spec ) ), // What spec we want.
-				$<( audio_spec_ ), // What spec we get.
+				$<( obtained_spec ), // What spec we get.
 				// Allow changing frequency and samples. But we can't deal with format and channels changes.
 				SDL_AUDIO_ALLOW_FREQUENCY_CHANGE | SDL_AUDIO_ALLOW_SAMPLES_CHANGE );
 
@@ -41,6 +44,9 @@ fn AudioOut::constructor( ConsoleOutPtr& console_out )
 			// TODO - avoid crashing.
 			halt;
 		}
+
+		// Initialize audio thread data before unpausing audio thread and this launching audio thread.
+		audio_thread_data_.deref().sample_rate= u32( obtained_spec.freq );
 
 		// Run the device, which is created in paused state.
 		SDL_PauseAudioDevice( device_id_ , 0 );
@@ -59,10 +65,33 @@ fn AudioOut::destructor()
 
 fn AudioCallback( $(byte8) userdata, $(Uint8) stream, i32 len ) unsafe call_conv( "C" )
 {
-	// TODO
-	ust::ignore_unused( userdata );
-	ust::ignore_unused( stream );
-	ust::ignore_unused( len );
+	AudioThreadRun(
+		unsafe( $>( ust::byte_ptr_cast</AudioThreadData/>( userdata ) ) ),
+		unsafe(
+			ust::array_view_mut</SamplePairType/>(
+				ust::byte_ptr_cast</SamplePairType/>( ust::ptr_cast_to_byte8( stream ) ),
+				size_type(len) / typeinfo</SamplePairType/>.size_of ) ) );
 }
+
+fn AudioThreadRun( AudioThreadData &mut data, ust::array_view_mut</SamplePairType/> out_sample_pairs )
+{
+	var f32 base_freq= 400.0f;
+	var f32 freq_scale= base_freq * c_tau / f32( data.sample_rate );
+
+	foreach( &mut out_sample_pair : out_sample_pairs )
+	{
+		var f32 val= 32767.0f * ust::sin( f32( data.sample_counter ) * freq_scale );
+
+		var SampleType val_casted( val );
+		out_sample_pair[0]= val_casted;
+		out_sample_pair[1]= val_casted;
+
+		++data.sample_counter;
+	}
+}
+
+type SampleType= i16;
+
+type SamplePairType= [ SampleType, 2 ];
 
 } // namespace PM
