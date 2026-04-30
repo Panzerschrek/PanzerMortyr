@@ -1,0 +1,68 @@
+import "audio_out.iu"
+
+namespace PM
+{
+
+fn AudioOut::constructor( ConsoleOutPtr& console_out )
+	(
+		device_id_= zero_init /* set later */,
+		audio_spec_= zero_init /* set later */
+	)
+{
+	unsafe
+	{
+		SDL_InitSubSystem( SDL_INIT_AUDIO );
+
+		var SDL_AudioSpec desired_spec
+		{
+			.freq= 44100,
+			.format( AUDIO_S16LSB ),
+			.channels( 2 ),
+			.silence(0), // This will be filled by SDL_OpenAudioDevice call.
+			.samples( 512 ), // TODO - tune this to reduce sound latency.
+			.padding= zero_init,
+			.size= 0u, // This will be filled by SDL_OpenAudioDevice call.
+			.callback( AudioCallback ),
+			.userdata= ust::nullptr</byte8/>(),
+		};
+
+		device_id_=
+			SDL_OpenAudioDevice(
+				ust::nullptr</char8/>(), // Use default device name.
+				0, // Perform oudio playing, not recording.
+				$<( cast_mut( desired_spec ) ), // What spec we want.
+				$<( audio_spec_ ), // What spec we get.
+				// Allow changing frequency and samples. But we can't deal with format and channels changes.
+				SDL_AUDIO_ALLOW_FREQUENCY_CHANGE | SDL_AUDIO_ALLOW_SAMPLES_CHANGE );
+
+		if( device_id_ == 0u )
+		{
+			ConsoleOutAddTextLine( console_out, "Failed to open audio device!" );
+			// TODO - avoid crashing.
+			halt;
+		}
+
+		// Run the device, which is created in paused state.
+		SDL_PauseAudioDevice( device_id_ , 0 );
+	}
+}
+
+fn AudioOut::destructor()
+{
+	// Pause before closing to stop the audion callback which can be executed right now on a separate thread.
+	unsafe( SDL_PauseAudioDevice( device_id_ , 1 ) );
+
+	unsafe( SDL_CloseAudioDevice( device_id_ ) );
+
+	unsafe( SDL_QuitSubSystem( SDL_INIT_AUDIO ) );
+}
+
+fn AudioCallback( $(byte8) userdata, $(Uint8) stream, i32 len ) unsafe call_conv( "C" )
+{
+	// TODO
+	ust::ignore_unused( userdata );
+	ust::ignore_unused( stream );
+	ust::ignore_unused( len );
+}
+
+} // namespace PM
