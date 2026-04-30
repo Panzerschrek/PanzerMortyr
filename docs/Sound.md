@@ -86,3 +86,18 @@ The sound mixing thread should receive loaded sound samples from the main thread
 It's not a huge problem to load all sound files from the game archive (or at least used ones) at once.
 But maybe it's not necessary and less memory may be used instead by only loading sounds needed for the current level (but this requires further investigation).
 If the approach with loading of only necessary files is chosen, sounds shouldn't be reloaded upon level transition, if a particular file is used both in the previous and in the new level.
+
+
+### Sound files of the original game
+
+The original game uses only WAV format for its sounds (except music).
+They all are single-channel (no stereo).
+
+There are several frequencies used - 8000, 11000, 11025, 22050, 16000, 44100.
+The most common frequency is 22050.
+Ambient sounds (with longer duration) tend to have smaller frequency (presumably to save memory).
+
+The majority of files use samples in 16-bit signed formats.
+But some files use 8-bit unsigned samples instead (presumably to save space).
+
+The largest file has size 959,7 Kb.
