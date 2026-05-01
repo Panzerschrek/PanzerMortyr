@@ -26,6 +26,7 @@ fn AudioProcessor::constructor( ConsoleOutPtr mut console_out_ptr, GameFilesyste
 					.volume[ 1.0f, 1.0f ],
 					.sound_data( sound_data_opt.try_take() ),
 					.sample_counter= 0u,
+					.is_about_to_be_removed= false,
 				} );
 		}
 	}
@@ -42,8 +43,106 @@ fn AudioProcessor::Update( mut this, WorldAudioInfo& world_audio_info )
 			// Load a sound file if not loaded yet.
 			// TODO - perform preloading at the start of the level
 			auto mut fs_lock= game_filesystem_.lock_mut();
-			sound_files_data_.insert_new(
-				sound_source.file_name, LoadSoundData( console_out_, fs_lock.deref(), sound_source.file_name ) );
+
+			auto mut sound_data_opt= LoadSoundData( console_out_, fs_lock.deref(), sound_source.file_name );
+			if( !sound_data_opt.empty() )
+			{
+				sound_files_data_.insert_new(
+					sound_source.file_name,
+					ust::shared_ptr_mt_final</ SoundDataAbstract />( sound_data_opt.try_take() ) );
+			}
+			else
+			{
+				// Insert a dummy.
+				sound_files_data_.insert_new(
+					sound_source.file_name, ust::shared_ptr_mt_final_nullable</ SoundDataAbstract />() );
+			}
+		}
+	}
+
+	with( mut lock : audio_mixer_shared_data_.lock_mut() )
+	{
+		var AudioMixerSharedData &mut audio_mixer_shared_data= lock.deref();
+
+		// Mark used sound sources.
+		//
+
+		foreach( v : active_sound_sources_ )
+		{
+			v.value().used= false;
+		}
+
+		foreach( &sound_source : world_audio_info.sound_sources )
+		{
+			if_var( &mut active_source : active_sound_sources_.find( sound_source.id ) )
+			{
+				active_source.used= true;
+			}
+		}
+
+		// Remove no longer used sound sources.
+		//
+
+		active_sound_sources_.retain(
+			lambda[&]( UniqueSoundSourceId id, ActiveSoundSource& active_sound_source ) : bool
+			{
+				if( !active_sound_source.used )
+				{
+					// Mark it as about to be removed by the mixer.
+					// TODO - try avoiding linear search here.
+					foreach( &mut s : audio_mixer_shared_data.sources )
+					{
+						if( s.id == id )
+						{
+							s.is_about_to_be_removed= true;
+							break;
+						}
+					}
+
+					return false; // Need to remove.
+				}
+				return true; // Need to preserve.
+			} );
+
+		// Add new sources or update old ones.
+		foreach( &sound_source : world_audio_info.sound_sources )
+		{
+			if( active_sound_sources_.exists( sound_source.id ) )
+			{
+				// Update.
+
+				// TODO - try avoiding linear search here.
+				foreach( &mut mixer_source : audio_mixer_shared_data.sources )
+				{
+					if( mixer_source.id == sound_source.id )
+					{
+						mixer_source.volume= sound_source.volume;
+						break;
+					}
+				}
+			}
+			else
+			{
+				// Add new one.
+
+				if_var( &sound_data_nullable : sound_files_data_.find( sound_source.file_name ) )
+				{
+					if( !sound_data_nullable.empty() )
+					{
+						active_sound_sources_.insert_new( sound_source.id, ActiveSoundSource{ .used= true } );
+
+						audio_mixer_shared_data.sources.push_back(
+							AudioMixerSharedData::SoundSource
+							{
+								.id= sound_source.id,
+								.volume= sound_source.volume,
+								.sound_data= sound_data_nullable.try_to_non_nullable(),
+								.sample_counter= 0u,
+								.is_about_to_be_removed= false,
+							} );
+					}
+				}
+			}
 		}
 	}
 }
