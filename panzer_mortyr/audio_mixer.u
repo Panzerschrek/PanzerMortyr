@@ -56,20 +56,23 @@ fn AudioMixer::Mix( mut this, ust::array_view_mut</SamplePairType/> out_sample_p
 		{
 			var AudioMixerSharedData::SoundSource &mut sound_source= shared_data.sources[i];
 
-			if_var( &sound_data : sound_source.sound_data.deref().get</ SoundData</i16/> />() )
+			variant_visit( &sound_data : sound_source.sound_data.deref() )
 			{
-				var f32 max_sample_abs_value= 32768.0f;
+				var f32 resampling_factor= f32( sound_data.GetFrequency() ) / f32( frequency_ );
+
+				auto sound_data_samples= sound_data.GetSamples();
+
+				type InSampleType= typeof( sound_data_samples[0s] );
+
+				var f32 constexpr sample_scale= GetScaleForSampleType</InSampleType/>();
+				var f32 constexpr sample_offset= GetOffsetForSampleType</InSampleType/>();
 
 				// TODO - use proper input per-source volume.
 				var [ f32, 2 ] scaled_volume
 				[
-					1.0f / max_sample_abs_value,
-					1.0f / max_sample_abs_value,
+					sample_scale,
+					sample_scale,
 				];
-
-				var f32 resampling_factor= f32( sound_data.GetFrequency() ) / f32( frequency_ );
-
-				var ust::array_view_imut</i16/> sound_data_samples= sound_data.GetSamples();
 
 				foreach( &mut out_sample_pair : out_sample_pairs )
 				{
@@ -82,17 +85,18 @@ fn AudioMixer::Mix( mut this, ust::array_view_mut</SamplePairType/> out_sample_p
 						break;
 					}
 
-					var f32 sample_value= f32( sound_data_samples[ size_type( src_sample_index ) ] );
+					var f32 mut sample_value( sound_data_samples[ size_type( src_sample_index ) ] );
+
+					static_if( sample_offset != 0.0f )
+					{
+						sample_value+= sample_offset;
+					}
 
 					out_sample_pair[0]+= sample_value * scaled_volume[0];
 					out_sample_pair[1]+= sample_value * scaled_volume[1];
 
 					++sound_source.sample_counter;
 				}
-			}
-			else
-			{
-				// TODO - handle other formats.
 			}
 		}
 
@@ -106,6 +110,37 @@ fn AudioMixer::Mix( mut this, ust::array_view_mut</SamplePairType/> out_sample_p
 		{
 			++i;
 		}
+	}
+}
+
+template</type T/>
+fn constexpr GetScaleForSampleType() : f32
+{
+	static_assert( typeinfo</T/>.is_fundamental );
+	static_assert( typeinfo</T/>.is_integer );
+
+	var size_type num_bits= 8s * typeinfo</T/>.size_of;
+	var u64 max_signed_value_modulo= 1u64 << ( num_bits - 1s );
+
+	return 1.0f / f32( max_signed_value_modulo );
+}
+
+template</type T/>
+fn constexpr GetOffsetForSampleType() : f32
+{
+	static_assert( typeinfo</T/>.is_fundamental );
+	static_assert( typeinfo</T/>.is_integer );
+
+	static_if( typeinfo</T/>.is_signed_integer )
+	{
+		return 0.0f;
+	}
+	else
+	{
+		var size_type num_bits= 8s * typeinfo</T/>.size_of;
+		var u64 middle_value= 1u64 << ( num_bits - 1s );
+
+		return -f32( middle_value );
 	}
 }
 
