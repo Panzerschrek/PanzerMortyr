@@ -3,40 +3,55 @@ import "audio_processor.iu"
 namespace PM
 {
 
-fn AudioProcessor::constructor( ConsoleOutPtr mut console_out_ptr, GameFilesystemPtr mut game_filesystem_ptr )
+fn AudioProcessor::constructor(
+	ConsoleOutPtr mut console_out_ptr,
+	GameFilesystemPtr mut game_filesystem_ptr,
+	CachingGameResourcesLoaderPtr& caching_game_resources_loader )
 	(
 		game_filesystem_= move( game_filesystem_ptr ),
 		audio_mixer_shared_data_( AudioMixerSharedData() ),
 		audio_out_( console_out_ptr, audio_mixer_shared_data_ ),
 		console_out_= move( console_out_ptr ),
+		sounds_description_=
+			lambda[&]() : GameResourcePtr</SoundsDescription/>
+			{
+				auto mut lock= caching_game_resources_loader.lock_mut();
+				return lock.deref().LoadSoundsDescription();
+			}()
 	)
 {
 }
 
 fn AudioProcessor::Update( mut this, WorldAudioInfo& world_audio_info )
 {
+	auto& sounds_description= sounds_description_.deref().sounds;
+	var size_type constexpr sound_table_size= typeinfo</ typeof( sounds_description ) />.element_count;
+
 	// Load sound files.
 	// TODO - remove unused ones upon level transition.
 	foreach( &sound_source : world_audio_info.sound_sources )
 	{
-		if( !sound_files_data_.exists( sound_source.file_name ) )
+		if( size_type( sound_source.sound_index ) < sound_table_size )
 		{
-			// Load a sound file if not loaded yet.
-			// TODO - perform preloading at the start of the level
-			auto mut fs_lock= game_filesystem_.lock_mut();
+			var ResourceString& file_name= sounds_description[ size_type( sound_source.sound_index ) ].file_name;
+			if( file_name[0] != '\0' && !sound_files_data_.exists( file_name ) )
+			{
+				// Load a sound file if not loaded yet.
+				// TODO - perform preloading at the start of the level
+				auto mut fs_lock= game_filesystem_.lock_mut();
 
-			auto mut sound_data_opt= LoadSoundData( console_out_, fs_lock.deref(), sound_source.file_name );
-			if( !sound_data_opt.empty() )
-			{
-				sound_files_data_.insert_new(
-					sound_source.file_name,
-					ust::shared_ptr_mt_final</ SoundDataAbstract />( sound_data_opt.try_take() ) );
-			}
-			else
-			{
-				// Insert a dummy.
-				sound_files_data_.insert_new(
-					sound_source.file_name, ust::shared_ptr_mt_final_nullable</ SoundDataAbstract />() );
+				auto mut sound_data_opt= LoadSoundData( console_out_, fs_lock.deref(), file_name );
+				if( !sound_data_opt.empty() )
+				{
+					sound_files_data_.insert_new(
+						file_name, ust::shared_ptr_mt_final</ SoundDataAbstract />( sound_data_opt.try_take() ) );
+				}
+				else
+				{
+					// Insert a dummy.
+					sound_files_data_.insert_new(
+						file_name, ust::shared_ptr_mt_final_nullable</ SoundDataAbstract />() );
+				}
 			}
 		}
 	}
@@ -106,22 +121,26 @@ fn AudioProcessor::Update( mut this, WorldAudioInfo& world_audio_info )
 			{
 				// Add new one.
 
-				if_var( &sound_data_nullable : sound_files_data_.find( sound_source.file_name ) )
+				if( size_type( sound_source.sound_index ) < sound_table_size )
 				{
-					if( !sound_data_nullable.empty() )
+					var ResourceString& file_name= sounds_description[ size_type( sound_source.sound_index ) ].file_name;
+					if_var( &sound_data_nullable : sound_files_data_.find( file_name) )
 					{
-						active_sound_sources_.insert_new( sound_source.id, ActiveSoundSource{ .used= true } );
+						if( !sound_data_nullable.empty() )
+						{
+							active_sound_sources_.insert_new( sound_source.id, ActiveSoundSource{ .used= true } );
 
-						audio_mixer_shared_data.sources.push_back(
-							AudioMixerSharedData::SoundSource
-							{
-								.id= sound_source.id,
-								.current_volume= sound_source.volume,
-								.new_volume= sound_source.volume,
-								.sound_data= sound_data_nullable.try_to_non_nullable(),
-								.sample_counter= 0u,
-								.is_about_to_be_removed= false,
-							} );
+							audio_mixer_shared_data.sources.push_back(
+								AudioMixerSharedData::SoundSource
+								{
+									.id= sound_source.id,
+									.current_volume= sound_source.volume,
+									.new_volume= sound_source.volume,
+									.sound_data= sound_data_nullable.try_to_non_nullable(),
+									.sample_counter= 0u,
+									.is_about_to_be_removed= false,
+								} );
+						}
 					}
 				}
 			}
