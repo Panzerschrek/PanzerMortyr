@@ -1,3 +1,4 @@
+import "/string_conversions.iu"
 import "audio_processor.iu"
 
 namespace PM
@@ -31,6 +32,8 @@ fn AudioProcessor::constructor(
 
 	auto mut fs_lock= game_filesystem_ptr.lock_mut();
 
+	var size_type mut total_sound_files= 0s, mut total_sound_data_bytes= 0s;
+
 	for( auto mut i= 0s; i < SoundsDescription::c_num_sounds; ++i )
 	{
 		var ResourceString& file_name= sounds_description[i].file_name;
@@ -43,10 +46,21 @@ fn AudioProcessor::constructor(
 				continue;
 			}
 
+			ConsoleOutAddTextLine(
+				console_out_ptr,
+				ust::concat( "Loading sound file \"", ConvertResourceStringToStringView( file_name ), "\"." ) );
+
 			auto mut sound_data_opt= LoadSoundData( console_out_ptr, fs_lock.deref(), file_name );
 
 			if( !sound_data_opt.empty() )
 			{
+				++total_sound_files;
+
+				variant_visit( &el : sound_data_opt.try_deref() )
+				{
+					total_sound_data_bytes+= el.GetSamples().to_byte8_range().size();
+				}
+
 				var ust::shared_ptr_mt_final</ SoundDataAbstract /> data_shared_ptr( sound_data_opt.try_take() );
 				sounds_data_[i]= data_shared_ptr;
 				sound_data_hash_map.insert_new( file_name, data_shared_ptr );
@@ -58,6 +72,15 @@ fn AudioProcessor::constructor(
 			}
 		}
 	}
+
+	ConsoleOutAddTextLine(
+		console_out_ptr,
+		ust::concat(
+			"Loaded ",
+			ust::to_string8( total_sound_files ),
+			" sound files with total size ",
+			ust::to_string8( total_sound_data_bytes ),
+			" bytes." ) );
 }
 
 fn AudioProcessor::Update( mut this, WorldAudioInfo& world_audio_info )
