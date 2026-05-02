@@ -371,7 +371,7 @@ fn nodiscard ProcessGameLogicStep(
 	ProcessProjectileHitEventsLogicStep( global_data, map_data, game_state );
 
 	ProcessDamagingFlamesLogicStep(
-		global_data.game_params.deref(),
+		global_data,
 		game_state.damaging_flames,
 		game_state.random,
 		game_state.entities,
@@ -2367,6 +2367,7 @@ fn ProcessEntitiesLogicStep(
 		if_var( &d : delayed_explosion_splash_damage )
 		{
 			ApplySplashDamage(
+				game_global_data.sounds_description.deref(),
 				d.center,
 				d.radius,
 				d.splash_base_damage,
@@ -3137,6 +3138,7 @@ fn SlowDownProjectileAfterBouncing( Vec3f &mut velocity, EntitiesDescription::To
 }
 
 fn DamageEntityOrPlayer(
+	SoundsDescription& sounds_description,
 	ust::array_view_mut</ ust::optional</EntityState/> /> entities,
 	PlayerState &mut player_state,
 	u32 entity_index,
@@ -3144,7 +3146,7 @@ fn DamageEntityOrPlayer(
 {
 	if( entity_index == c_player_entity_index )
 	{
-		DamagePlayer( player_state, damage );
+		DamagePlayer( sounds_description, player_state, damage );
 	}
 	else
 	{
@@ -3158,7 +3160,7 @@ fn DamageEntityOrPlayer(
 	}
 }
 
-fn DamagePlayer( PlayerState &mut player_state, u32 damage )
+fn DamagePlayer( SoundsDescription& sounds_description, PlayerState &mut player_state, u32 damage )
 {
 	if( damage == 0u )
 	{
@@ -3169,6 +3171,10 @@ fn DamagePlayer( PlayerState &mut player_state, u32 damage )
 	{
 		return;
 	}
+
+	// Assume that we need to emit this sound each time the player is damaged.
+	// TODO - check if the original game does this too.
+	EmitPlayerDamageSound( sounds_description, player_state.sound_source_slots );
 
 	// An investigation of the original game has shown,
 	// that armor absorbs 50% damage (rounded down),
@@ -3225,7 +3231,11 @@ fn ProcessProjectileHitEventsLogicStep( GameGlobalData& global_data, GameMapData
 			{
 				// No splash damage - damage hit entity directly.
 				DamageEntityOrPlayer(
-					game_state.entities, game_state.player, projectile_hit_event.hit_entity_index, weapon_tool.damage );
+					global_data.sounds_description.deref(),
+					game_state.entities,
+					game_state.player,
+					projectile_hit_event.hit_entity_index,
+					weapon_tool.damage );
 			}
 
 			collision_kind_index= 1s;
@@ -3267,6 +3277,7 @@ fn ProcessProjectileHitEventsLogicStep( GameGlobalData& global_data, GameMapData
 			var f32 splash_base_damage( weapon_tool.damage );
 
 			ApplySplashDamage(
+				global_data.sounds_description.deref(),
 				projectile_hit_event.position,
 				splash_damage_radius,
 				splash_base_damage,
@@ -3490,6 +3501,7 @@ fn ProcessProjectileHitEventsLogicStep( GameGlobalData& global_data, GameMapData
 }
 
 fn ApplySplashDamage(
+	SoundsDescription& sounds_description,
 	Vec3f& center,
 	f32 radius,
 	f32 splash_base_damage,
@@ -3527,7 +3539,8 @@ fn ApplySplashDamage(
 			var u32 damage_at_distance_rounded(
 				damage_at_distance + f32( rand.Next() ) / f32( PseudoRandomGenerator::c_max_plus_one ) );
 
-			DamageEntityOrPlayer( entities, player, collider.entity_index, damage_at_distance_rounded );
+			DamageEntityOrPlayer(
+				sounds_description, entities, player, collider.entity_index, damage_at_distance_rounded );
 		}
 	}
 }
@@ -3559,7 +3572,7 @@ fn AlarmEnemiesByNearbyEvent(
 }
 
 fn ProcessDamagingFlamesLogicStep(
-	GameParams& game_params,
+	GameGlobalData& global_data,
 	DamagingFlamesContainer &mut damaging_flames,
 	PseudoRandomGenerator &mut rand,
 	ust::array_view_mut</ ust::optional</EntityState /> /> entities,
@@ -3577,6 +3590,8 @@ fn ProcessDamagingFlamesLogicStep(
 			A little bit of random is added to damage to compensate rounding errors, so that even single flame damages sometimes.
 	*/
 
+	var GameParams& game_params= global_data.game_params.deref();
+
 	var u32 damage_step_mask= game_params.fire_damage[0];
 	var u32 base_flame_damage= game_params.fire_damage[1];
 	var u32 constexpr c_flame_damage_divisor= 16u;
@@ -3589,7 +3604,8 @@ fn ProcessDamagingFlamesLogicStep(
 				var u32 damage= ( base_flame_damage + rand.Next() % c_flame_damage_divisor ) / c_flame_damage_divisor;
 				if( damage > 0u )
 				{
-					DamageEntityOrPlayer( entities, player, damaging_flame.entity_index, damage );
+					DamageEntityOrPlayer(
+						global_data.sounds_description.deref(), entities, player, damaging_flame.entity_index, damage );
 				}
 			}
 
@@ -6441,6 +6457,15 @@ fn EmitPlayerJumpSound( SoundsDescription& sounds_description, PlayerSoundSource
 	{
 		var u32 volume= 255u; // TODO - tune it?
 		EmitSound( slots, u8(sounds_description.character_jump), volume );
+	}
+}
+
+fn EmitPlayerDamageSound( SoundsDescription& sounds_description, PlayerSoundSourceSlots &mut slots )
+{
+	if( sounds_description.character_damage >= 0 && sounds_description.character_damage < i32( SoundsDescription::c_num_sounds ) )
+	{
+		var u32 volume= 255u; // TODO - tune it?
+		EmitSound( slots, u8(sounds_description.character_damage), volume );
 	}
 }
 
