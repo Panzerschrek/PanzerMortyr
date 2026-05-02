@@ -173,14 +173,20 @@ PanzerMortyr sound:
 * Play hurt and death sounds for the player.
 * Play player's jump sounds.
 * Play player's out-of-ammo sounds.
+* Play sounds for player entering/leaving water.
+* Play tool-related sounds (if has some).
+* Play necessary sounds while activating a tool (a health pack, armor, a weapon).
 * Play other player-related sounds.
 * Play enemy alarm default sounds (Halt oder ich schieße!).
 * Play enemy hurt and death default sounds.
 * Play breaking glass sounds.
+* Play sounds for pushed enities.
 * Play exposion sounds.
 * Play projectile hit sounds.
+* Play projectile bounce sounds (for grenades and other bouncing projectiles).
 * Play bird sounds.
 * Play main character speech (he says something at some specific map places).
+* Play sounds of dynamic clusters (doors, elevators, buttons).
 * Play ambient sounds.
 * Play CD music and/or music files ripped from the original CD.
 * Implement 3D sounds - with distance-based attenuation and separate volume for left and right channel depending on head orientation.
@@ -188,5 +194,6 @@ PanzerMortyr sound:
 * Play menu sounds.
 * Save playing sounds in save files and resume playing them upon game loading.
 * Stop playing sounds from a previous level after level tranition.
-* Consider implementing sound effects like reverberation/echo effects and use them where it makes sense (like while under water).
+* Consider implementing sound effects like reverberation/echo effects and use them where it makes sense (like while under water oh having an environment suit active).
 * Consider adding a setting for sound quality (sample rate).
+* Pause/resume game sounds when pausing the game.
