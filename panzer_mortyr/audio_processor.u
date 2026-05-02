@@ -4,58 +4,62 @@ namespace PM
 {
 
 fn AudioProcessor::constructor(
-	ConsoleOutPtr mut console_out_ptr,
-	GameFilesystemPtr mut game_filesystem_ptr,
+	ConsoleOutPtr& console_out_ptr,
+	GameFilesystemPtr& game_filesystem_ptr,
 	CachingGameResourcesLoaderPtr& caching_game_resources_loader )
 	(
-		game_filesystem_= move( game_filesystem_ptr ),
 		audio_mixer_shared_data_( AudioMixerSharedData() ),
 		audio_out_( console_out_ptr, audio_mixer_shared_data_ ),
-		console_out_= move( console_out_ptr ),
-		sounds_description_=
-			lambda[&]() : GameResourcePtr</SoundsDescription/>
+	)
+{
+	var GameResourcePtr</SoundsDescription/> sounds_description_ptr=
+		lambda[&]() : GameResourcePtr</SoundsDescription/>
 			{
 				auto mut lock= caching_game_resources_loader.lock_mut();
 				return lock.deref().LoadSoundsDescription();
-			}()
-	)
-{
+			}();
+
+	// Just preload all sound files listed in the "GLOS.STD" file.
+	// There are not so many of them, only around 10Mb of data total.
+
+	// Use a hash map for deduplication, since some slots use the same file name.
+	var ust::hash_map</ ResourceString, SoundDataNullablePtr /> mut sound_data_hash_map;
+
+	auto& sounds_description= sounds_description_ptr.deref().sounds;
+
+	auto mut fs_lock= game_filesystem_ptr.lock_mut();
+
+	for( auto mut i= 0s; i < SoundsDescription::c_num_sounds; ++i )
+	{
+		var ResourceString& file_name= sounds_description[i].file_name;
+
+		if( file_name[0] != '\0' )
+		{
+			if_var( &prev_data : sound_data_hash_map.find( file_name ) )
+			{
+				sounds_data_[i]= prev_data;
+				continue;
+			}
+
+			auto mut sound_data_opt= LoadSoundData( console_out_ptr, fs_lock.deref(), file_name );
+
+			if( !sound_data_opt.empty() )
+			{
+				var ust::shared_ptr_mt_final</ SoundDataAbstract /> data_shared_ptr( sound_data_opt.try_take() );
+				sounds_data_[i]= data_shared_ptr;
+				sound_data_hash_map.insert_new( file_name, data_shared_ptr );
+			}
+			else
+			{
+				// Insert a dummy if failed to load.
+				sound_data_hash_map.insert_new( file_name, SoundDataNullablePtr() );
+			}
+		}
+	}
 }
 
 fn AudioProcessor::Update( mut this, WorldAudioInfo& world_audio_info )
 {
-	auto& sounds_description= sounds_description_.deref().sounds;
-	var size_type constexpr sound_table_size= typeinfo</ typeof( sounds_description ) />.element_count;
-
-	// Load sound files.
-	// TODO - remove unused ones upon level transition.
-	foreach( &sound_source : world_audio_info.sound_sources )
-	{
-		if( size_type( sound_source.sound_index ) < sound_table_size )
-		{
-			var ResourceString& file_name= sounds_description[ size_type( sound_source.sound_index ) ].file_name;
-			if( file_name[0] != '\0' && !sound_files_data_.exists( file_name ) )
-			{
-				// Load a sound file if not loaded yet.
-				// TODO - perform preloading at the start of the level
-				auto mut fs_lock= game_filesystem_.lock_mut();
-
-				auto mut sound_data_opt= LoadSoundData( console_out_, fs_lock.deref(), file_name );
-				if( !sound_data_opt.empty() )
-				{
-					sound_files_data_.insert_new(
-						file_name, ust::shared_ptr_mt_final</ SoundDataAbstract />( sound_data_opt.try_take() ) );
-				}
-				else
-				{
-					// Insert a dummy.
-					sound_files_data_.insert_new(
-						file_name, ust::shared_ptr_mt_final_nullable</ SoundDataAbstract />() );
-				}
-			}
-		}
-	}
-
 	with( mut lock : audio_mixer_shared_data_.lock_mut() )
 	{
 		var AudioMixerSharedData &mut audio_mixer_shared_data= lock.deref();
@@ -121,27 +125,25 @@ fn AudioProcessor::Update( mut this, WorldAudioInfo& world_audio_info )
 			{
 				// Add new one.
 
-				if( size_type( sound_source.sound_index ) < sound_table_size )
+				if( size_type( sound_source.sound_index ) < typeinfo</ typeof( sounds_data_ ) />.element_count )
 				{
-					var ResourceString& file_name= sounds_description[ size_type( sound_source.sound_index ) ].file_name;
-					if_var( &sound_data_nullable : sound_files_data_.find( file_name) )
+					var SoundDataNullablePtr& sound_data_nullable_ptr= sounds_data_[ sound_source.sound_index ];
+					if( !sound_data_nullable_ptr.empty() )
 					{
-						if( !sound_data_nullable.empty() )
-						{
-							active_sound_sources_.insert_new( sound_source.id, ActiveSoundSource{ .used= true } );
+						active_sound_sources_.insert_new( sound_source.id, ActiveSoundSource{ .used= true } );
 
-							audio_mixer_shared_data.sources.push_back(
-								AudioMixerSharedData::SoundSource
-								{
-									.id= sound_source.id,
-									.current_volume= sound_source.volume,
-									.new_volume= sound_source.volume,
-									.sound_data= sound_data_nullable.try_to_non_nullable(),
-									.sample_counter= 0u,
-									.is_about_to_be_removed= false,
-								} );
-						}
+						audio_mixer_shared_data.sources.push_back(
+							AudioMixerSharedData::SoundSource
+							{
+								.id= sound_source.id,
+								.current_volume= sound_source.volume,
+								.new_volume= sound_source.volume,
+								.sound_data= sound_data_nullable_ptr.try_to_non_nullable(),
+								.sample_counter= 0u,
+								.is_about_to_be_removed= false,
+							} );
 					}
+
 				}
 			}
 		}
