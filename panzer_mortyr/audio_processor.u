@@ -6,11 +6,12 @@ namespace PM
 fn AudioProcessor::constructor(
 	ConsoleOutPtr& console_out_ptr,
 	GameFilesystemPtr& game_filesystem_ptr,
-	Settings& settings,
+	SettingsImutPtr mut settings,
 	CachingGameResourcesLoaderPtr& caching_game_resources_loader )
 	(
 		audio_mixer_shared_data_( AudioMixerSharedData() ),
-		audio_out_( console_out_ptr, settings, audio_mixer_shared_data_ ),
+		audio_out_( console_out_ptr, settings.lock_imut().deref(), audio_mixer_shared_data_ ),
+		settings_= move(settings)
 	)
 {
 	var GameResourcePtr</SoundsDescription/> sounds_description_ptr=
@@ -61,6 +62,16 @@ fn AudioProcessor::constructor(
 
 fn AudioProcessor::Update( mut this, WorldAudioInfo& world_audio_info )
 {
+	// TODO - use non-linear volume scale?
+	var f32 volume_scale= ust::max( 0.0f, ust::min( 1.0f, f32( settings_.lock_imut().deref().snd_volume ) / 100.0f ) );
+
+	auto prepare_volume=
+		lambda[=]( [ f32, 2 ]& volume ) : [ f32, 2 ]
+		{
+			var [ f32, 2 ] volume_scaled[ volume[0] * volume_scale, volume[1] * volume_scale ];
+			return volume_scaled;
+		};
+
 	with( mut lock : audio_mixer_shared_data_.lock_mut() )
 	{
 		var AudioMixerSharedData &mut audio_mixer_shared_data= lock.deref();
@@ -130,7 +141,7 @@ fn AudioProcessor::Update( mut this, WorldAudioInfo& world_audio_info )
 							if( mixer_source.id == sound_source.id )
 							{
 								active_sound_source.is_playing= true;
-								mixer_source.new_volume= sound_source.volume;
+								mixer_source.new_volume= prepare_volume( sound_source.volume );
 								break;
 							}
 						}
@@ -156,12 +167,14 @@ fn AudioProcessor::Update( mut this, WorldAudioInfo& world_audio_info )
 						{
 							if( mixer_source.id == c_empty_sound_source_id )
 							{
+								var [ f32, 2 ] volume_prepared= prepare_volume( sound_source.volume );
+
 								mixer_source=
 									AudioMixerSharedData::SoundSource
 									{
 										.id= sound_source.id,
-										.current_volume= sound_source.volume,
-										.new_volume= sound_source.volume,
+										.current_volume= volume_prepared,
+										.new_volume= volume_prepared,
 										.sound_data= sound_data_nullable_ptr,
 										.sample_counter= 0u,
 										.is_about_to_be_removed= false,
