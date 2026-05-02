@@ -1162,7 +1162,7 @@ fn PerformPlayerMovement(
 	if( game_state.player.energy > 0u )
 	{
 		ApplyPlayerUnclippedMovement(
-			global_data.game_params.deref(),
+			global_data,
 			game_state.player,
 			player_input.move_wish_vector,
 			player_input.jump_requested );
@@ -1172,7 +1172,7 @@ fn PerformPlayerMovement(
 		// If the player is dead - apply unclipped movement, but with controls disabled.
 		// Gravity and deceleration should be still applied.
 		ApplyPlayerUnclippedMovement(
-			global_data.game_params.deref(),
+			global_data,
 			game_state.player,
 			Vec3f::MakeZero(),
 			false );
@@ -1366,7 +1366,7 @@ fn PerformPlayerMovement(
 }
 
 fn ApplyPlayerUnclippedMovement(
-	GameParams& game_params,
+	GameGlobalData& global_data,
 	PlayerState &mut player_state,
 	Vec3f& move_wish_direction,
 	bool jump_requested )
@@ -1375,7 +1375,8 @@ fn ApplyPlayerUnclippedMovement(
 
 	// Max player speed is defined via the game config.
 	// Make it smaller if crouching.
-	var f32 max_horizontal_speed_per_step= f32( game_params.max_player_speed ) * crouching_related_movement_scale;
+	var f32 max_horizontal_speed_per_step=
+		f32( global_data.game_params.deref().max_player_speed ) * crouching_related_movement_scale;
 
 	// Acceleration depends on friction. Scale is for now just guessed.
 	// Acceleration is twice as big as deceleration, it's needed because deceleration is always applied.
@@ -1447,10 +1448,13 @@ fn ApplyPlayerUnclippedMovement(
 			player_state.velocity+= move_vector_transformed * ( horizontal_acceleration_per_step * liquid_gravity_scale );
 
 			// Allow jumping while standing on bottom, but with less power.
+			// TODO - consider adding a jumping timeout.
 			if( jump_requested )
 			{
 				player_state.velocity.z+=
 					c_jump_vertical_velocity_add * liquid_jump_velocity_scale * crouching_related_movement_scale;
+
+				EmitPlayerJumpSound( global_data.sounds_description.deref(), player_state.sound_source_slots );
 			}
 
 			// Apply ground deceleration.
@@ -1487,9 +1491,12 @@ fn ApplyPlayerUnclippedMovement(
 
 		player_state.velocity.z+= c_gravity_per_step;
 
+		// TODO - consider adding a jumping timeout.
 		if( jump_requested && player_state.on_ground )
 		{
 			player_state.velocity.z+= c_jump_vertical_velocity_add * crouching_related_movement_scale;
+
+			EmitPlayerJumpSound( global_data.sounds_description.deref(), player_state.sound_source_slots );
 		}
 
 		{
@@ -6426,6 +6433,16 @@ fn GetShotVectorBasis( Vec3f& shot_vector ) : [ Vec3f, 3 ]
 			basis_vector_a / basis_vector_a_length,
 			basis_vector_b / basis_vector_b_length,
 			basis_vector_c / basis_vector_c_length );
+}
+
+template</size_type N/>
+fn EmitPlayerJumpSound( SoundsDescription& sounds_description, [ SoundSourceSlot, N ] &mut slots )
+{
+	if( sounds_description.character_jump >= 0 && sounds_description.character_jump < i32( SoundsDescription::c_num_sounds ) )
+	{
+		var u32 volume= 255u; // TODO - tune it?
+		EmitSound( slots, u8(sounds_description.character_jump), volume );
+	}
 }
 
 template</size_type N/>
