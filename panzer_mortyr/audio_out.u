@@ -7,7 +7,7 @@ namespace PM
 fn AudioOut::constructor(
 	ConsoleOutPtr& console_out, Settings& settings, AudioMixerSharedDataPtr mut audio_mixer_shared_data_ptr )
 	(
-		device_id_= 0u /* set later */,
+		device_id_= 0u, // Set later.
 		audio_mixer_( AudioMixer( move( audio_mixer_shared_data_ptr ) ) )
 	)
 {
@@ -31,7 +31,7 @@ fn AudioOut::constructor(
 			.samples( 512 ), // TODO - tune this to reduce sound latency.
 			.padding= zero_init,
 			.size= 0u, // This will be filled by SDL_OpenAudioDevice call.
-			.callback( AudioCallback ),
+			.callback( AudioCallback ), // This callback is executed in a separate thread.
 			.userdata= ust::ptr_cast_to_byte8( audio_mixer_.get_ptr() ),
 		};
 
@@ -54,10 +54,13 @@ fn AudioOut::constructor(
 			return;
 		}
 
-		ConsoleOutAddTextLine( console_out, "Opened an audio device." );
-		// TODO - print audio device name.
-		ConsoleOutAddTextLine( console_out, ust::concat( " frequency: ", ust::to_string8( obtained_spec.freq ) ) );
-		ConsoleOutAddTextLine( console_out, ust::concat( " buffer size: ", ust::to_string8( obtained_spec.samples ) ) );
+		safe
+		{
+			ConsoleOutAddTextLine( console_out, "Opened an audio device." );
+			// TODO - print audio device name.
+			ConsoleOutAddTextLine( console_out, ust::concat( " frequency: ", ust::to_string8( obtained_spec.freq ) ) );
+			ConsoleOutAddTextLine( console_out, ust::concat( " buffer size: ", ust::to_string8( obtained_spec.samples ) ) );
+		}
 
 		// Prepare audio thread data before unpausing audio thread and this launching audio thread.
 		audio_mixer_.deref().SetFrequency( u32( obtained_spec.freq ) );
@@ -71,7 +74,7 @@ fn AudioOut::destructor()
 {
 	if( device_id_ != 0u )
 	{
-		// Pause before closing to stop the audio callback which can be executed right now on a separate thread.
+		// Pause before closing to stop the audio callback, which can be executed right now on a separate thread.
 		unsafe( SDL_PauseAudioDevice( device_id_, 1 ) );
 
 		unsafe( SDL_CloseAudioDevice( device_id_ ) );
@@ -85,6 +88,8 @@ fn AudioOut::IsActive( this ) : bool
 	return device_id_ != 0u;
 }
 
+// "userdata" pointer should be a pointer to an instance of "AudioMixer" class.
+// "stream" should be valid pointer and at lest "len" bytes should be redable from it.
 fn AudioCallback( $(byte8) userdata, $(Uint8) stream, i32 len ) unsafe call_conv( "C" )
 {
 	unsafe( $>( ust::byte_ptr_cast</AudioMixer/>( userdata ) ) ).Mix(
