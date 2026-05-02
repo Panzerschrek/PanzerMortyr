@@ -1,0 +1,259 @@
+import "/string_conversions.iu"
+import "audio_processor.iu"
+
+namespace PM
+{
+
+fn AudioProcessor::constructor(
+	ConsoleOutPtr& console_out_ptr,
+	GameFilesystemPtr& game_filesystem_ptr,
+	SettingsImutPtr mut settings,
+	CachingGameResourcesLoaderPtr& caching_game_resources_loader )
+	(
+		audio_mixer_shared_data_( AudioMixerSharedData() ),
+		audio_out_( console_out_ptr, settings.lock_imut().deref(), audio_mixer_shared_data_ ),
+		settings_= move(settings)
+	)
+{
+	if( !audio_out_.IsActive() )
+	{
+		ConsoleOutAddTextLine( console_out_ptr, "Audio out isn't active, skip loading sounds." );
+		return;
+	}
+
+	var GameResourcePtr</SoundsDescription/> sounds_description_ptr=
+		lambda[&]() : GameResourcePtr</SoundsDescription/>
+			{
+				auto mut lock= caching_game_resources_loader.lock_mut();
+				return lock.deref().LoadSoundsDescription();
+			}();
+
+	// Just preload all sound files listed in the "GLOS.STD" file.
+	// There are not so many of them, only around 10Mb of data total.
+
+	// Use a hash map for deduplication, since some entires in the sounds table use the same file name.
+	var ust::hash_map</ ResourceString, SoundDataNullablePtr /> mut sound_data_hash_map;
+
+	auto& sounds_description= sounds_description_ptr.deref().sounds;
+
+	auto mut fs_lock= game_filesystem_ptr.lock_mut();
+
+	var size_type mut num_sound_files_loaded= 0s, mut total_sound_data_bytes= 0s;
+
+	for( auto mut i= 0s; i < SoundsDescription::c_num_sounds; ++i )
+	{
+		var ResourceString& file_name= sounds_description[i].file_name;
+
+		if( file_name[0] == '\0' )
+		{
+			// Empty sound - ignore it.
+			continue;
+		}
+
+		if_var( &prev_data : sound_data_hash_map.find( file_name ) )
+		{
+			// Already loaded a file with this name - reuse sound data for it.
+			sounds_data_[i]= prev_data;
+			continue;
+		}
+
+		auto mut sound_data_opt= LoadSoundData( console_out_ptr, fs_lock.deref(), file_name );
+
+		if( !sound_data_opt.empty() )
+		{
+			++num_sound_files_loaded;
+
+			variant_visit( &el : sound_data_opt.try_deref() )
+			{
+				total_sound_data_bytes+= el.GetSamples().to_byte8_range().size();
+			}
+
+			var ust::shared_ptr_mt_final</ SoundDataAbstract /> data_shared_ptr( sound_data_opt.try_take() );
+			sounds_data_[i]= data_shared_ptr;
+			sound_data_hash_map.insert_new( file_name, data_shared_ptr );
+		}
+		else
+		{
+			// Insert a dummy if failed to load.
+			sound_data_hash_map.insert_new( file_name, SoundDataNullablePtr() );
+		}
+	}
+
+	ConsoleOutAddTextLine(
+		console_out_ptr,
+		ust::concat(
+			"Loaded ",
+			ust::to_string8( num_sound_files_loaded ),
+			" sound files with total size ",
+			ust::to_string8( total_sound_data_bytes ),
+			" bytes." ) );
+}
+
+fn AudioProcessor::Update( mut this, WorldAudioInfo& world_audio_info )
+{
+	if( !audio_out_.IsActive() )
+	{
+		return;
+	}
+
+	// TODO - use non-linear volume scale?
+	var f32 volume_scale= ust::max( 0.0f, ust::min( 1.0f, f32( settings_.lock_imut().deref().snd_volume ) / 100.0f ) );
+
+	var bool swap_channels= settings_.lock_imut().deref().snd_swap_channels;
+
+	auto prepare_volume=
+		lambda[=]( [ f32, 2 ]& volume ) : [ f32, 2 ]
+		{
+			var [ f32, 2 ] mut volume_scaled[ volume[0] * volume_scale, volume[1] * volume_scale ];
+			if( swap_channels )
+			{
+				auto tmp= volume_scaled[0];
+				volume_scaled[0]= volume_scaled[1];
+				volume_scaled[1]= tmp;
+			}
+			return volume_scaled;
+		};
+
+	auto mut lock= audio_mixer_shared_data_.lock_mut();
+	var AudioMixerSharedData &mut audio_mixer_shared_data= lock.deref();
+
+	// Mark used sound sources.
+	//
+
+	foreach( v : active_sound_sources_ )
+	{
+		v.value().used= false;
+	}
+
+	foreach( &sound_source : world_audio_info.sound_sources )
+	{
+		if_var( &mut active_source : active_sound_sources_.find( sound_source.id ) )
+		{
+			active_source.used= true;
+		}
+	}
+
+	// Remove no longer used sound sources.
+	//
+
+	active_sound_sources_.retain(
+		lambda[&]( UniqueSoundSourceId id, ActiveSoundSource& active_sound_source ) : bool
+		{
+			if( !active_sound_source.used )
+			{
+				if( active_sound_source.is_playing )
+				{
+					// Mark it as about to be removed by the mixer.
+					// It's fine to use linear search here, since we have only a small fixed number of slots.
+					foreach( &mut mixer_source : audio_mixer_shared_data.sources )
+					{
+						if( mixer_source.id == id )
+						{
+							mixer_source.is_about_to_be_removed= true;
+							break;
+						}
+					}
+				}
+
+				return false; // Need to remove.
+			}
+			return true; // Need to preserve.
+		} );
+
+	// Add new sources or update old ones.
+	foreach( &sound_source : world_audio_info.sound_sources )
+	{
+		auto mut active_sound_source_opt= active_sound_sources_.find( sound_source.id );
+
+		if( !active_sound_source_opt.empty() )
+		{
+			// Update.
+			{
+				var ActiveSoundSource &mut active_sound_source= active_sound_source_opt.try_deref();
+
+				if( active_sound_source.is_playing )
+				{
+					// Mark as non-playing before checking if it's still playing.
+					active_sound_source.is_playing= false;
+
+					// It's fine to use linear search here, since we have only a small fixed number of slots.
+					foreach( &mut mixer_source : audio_mixer_shared_data.sources )
+					{
+						if( mixer_source.id == sound_source.id )
+						{
+							active_sound_source.is_playing= true;
+							mixer_source.new_volume= prepare_volume( sound_source.volume );
+							break;
+						}
+					}
+				}
+			}
+
+			move(active_sound_source_opt);
+		}
+		else
+		{
+			move(active_sound_source_opt);
+
+			// Add new one.
+
+			if( size_type( sound_source.sound_index ) < typeinfo</ typeof( sounds_data_ ) />.element_count )
+			{
+				var SoundDataNullablePtr& sound_data_nullable_ptr= sounds_data_[ sound_source.sound_index ];
+				if( !sound_data_nullable_ptr.empty() )
+				{
+					// Search for a free slot.
+					// It's fine to use linear search here, since we have only a small fixed number of slots.
+					foreach( &mut mixer_source : audio_mixer_shared_data.sources )
+					{
+						if( mixer_source.id == c_empty_sound_source_id )
+						{
+							// Found a free slot. Assign it to this source.
+
+							var [ f32, 2 ] volume_prepared= prepare_volume( sound_source.volume );
+
+							mixer_source=
+								AudioMixerSharedData::SoundSource
+								{
+									.id= sound_source.id,
+									.current_volume= volume_prepared,
+									.new_volume= volume_prepared,
+									.sound_data= sound_data_nullable_ptr,
+									.sample_counter= 0u,
+									.is_about_to_be_removed= false,
+								};
+
+							active_sound_sources_.insert_new(
+								sound_source.id, ActiveSoundSource{ .used= true, .is_playing= true } );
+
+							break;
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
+fn AudioProcessor::GetStats( this ) : Stats
+{
+	var Stats mut stats
+	{
+		.num_active_sound_sources= 0u,
+		.num_playing_sound_sources= 0u,
+	};
+
+	foreach( &active_sound_source : active_sound_sources_ )
+	{
+		++stats.num_active_sound_sources;
+
+		if( active_sound_source.value().is_playing )
+		{
+			++stats.num_playing_sound_sources;
+		}
+	}
+
+	return stats;
+}
+
+} // namespace PM

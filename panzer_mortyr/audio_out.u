@@ -1,0 +1,102 @@
+import "/string_conversions.iu"
+import "audio_out.iu"
+
+namespace PM
+{
+
+fn AudioOut::constructor(
+	ConsoleOutPtr& console_out, Settings& settings, AudioMixerSharedDataPtr mut audio_mixer_shared_data_ptr )
+	(
+		device_id_= 0u, // Set later.
+		audio_mixer_( AudioMixer( move( audio_mixer_shared_data_ptr ) ) )
+	)
+{
+	if( !settings.snd_audio_enabled )
+	{
+		device_id_= 0u;
+		ConsoleOutAddTextLine( console_out, "Audio is disabled, skip initializing audio subsystem." );
+		return;
+	}
+
+	unsafe
+	{
+		SDL_InitSubSystem( SDL_INIT_AUDIO );
+
+		var SDL_AudioSpec desired_spec
+		{
+			.freq= 44100,
+			.format( AUDIO_F32LSB ),
+			.channels( 2 ),
+			.silence(0), // This will be filled by SDL_OpenAudioDevice call.
+			.samples( 512 ), // TODO - tune this to reduce sound latency.
+			.padding= zero_init,
+			.size= 0u, // This will be filled by SDL_OpenAudioDevice call.
+			.callback( AudioCallback ), // This callback is executed in a separate thread.
+			.userdata= ust::ptr_cast_to_byte8( audio_mixer_.get_ptr() ),
+		};
+
+		var SDL_AudioSpec mut obtained_spec= zero_init;
+
+		device_id_=
+			SDL_OpenAudioDevice(
+				ust::nullptr</char8/>(), // Use default device name.
+				0, // Perform oudio playing, not recording.
+				$<( cast_mut( desired_spec ) ), // What spec we want.
+				$<( obtained_spec ), // What spec we get.
+				// Allow changing frequency and samples. But we can't deal with format and channels changes.
+				SDL_AUDIO_ALLOW_FREQUENCY_CHANGE | SDL_AUDIO_ALLOW_SAMPLES_CHANGE );
+
+		if( device_id_ == 0u )
+		{
+			ConsoleOutAddTextLine( console_out, "Failed to open audio device!" );
+
+			// Just leave "device_id_" with zero value and output no sound at all.
+			return;
+		}
+
+		safe
+		{
+			ConsoleOutAddTextLine( console_out, "Opened an audio device." );
+			// TODO - print audio device name.
+			ConsoleOutAddTextLine( console_out, ust::concat( " frequency: ", ust::to_string8( obtained_spec.freq ) ) );
+			ConsoleOutAddTextLine( console_out, ust::concat( " buffer size: ", ust::to_string8( obtained_spec.samples ) ) );
+		}
+
+		// Prepare audio thread data before unpausing audio thread and this launching audio thread.
+		audio_mixer_.deref().SetFrequency( u32( obtained_spec.freq ) );
+
+		// Run the device, which is created in paused state.
+		SDL_PauseAudioDevice( device_id_, 0 );
+	}
+}
+
+fn AudioOut::destructor()
+{
+	if( device_id_ != 0u )
+	{
+		// Pause before closing to stop the audio callback, which can be executed right now on a separate thread.
+		unsafe( SDL_PauseAudioDevice( device_id_, 1 ) );
+
+		unsafe( SDL_CloseAudioDevice( device_id_ ) );
+
+		unsafe( SDL_QuitSubSystem( SDL_INIT_AUDIO ) );
+	}
+}
+
+fn AudioOut::IsActive( this ) : bool
+{
+	return device_id_ != 0u;
+}
+
+// "userdata" pointer should be a pointer to an instance of "AudioMixer" class.
+// "stream" should be valid pointer and at lest "len" bytes should be redable from it.
+fn AudioCallback( $(byte8) userdata, $(Uint8) stream, i32 len ) unsafe call_conv( "C" )
+{
+	unsafe( $>( ust::byte_ptr_cast</AudioMixer/>( userdata ) ) ).Mix(
+		unsafe(
+			ust::array_view_mut</AudioMixer::SamplePairType/>(
+				ust::byte_ptr_cast</AudioMixer::SamplePairType/>( ust::ptr_cast_to_byte8( stream ) ),
+				size_type(len) / typeinfo</AudioMixer::SamplePairType/>.size_of ) ) );
+}
+
+} // namespace PM

@@ -3,6 +3,7 @@ import "/integer_parsing.iu"
 import "/main_wrapper.iu"
 import "/stdout.iu"
 
+import "audio_processor.iu"
 import "command_line_options.iu"
 import "console.iu"
 import "crosshair_drawer.iu"
@@ -12,6 +13,7 @@ import "hud_drawer.iu"
 import "menu.iu"
 import "opengl_window.iu"
 import "performance_counter.iu"
+import "sound_loading.iu"
 import "world_drawer.iu"
 
 pretty_main
@@ -34,7 +36,6 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 	// Parse command line.
 
 	var CommandLineOptions command_line_options= ParseCommandLineOptions( args );
-
 
 	// Create console out as first step - in order to have proper logging.
 
@@ -88,6 +89,9 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 		caching_game_resources_loader_ptr,
 		console_out_ptr,
 		GLCapabilities::Create() );
+
+	var AudioProcessor mut audio_processor(
+		console_out_ptr, game_filesystem_ptr, settings_ptr, caching_game_resources_loader_ptr );
 
 	if_var( start_map : command_line_options.start_map )
 	{
@@ -271,6 +275,9 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 			// TODO - update game in multiplayer mode always.
 
 			game.Update( time_delta_s_limited, keyboard_state, mouse_buttons_state, mouse_motion );
+
+			// Update audio as soon as possible after game update - to reduce audio latency.
+			audio_processor.Update( game.GetWorldAudioInfo() );
 		}
 
 		console.Update( time_delta_s );
@@ -302,6 +309,11 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 				// Fill background with a tileable image.
 				image_drawer.DrawImage( bacground_image_file_name, 0, 0, 1.0f, 0u, 0u, viewport_size[0], viewport_size[1] );
 			}
+		}
+
+		if( settings_ptr.lock_imut().deref().r_show_stats )
+		{
+			DrawAudioStats( text_drawer, audio_processor.GetStats() );
 		}
 
 		if_var( &hud_drawing_info : game.GetHudDrawingInfo() )
@@ -579,6 +591,29 @@ fn DrawWorldDrawingStats( TextDrawer &mut text_drawer, [ u32, 2 ] viewport_size,
 	text_drawer.AddText(
 		0,
 		i32( viewport_size[1] - TextDrawer::c_glyph_height ),
+		text,
+		TextDrawer::Settings
+		{
+			.monospace= true,
+			.background_color[ 0u8, 0u8, 0u8, 96u8 ],
+		} );
+}
+
+fn DrawAudioStats( TextDrawer &mut text_drawer, AudioProcessor::Stats& stats )
+{
+	var ust::string8 mut text;
+
+	text+= "active sounds: ";
+	text+= ust::to_string8( stats.num_active_sound_sources );
+	text+= "\n";
+
+	text+= "playing sounds: ";
+	text+= ust::to_string8( stats.num_playing_sound_sources );
+	text+= "\n";
+
+	text_drawer.AddText(
+		0,
+		i32( 2u * TextDrawer::c_glyph_height ),
 		text,
 		TextDrawer::Settings
 		{

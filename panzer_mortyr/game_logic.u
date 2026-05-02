@@ -136,6 +136,18 @@ fn CreateNewMapGameState(
 				.velocity_z= 0.0f,
 				.collider_index= ~0u,
 			};
+
+		with( &mut entity : pair.second.try_deref() )
+		{
+			// Emit a sound if spawning an entity in state requiring such sound.
+			if_var( &sound : entity_description.operations[ size_type( entity.current_operation ) ].sound )
+			{
+				if( sound.sound_index <= 255u )
+				{
+					EmitSound( entity.sound_source_slots, u8( sound.sound_index ), sound.power );
+				}
+			}
+		}
 	}
 
 	// Map entity navigation infos 1 to 1 to what is stored in the map data.
@@ -607,6 +619,11 @@ fn PerformPlayerWeaponLogic( GameMapData& map_data, PlayerInput& player_input, G
 							game_state.entities,
 							position,
 							c_player_shot_enemy_alarm_max_distance );
+					}
+
+					if( tool.sound >= 0 &&  tool.sound <= 255 )
+					{
+						EmitShotSound( player_state.sound_source_slots, u8(tool.sound) );
 					}
 				}
 			}
@@ -1704,6 +1721,18 @@ fn TriggerEntitiesSpawn( GameMapData& map_data, GameState &mut game_state )
 				.collider_index= ~0u,
 			};
 
+		with( &mut entity : game_state.entities[i].try_deref() )
+		{
+			// Emit a sound if spawning an entity in state requiring such sound.
+			if_var( &sound : entity_description.operations[ size_type( entity.current_operation ) ].sound )
+			{
+				if( sound.sound_index <= 255u )
+				{
+					EmitSound( entity.sound_source_slots, u8( sound.sound_index ), sound.power );
+				}
+			}
+		}
+
 		AddEntityCollider( entities_description, i, game_state );
 	}
 }
@@ -2248,6 +2277,15 @@ fn ProcessEntitiesLogicStep(
 						entity.current_operation= next_operation;
 						entity.num_steps_since_operation_start= 0u;
 						entity.lost_energy_in_current_operation= false;
+
+						// Emit a sound if switching to an operation having it.
+						if_var( &sound : entity_description.operations[ size_type( entity.current_operation ) ].sound )
+						{
+							if( sound.sound_index <= 255u )
+							{
+								EmitSound( entity.sound_source_slots, u8( sound.sound_index ), sound.power );
+							}
+						}
 					}
 					else
 					{
@@ -5552,6 +5590,11 @@ fn EntityShoot(
 			} );
 	}
 
+	if( weapon_tool.sound >= 0 &&  weapon_tool.sound <= 255 )
+	{
+		EmitShotSound( entity.sound_source_slots, u8(weapon_tool.sound) );
+	}
+
 	// Alarm other nearby enemies assuming shooting produces a loud sound which can be heard by them.
 	// The only exception is melee weapons.
 	if( weapon_tool.projectile_kind == EntitiesDescription::Tool::c_projectile_kind_melee )
@@ -5572,7 +5615,7 @@ fn EntityShoot(
 fn EntityDirectionalShot(
 	EntitiesDescription& entities_description,
 	EntitiesDescription::DirectionalShot& directional_shot,
-	EntityState& entity,
+	EntityState& mut entity,
 	u32 entity_index,
 	PseudoRandomGenerator &mut rand,
 	ProjectilesContainer &mut projectiles,
@@ -5639,6 +5682,11 @@ fn EntityDirectionalShot(
 				.color_index= weapon_tool.light_at_shot[0],
 				.age_steps= 0u,
 			} );
+	}
+
+	if( weapon_tool.sound >= 0 &&  weapon_tool.sound <= 255 )
+	{
+		EmitShotSound( entity.sound_source_slots, u8(weapon_tool.sound) );
 	}
 }
 
@@ -6378,6 +6426,68 @@ fn GetShotVectorBasis( Vec3f& shot_vector ) : [ Vec3f, 3 ]
 			basis_vector_a / basis_vector_a_length,
 			basis_vector_b / basis_vector_b_length,
 			basis_vector_c / basis_vector_c_length );
+}
+
+template</size_type N/>
+fn EmitShotSound( [ SoundSourceSlot, N ] &mut slots, u8 sound_index )
+{
+	var u32 volume_for_shots= 255u; // TODO - tune it?
+	EmitSound( slots, sound_index, volume_for_shots );
+}
+
+template</size_type N/>
+fn EmitSound( [ SoundSourceSlot, N ] &mut slots, u8 sound_index, u32 volume )
+{
+	if( volume <= 0u )
+	{
+		return;
+	}
+
+	var u8 volume_clamped( ust::min( volume, 255u ) );
+
+	var u16 mut max_sequential_index(0);
+
+	foreach( &slot : slots )
+	{
+		ust::max_assign( max_sequential_index, slot.sequential_index );
+	}
+
+	// Assume that 65535 unique sounds emitted by an entity/player during his/its lifetime is enough and no overflow happens here.
+	var u16 next_sequential_index( u32( max_sequential_index ) + 1u );
+
+	// Check if we can override existing sound source with the same index.
+	// It's necessary to stop playing previous sound with the same index.
+	// The original game does exactly this.
+	foreach( &mut slot : slots )
+	{
+		if( slot.sound_index == sound_index )
+		{
+			slot.sequential_index= next_sequential_index;
+			slot.volume= volume_clamped;
+			return;
+		}
+	}
+
+	// Pick the slot with the smallest sequential index.
+	// Doing so we recycle the oldest sounds.
+
+	var u16 mut min_sequential_index( ~0u );
+	var size_type mut min_sequential_index_slot_index= 0s;
+
+	for( auto mut i= 0s; i < N; ++i )
+	{
+		var u16 sequential_index= slots[i].sequential_index;
+		if( sequential_index < min_sequential_index )
+		{
+			min_sequential_index= sequential_index;
+			min_sequential_index_slot_index= i;
+		}
+	}
+
+	var SoundSourceSlot &mut slot= slots[ min_sequential_index_slot_index ];
+	slot.sequential_index= next_sequential_index;
+	slot.sound_index= sound_index;
+	slot.volume= volume_clamped;
 }
 
 } // namespace PM

@@ -1,0 +1,61 @@
+import "audio_out.iu"
+import "caching_game_resources_loader.iu"
+import "game_filesystem.iu"
+import "sound_loading.iu"
+import "world_audio_info.iu"
+
+namespace PM
+{
+
+// This class prepares sounds for output.
+class AudioProcessor
+{
+	struct Stats
+	{
+		u32 num_active_sound_sources;
+		u32 num_playing_sound_sources;
+	}
+
+public:
+	fn constructor(
+		ConsoleOutPtr& console_out_ptr,
+		GameFilesystemPtr& game_filesystem_ptr,
+		SettingsImutPtr settings,
+		CachingGameResourcesLoaderPtr& caching_game_resources_loader );
+
+	// Call it to add new sound sources or to update existing sources.
+	// For a sound to continue playing it should be always present in sound sources list of the given structure.
+	fn Update( mut this, WorldAudioInfo& world_audio_info );
+
+	fn GetStats( this ) : Stats;
+
+private:
+	struct ActiveSoundSource
+	{
+		// This flag is needed to detect and remove no longer active sound sources.
+		bool used;
+
+		// This flag is "false" if actual playback of the source already ended.
+		// It's used to avoid trying to modify sound sources in mixer's data if it isn't needed anymore.
+		bool is_playing;
+	}
+
+	// Use shared multithreaded pointer to share data with the mixer thread.
+	// Store null pointer if failed to load a file.
+	type SoundDataNullablePtr= ust::shared_ptr_mt_final_nullable</ SoundDataAbstract />;
+
+private:
+	SettingsImutPtr imut settings_;
+	AudioMixerSharedDataPtr imut audio_mixer_shared_data_;
+	AudioOut audio_out_;
+
+	// Table of preloaded sounds from the GLOS.STD file.
+	[ SoundDataNullablePtr, SoundsDescription::c_num_sounds ] sounds_data_;
+
+	// Store which sources are active (are present in the input sources list).
+	// Even if a a source already ended being played,
+	// we still preserve and entry in this map - to avoid restarting playing it again.
+	ust::hash_map</ UniqueSoundSourceId, ActiveSoundSource /> active_sound_sources_;
+}
+
+} // namespace PM
