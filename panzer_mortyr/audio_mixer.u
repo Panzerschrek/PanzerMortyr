@@ -1,4 +1,3 @@
-import "/math.iu"
 import "audio_mixer.iu"
 import "math_constants.iu"
 
@@ -20,7 +19,7 @@ fn AudioMixer::SetFrequency( mut this, u32 frequency )
 
 fn AudioMixer::Mix( mut this, ust::array_view_mut</SamplePairType/> out_sample_pairs )
 {
-	// Zero mix buffer before adding something to it.
+	// Zero the mix buffer before adding something to it.
 	foreach( &mut out_sample_pair : out_sample_pairs )
 	{
 		foreach( &mut sample : out_sample_pair )
@@ -36,7 +35,7 @@ fn AudioMixer::Mix( mut this, ust::array_view_mut</SamplePairType/> out_sample_p
 	{
 		if( sound_source.id != c_empty_sound_source_id && !sound_source.sound_data.empty() )
 		{
-			var bool mut need_to_remove= false;
+			var bool mut reached_sound_data_end= false;
 
 			variant_visit( &sound_data : sound_source.sound_data.try_deref() )
 			{
@@ -55,9 +54,9 @@ fn AudioMixer::Mix( mut this, ust::array_view_mut</SamplePairType/> out_sample_p
 					sound_source.current_volume[1] * sample_scale,
 				];
 
-				// If is about to remove this sound source - fade its volume towards zero.
 				var [ f32, c_num_samples ] end_volume=
 					( sound_source.is_about_to_be_removed
+						// If is about to remove this sound source - fade its volume towards zero.
 						? ust::make_array( 0.0f, 0.0f )
 						: ust::make_array(
 							sound_source.new_volume[0] * sample_scale,
@@ -74,14 +73,14 @@ fn AudioMixer::Mix( mut this, ust::array_view_mut</SamplePairType/> out_sample_p
 				foreach( &mut out_sample_pair : out_sample_pairs )
 				{
 					// Perform here resampling with linear interpolation.
-					// This works well, since out output frequency is almost always higher than frequency of sound files of the origina game.
+					// This works well, since output frequency is almost always higher than frequency of sound files of the original game.
 
 					var f32 src_sample_index_fractional= f32( sound_source.sample_counter ) * resampling_factor;
 					var u32 src_sample_index( src_sample_index_fractional );
 
 					if( size_type( src_sample_index ) + 1s >= sound_data_samples.size() )
 					{
-						need_to_remove= true;
+						reached_sound_data_end= true;
 						break;
 					}
 
@@ -97,8 +96,10 @@ fn AudioMixer::Mix( mut this, ust::array_view_mut</SamplePairType/> out_sample_p
 						sample_value+= sample_offset;
 					}
 
-					out_sample_pair[0]+= sample_value * current_volume[0];
-					out_sample_pair[1]+= sample_value * current_volume[1];
+					for( auto mut i= 0s; i < c_num_samples; ++i )
+					{
+						out_sample_pair[i]+= sample_value * current_volume[i];
+					}
 
 					++sound_source.sample_counter;
 
@@ -112,14 +113,9 @@ fn AudioMixer::Mix( mut this, ust::array_view_mut</SamplePairType/> out_sample_p
 			// Update current volume after interpolating it smoothly from old to new value.
 			sound_source.current_volume= sound_source.new_volume;
 
-			if( sound_source.is_about_to_be_removed )
+			if( reached_sound_data_end | sound_source.is_about_to_be_removed )
 			{
 				// Perform removal AFTER performing mixing - to allow fading a sound to be removed.
-				need_to_remove= true;
-			}
-
-			if( need_to_remove )
-			{
 				sound_source.id= c_empty_sound_source_id;
 				sound_source.sound_data.reset();
 				sound_source.sample_counter= 0u;
@@ -135,9 +131,9 @@ fn constexpr GetScaleForSampleType() : f32
 	static_assert( typeinfo</T/>.is_integer );
 
 	var size_type num_bits= 8s * typeinfo</T/>.size_of;
-	var u64 max_signed_value_modulo= 1u64 << ( num_bits - 1s );
+	var u64 max_absolute_signed_value= 1u64 << ( num_bits - 1s );
 
-	return 1.0f / f32( max_signed_value_modulo );
+	return 1.0f / f32( max_absolute_signed_value );
 }
 
 template</type T/>
