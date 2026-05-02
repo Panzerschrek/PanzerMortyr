@@ -151,6 +151,7 @@ PanzerMortyr menus and HUD:
 * Implement video modes menu.
 * Implement key bindings menu.
 * Make sound options menu functional.
+* Consider playing a test sound while changing sound options (so that it's clear how they affect the result).
 * Allow changing HUD position via settings menu.
 * Allow changing crosshair via settings menu.
 * Implement some stub page for parental lock menu.
@@ -166,10 +167,26 @@ PanzerMortyr menus and HUD:
 
 PanzerMortyr sound:
 
-* Play event sounds - shots, footsteps, enemy sounds, item pick-up sounds.
+* Use a lock-free queue for communication between "AudioProcessor" and "AudioMixer" - using mutex-based communication is problematic for an audio thread.
+* Play player's footstep sounds.
+* Play sounds for picking-up items.
+* Play hurt and death sounds for the player.
+* Play player's jump sounds.
+* Play player's out-of-ammo sounds.
+* Play other player-related sounds.
+* Play enemy alarm default sounds (Halt oder ich schieße!).
+* Play enemy hurt and death default sounds.
+* Play breaking glass sounds.
+* Play exposion sounds.
+* Play projectile hit sounds.
+* Play bird sounds.
 * Play main character speech (he says something at some specific map places).
 * Play ambient sounds.
 * Play CD music and/or music files ripped from the original CD.
 * Implement 3D sounds - with distance-based attenuation and separate volume for left and right channel depending on head orientation.
-* Perform smooth volume transition (sample-by-sample) for sound sources which can change their volume (positional ones, for example).
-* Cache or preload sound files to avoid starting playing a sound which isn't loaded yet.
+* Consider implementing occlusion-based sound volume attenuation (reduce volume of a sound located behind a wall or in some other room).
+* Play menu sounds.
+* Save playing sounds in save files and resume playing them upon game loading.
+* Stop playing sounds from a previous level after level tranition.
+* Consider implementing sound effects like reverberation/echo effects and use them where it makes sense (like while under water).
+* Consider adding a setting for sound quality (sample rate).

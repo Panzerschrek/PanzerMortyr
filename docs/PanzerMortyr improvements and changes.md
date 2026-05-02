@@ -92,6 +92,18 @@ Changes:
 * Note images are shown at screen's center with scale and alpha depending on distance from the player's camera to the note cluster volume, not with fixed scale as the original game does.
 
 
+### Sound
+
+Improvements:
+
+* PanzerMortyr outputs higher quality sound - with 44100Hz sample rate (by default) and 32-bit floating-point samples (where it's supported).
+
+
+Changes:
+
+* Due to improved sound quality some sounds sound slightly differently compared to the original game.
+
+
 ### General
 
 Improvements:
