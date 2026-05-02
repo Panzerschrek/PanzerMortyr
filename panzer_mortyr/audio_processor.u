@@ -88,14 +88,17 @@ fn AudioProcessor::Update( mut this, WorldAudioInfo& world_audio_info )
 			{
 				if( !active_sound_source.used )
 				{
-					// Mark it as about to be removed by the mixer.
-					// It's fine to use linear search here, since we have only fixed number of slots.
-					foreach( &mut s : audio_mixer_shared_data.sources )
+					if( active_sound_source.is_playing )
 					{
-						if( s.id == id )
+						// Mark it as about to be removed by the mixer.
+						// It's fine to use linear search here, since we have only fixed number of slots.
+						foreach( &mut mixer_source : audio_mixer_shared_data.sources )
 						{
-							s.is_about_to_be_removed= true;
-							break;
+							if( mixer_source.id == id )
+							{
+								mixer_source.is_about_to_be_removed= true;
+								break;
+							}
 						}
 					}
 
@@ -107,22 +110,38 @@ fn AudioProcessor::Update( mut this, WorldAudioInfo& world_audio_info )
 		// Add new sources or update old ones.
 		foreach( &sound_source : world_audio_info.sound_sources )
 		{
-			if( active_sound_sources_.exists( sound_source.id ) )
+			auto mut active_sound_source_opt= active_sound_sources_.find( sound_source.id );
+
+			if( !active_sound_source_opt.empty() )
 			{
 				// Update.
-
-				// It's fine to use linear search here, since we have only fixed number of slots.
-				foreach( &mut mixer_source : audio_mixer_shared_data.sources )
 				{
-					if( mixer_source.id == sound_source.id )
+					var ActiveSoundSource &mut active_sound_source= active_sound_source_opt.try_deref();
+
+					if( active_sound_source.is_playing )
 					{
-						mixer_source.new_volume= sound_source.volume;
-						break;
+						// Mark as non-playing before checking if it's still playing.
+						active_sound_source.is_playing= false;
+
+						// It's fine to use linear search here, since we have only fixed number of slots.
+						foreach( &mut mixer_source : audio_mixer_shared_data.sources )
+						{
+							if( mixer_source.id == sound_source.id )
+							{
+								active_sound_source.is_playing= true;
+								mixer_source.new_volume= sound_source.volume;
+								break;
+							}
+						}
 					}
 				}
+
+				move(active_sound_source_opt);
 			}
 			else
 			{
+				move(active_sound_source_opt);
+
 				// Add new one.
 
 				if( size_type( sound_source.sound_index ) < typeinfo</ typeof( sounds_data_ ) />.element_count )
@@ -132,11 +151,11 @@ fn AudioProcessor::Update( mut this, WorldAudioInfo& world_audio_info )
 					{
 						// Search for a free slot.
 						// It's fine to use linear search here, since we have only fixed number of slots.
-						foreach( &mut out_sound_source : audio_mixer_shared_data.sources )
+						foreach( &mut mixer_source : audio_mixer_shared_data.sources )
 						{
-							if( out_sound_source.id == c_empty_sound_source_id )
+							if( mixer_source.id == c_empty_sound_source_id )
 							{
-								out_sound_source=
+								mixer_source=
 									AudioMixerSharedData::SoundSource
 									{
 										.id= sound_source.id,
@@ -147,7 +166,8 @@ fn AudioProcessor::Update( mut this, WorldAudioInfo& world_audio_info )
 										.is_about_to_be_removed= false,
 									};
 
-								active_sound_sources_.insert_new( sound_source.id, ActiveSoundSource{ .used= true } );
+								active_sound_sources_.insert_new(
+									sound_source.id, ActiveSoundSource{ .used= true, .is_playing= true } );
 
 								break;
 							}
