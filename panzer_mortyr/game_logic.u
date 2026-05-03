@@ -4,6 +4,7 @@ import "cluster_utils.iu"
 import "collisions.iu"
 import "game_constants.iu"
 import "game_logic.iu"
+import "game_logic_sound.iu"
 import "geometry_utils.iu"
 import "global_navigation_graph_utils.iu"
 import "mat.iu"
@@ -66,7 +67,7 @@ fn CreateNewMapGameState(
 			},
 			.last_requested_key_type= EntitiesDescription::ToolType::None,
 			.last_key_request_step= 0u,
-			.opened_secrets_mask= 0u,
+			.activated_triggers_mask= 0u,
 			.last_opened_secret_area_step= 0u,
 		},
 		.broken_quad_bits( map_data.zmap_data.deref().quads.size() )
@@ -225,7 +226,7 @@ fn CreateNewMapGameState(
 					},
 					.last_requested_key_type= EntitiesDescription::ToolType::None,
 					.last_key_request_step= 0u,
-					.opened_secrets_mask= 0u,
+					.activated_triggers_mask= 0u,
 					.last_opened_secret_area_step= 0u,
 				};
 
@@ -371,7 +372,7 @@ fn nodiscard ProcessGameLogicStep(
 	ProcessProjectileHitEventsLogicStep( global_data, map_data, game_state );
 
 	ProcessDamagingFlamesLogicStep(
-		global_data.game_params.deref(),
+		global_data,
 		game_state.damaging_flames,
 		game_state.random,
 		game_state.entities,
@@ -399,11 +400,11 @@ fn nodiscard ProcessGameLogicStep(
 
 	ProcessProjectileHitLightsLogicStep( game_state.projectile_hit_lights );
 
-	PickUpItems( map_data, game_state );
+	PickUpItems( global_data.sounds_description.deref(), map_data, game_state );
 
-	DealPlayerEnvironmentalDamage( map_data, game_state );
+	DealPlayerEnvironmentalDamage( global_data.sounds_description.deref(), map_data, game_state );
 
-	var u32 next_map_index= InteractWithTriggerVolumes( map_data, game_state );
+	var u32 next_map_index= InteractWithTriggerVolumes( global_data.sounds_description.deref(), map_data, game_state );
 
 	++game_state.step_index;
 
@@ -1162,7 +1163,7 @@ fn PerformPlayerMovement(
 	if( game_state.player.energy > 0u )
 	{
 		ApplyPlayerUnclippedMovement(
-			global_data.game_params.deref(),
+			global_data,
 			game_state.player,
 			player_input.move_wish_vector,
 			player_input.jump_requested );
@@ -1172,7 +1173,7 @@ fn PerformPlayerMovement(
 		// If the player is dead - apply unclipped movement, but with controls disabled.
 		// Gravity and deceleration should be still applied.
 		ApplyPlayerUnclippedMovement(
-			global_data.game_params.deref(),
+			global_data,
 			game_state.player,
 			Vec3f::MakeZero(),
 			false );
@@ -1326,7 +1327,20 @@ fn PerformPlayerMovement(
 	// Check if in liquid.
 	var Vec3f player_center_position= game_state.player.position + ( player_bbox.min + player_bbox.max ) * 0.5f;
 
-	game_state.player.in_liquid= IsPointInLiquid( map_data, player_center_position );
+	var bool new_in_liquid= IsPointInLiquid( map_data, player_center_position );
+
+	if( new_in_liquid & !game_state.player.in_liquid )
+	{
+		// TODO - emit different sounds if entering not water but acid or lava.
+		EmitPlayerWaterEnteringSound( global_data.sounds_description.deref(), game_state.player.sound_source_slots );
+	}
+	if( !new_in_liquid & game_state.player.in_liquid )
+	{
+		// TODO - add a timeout for this sound - don't emit if if was in liquid only a fraction of a second.
+		EmitPlayerWaterLeavingSound( global_data.sounds_description.deref(), game_state.player.sound_source_slots );
+	}
+
+	game_state.player.in_liquid= new_in_liquid;
 
 	// Water leaving logic.
 	// If the player is in water (but not staying on bottom), slightly above has air,
@@ -1366,7 +1380,7 @@ fn PerformPlayerMovement(
 }
 
 fn ApplyPlayerUnclippedMovement(
-	GameParams& game_params,
+	GameGlobalData& global_data,
 	PlayerState &mut player_state,
 	Vec3f& move_wish_direction,
 	bool jump_requested )
@@ -1375,7 +1389,8 @@ fn ApplyPlayerUnclippedMovement(
 
 	// Max player speed is defined via the game config.
 	// Make it smaller if crouching.
-	var f32 max_horizontal_speed_per_step= f32( game_params.max_player_speed ) * crouching_related_movement_scale;
+	var f32 max_horizontal_speed_per_step=
+		f32( global_data.game_params.deref().max_player_speed ) * crouching_related_movement_scale;
 
 	// Acceleration depends on friction. Scale is for now just guessed.
 	// Acceleration is twice as big as deceleration, it's needed because deceleration is always applied.
@@ -1451,6 +1466,8 @@ fn ApplyPlayerUnclippedMovement(
 			{
 				player_state.velocity.z+=
 					c_jump_vertical_velocity_add * liquid_jump_velocity_scale * crouching_related_movement_scale;
+
+				EmitPlayerJumpSound( global_data.sounds_description.deref(), player_state.sound_source_slots );
 			}
 
 			// Apply ground deceleration.
@@ -1490,6 +1507,8 @@ fn ApplyPlayerUnclippedMovement(
 		if( jump_requested && player_state.on_ground )
 		{
 			player_state.velocity.z+= c_jump_vertical_velocity_add * crouching_related_movement_scale;
+
+			EmitPlayerJumpSound( global_data.sounds_description.deref(), player_state.sound_source_slots );
 		}
 
 		{
@@ -2360,6 +2379,7 @@ fn ProcessEntitiesLogicStep(
 		if_var( &d : delayed_explosion_splash_damage )
 		{
 			ApplySplashDamage(
+				game_global_data.sounds_description.deref(),
 				d.center,
 				d.radius,
 				d.splash_base_damage,
@@ -3130,6 +3150,7 @@ fn SlowDownProjectileAfterBouncing( Vec3f &mut velocity, EntitiesDescription::To
 }
 
 fn DamageEntityOrPlayer(
+	SoundsDescription& sounds_description,
 	ust::array_view_mut</ ust::optional</EntityState/> /> entities,
 	PlayerState &mut player_state,
 	u32 entity_index,
@@ -3137,7 +3158,7 @@ fn DamageEntityOrPlayer(
 {
 	if( entity_index == c_player_entity_index )
 	{
-		DamagePlayer( player_state, damage );
+		DamagePlayer( sounds_description, player_state, damage );
 	}
 	else
 	{
@@ -3151,7 +3172,7 @@ fn DamageEntityOrPlayer(
 	}
 }
 
-fn DamagePlayer( PlayerState &mut player_state, u32 damage )
+fn DamagePlayer( SoundsDescription& sounds_description, PlayerState &mut player_state, u32 damage )
 {
 	if( damage == 0u )
 	{
@@ -3174,8 +3195,25 @@ fn DamagePlayer( PlayerState &mut player_state, u32 damage )
 	var u32 armor_reduce= damage_with_armor_absorption / 2u;
 	var u32 energy_reduce= damage_with_armor_absorption / 4u + damage_without_armor_absorption;
 
-	player_state.armor-= ust::min( armor_reduce, player_state.armor );
-	player_state.energy-= ust::min( energy_reduce, player_state.energy );
+	var u32 armor_damage= ust::min( armor_reduce, player_state.armor );
+	var u32 energy_damage= ust::min( energy_reduce, player_state.energy );
+
+	if( armor_damage > 0u | energy_damage > 0u )
+	{
+		player_state.armor-= armor_damage;
+		player_state.energy-= energy_damage;
+
+		if( player_state.energy == 0u )
+		{
+			EmitPlayerDeathSound( sounds_description, player_state.sound_source_slots );
+		}
+		else
+		{
+			// Assume that we need to emit this sound each time the player is damaged.
+			// TODO - check if the original game does this too.
+			EmitPlayerDamageSound( sounds_description, player_state.sound_source_slots );
+		}
+	}
 }
 
 fn DamageEntity( EntityState &mut entity, u32 damage )
@@ -3218,7 +3256,11 @@ fn ProcessProjectileHitEventsLogicStep( GameGlobalData& global_data, GameMapData
 			{
 				// No splash damage - damage hit entity directly.
 				DamageEntityOrPlayer(
-					game_state.entities, game_state.player, projectile_hit_event.hit_entity_index, weapon_tool.damage );
+					global_data.sounds_description.deref(),
+					game_state.entities,
+					game_state.player,
+					projectile_hit_event.hit_entity_index,
+					weapon_tool.damage );
 			}
 
 			collision_kind_index= 1s;
@@ -3260,6 +3302,7 @@ fn ProcessProjectileHitEventsLogicStep( GameGlobalData& global_data, GameMapData
 			var f32 splash_base_damage( weapon_tool.damage );
 
 			ApplySplashDamage(
+				global_data.sounds_description.deref(),
 				projectile_hit_event.position,
 				splash_damage_radius,
 				splash_base_damage,
@@ -3483,6 +3526,7 @@ fn ProcessProjectileHitEventsLogicStep( GameGlobalData& global_data, GameMapData
 }
 
 fn ApplySplashDamage(
+	SoundsDescription& sounds_description,
 	Vec3f& center,
 	f32 radius,
 	f32 splash_base_damage,
@@ -3520,7 +3564,8 @@ fn ApplySplashDamage(
 			var u32 damage_at_distance_rounded(
 				damage_at_distance + f32( rand.Next() ) / f32( PseudoRandomGenerator::c_max_plus_one ) );
 
-			DamageEntityOrPlayer( entities, player, collider.entity_index, damage_at_distance_rounded );
+			DamageEntityOrPlayer(
+				sounds_description, entities, player, collider.entity_index, damage_at_distance_rounded );
 		}
 	}
 }
@@ -3552,7 +3597,7 @@ fn AlarmEnemiesByNearbyEvent(
 }
 
 fn ProcessDamagingFlamesLogicStep(
-	GameParams& game_params,
+	GameGlobalData& global_data,
 	DamagingFlamesContainer &mut damaging_flames,
 	PseudoRandomGenerator &mut rand,
 	ust::array_view_mut</ ust::optional</EntityState /> /> entities,
@@ -3570,6 +3615,8 @@ fn ProcessDamagingFlamesLogicStep(
 			A little bit of random is added to damage to compensate rounding errors, so that even single flame damages sometimes.
 	*/
 
+	var GameParams& game_params= global_data.game_params.deref();
+
 	var u32 damage_step_mask= game_params.fire_damage[0];
 	var u32 base_flame_damage= game_params.fire_damage[1];
 	var u32 constexpr c_flame_damage_divisor= 16u;
@@ -3582,7 +3629,8 @@ fn ProcessDamagingFlamesLogicStep(
 				var u32 damage= ( base_flame_damage + rand.Next() % c_flame_damage_divisor ) / c_flame_damage_divisor;
 				if( damage > 0u )
 				{
-					DamageEntityOrPlayer( entities, player, damaging_flame.entity_index, damage );
+					DamageEntityOrPlayer(
+						global_data.sounds_description.deref(), entities, player, damaging_flame.entity_index, damage );
 				}
 			}
 
@@ -3793,7 +3841,7 @@ fn ProcessProjectileHitLightsLogicStep( ProjectileHitLightsContainer &mut projec
 		} );
 }
 
-fn PickUpItems( GameMapData& map_data, GameState &mut game_state )
+fn PickUpItems( SoundsDescription& sounds_description, GameMapData& map_data, GameState &mut game_state )
 {
 	if( game_state.player.energy == 0u )
 	{
@@ -3871,6 +3919,11 @@ fn PickUpItems( GameMapData& map_data, GameState &mut game_state )
 
 							if( total_energy < box_energy )
 							{
+								EmitPickupSound(
+									sounds_description,
+									EntitiesDescription::ToolType::HealthPack,
+									game_state.player.sound_source_slots );
+
 								need_to_remove_entity= true;
 							}
 						}
@@ -3900,6 +3953,11 @@ fn PickUpItems( GameMapData& map_data, GameState &mut game_state )
 
 							if( total_armor < box_armor )
 							{
+								EmitPickupSound(
+									sounds_description,
+									EntitiesDescription::ToolType::Armor,
+									game_state.player.sound_source_slots );
+
 								need_to_remove_entity= true;
 							}
 						}
@@ -3940,6 +3998,11 @@ fn PickUpItems( GameMapData& map_data, GameState &mut game_state )
 							}
 						}
 
+						if( need_to_remove_entity )
+						{
+							EmitPickupSound( sounds_description, tool.tool_type, game_state.player.sound_source_slots );
+						}
+
 						// TODO - handle regenerating entities in multiplayer.
 					}
 				}
@@ -3954,7 +4017,8 @@ fn PickUpItems( GameMapData& map_data, GameState &mut game_state )
 	}
 }
 
-fn DealPlayerEnvironmentalDamage( GameMapData& map_data, GameState &mut game_state )
+fn DealPlayerEnvironmentalDamage(
+	SoundsDescription& sounds_description, GameMapData& map_data, GameState &mut game_state )
 {
 	if( game_state.step_index % c_environmental_damage_period_steps != 0u )
 	{
@@ -3988,12 +4052,29 @@ fn DealPlayerEnvironmentalDamage( GameMapData& map_data, GameState &mut game_sta
 	if( ( is_in_acid & !game_state.player.tools_state.acid_protection_suit_is_active ) | is_in_lava )
 	{
 		// Armor can't absorb environmental damage, so that only energy is damaged.
-		game_state.player.energy-= ust::min( c_environmental_damage, game_state.player.energy );
+
+		var u32 damage= ust::min( c_environmental_damage, game_state.player.energy );
+		if( damage > 0u )
+		{
+			game_state.player.energy-= damage;
+
+			if( game_state.player.energy == 0u )
+			{
+				EmitPlayerDeathSound( sounds_description, game_state.player.sound_source_slots );
+			}
+			else
+			{
+				// Emit damage sound if is damaged in acid or lava.
+				// TODO - check if the original game does this.
+				EmitPlayerDamageSound( sounds_description, game_state.player.sound_source_slots );
+			}
+		}
 	}
 }
 
 // Returns next map index if requires map transition or 0 if requires no one.
-fn InteractWithTriggerVolumes( GameMapData& map_data, GameState &mut game_state ) : u32
+fn InteractWithTriggerVolumes(
+	SoundsDescription& sounds_description, GameMapData& map_data, GameState &mut game_state ) : u32
 {
 	var u32 mut next_map_index= 0u;
 
@@ -4033,6 +4114,9 @@ fn InteractWithTriggerVolumes( GameMapData& map_data, GameState &mut game_state 
 			continue;
 		}
 
+		// Assume we have no more than 32 triggers on a map.
+		var u32 trigger_mask= 1u << trigger_volumen_index;
+
 		switch( trigger_volume.trigger_type )
 		{
 			ZvoxTriggerVolume::c_trigger_type_map_end ->
@@ -4041,19 +4125,22 @@ fn InteractWithTriggerVolumes( GameMapData& map_data, GameState &mut game_state 
 			},
 			ZvoxTriggerVolume::c_trigger_type_secret_area ->
 			{
-				if( trigger_volumen_index < 32s )
+				if( ( game_state.player.activated_triggers_mask & trigger_mask ) == 0u )
 				{
-					var u32 mask= 1u << trigger_volumen_index;
-					if( ( game_state.player.opened_secrets_mask & mask ) == 0u )
-					{
-						game_state.player.opened_secrets_mask |= mask;
-						game_state.player.last_opened_secret_area_step= game_state.step_index;
-					}
+					game_state.player.activated_triggers_mask |= trigger_mask;
+					game_state.player.last_opened_secret_area_step= game_state.step_index;
+
+					EmitSecretFoundSound( sounds_description, game_state.player.sound_source_slots );
 				}
 			},
 			ZvoxTriggerVolume::c_trigger_type_character_speech ->
 			{
-				// TODO - trigger speech sound
+				if( ( game_state.player.activated_triggers_mask & trigger_mask ) == 0u )
+				{
+					game_state.player.activated_triggers_mask |= trigger_mask;
+
+					EmitPlayerSpeechSound( trigger_volume.trigger_param, game_state.player.sound_source_slots );
+				}
 			},
 			ZvoxTriggerVolume::c_trigger_type_game_end ->
 			{
@@ -6426,68 +6513,6 @@ fn GetShotVectorBasis( Vec3f& shot_vector ) : [ Vec3f, 3 ]
 			basis_vector_a / basis_vector_a_length,
 			basis_vector_b / basis_vector_b_length,
 			basis_vector_c / basis_vector_c_length );
-}
-
-template</size_type N/>
-fn EmitShotSound( [ SoundSourceSlot, N ] &mut slots, u8 sound_index )
-{
-	var u32 volume_for_shots= 255u; // TODO - tune it?
-	EmitSound( slots, sound_index, volume_for_shots );
-}
-
-template</size_type N/>
-fn EmitSound( [ SoundSourceSlot, N ] &mut slots, u8 sound_index, u32 volume )
-{
-	if( volume <= 0u )
-	{
-		return;
-	}
-
-	var u8 volume_clamped( ust::min( volume, 255u ) );
-
-	var u16 mut max_sequential_index(0);
-
-	foreach( &slot : slots )
-	{
-		ust::max_assign( max_sequential_index, slot.sequential_index );
-	}
-
-	// Assume that 65535 unique sounds emitted by an entity/player during his/its lifetime is enough and no overflow happens here.
-	var u16 next_sequential_index( u32( max_sequential_index ) + 1u );
-
-	// Check if we can override existing sound source with the same index.
-	// It's necessary to stop playing previous sound with the same index.
-	// The original game does exactly this.
-	foreach( &mut slot : slots )
-	{
-		if( slot.sound_index == sound_index )
-		{
-			slot.sequential_index= next_sequential_index;
-			slot.volume= volume_clamped;
-			return;
-		}
-	}
-
-	// Pick the slot with the smallest sequential index.
-	// Doing so we recycle the oldest sounds.
-
-	var u16 mut min_sequential_index( ~0u );
-	var size_type mut min_sequential_index_slot_index= 0s;
-
-	for( auto mut i= 0s; i < N; ++i )
-	{
-		var u16 sequential_index= slots[i].sequential_index;
-		if( sequential_index < min_sequential_index )
-		{
-			min_sequential_index= sequential_index;
-			min_sequential_index_slot_index= i;
-		}
-	}
-
-	var SoundSourceSlot &mut slot= slots[ min_sequential_index_slot_index ];
-	slot.sequential_index= next_sequential_index;
-	slot.sound_index= sound_index;
-	slot.volume= volume_clamped;
 }
 
 } // namespace PM
