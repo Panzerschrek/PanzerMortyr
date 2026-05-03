@@ -44,6 +44,7 @@ Gameplay investigation:
 * Investigate whether armor absorbs flame damage.
 * Investigate what kinds of entities are affected by gravity (what in an entity description turns gravity on and off).
 * Investigate what "zarowka" entity property is and whether it's actually used.
+* Investigate whether it's possible for the player to drown in water by spending too much time in it.
 
 PanzerMortyr general:
 
@@ -169,11 +170,8 @@ PanzerMortyr sound:
 
 * Use a lock-free queue for communication between "AudioProcessor" and "AudioMixer" - using mutex-based communication is problematic for an audio thread.
 * Play player's footstep sounds.
-* Play sounds for picking-up items.
-* Play hurt and death sounds for the player.
-* Play player's jump sounds.
 * Play player's out-of-ammo sounds.
-* Play sounds for player entering/leaving water.
+* Play player's falling sounds (due to fall damage).
 * Play tool-related sounds (if has some).
 * Play necessary sounds while activating a tool (a health pack, armor, a weapon).
 * Play other player-related sounds.
@@ -185,15 +183,16 @@ PanzerMortyr sound:
 * Play projectile hit sounds.
 * Play projectile bounce sounds (for grenades and other bouncing projectiles).
 * Play bird sounds.
-* Play main character speech (he says something at some specific map places).
 * Play sounds of dynamic clusters (doors, elevators, buttons).
 * Play ambient sounds.
 * Play CD music and/or music files ripped from the original CD.
 * Implement 3D sounds - with distance-based attenuation and separate volume for left and right channel depending on head orientation.
 * Consider implementing occlusion-based sound volume attenuation (reduce volume of a sound located behind a wall or in some other room).
 * Play menu sounds.
+* Play sounds while selecting next/previous item and activating it.
 * Save playing sounds in save files and resume playing them upon game loading.
 * Stop playing sounds from a previous level after level tranition.
 * Consider implementing sound effects like reverberation/echo effects and use them where it makes sense (like while under water oh having an environment suit active).
 * Consider adding a setting for sound quality (sample rate).
+* Allow selecting audio device via settings.
 * Pause/resume game sounds when pausing the game.
