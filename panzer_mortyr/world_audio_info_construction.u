@@ -1,9 +1,10 @@
+import "game_state_view_construction.iu"
 import "world_audio_info_construction.iu"
 
 namespace PM
 {
 
-fn ConstructWorldAudioInfo( GameState& game_state ) : WorldAudioInfo
+fn ConstructWorldAudioInfo( GameState& game_state, CameraController& camera_controller ) : WorldAudioInfo
 {
 	var WorldAudioInfo mut info;
 
@@ -28,6 +29,8 @@ fn ConstructWorldAudioInfo( GameState& game_state ) : WorldAudioInfo
 		}
 	}
 
+	var Vec3f camera_position= GetCameraPositionForPlayerWithExtraDepthShift( game_state.player, camera_controller );
+
 	for( auto mut i= 0s; i < game_state.entities.size(); ++i )
 	{
 		if_var( &entity : game_state.entities[i] )
@@ -36,7 +39,19 @@ fn ConstructWorldAudioInfo( GameState& game_state ) : WorldAudioInfo
 			{
 				if( slot.sequential_index != 0u16 )
 				{
-					// TODO - calculate volume based on distance and direction to the entity.
+					// TODO - use BBox center.
+					var Vec3f vector_to_sound_source= entity.position - camera_position;
+
+					var f32 distance= vector_to_sound_source.Length();
+
+					var f32 c_min_distance= 0.1f;
+					var f32 c_one_volume_distance= 192.0f;
+					var f32 c_max_volume= 1.0f;
+
+					// Use attenuation proportional to distance, not square distance.
+					// Using inverse sqare law produces too quiet sounds.
+					var f32 volume_scale=
+						ust::min( c_one_volume_distance / ust::max( distance, c_min_distance ), c_max_volume );
 
 					info.sound_sources.push_back(
 						WorldAudioInfo::SoundSource
@@ -47,7 +62,7 @@ fn ConstructWorldAudioInfo( GameState& game_state ) : WorldAudioInfo
 								u32( i << entity_index_shift_for_sound_id ) |
 								u32( slot.sequential_index ),
 							.sound_index= slot.sound_index,
-							.volume[ f32( slot.volume ) / f32( 255.0f ) ... ],
+							.volume[ volume_scale * f32( slot.volume ) / f32( 255.0f ) ... ],
 						} );
 				}
 			}
