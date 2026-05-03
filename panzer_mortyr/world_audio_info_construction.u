@@ -36,27 +36,7 @@ fn ConstructWorldAudioInfo(
 
 	var EntitiesDescription& entities_description= map_data.entities_description.deref();
 
-	var Vec3f camera_position= GetCameraPositionForPlayerWithExtraDepthShift( game_state.player, camera_controller );
-
-	var Mat4f head_rotation_matrix=
-		Mat4f::MakeRotationX( camera_controller.GetElevation() ) *
-		Mat4f::MakeRotationZ( camera_controller.GetAzimuth() );
-
-	// Use channel vectors slightly inclined to each other, not exactly 180 degree.
-	// Doing so we ensure that sounds behind the player are somewhat quieter than sounds at front of him.
-	var f32 channel_vectors_angle= c_tau * 0.42f;
-
-	var [ Vec3f, 2 ] channel_vectors
-	[
-		Vec3f(
-			ust::sin( -0.5f * channel_vectors_angle ),
-			ust::cos( -0.5f * channel_vectors_angle ),
-			0.0f ) * head_rotation_matrix,
-		Vec3f(
-			ust::sin(  0.5f * channel_vectors_angle ),
-			ust::cos(  0.5f * channel_vectors_angle ),
-			0.0f ) * head_rotation_matrix,
-	];
+	var SpatialVolumeCalculator volume_calculator( game_state.player, camera_controller );
 
 	for( auto mut i= 0s; i < game_state.entities.size(); ++i )
 	{
@@ -66,12 +46,6 @@ fn ConstructWorldAudioInfo(
 			{
 				if( slot.sequential_index != 0u16 )
 				{
-					var f32 c_min_distance= 0.1f;
-					var f32 c_one_volume_distance= 256.0f;
-					var f32 c_max_sound_distance= 3072.0f;
-					var f32 c_small_volume_cut= c_one_volume_distance / c_max_sound_distance;
-					var f32 c_max_volume= 1.0f;
-
 					var Vec3f mut sound_position= entity.position;
 
 					var EntitiesDescription::EntityDescription& entity_description=
@@ -93,42 +67,6 @@ fn ConstructWorldAudioInfo(
 						}
 					}
 
-					var Vec3f vector_to_sound_source= sound_position - camera_position;
-
-					var f32 distance= vector_to_sound_source.Length();
-					var f32 distance_clamped= ust::max( distance, c_min_distance );
-
-
-					// Use attenuation proportional to distance, not square distance.
-					// Using inverse sqare law produces too quiet sounds.
-					var f32 volume_distance_scaled=
-						f32( slot.volume ) / f32( 255.0f ) * c_one_volume_distance / distance_clamped;
-
-					// Subtract some small value from result volume to force zero volume for distant sounds.
-					// We need this to prevent playing sounds from the other end of the map (to save some CPU time).
-					var f32 volume_with_distance_cut= ust::max( volume_distance_scaled - c_small_volume_cut, 0.0f );
-
-					var [ f32, 2 ] channel_angle_cos
-					[
-						channel_vectors[0].Dot( vector_to_sound_source ) / distance_clamped,
-						channel_vectors[1].Dot( vector_to_sound_source ) / distance_clamped,
-					];
-
-					// Calculate per-channel volume based on angle cosine between the direction to the source and channel vector.
-					// If this angle is 180 degree, volume should be around zero (but not strictly zero).
-					var [ f32, 2 ] channel_volumes
-					[
-						volume_with_distance_cut * ( channel_angle_cos[0] * 0.46f + 0.54f ),
-						volume_with_distance_cut * ( channel_angle_cos[1] * 0.46f + 0.54f ),
-					];
-
-					// Make sure result volume isn't above 1.
-					var [ f32, 2 ] channel_volumes_clamped
-					[
-						ust::min( channel_volumes[0], c_max_volume ),
-						ust::min( channel_volumes[1], c_max_volume ),
-					];
-
 					info.sound_sources.push_back(
 						WorldAudioInfo::SoundSource
 						{
@@ -138,7 +76,7 @@ fn ConstructWorldAudioInfo(
 								u32( i << entity_index_shift_for_sound_id ) |
 								u32( slot.sequential_index ),
 							.sound_index= slot.sound_index,
-							.volume= channel_volumes_clamped,
+							.volume= volume_calculator.CalculatePointSoundSourceRelativeVolume( sound_position, slot.volume ),
 						} );
 				}
 			}
@@ -146,6 +84,87 @@ fn ConstructWorldAudioInfo(
 	}
 
 	return info;
+}
+
+class SpatialVolumeCalculator
+{
+public:
+	fn constructor( PlayerState& player_state, CameraController& camera_controller )
+		(
+			camera_position_= GetCameraPositionForPlayerWithExtraDepthShift( player_state, camera_controller ),
+			channel_vectors_[ Vec3f::MakeZero() ... ] // Set later.
+		)
+	{
+		var Mat4f head_rotation_matrix=
+			Mat4f::MakeRotationX( camera_controller.GetElevation() ) *
+			Mat4f::MakeRotationZ( camera_controller.GetAzimuth() );
+
+		// Use channel vectors slightly inclined to each other, not exactly 180 degree.
+		// Doing so we ensure that sounds behind the player are somewhat quieter than sounds at front of him.
+		var f32 channel_vectors_angle= c_tau * 0.42f;
+
+		channel_vectors_=
+			ust::make_array(
+				Vec3f(
+					ust::sin( -0.5f * channel_vectors_angle ),
+					ust::cos( -0.5f * channel_vectors_angle ),
+					0.0f ) * head_rotation_matrix,
+				Vec3f(
+					ust::sin(  0.5f * channel_vectors_angle ),
+					ust::cos(  0.5f * channel_vectors_angle ),
+					0.0f ) * head_rotation_matrix );
+	}
+
+	// Calculate volume at camera position for both channels.
+	fn CalculatePointSoundSourceRelativeVolume( this, Vec3f& position, u8 absolute_volume ) : [ f32, 2 ]
+	{
+		var f32 c_min_distance= 0.1f;
+		var f32 c_one_volume_distance= 256.0f;
+		var f32 c_max_sound_distance= 3072.0f;
+		var f32 c_small_volume_cut= c_one_volume_distance / c_max_sound_distance;
+		var f32 c_max_volume= 1.0f;
+
+		var Vec3f vector_to_sound_source= position - camera_position_;
+
+		var f32 distance= vector_to_sound_source.Length();
+		var f32 distance_clamped= ust::max( distance, c_min_distance );
+
+		// Use attenuation proportional to distance, not square distance.
+		// Using inverse sqare law produces too quiet sounds.
+		var f32 volume_distance_scaled=
+			f32( absolute_volume ) / f32( 255.0f ) * c_one_volume_distance / distance_clamped;
+
+		// Subtract some small value from result volume to force zero volume for distant sounds.
+		// We need this to prevent playing sounds from the other end of the map (to save some CPU time).
+		var f32 volume_with_distance_cut= ust::max( volume_distance_scaled - c_small_volume_cut, 0.0f );
+
+		var [ f32, 2 ] channel_angle_cos
+		[
+			channel_vectors_[0].Dot( vector_to_sound_source ) / distance_clamped,
+			channel_vectors_[1].Dot( vector_to_sound_source ) / distance_clamped,
+		];
+
+		// Calculate per-channel volume based on angle cosine between the direction to the source and channel vector.
+		// If this angle is 180 degree, volume should be around zero (but not strictly zero).
+		var [ f32, 2 ] channel_volumes
+		[
+			volume_with_distance_cut * ( channel_angle_cos[0] * 0.46f + 0.54f ),
+			volume_with_distance_cut * ( channel_angle_cos[1] * 0.46f + 0.54f ),
+		];
+
+		// Make sure result volume isn't above 1.
+		var [ f32, 2 ] channel_volumes_clamped
+		[
+			ust::min( channel_volumes[0], c_max_volume ),
+			ust::min( channel_volumes[1], c_max_volume ),
+		];
+
+		return channel_volumes_clamped;
+	}
+
+private:
+	Vec3f camera_position_;
+	[ Vec3f, 2 ] channel_vectors_;
 }
 
 } // namespace PM
