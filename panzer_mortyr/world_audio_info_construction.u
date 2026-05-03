@@ -1,4 +1,5 @@
 import "game_state_view_construction.iu"
+import "mat.iu"
 import "world_audio_info_construction.iu"
 
 namespace PM
@@ -36,6 +37,17 @@ fn ConstructWorldAudioInfo(
 
 	var Vec3f camera_position= GetCameraPositionForPlayerWithExtraDepthShift( game_state.player, camera_controller );
 
+	var Mat4f head_rotation_matrix=
+		Mat4f::MakeRotationX( camera_controller.GetElevation() ) *
+		Mat4f::MakeRotationZ( camera_controller.GetAzimuth() );
+
+	// TODO - make these vectors slightly inclined?
+	var [ Vec3f, 2 ] channel_vectors
+	[
+		Vec3f( -1.0f, 0.0f, 0.0f ) * head_rotation_matrix,
+		Vec3f(  1.0f, 0.0f, 0.0f ) * head_rotation_matrix,
+	];
+
 	for( auto mut i= 0s; i < game_state.entities.size(); ++i )
 	{
 		if_var( &entity : game_state.entities[i] )
@@ -45,7 +57,7 @@ fn ConstructWorldAudioInfo(
 				if( slot.sequential_index != 0u16 )
 				{
 					var f32 c_min_distance= 0.1f;
-					var f32 c_one_volume_distance= 192.0f;
+					var f32 c_one_volume_distance= 256.0f;
 					var f32 c_max_sound_distance= 3072.0f;
 					var f32 c_small_volume_cut= c_one_volume_distance / c_max_sound_distance;
 					var f32 c_max_volume= 1.0f;
@@ -74,19 +86,38 @@ fn ConstructWorldAudioInfo(
 					var Vec3f vector_to_sound_source= sound_position - camera_position;
 
 					var f32 distance= vector_to_sound_source.Length();
-					var f32 distance_clamepd= ust::max( distance, c_min_distance );
+					var f32 distance_clamped= ust::max( distance, c_min_distance );
+
 
 					// Use attenuation proportional to distance, not square distance.
 					// Using inverse sqare law produces too quiet sounds.
 					var f32 volume_distance_scaled=
-						f32( slot.volume ) / f32( 255.0f ) * c_one_volume_distance / distance_clamepd;
+						f32( slot.volume ) / f32( 255.0f ) * c_one_volume_distance / distance_clamped;
 
 					// Subtract some small value from result volume to force zero volume for distant sounds.
 					// We need this to prevent playing sounds from the other end of the map (to save some CPU time).
 					var f32 volume_with_distance_cut= ust::max( volume_distance_scaled - c_small_volume_cut, 0.0f );
 
+					var [ f32, 2 ] channel_angle_cos
+					[
+						channel_vectors[0].Dot( vector_to_sound_source ) / distance_clamped,
+						channel_vectors[1].Dot( vector_to_sound_source ) / distance_clamped,
+					];
+
+					// Calculate per-channel volume based on angle cosine between the direction to the source and channel vector.
+					// If this angle is 180 degree, volume should be around zero (but not strictly zero).
+					var [ f32, 2 ] channel_volumes
+					[
+						volume_with_distance_cut * ( channel_angle_cos[0] * 0.46f + 0.54f ),
+						volume_with_distance_cut * ( channel_angle_cos[1] * 0.46f + 0.54f ),
+					];
+
 					// Make sure result volume isn't above 1.
-					var f32 volume_clamped= ust::min( volume_with_distance_cut, c_max_volume );
+					var [ f32, 2 ] channel_volumes_clamped
+					[
+						ust::min( channel_volumes[0], c_max_volume ),
+						ust::min( channel_volumes[1], c_max_volume ),
+					];
 
 					info.sound_sources.push_back(
 						WorldAudioInfo::SoundSource
@@ -97,7 +128,7 @@ fn ConstructWorldAudioInfo(
 								u32( i << entity_index_shift_for_sound_id ) |
 								u32( slot.sequential_index ),
 							.sound_index= slot.sound_index,
-							.volume[ volume_clamped ... ],
+							.volume= channel_volumes_clamped,
 						} );
 				}
 			}
