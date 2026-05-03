@@ -179,14 +179,13 @@ PanzerMortyr sound:
 * Play enemy hurt and death default sounds.
 * Play breaking glass sounds.
 * Play sounds for pushed enities.
-* Play exposion sounds.
+* Play explosion sounds.
 * Play projectile hit sounds.
 * Play projectile bounce sounds (for grenades and other bouncing projectiles).
 * Play bird sounds.
 * Play sounds of dynamic clusters (doors, elevators, buttons).
 * Play ambient sounds.
 * Play CD music and/or music files ripped from the original CD.
-* Implement 3D sounds - with distance-based attenuation and separate volume for left and right channel depending on head orientation.
 * Consider implementing occlusion-based sound volume attenuation (reduce volume of a sound located behind a wall or in some other room).
 * Play menu sounds.
 * Play sounds while selecting next/previous item and activating it.
@@ -196,3 +195,4 @@ PanzerMortyr sound:
 * Consider adding a setting for sound quality (sample rate).
 * Allow selecting audio device via settings.
 * Pause/resume game sounds when pausing the game.
+* Tune volume attenuation params and volumes of various player and entity-related sounds.
