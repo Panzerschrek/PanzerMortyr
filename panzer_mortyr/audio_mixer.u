@@ -62,56 +62,73 @@ fn AudioMixer::Mix( mut this, ust::array_view_mut</SamplePairType/> out_sample_p
 							sound_source.new_volume[0] * sample_scale,
 							sound_source.new_volume[1] * sample_scale ) );
 
-				// Perform smooth volume change to avoid "cracks" and "steps".
-				var [ f32, c_num_samples ] mut current_volume= start_volume;
-				var [ f32, c_num_samples ] volume_step_delta
-				[
-					f32( end_volume[0] - start_volume[0] ) / f32( out_sample_pairs.size() ),
-					f32( end_volume[1] - start_volume[1] ) / f32( out_sample_pairs.size() ),
-				];
-
-				foreach( &mut out_sample_pair : out_sample_pairs )
+				if( start_volume[0] > 0.0f | start_volume[1] > 0.0f | end_volume[0] > 0.0f | end_volume[1] > 0.0f )
 				{
-					// Perform here resampling with linear interpolation.
-					// This works well, since output frequency is almost always higher than frequency of sound files of the original game.
+					// Perform smooth volume change to avoid "cracks" and "steps".
+					var [ f32, c_num_samples ] mut current_volume= start_volume;
+					var [ f32, c_num_samples ] volume_step_delta
+					[
+						f32( end_volume[0] - start_volume[0] ) / f32( out_sample_pairs.size() ),
+						f32( end_volume[1] - start_volume[1] ) / f32( out_sample_pairs.size() ),
+					];
 
-					var f32 src_sample_index_fractional= f32( sound_source.sample_counter ) * resampling_factor;
-					var u32 src_sample_index( src_sample_index_fractional );
+					foreach( &mut out_sample_pair : out_sample_pairs )
+					{
+						// Perform here resampling with linear interpolation.
+						// This works well, since output frequency is almost always higher than frequency of sound files of the original game.
+
+						var f32 src_sample_index_fractional= f32( sound_source.sample_counter ) * resampling_factor;
+						var u32 src_sample_index( src_sample_index_fractional );
+
+						if( size_type( src_sample_index ) + 1s >= sound_data_samples.size() )
+						{
+							reached_sound_data_end= true;
+							break;
+						}
+
+						var f32 mix_fraction= src_sample_index_fractional - f32( src_sample_index );
+						var InSampleType sample_value0= sound_data_samples[ size_type( src_sample_index ) ];
+						var InSampleType sample_value1= sound_data_samples[ size_type( src_sample_index ) + 1s ];
+
+						var f32 mut sample_value=
+							f32( sample_value0 ) * ( 1.0f - mix_fraction ) + f32( sample_value1 ) * mix_fraction;
+
+						static_if( sample_offset != 0.0f )
+						{
+							sample_value+= sample_offset;
+						}
+
+						for( auto mut i= 0s; i < c_num_samples; ++i )
+						{
+							out_sample_pair[i]+= sample_value * current_volume[i];
+						}
+
+						++sound_source.sample_counter;
+
+						for( auto mut i= 0s; i < c_num_samples; ++i )
+						{
+							current_volume[i]+= volume_step_delta[i];
+						}
+					}
+
+					// Update current volume after interpolating it smoothly from old to new value.
+					sound_source.current_volume= sound_source.new_volume;
+				}
+				else
+				{
+					// An optimization - don't mix sounds with zero volume.
+					// But we still need to advance them in case if volume changes later.
+
+					sound_source.sample_counter+= u32( out_sample_pairs.size() );
+
+					var u32 src_sample_index( f32( sound_source.sample_counter ) * resampling_factor );
 
 					if( size_type( src_sample_index ) + 1s >= sound_data_samples.size() )
 					{
 						reached_sound_data_end= true;
-						break;
-					}
-
-					var f32 mix_fraction= src_sample_index_fractional - f32( src_sample_index );
-					var InSampleType sample_value0= sound_data_samples[ size_type( src_sample_index ) ];
-					var InSampleType sample_value1= sound_data_samples[ size_type( src_sample_index ) + 1s ];
-
-					var f32 mut sample_value=
-						f32( sample_value0 ) * ( 1.0f - mix_fraction ) + f32( sample_value1 ) * mix_fraction;
-
-					static_if( sample_offset != 0.0f )
-					{
-						sample_value+= sample_offset;
-					}
-
-					for( auto mut i= 0s; i < c_num_samples; ++i )
-					{
-						out_sample_pair[i]+= sample_value * current_volume[i];
-					}
-
-					++sound_source.sample_counter;
-
-					for( auto mut i= 0s; i < c_num_samples; ++i )
-					{
-						current_volume[i]+= volume_step_delta[i];
 					}
 				}
 			}
-
-			// Update current volume after interpolating it smoothly from old to new value.
-			sound_source.current_volume= sound_source.new_volume;
 
 			if( reached_sound_data_end | sound_source.is_about_to_be_removed )
 			{
