@@ -44,6 +44,12 @@ fn ConstructWorldAudioInfo(
 			{
 				if( slot.sequential_index != 0u16 )
 				{
+					var f32 c_min_distance= 0.1f;
+					var f32 c_one_volume_distance= 192.0f;
+					var f32 c_max_sound_distance= 3072.0f;
+					var f32 c_small_volume_cut= c_one_volume_distance / c_max_sound_distance;
+					var f32 c_max_volume= 1.0f;
+
 					var Vec3f mut sound_position= entity.position;
 
 					var EntitiesDescription::EntityDescription& entity_description=
@@ -68,15 +74,19 @@ fn ConstructWorldAudioInfo(
 					var Vec3f vector_to_sound_source= sound_position - camera_position;
 
 					var f32 distance= vector_to_sound_source.Length();
-
-					var f32 c_min_distance= 0.1f;
-					var f32 c_one_volume_distance= 192.0f;
-					var f32 c_max_volume= 1.0f;
+					var f32 distance_clamepd= ust::max( distance, c_min_distance );
 
 					// Use attenuation proportional to distance, not square distance.
 					// Using inverse sqare law produces too quiet sounds.
-					var f32 volume_scale=
-						ust::min( c_one_volume_distance / ust::max( distance, c_min_distance ), c_max_volume );
+					var f32 volume_distance_scaled=
+						f32( slot.volume ) / f32( 255.0f ) * c_one_volume_distance / distance_clamepd;
+
+					// Subtract some small value from result volume to force zero volume for distant sounds.
+					// We need this to prevent playing sounds from the other end of the map (to save some CPU time).
+					var f32 volume_with_distance_cut= ust::max( volume_distance_scaled - c_small_volume_cut, 0.0f );
+
+					// Make sure result volume isn't above 1.
+					var f32 volume_clamped= ust::min( volume_with_distance_cut, c_max_volume );
 
 					info.sound_sources.push_back(
 						WorldAudioInfo::SoundSource
@@ -87,7 +97,7 @@ fn ConstructWorldAudioInfo(
 								u32( i << entity_index_shift_for_sound_id ) |
 								u32( slot.sequential_index ),
 							.sound_index= slot.sound_index,
-							.volume[ volume_scale * f32( slot.volume ) / f32( 255.0f ) ... ],
+							.volume[ volume_clamped ... ],
 						} );
 				}
 			}
