@@ -35,7 +35,7 @@ fn AudioMixer::Mix( mut this, ust::array_view_mut</SamplePairType/> out_sample_p
 	// Warning!
 	// This code should finish executing in a predictable and pretty short amount of time,
 	// since it's being executed by a background thread performing actual sound outputting and an unpredictable delay may lead to sound artifacts.
-	// It should contain no blocking operations (like mutex blocking), system calls and even memory allocations.
+	// It should contain no blocking operations (like mutex blocking), system calls and even memory allocations/deallocations.
 
 	// Zero the mix buffer before adding something to it.
 	foreach( &mut out_sample_pair : out_sample_pairs )
@@ -163,11 +163,19 @@ fn AudioMixer::Mix( mut this, ust::array_view_mut</SamplePairType/> out_sample_p
 			{
 				// Perform removal AFTER performing mixing - to allow fading a sound to be removed.
 
-				if( out_messages_queue_write_end_.TryPush( OutMessageSoundSourceFinished{ .id= sound_source.id } ) )
+				// Pass a copy of the shared pointer containing sound data back.
+				// Doing so we ensure that this thread is not the last one owning it
+				// and thus prevent freeing memory of this data on this thread while resetting this shared pointer instance.
+				// We need to prevent freeing memory here, since it may require some mutex locks (inside an allocator) or even system calls.
+				if( out_messages_queue_write_end_.TryPush(
+					OutMessageSoundSourceFinished{ .id= sound_source.id, .sound_data= sound_source.sound_data } ) )
 				{
 					sound_source.id= c_empty_sound_source_id;
-					sound_source.sound_data.reset();
 					sound_source.sample_counter= 0u;
+
+					 // It's fine to reset it now,
+					 // since a copy of this shared pointer is now in the queue and no actual memory freeing should take place.
+					sound_source.sound_data.reset();
 				}
 				else
 				{
