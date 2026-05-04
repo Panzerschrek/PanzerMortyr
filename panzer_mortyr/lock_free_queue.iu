@@ -1,0 +1,201 @@
+import "/aligned_storage.iu"
+import "/alloc.iu"
+import "/assert.iu"
+import "/atomic.iu"
+
+namespace PM
+{
+
+// Single-producer, single-consumer lock-free queue with fixed capacity.
+template</ type T, u32 Capacity />
+class LockFreeQueue
+{
+	static_assert( typeinfo</T/>.reference_tag_count == 0s, "Types with references inside aren't supported!" );
+	static_assert( !non_sync</T/>, "Non-sync types aren't supported!" );
+
+public:
+	// Create both queue ends.
+	// Each end can be sent into another thread.
+	// The underlying queue is destroyed when both ends are destroyed.
+	fn Create() : tup[ WriteEnd, ReadEnd ]
+	{
+		unsafe
+		{
+			var $(SharedStorage) storage=
+				ust::byte_ptr_cast</SharedStorage/>( ust::memory_allocate( typeinfo</SharedStorage/>.size_of ) );
+
+			// Initialize control variables.
+			$>(storage).write_position= 0u;
+			$>(storage).read_position= 0u;
+			$>(storage).use_counter= 2u; // One use for the write end one use for the read end.
+
+			// Leave actual storage uninitialized.
+
+			var tup[ WriteEnd, ReadEnd ] result[ (storage), (storage) ];
+			return result;
+		}
+	}
+
+	class WriteEnd
+	{
+		// Given storage should be valid and its use counter should be initialized properly.
+		fn constructor( $(SharedStorage) storage ) unsafe
+			( storage_= storage )
+		{}
+
+		fn destructor()
+		{
+			unsafe
+			{
+				if( ust::atomic_dec( $>( storage_ ).use_counter ) == 1u )
+				{
+					DestroyStorageElements( $>( storage_ ) );
+					ust::memory_free( ust::ptr_cast_to_byte8( storage_ ) );
+				}
+			}
+		}
+
+		// Returns "true" if was able to push.
+		fn nodiscard TryPush( mut this, T mut value ) : bool
+		{
+			unsafe
+			{
+				var SharedStorage &mut storage= $>( storage_ );
+
+				// Can use here non-atomic read, since this is the only thread modifying it.
+				var u32 write_position= storage.write_position;
+				// Require here atomic load, since other thread can modify it.
+				var u32 read_position= ust::atomic_read( storage.read_position );
+
+				debug_assert( storage.read_position <= storage.write_position );
+
+				var u32 num_stored_elements= write_position - read_position;
+				debug_assert( num_stored_elements <= Capacity );
+
+				if( num_stored_elements == Capacity )
+				{
+					return false; // The queue is full.
+				}
+
+				// Copy bytes of the given value into a storage slot.
+				ust::memory_copy_aligned(
+					typeinfo</T/>.align_of,
+					ust::ptr_cast_to_byte8( $<( storage.storage[ write_position % Capacity ] ) ),
+					ust::ptr_cast_to_byte8( $<( value ) ),
+					typeinfo</T/>.size_of );
+
+				// Forget about given value - now we own it.
+				ust::move_into_nowhere( move(value) );
+
+				// Require atomic operation to increment the write position, since it can be read by the other end.
+				ust::atomic_inc( storage.write_position );
+
+				return true;
+			}
+		}
+
+	private:
+		$(SharedStorage) imut storage_;
+	}
+
+	class ReadEnd
+	{
+		// Given storage should be valid and its use counter should be initialized properly.
+		fn constructor( $(SharedStorage) storage ) unsafe
+			( storage_= storage )
+		{}
+
+		fn destructor()
+		{
+			unsafe
+			{
+				if( ust::atomic_dec( $>( storage_ ).use_counter ) == 1u )
+				{
+					DestroyStorageElements( $>( storage_ ) );
+					ust::memory_free( ust::ptr_cast_to_byte8( storage_ ) );
+				}
+			}
+		}
+
+		// Returns empty optional if queue is empty.
+		fn TryPop( mut this ) : ust::optional</T/>
+		{
+			unsafe
+			{
+				var SharedStorage &mut storage= $>( storage_ );
+
+				// Require here atomic load, since other thread can modify it.
+				var u32 write_position= ust::atomic_read( storage.write_position );
+				// Can use here non-atomic read, since this is the only thread modifying it.
+				var u32 read_position= storage.read_position;
+
+				debug_assert( storage.read_position <= storage.write_position );
+
+				var u32 num_stored_elements= write_position - read_position;
+				debug_assert( num_stored_elements <= Capacity );
+
+				if( num_stored_elements == 0u )
+				{
+					return ust::null_optional; // The queue is empty.
+				}
+
+				// Extract a value from the queue and return it.
+
+				var T mut value= uninitialized;
+
+				ust::memory_copy_aligned(
+					typeinfo</T/>.align_of,
+					ust::ptr_cast_to_byte8( $<( value ) ),
+					ust::ptr_cast_to_byte8( $<( storage.storage[ read_position % Capacity ] ) ),
+					typeinfo</T/>.size_of );
+
+				// Require atomic operation to increment the read position, since it can be read by the other end.
+				ust::atomic_inc( storage.read_position );
+
+				return value; // Return value move should be applied here.
+			}
+		}
+
+	private:
+		$(SharedStorage) imut storage_;
+	}
+
+private:
+	// Underlying storage of the queue, which is shared by both ends.
+	struct SharedStorage
+	{
+		// Use 32-bit counters witout wrapping.
+		// It allows to pass up to 4294967296 values through the queue, which is more than enough for our needs.
+
+		// Where a new element should be placed.
+		// This value should be % by capacity to access storage.
+		// It's changed only by the write end.
+		u32 write_position;
+
+		// Where an element should be extracted.
+		// This value should be % by capacity to access storage.
+		// It's changed only by the read end.
+		u32 read_position;
+
+		// 2 if both ends are alive, 1 if only one is alive, 0 means needs to be destoyed.
+		u32 use_counter;
+
+		// Where actual elements are stored.
+		[ ust::aligned_storage</ typeinfo</T/>.size_of, typeinfo</T/>.align_of />, Capacity ] storage;
+	}
+
+	fn DestroyStorageElements( SharedStorage &mut storage ) unsafe
+	{
+		debug_assert( storage.read_position <= storage.write_position );
+
+		unsafe
+		{
+			for( auto mut i= storage.read_position; i < storage.write_position; ++i )
+			{
+				ust::call_destructor( cast_ref_unsafe</T/>( storage.storage[ i % Capacity ] ) );
+			}
+		}
+	}
+}
+
+} // namespace PM
