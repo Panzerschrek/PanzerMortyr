@@ -137,6 +137,7 @@ fn AudioProcessor::Update( mut this, WorldAudioInfo& world_audio_info )
 		};
 
 	// Read messages from the mixer.
+	//
 
 	loop
 	{
@@ -160,8 +161,7 @@ fn AudioProcessor::Update( mut this, WorldAudioInfo& world_audio_info )
 		}
 	}
 
-	auto mut lock= audio_out_ext_.shared_data.lock_mut();
-	var AudioMixerSharedData &mut audio_mixer_shared_data= lock.deref();
+	auto &mut messages_queue_write_end= audio_out_ext_.mixer_in_messages_queue_write_end;
 
 	// Mark used sound sources.
 	//
@@ -189,15 +189,16 @@ fn AudioProcessor::Update( mut this, WorldAudioInfo& world_audio_info )
 			{
 				if( active_sound_source.is_playing )
 				{
-					// Mark it as about to be removed by the mixer.
-					// It's fine to use linear search here, since we have only a small fixed number of slots.
-					foreach( &mut mixer_source : audio_mixer_shared_data.sources )
+					if( messages_queue_write_end.TryPush(
+						AudioMixerSharedData::InMessageRemoveSoundSource{ .id= id } ) )
 					{
-						if( mixer_source.id == id )
-						{
-							mixer_source.is_about_to_be_removed= true;
-							break;
-						}
+						return false; // Need to remove.
+					}
+					else
+					{
+						// Failed to push to the queue, since it's full.
+						// Preserve this sound source and try removing it later, when the queue isn't full.
+						return true;
 					}
 				}
 
@@ -214,21 +215,18 @@ fn AudioProcessor::Update( mut this, WorldAudioInfo& world_audio_info )
 		if( !active_sound_source_opt.empty() )
 		{
 			// Update.
+			if( active_sound_source_opt.try_deref().is_playing )
 			{
-				var ActiveSoundSource &mut active_sound_source= active_sound_source_opt.try_deref();
-
-				if( active_sound_source.is_playing )
-				{
-					// It's fine to use linear search here, since we have only a small fixed number of slots.
-					foreach( &mut mixer_source : audio_mixer_shared_data.sources )
-					{
-						if( mixer_source.id == sound_source.id )
+				var bool pushed=
+					messages_queue_write_end.TryPush(
+						AudioMixerSharedData::InMessageSetSoundSourceVolume
 						{
-							mixer_source.new_volume= prepare_volume( sound_source.volume );
-							break;
-						}
-					}
-				}
+							.id= sound_source.id,
+							.volume= prepare_volume( sound_source.volume )
+						} );
+
+				 // It's not a big problem if we failed to update volume if the queue is full.
+				ust::ignore_unused(pushed);
 			}
 
 			move(active_sound_source_opt);
@@ -244,32 +242,20 @@ fn AudioProcessor::Update( mut this, WorldAudioInfo& world_audio_info )
 				var SoundDataNullablePtr& sound_data_nullable_ptr= sounds_data_[ sound_source.sound_index ];
 				if( !sound_data_nullable_ptr.empty() )
 				{
-					// Search for a free slot.
-					// It's fine to use linear search here, since we have only a small fixed number of slots.
-					foreach( &mut mixer_source : audio_mixer_shared_data.sources )
+					if( messages_queue_write_end.TryPush(
+							AudioMixerSharedData::InMessageAddSoundSource
+							{
+								.id= sound_source.id,
+								.volume= prepare_volume( sound_source.volume ),
+								.sound_data= sound_data_nullable_ptr.try_to_non_nullable(),
+							} ) )
 					{
-						if( mixer_source.id == c_empty_sound_source_id )
-						{
-							// Found a free slot. Assign it to this source.
-
-							var [ f32, 2 ] volume_prepared= prepare_volume( sound_source.volume );
-
-							mixer_source=
-								AudioMixerSharedData::SoundSource
-								{
-									.id= sound_source.id,
-									.current_volume= volume_prepared,
-									.new_volume= volume_prepared,
-									.sound_data= sound_data_nullable_ptr,
-									.sample_counter= 0u,
-									.is_about_to_be_removed= false,
-								};
-
-							active_sound_sources_.insert_new(
-								sound_source.id, ActiveSoundSource{ .used= true, .is_playing= true } );
-
-							break;
-						}
+						active_sound_sources_.insert_new(
+							sound_source.id, ActiveSoundSource{ .used= true, .is_playing= true } );
+					}
+					else
+					{
+						// Don't create and entry in the active sound sources map if the queue is full in order to try it again next time..
 					}
 				}
 			}

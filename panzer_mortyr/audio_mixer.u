@@ -31,6 +31,20 @@ fn AudioMixer::Mix( mut this, ust::array_view_mut</SamplePairType/> out_sample_p
 	auto mut lock= shared_data_.lock_mut();
 	var AudioMixerSharedData &mut shared_data= lock.deref();
 
+	// Process input messages.
+
+	loop
+	{
+		if_var( &message : shared_data.in_messages_queue_read_end.TryPop() )
+		{
+			ProcessMessage( shared_data.sources, message );
+		}
+		else
+		{
+			break;
+		}
+	}
+
 	foreach( &mut sound_source : shared_data.sources )
 	{
 		if( sound_source.id != c_empty_sound_source_id && !sound_source.sound_data.empty() )
@@ -147,6 +161,70 @@ fn AudioMixer::Mix( mut this, ust::array_view_mut</SamplePairType/> out_sample_p
 					// Assume that we can push a finish message next time.
 				}
 			}
+		}
+	}
+}
+
+fn ProcessMessage(
+	AudioMixerSharedData::SoundSources &mut sound_sources, AudioMixerSharedData::InMessage& message )
+{
+	variant_visit( &el : message )
+	{
+		ProcessMessageImpl( sound_sources, el );
+	}
+}
+
+fn ProcessMessageImpl(
+	AudioMixerSharedData::SoundSources &mut sound_sources, AudioMixerSharedData::InMessageAddSoundSource& message )
+{
+	foreach( &mut source : sound_sources )
+	{
+		// Search for a free slot.
+		// It's fine to use linear search here, since we have only a small fixed number of slots.
+		if( source.id == c_empty_sound_source_id )
+		{
+			// Found a free slot. Assign it to this source.
+
+			source=
+				AudioMixerSharedData::SoundSource
+				{
+					.id= message.id,
+					.current_volume= message.volume,
+					.new_volume= message.volume,
+					.sound_data= message.sound_data,
+					.sample_counter= 0u,
+					.is_about_to_be_removed= false,
+				};
+
+			break;
+		}
+	}
+}
+
+fn ProcessMessageImpl(
+	AudioMixerSharedData::SoundSources &mut sound_sources, AudioMixerSharedData::InMessageSetSoundSourceVolume& message )
+{
+	// It's fine to use linear search here, since we have only a small fixed number of slots.
+	foreach( &mut source : sound_sources )
+	{
+		if( source.id == message.id )
+		{
+			source.new_volume= message.volume;
+			break;
+		}
+	}
+}
+
+fn ProcessMessageImpl(
+	AudioMixerSharedData::SoundSources &mut sound_sources, AudioMixerSharedData::InMessageRemoveSoundSource& message )
+{
+	// It's fine to use linear search here, since we have only a small fixed number of slots.
+	foreach( &mut source : sound_sources )
+	{
+		if( source.id == message.id )
+		{
+			source.is_about_to_be_removed= true;
+			break;
 		}
 	}
 }
