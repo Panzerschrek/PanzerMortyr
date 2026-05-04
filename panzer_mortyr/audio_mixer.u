@@ -10,6 +10,17 @@ fn AudioMixer::constructor(
 	(
 		in_messages_queue_read_end_= move( in_messages_queue_read_end ),
 		out_messages_queue_write_end_= move( out_messages_queue_write_end ),
+		// Fill source slots with dummy data to indicated that they all are free.
+		sources_
+		[
+			{
+				.id= c_empty_sound_source_id,
+				.current_volume= zero_init,
+				.new_volume= zero_init,
+				.sample_counter= 0u,
+				.is_about_to_be_removed= false,
+			} ...
+		],
 		frequency_= 1u, // Set exact value later.
 	)
 {}
@@ -21,6 +32,11 @@ fn AudioMixer::SetFrequency( mut this, u32 frequency )
 
 fn AudioMixer::Mix( mut this, ust::array_view_mut</SamplePairType/> out_sample_pairs )
 {
+	// Warning!
+	// This code should finish executing in a predictable and pretty short amount of time,
+	// since it's being executed by a background thread performing actual sound outputting and an unpredictable delay may lead to sound artifacts.
+	// It should contain no blocking operations (like mutex blocking), system calls and even memory allocations.
+
 	// Zero the mix buffer before adding something to it.
 	foreach( &mut out_sample_pair : out_sample_pairs )
 	{
@@ -36,7 +52,7 @@ fn AudioMixer::Mix( mut this, ust::array_view_mut</SamplePairType/> out_sample_p
 	{
 		if_var( &message : in_messages_queue_read_end_.TryPop() )
 		{
-			ProcessMessage( sources_, message );
+			ProcessMessage( message );
 		}
 		else
 		{
@@ -163,23 +179,23 @@ fn AudioMixer::Mix( mut this, ust::array_view_mut</SamplePairType/> out_sample_p
 	}
 }
 
-fn AudioMixer::ProcessMessage( SoundSources &mut sound_sources, InMessage& message )
+fn AudioMixer::ProcessMessage( mut this, InMessage& message )
 {
 	variant_visit( &el : message )
 	{
-		ProcessMessageImpl( sound_sources, el );
+		ProcessMessageImpl( el );
 	}
 }
 
-fn AudioMixer::ProcessMessageImpl( SoundSources &mut sound_sources, InMessageAddSoundSource& message )
+fn AudioMixer::ProcessMessageImpl( mut this, InMessageAddSoundSource& message )
 {
-	foreach( &mut source : sound_sources )
+	foreach( &mut source : sources_ )
 	{
 		// Search for a free slot.
 		// It's fine to use linear search here, since we have only a small fixed number of slots.
 		if( source.id == c_empty_sound_source_id )
 		{
-			// Found a free slot. Assign it to this source.
+			// Found a free slot. Assign it to the new source.
 
 			source=
 				SoundSource
@@ -197,26 +213,28 @@ fn AudioMixer::ProcessMessageImpl( SoundSources &mut sound_sources, InMessageAdd
 	}
 }
 
-fn AudioMixer::ProcessMessageImpl( SoundSources &mut sound_sources, InMessageSetSoundSourceVolume& message )
+fn AudioMixer::ProcessMessageImpl( mut this, InMessageSetSoundSourceVolume& message )
 {
 	// It's fine to use linear search here, since we have only a small fixed number of slots.
-	foreach( &mut source : sound_sources )
+	foreach( &mut source : sources_ )
 	{
 		if( source.id == message.id )
 		{
+			// Set new volume in order to gradually change current volume to it and avoid ugly "steps" and "cracks".
 			source.new_volume= message.volume;
 			break;
 		}
 	}
 }
 
-fn AudioMixer::ProcessMessageImpl( 	SoundSources &mut sound_sources, InMessageRemoveSoundSource& message )
+fn AudioMixer::ProcessMessageImpl( mut this, InMessageRemoveSoundSource& message )
 {
 	// It's fine to use linear search here, since we have only a small fixed number of slots.
-	foreach( &mut source : sound_sources )
+	foreach( &mut source : sources_ )
 	{
 		if( source.id == message.id )
 		{
+			// Mark a running source for removal, but not remove it immediately - to fade it nicely to zero.
 			source.is_about_to_be_removed= true;
 			break;
 		}
