@@ -13,42 +13,8 @@ type AudioMixerSharedDataPtr= ust::shared_ptr_mt_mut</AudioMixerSharedData/>;
 // This struct represents a communication channel with the thread performing actual audio outputting and mixing.
 struct AudioMixerSharedData
 {
-	// Use fixed number of source slots.
-	// It's expected that many of these sounds have zero volume and mixing sounds with zero volume costs nothing.
-
-	type SoundSources= [ SoundSource, 40 ];
-	SoundSources sources
-		[
-			{
-				.id= c_empty_sound_source_id,
-				.current_volume= zero_init,
-				.new_volume= zero_init,
-				.sample_counter= 0u,
-				.is_about_to_be_removed= false,
-			} ...
-		];
-
 	InMessagesQueue::ReadEnd in_messages_queue_read_end;
 	OutMessagesQueue::WriteEnd out_messages_queue_write_end;
-
-	struct SoundSource
-	{
-		// Zero ID represents that this source isn't active (is empty slot).
-		UniqueSoundSourceId id;
-
-		// While updating volume of an existing sound source, only "new_volume" should be set.
-		[ f32, AudioMixer::c_num_samples ] current_volume;
-		[ f32, AudioMixer::c_num_samples ] new_volume;
-
-		ust::shared_ptr_mt_final_nullable</SoundDataAbstract/> sound_data;
-
-		// Counter of output samples, not sound data samples (using output frequency).
-		u32 sample_counter;
-
-		// Use it to mark sources to be removed.
-		// Do this instead of removing them to do this in a nice way - with fading out (to avoid "steps" and "cracks").
-		bool is_about_to_be_removed;
-	}
 
 	type InMessagesQueue= LockFreeQueue</ InMessage, 256u />;
 
@@ -104,10 +70,57 @@ public:
 	fn Mix( mut this, ust::array_view_mut</SamplePairType/> out_sample_pairs );
 
 private:
+	// Use fixed number of source slots.
+	// It's expected that many of these sounds have zero volume and mixing sounds with zero volume costs nothing.
+
+	type SoundSources= [ SoundSource, 40 ];
+
+	struct SoundSource
+	{
+		// Zero ID represents that this source isn't active (is empty slot).
+		UniqueSoundSourceId id;
+
+		// While updating volume of an existing sound source, only "new_volume" should be set.
+		[ f32, AudioMixer::c_num_samples ] current_volume;
+		[ f32, AudioMixer::c_num_samples ] new_volume;
+
+		ust::shared_ptr_mt_final_nullable</SoundDataAbstract/> sound_data;
+
+		// Counter of output samples, not sound data samples (using output frequency).
+		u32 sample_counter;
+
+		// Use it to mark sources to be removed.
+		// Do this instead of removing them to do this in a nice way - with fading out (to avoid "steps" and "cracks").
+		bool is_about_to_be_removed;
+	}
+
+private:
+	fn ProcessMessage( SoundSources &mut sound_sources, AudioMixerSharedData::InMessage& message );
+
+	fn ProcessMessageImpl(
+		SoundSources &mut sound_sources, AudioMixerSharedData::InMessageAddSoundSource& message );
+
+	fn ProcessMessageImpl(
+		SoundSources &mut sound_sources, AudioMixerSharedData::InMessageSetSoundSourceVolume& message );
+
+	fn ProcessMessageImpl(
+		SoundSources &mut sound_sources, AudioMixerSharedData::InMessageRemoveSoundSource& message );
+
+private:
 	AudioMixerSharedDataPtr imut shared_data_;
 
 	u32 frequency_;
-	u32 sample_counter_;
+
+	SoundSources sources_
+		[
+			{
+				.id= c_empty_sound_source_id,
+				.current_volume= zero_init,
+				.new_volume= zero_init,
+				.sample_counter= 0u,
+				.is_about_to_be_removed= false,
+			} ...
+		];
 }
 
 } // namespace PM
