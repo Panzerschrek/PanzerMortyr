@@ -136,6 +136,30 @@ fn AudioProcessor::Update( mut this, WorldAudioInfo& world_audio_info )
 			return volume_scaled;
 		};
 
+	// Read messages from the mixer.
+
+	loop
+	{
+		if_var( &message : audio_out_ext_.mixer_out_messages_queue_read_end.TryPop() )
+		{
+			if_var( &sound_source_finished_message : message.get</ AudioMixerSharedData::OutMessageSoundSourceFinished/>() )
+			{
+				if_var( &mut active_sound_source : active_sound_sources_.find( sound_source_finished_message.id ) )
+				{
+					active_sound_source.is_playing= false;
+				}
+			}
+			else
+			{
+				halt;
+			}
+		}
+		else
+		{
+			break;
+		}
+	}
+
 	auto mut lock= audio_out_ext_.shared_data.lock_mut();
 	var AudioMixerSharedData &mut audio_mixer_shared_data= lock.deref();
 
@@ -195,15 +219,11 @@ fn AudioProcessor::Update( mut this, WorldAudioInfo& world_audio_info )
 
 				if( active_sound_source.is_playing )
 				{
-					// Mark as non-playing before checking if it's still playing.
-					active_sound_source.is_playing= false;
-
 					// It's fine to use linear search here, since we have only a small fixed number of slots.
 					foreach( &mut mixer_source : audio_mixer_shared_data.sources )
 					{
 						if( mixer_source.id == sound_source.id )
 						{
-							active_sound_source.is_playing= true;
 							mixer_source.new_volume= prepare_volume( sound_source.volume );
 							break;
 						}
