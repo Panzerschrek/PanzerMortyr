@@ -168,7 +168,6 @@ PanzerMortyr menus and HUD:
 
 PanzerMortyr sound:
 
-* Use a lock-free queue for communication between "AudioProcessor" and "AudioMixer" - using mutex-based communication is problematic for an audio thread.
 * Play player's footstep sounds.
 * Play player's out-of-ammo sounds.
 * Play player's falling sounds (due to fall damage).
