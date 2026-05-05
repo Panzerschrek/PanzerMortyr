@@ -365,9 +365,9 @@ fn nodiscard ProcessGameLogicStep(
 
 	ProcessEntitiesLogicStep( global_data, map_data, game_state, route_search_context );
 
-	ProcessDynamicClustersLogicStep( map_data, game_state );
+	ProcessDynamicClustersLogicStep( global_data, map_data, game_state );
 
-	ProcessProjectilesLogicStep( map_data, game_state );
+	ProcessProjectilesLogicStep( global_data, map_data, game_state );
 
 	ProcessProjectileHitEventsLogicStep( global_data, map_data, game_state );
 
@@ -1536,16 +1536,20 @@ fn ApplyPlayerUnclippedMovement(
 
 fn GetFrictionForMapQuad( GameGlobalData& global_data, GameMapData& map_data, u32 quad_index ) : f32
 {
-	var MaterialsProperties& materials_properties= global_data.materials_properties.deref();
+	return f32( GetMaterialPropertiesForMapQuad( global_data, map_data, quad_index ).player_step_friction );
+}
 
-	var f32 default_friction(
-		( materials_properties.empty() ? 1u : materials_properties.front().player_step_friction ) );
+fn GetMaterialPropertiesForMapQuad(
+	GameGlobalData& global_data, GameMapData& map_data, u32 quad_index ) : MaterialProperties &
+{
+	var MaterialsProperties& materials_properties= global_data.materials_properties.deref();
+	var MaterialProperties& default_properties= materials_properties.front();
 
 	var ZmapData& zmap_data= map_data.zmap_data.deref();
 
 	if( size_type( quad_index ) >= zmap_data.quads.size() )
 	{
-		return default_friction;
+		return default_properties;
 	}
 
 	var ZmapQuad& quad= zmap_data.quads[ size_type( quad_index ) ];
@@ -1587,14 +1591,14 @@ fn GetFrictionForMapQuad( GameGlobalData& global_data, GameMapData& map_data, u3
 				{
 					if( material_properties.name == material_name )
 					{
-						return f32( material_properties.player_step_friction );
+						return material_properties;
 					}
 				}
 			}
 		}
 	}
 
-	return default_friction;
+	return default_properties;
 }
 
 fn IsMapQuadBreakable( GameGlobalData& global_data, GameMapData& map_data, ZmapQuad& quad ) : bool
@@ -2399,7 +2403,7 @@ fn ProcessEntitiesLogicStep(
 	}
 }
 
-fn ProcessDynamicClustersLogicStep( GameMapData& map_data, GameState &mut game_state )
+fn ProcessDynamicClustersLogicStep( GameGlobalData& global_data, GameMapData& map_data, GameState &mut game_state )
 {
 	auto clusters= map_data.zvox_data.deref().clusters.range();
 	auto dynamic_cluster_extra_infos= map_data.zvox_data.deref().dynamic_cluster_extra_infos.range();
@@ -2474,6 +2478,7 @@ fn ProcessDynamicClustersLogicStep( GameMapData& map_data, GameState &mut game_s
 			DynamicClusterState::MovementStage::MoveForward ->
 			{
 				if( PushMoveDynamicCluster(
+						global_data,
 						map_data,
 						game_state.broken_quad_bits,
 						game_state.dynamic_cluster_colliders[i],
@@ -2483,7 +2488,8 @@ fn ProcessDynamicClustersLogicStep( GameMapData& map_data, GameState &mut game_s
 						game_state.dynamic_cluster_colliders,
 						game_state.player,
 						game_state.projectiles,
-						game_state.projectile_hit_events ) )
+						game_state.projectile_hit_events,
+						game_state.static_sound_sources ) )
 				{
 					cluster_state.distance_from_start+= movement_speed;
 
@@ -2535,6 +2541,7 @@ fn ProcessDynamicClustersLogicStep( GameMapData& map_data, GameState &mut game_s
 			DynamicClusterState::MovementStage::MoveBackward ->
 			{
 				if( PushMoveDynamicCluster(
+						global_data,
 						map_data,
 						game_state.broken_quad_bits,
 						game_state.dynamic_cluster_colliders[i],
@@ -2544,7 +2551,8 @@ fn ProcessDynamicClustersLogicStep( GameMapData& map_data, GameState &mut game_s
 						game_state.dynamic_cluster_colliders,
 						game_state.player,
 						game_state.projectiles,
-						game_state.projectile_hit_events ) )
+						game_state.projectile_hit_events,
+						game_state.static_sound_sources ) )
 				{
 					cluster_state.distance_from_start-= movement_speed;
 
@@ -2726,6 +2734,7 @@ fn ProcessClusterKeyRequirement( ZvoxCluster& cluster, PlayerState &mut player, 
 
 // Returns true if can move and false if movement is blocked.
 fn PushMoveDynamicCluster(
+	GameGlobalData& global_data,
 	GameMapData& map_data,
 	BitArrayView broken_quad_bits,
 	DynamicClusterCollider& dynamic_cluster_collider,
@@ -2735,7 +2744,8 @@ fn PushMoveDynamicCluster(
 	ust::array_view_imut</DynamicClusterCollider/> dynamic_cluster_colliders,
 	PlayerState &mut player_state,
 	ProjectilesContainer &mut projectiles,
-	ust::vector</ProjectileHitEvent/> &mut projectile_hit_events ) : bool
+	ust::vector</ProjectileHitEvent/> &mut projectile_hit_events,
+	StaticSoundSources &mut static_sound_sources ) : bool
 {
 	var f32 movement_vector_length= in_movement_vector.Length();
 	if( movement_vector_length == 0.0f )
@@ -2904,6 +2914,14 @@ fn PushMoveDynamicCluster(
 
 								projectile.velocity=
 									velocity_in_dynamic_cluster_reference_system + movement_vector_elongated;
+
+								EmitProjectileBounceSound(
+									static_sound_sources,
+									weapon_tool,
+									GetMaterialPropertiesForMapQuad(
+										global_data, map_data, intersection_result.quad_index ),
+									projectile.position,
+									projectile.velocity );
 							}
 						}
 					}
@@ -2932,7 +2950,7 @@ fn PushMoveDynamicCluster(
 	return true;
 }
 
-fn ProcessProjectilesLogicStep( GameMapData& map_data, GameState &mut game_state )
+fn ProcessProjectilesLogicStep( GameGlobalData& global_data, GameMapData& map_data, GameState &mut game_state )
 {
 	var EntitiesDescription& entities_description= map_data.entities_description.deref();
 
@@ -2941,6 +2959,7 @@ fn ProcessProjectilesLogicStep( GameMapData& map_data, GameState &mut game_state
 	auto& broken_quad_bits= game_state.broken_quad_bits;
 	auto& dynamic_cluster_colliders= game_state.dynamic_cluster_colliders;
 	auto& colliders= game_state.colliders;
+	auto &mut static_sound_sources= game_state.static_sound_sources;
 
 	game_state.projectiles.Retain(
 		lambda[&]( Projectile& mut projectile ) : bool
@@ -3021,6 +3040,8 @@ fn ProcessProjectilesLogicStep( GameMapData& map_data, GameState &mut game_state
 							{
 								smallest_travelled_distance= intersection_distance;
 								hit_entity_index= collider.entity_index;
+								hit_cluster_index= ~0u;
+								hit_quad_index= ~0u;
 							}
 						}
 					}
@@ -3061,6 +3082,13 @@ fn ProcessProjectilesLogicStep( GameMapData& map_data, GameState &mut game_state
 										( 2.0f * projectile.velocity.Dot( normal ) / normal_square_length ) * normal;
 
 									SlowDownProjectileAfterBouncing( projectile.velocity, weapon_tool );
+
+									EmitProjectileBounceSound(
+										static_sound_sources,
+										weapon_tool,
+										GetMaterialPropertiesForMapQuad( global_data, map_data, hit_quad_index ),
+										projectile.position,
+										projectile.velocity );
 
 									continue label bounces_loop;
 								}
@@ -3512,6 +3540,29 @@ fn ProcessProjectileHitEventsLogicStep( GameGlobalData& global_data, GameMapData
 					}
 				}
 			}
+		}
+
+		if( size_type( projectile_hit_event.hit_cluster_index ) < clusters.size() &&
+			size_type( projectile_hit_event.hit_quad_index ) < quads.size() )
+		{
+			EmitProjectileHitSound(
+				game_state.static_sound_sources,
+				weapon_tool,
+				GetMaterialPropertiesForMapQuad( global_data, map_data, projectile_hit_event.hit_quad_index ),
+				projectile_hit_event.position );
+		}
+		else if( projectile_hit_event.hit_entity_index != ~0u )
+		{
+			EmitProjectileObjectHitSound( game_state.static_sound_sources, weapon_tool, projectile_hit_event.position );
+		}
+
+		if( weapon_tool.splash_damage_area_size > 0u )
+		{
+			// Projectiles with splash damage emit explosion sounds.
+			EmitExplosionSound(
+				game_state.static_sound_sources,
+				global_data.sounds_description.deref(),
+				projectile_hit_event.position );
 		}
 
 		// Alarm entities by nearby projectile hits.
