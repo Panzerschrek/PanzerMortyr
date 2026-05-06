@@ -179,7 +179,6 @@ PanzerMortyr sound:
 * Play enemy hurt and death default sounds.
 * Play sounds for pushed enities.
 * Play bird sounds.
-* Play sounds of dynamic clusters (doors, elevators, buttons).
 * Play ambient sounds.
 * Play CD music and/or music files ripped from the original CD.
 * Consider implementing occlusion-based sound volume attenuation (reduce volume of a sound located behind a wall or in some other room).
