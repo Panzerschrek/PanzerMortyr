@@ -112,6 +112,27 @@ fn ConstructWorldAudioInfo(
 		var SoundSourceSlot& slot= game_state.dynamic_clusters[i].sound_source_slot;
 		if( slot.sequential_index != 0u16 )
 		{
+			// Since dynamic clusters are large objects, calculating volume only for their centers isn't enough.
+			// So, calculate volume for the center and for corner vertices and average it.
+
+			var BBox3f& bbox= game_state.dynamic_cluster_colliders[i].bbox;
+
+			var [ f32, 2 ] mut volume_sum=
+				volume_calculator.CalculatePointSoundSourceRelativeVolume( bbox.GetCenter(), slot.volume );
+
+			foreach( &corner_vertex : bbox.CreateCornerVertices() )
+			{
+				var [ f32, 2 ] corner_volume=
+					volume_calculator.CalculatePointSoundSourceRelativeVolume( corner_vertex, slot.volume );
+
+				for( auto mut i= 0u; i < 2u; ++i )
+				{
+					volume_sum[i]+= corner_volume[i];
+				}
+			}
+
+			var f32 num_elements_in_volume_sum= 9.0f; // 1 for center and 8 for corner vertices.
+
 			info.sound_sources.push_back(
 				WorldAudioInfo::SoundSource
 				{
@@ -121,8 +142,7 @@ fn ConstructWorldAudioInfo(
 						u32( i << dynamic_cluster_index_shift_for_sound_id ) |
 						u32( slot.sequential_index ),
 					.sound_index= slot.sound_index,
-					.volume= volume_calculator.CalculatePointSoundSourceRelativeVolume(
-						game_state.dynamic_cluster_colliders[i].bbox.GetCenter(), slot.volume ),
+					.volume[ volume_sum[0] / num_elements_in_volume_sum, volume_sum[1] / num_elements_in_volume_sum ],
 				} );
 		}
 	}
