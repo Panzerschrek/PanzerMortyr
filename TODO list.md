@@ -177,7 +177,6 @@ PanzerMortyr sound:
 * Play other player-related sounds.
 * Play enemy alarm default sounds (Halt oder ich schieße!).
 * Play enemy hurt and death default sounds.
-* Play breaking glass sounds.
 * Play sounds for pushed enities.
 * Play bird sounds.
 * Play sounds of dynamic clusters (doors, elevators, buttons).
