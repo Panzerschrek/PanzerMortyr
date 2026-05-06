@@ -184,7 +184,6 @@ PanzerMortyr sound:
 * Play CD music and/or music files ripped from the original CD.
 * Consider implementing occlusion-based sound volume attenuation (reduce volume of a sound located behind a wall or in some other room).
 * Play menu sounds.
-* Play sounds while selecting next/previous item and activating it.
 * Save playing sounds in save files and resume playing them upon game loading.
 * Stop playing sounds from a previous level after level tranition.
 * Consider implementing sound effects like reverberation/echo effects and use them where it makes sense (like while under water oh having an environment suit active).
