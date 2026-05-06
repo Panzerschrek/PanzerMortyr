@@ -69,6 +69,7 @@ fn CreateNewMapGameState(
 			.last_key_request_step= 0u,
 			.activated_triggers_mask= 0u,
 			.last_opened_secret_area_step= 0u,
+			.horizontal_distance_walked= 0.0f,
 		},
 		.broken_quad_bits( map_data.zmap_data.deref().quads.size() )
 	};
@@ -228,6 +229,7 @@ fn CreateNewMapGameState(
 					.last_key_request_step= 0u,
 					.activated_triggers_mask= 0u,
 					.last_opened_secret_area_step= 0u,
+					.horizontal_distance_walked= 0.0f,
 				};
 
 			if_var( &prev_state : prev_player_state )
@@ -1200,6 +1202,17 @@ fn PerformPlayerMovement(
 			movement_start_position,
 			movement_end_position );
 
+	if( move_result.ground_planes_mask != 0u )
+	{
+		var f32 horizontal_distance_walked_in_this_logic_step=
+			( move_result.trace_clip_result.position_clipped.xy() - movement_start_position.xy() ).Length();
+
+		HandlePlayerWalking(
+			game_state.player,
+			horizontal_distance_walked_in_this_logic_step,
+			GetGroundMaterialPropertiesForMoveResult( global_data, map_data, move_result ) );
+	}
+
 	if( move_result.step_z_delta < 0.0f )
 	{
 		// A tricky way to avoid sudden jump in camera hight when performing steps climbing.
@@ -1534,13 +1547,65 @@ fn ApplyPlayerUnclippedMovement(
 	player_state.position+= player_state.velocity;
 }
 
+fn HandlePlayerWalking(
+	PlayerState &mut player_state,
+	f32 horizontal_distance_walked_in_this_logic_step,
+	ust::optional_ref_imut</MaterialProperties/> material_properties_opt )
+{
+	var f32 prev_distance= player_state.horizontal_distance_walked;
+	player_state.horizontal_distance_walked+= horizontal_distance_walked_in_this_logic_step;
+	var f32 cur_distance= player_state.horizontal_distance_walked;
+
+	if_var( &material_properties : material_properties_opt )
+	{
+		// This value was tuned so that footstep sounds are synchronized with walking animations of many (but not all) weapons.
+		var f32 c_step_length= 128.0f;
+
+		var u32 prev_steps( prev_distance / c_step_length );
+		var u32 cur_steps( cur_distance / c_step_length );
+
+		for( auto mut step= prev_steps; step < cur_steps; ++step )
+		{
+			EmitFootstepSound( material_properties, step, player_state.sound_source_slots );
+
+			// TODO - spawn here footstep decals if necessary.
+		}
+	}
+}
+
+fn GetGroundMaterialPropertiesForMoveResult(
+	GameGlobalData& global_data,
+	GameMapData& map_data,
+	CollisionStepMoveResult& move_result )
+		: ust::optional_ref_imut</MaterialProperties/> @( ust::reference_notation::return_inner_references::param0 )
+{
+	for( auto mut i= 0u; i < move_result.trace_clip_result.num_collision_events; ++i )
+	{
+		if( ( move_result.ground_planes_mask & ( 1u << i ) ) != 0u )
+		{
+			var u32 quad_index= move_result.trace_clip_result.collision_events[i].collision_quad_index;
+			if( quad_index != ~0u )
+			{
+				return GetMaterialPropertiesForMapQuad( global_data, map_data, quad_index );
+			}
+			else
+			{
+				// TODO - maybe use default material if ground plane belongs to a non-map object (entity)?
+			}
+		}
+	}
+
+	return ust::null_optional_ref;
+}
+
 fn GetFrictionForMapQuad( GameGlobalData& global_data, GameMapData& map_data, u32 quad_index ) : f32
 {
 	return f32( GetMaterialPropertiesForMapQuad( global_data, map_data, quad_index ).player_step_friction );
 }
 
 fn GetMaterialPropertiesForMapQuad(
-	GameGlobalData& global_data, GameMapData& map_data, u32 quad_index ) : MaterialProperties &
+	GameGlobalData& global_data, GameMapData& map_data, u32 quad_index )
+		: MaterialProperties & @( ust::reference_notation::return_references::param0 )
 {
 	var MaterialsProperties& materials_properties= global_data.materials_properties.deref();
 	var MaterialProperties& default_properties= materials_properties.front();

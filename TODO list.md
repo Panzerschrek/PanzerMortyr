@@ -97,6 +97,8 @@ PanzerMortyr game logic:
 * Implement weapon switching in case of out of ammo.
 * Spawn bubble sprites while swimming in water.
 * Spawn bubble sprites for projectiles moving in water.
+* Spawn water splash particles if a projectile hits water surface.
+* Spawn water circles if a projectile hits water surface.
 * Do something with unconditional entity state transition "w_zasiegu_strzalu_b" - try making it somewhat random.
 * Perform alarm-based enemy state transition with a delay (investigate how this delay is specified).
 * Consider creating patches for ZINF-files for fixing some errors in them.
@@ -168,7 +170,6 @@ PanzerMortyr menus and HUD:
 
 PanzerMortyr sound:
 
-* Play player's footstep sounds.
 * Play player's out-of-ammo sounds.
 * Play player's falling sounds (due to fall damage).
 * Play tool-related sounds (if has some).
