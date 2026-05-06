@@ -1210,7 +1210,7 @@ fn PerformPlayerMovement(
 		HandlePlayerWalking(
 			game_state.player,
 			horizontal_distance_walked,
-			GetMaterialPropertiesForMoveResult( global_data, map_data, move_result ) );
+			GetGroundMaterialPropertiesForMoveResult( global_data, map_data, move_result ) );
 	}
 
 	if( move_result.step_z_delta < 0.0f )
@@ -1548,42 +1548,60 @@ fn ApplyPlayerUnclippedMovement(
 }
 
 fn HandlePlayerWalking(
-	PlayerState &mut player_state, f32 horizontal_distance_walked, MaterialProperties& material_properties )
+	PlayerState &mut player_state,
+	f32 horizontal_distance_walked,
+	ust::optional_ref_imut</MaterialProperties/> material_properties_opt )
 {
 	var f32 prev_distance= player_state.horizontal_distance_walked;
 	player_state.horizontal_distance_walked+= horizontal_distance_walked;
 	var f32 cur_distance= player_state.horizontal_distance_walked;
 
-	var f32 c_step_length= 128.0f; // TODO - tune this.
-
-	var u32 prev_steps( prev_distance / c_step_length );
-	var u32 cur_steps( cur_distance / c_step_length );
-
-	for( auto mut step= prev_steps; step < cur_steps; ++step )
+	if_var( &material_properties : material_properties_opt )
 	{
-		var u32 sound_index=
-			( ( step & 1u ) == 0u
-				? material_properties.left_step_sound_index
-				: material_properties.right_step_sound_index );
+		var f32 c_step_length= 128.0f; // TODO - tune this.
 
-		if( sound_index <= 255u )
+		var u32 prev_steps( prev_distance / c_step_length );
+		var u32 cur_steps( cur_distance / c_step_length );
+
+		for( auto mut step= prev_steps; step < cur_steps; ++step )
 		{
-			var u32 volume= 255u;
-			EmitSound( player_state.sound_source_slots, u8( sound_index ), volume );
+			var u32 sound_index=
+				( ( step & 1u ) == 0u
+					? material_properties.left_step_sound_index
+					: material_properties.right_step_sound_index );
+
+			if( sound_index <= 255u )
+			{
+				var u32 volume= 255u;
+				EmitSound( player_state.sound_source_slots, u8( sound_index ), volume );
+			}
 		}
 	}
 }
 
-fn GetMaterialPropertiesForMoveResult(
-	GameGlobalData& global_data, GameMapData& map_data, CollisionStepMoveResult& move_result ) : MaterialProperties &
+fn GetGroundMaterialPropertiesForMoveResult(
+	GameGlobalData& global_data,
+	GameMapData& map_data,
+	CollisionStepMoveResult& move_result )
+		: ust::optional_ref_imut</MaterialProperties/> @( ust::reference_notation::return_inner_references::param0 )
 {
 	for( auto mut i= 0u; i < move_result.trace_clip_result.num_collision_events; ++i )
 	{
-		return GetMaterialPropertiesForMapQuad(
-			global_data, map_data, move_result.trace_clip_result.collision_events[i].collision_quad_index );
+		if( ( move_result.ground_planes_mask & ( 1u << i ) ) != 0u )
+		{
+			var u32 quad_index= move_result.trace_clip_result.collision_events[i].collision_quad_index;
+			if( quad_index != ~0u )
+			{
+				return GetMaterialPropertiesForMapQuad( global_data, map_data, quad_index );
+			}
+			else
+			{
+				// TODO - maybe use default material if ground plane belongs to a non-map object (entity)?
+			}
+		}
 	}
 
-	return global_data.materials_properties.deref().front();
+	return ust::null_optional_ref;
 }
 
 fn GetFrictionForMapQuad( GameGlobalData& global_data, GameMapData& map_data, u32 quad_index ) : f32
@@ -1592,7 +1610,8 @@ fn GetFrictionForMapQuad( GameGlobalData& global_data, GameMapData& map_data, u3
 }
 
 fn GetMaterialPropertiesForMapQuad(
-	GameGlobalData& global_data, GameMapData& map_data, u32 quad_index ) : MaterialProperties &
+	GameGlobalData& global_data, GameMapData& map_data, u32 quad_index )
+		: MaterialProperties & @( ust::reference_notation::return_references::param0 )
 {
 	var MaterialsProperties& materials_properties= global_data.materials_properties.deref();
 	var MaterialProperties& default_properties= materials_properties.front();
