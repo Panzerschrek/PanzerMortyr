@@ -5,8 +5,8 @@ namespace PM
 {
 
 fn AudioProcessor::constructor(
-	ConsoleOutPtr& console_out_ptr,
-	GameFilesystemPtr& game_filesystem_ptr,
+	ConsoleOutPtr mut console_out_ptr,
+	GameFilesystemPtr mut game_filesystem_ptr,
 	SettingsImutPtr mut settings,
 	CachingGameResourcesLoaderPtr& caching_game_resources_loader )
 	(
@@ -26,12 +26,14 @@ fn AudioProcessor::constructor(
 						AudioMixer( move( in_queue_read_end ), move( out_queue_write_end ) ) ),
 				};
 			} (),
+		console_out_ptr_= move(console_out_ptr),
+		game_filesystem_ptr_= move(game_filesystem_ptr),
 		settings_= move(settings)
 	)
 {
 	if( !audio_out_ext_.audio_out.IsActive() )
 	{
-		ConsoleOutAddTextLine( console_out_ptr, "Audio out isn't active, skip loading sounds." );
+		ConsoleOutAddTextLine( console_out_ptr_, "Audio out isn't active, skip loading sounds." );
 		return;
 	}
 
@@ -50,7 +52,7 @@ fn AudioProcessor::constructor(
 
 	auto& sounds_description= sounds_description_ptr.deref().sounds;
 
-	auto mut fs_lock= game_filesystem_ptr.lock_mut();
+	auto mut fs_lock= game_filesystem_ptr_.lock_mut();
 
 	var size_type mut num_sound_files_loaded= 0s, mut total_sound_data_bytes= 0s;
 
@@ -71,7 +73,7 @@ fn AudioProcessor::constructor(
 			continue;
 		}
 
-		auto mut sound_data_opt= LoadSoundData( console_out_ptr, fs_lock.deref(), file_name );
+		auto mut sound_data_opt= LoadSoundData( console_out_ptr_, fs_lock.deref(), file_name );
 
 		if( !sound_data_opt.empty() )
 		{
@@ -94,7 +96,7 @@ fn AudioProcessor::constructor(
 	}
 
 	ConsoleOutAddTextLine(
-		console_out_ptr,
+		console_out_ptr_,
 		ust::concat(
 			"Loaded ",
 			ust::to_string8( num_sound_files_loaded ),
@@ -108,6 +110,29 @@ fn AudioProcessor::Update( mut this, WorldAudioInfo& world_audio_info )
 	if( !audio_out_ext_.audio_out.IsActive() )
 	{
 		return;
+	}
+
+	// Load ambient sounds.
+	// Normally the list of ambient sounds should be changed only upon level transition, so, heavy loading work is performed exactly once per level.
+	// TODO - avoid reloading sound files already loaded, but assigned to different slots.
+	for( auto mut i= 0s; i < WorldAudioInfo::c_num_ambient_sounds; ++i )
+	{
+		var WorldAudioInfo::AmbientSound& in_sound= world_audio_info.ambient_sounds[i];
+		var AmbientSound &mut out_sound= ambient_sounds_[i];
+
+		if( out_sound.file_name != in_sound.file_name )
+		{
+			// Set file name in any case - to avoid reloading sound file again if failed to load it.
+			out_sound.file_name= in_sound.file_name;
+
+			auto mut fs_lock= game_filesystem_ptr_.lock_mut();
+
+			auto mut sound_data_opt= LoadSoundData( console_out_ptr_, fs_lock.deref(), in_sound.file_name );
+			if( !sound_data_opt.empty() )
+			{
+				out_sound.data= SoundDataNullablePtr( sound_data_opt.try_take() );
+			}
+		}
 	}
 
 	// TODO - use non-linear volume scale?
@@ -300,6 +325,8 @@ fn AudioProcessor::StopAllWorldSounds( mut this )
 	}
 
 	active_sound_sources_.clear();
+
+	// TODO - stop playing ambient sounds.
 }
 
 fn AudioProcessor::GetStats( this ) : Stats
