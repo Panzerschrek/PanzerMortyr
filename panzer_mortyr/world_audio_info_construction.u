@@ -1,3 +1,5 @@
+import "bounding_boxes_hierarchy_visiting.iu"
+import "cluster_utils.iu"
 import "game_state_view_construction.iu"
 import "mat.iu"
 import "math_constants.iu"
@@ -154,6 +156,8 @@ fn ConstructWorldAudioInfo(
 
 		if( size_type( map_data.map_index ) < maps_description.maps.size() )
 		{
+			var Vec3f camera_position= volume_calculator.GetCameraPosition();
+
 			var MapsDescription::MapDescription& map_description=
 				maps_description.maps[ size_type( map_data.map_index ) ];
 
@@ -164,10 +168,29 @@ fn ConstructWorldAudioInfo(
 			for( auto mut i= 0s; i < WorldAudioInfo::c_num_ambient_sounds; ++i )
 			{
 				info.ambient_sounds[i].file_name= map_description.ambient_sound_files[i];
-				info.ambient_sounds[i].volume= ust::make_array( 0.0f, 0.0f ); // TODO - calculate proper volume.
+				info.ambient_sounds[i].volume= ust::make_array( 0.0f, 0.0f ); // Set zero volume for all ambient sounds.
 			}
 
-			info.ambient_sounds[1].volume= ust::make_array( 1.0f, 0.5f );
+			// Set full volume for an ambient sound where camera is located.
+
+			var ust::array_view_imut</ZvoxCluster/> clusters= map_data.zvox_data.deref().clusters;
+
+			VisitBoundingBoxesHierarchyForPoint(
+				map_data.room_clusters_hierarchy.deref(),
+				camera_position,
+				lambda[&]( ClusterIndexInHierarchy cluster_index )
+				{
+					var ZvoxCluster& cluster= clusters[ size_type( cluster_index ) ];
+					if( cluster.ambient_sound_index != -1 &&
+						CreateClusterBBox( cluster ).PointIsInsideOrOnFace( camera_position ) )
+					{
+						var i32 index_corrected= cluster.ambient_sound_index + 256;
+						if( index_corrected >= 0 && size_type( index_corrected ) < WorldAudioInfo::c_num_ambient_sounds )
+						{
+							info.ambient_sounds[ size_type( index_corrected ) ].volume= ust::make_array( 1.0f, 1.0f );
+						}
+					}
+				} );
 		}
 	}
 
@@ -201,6 +224,11 @@ public:
 					ust::sin(  0.5f * channel_vectors_angle ),
 					ust::cos(  0.5f * channel_vectors_angle ),
 					0.0f ) * head_rotation_matrix );
+	}
+
+	fn GetCameraPosition( this ) : Vec3f
+	{
+		return camera_position_;
 	}
 
 	// Calculate volume at camera position for both channels.
