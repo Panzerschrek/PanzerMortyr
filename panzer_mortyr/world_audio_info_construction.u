@@ -213,8 +213,13 @@ public:
 	{
 		var [ [ f32, 2 ], WorldAudioInfo::c_num_ambient_sounds ] mut volumes= zero_init;
 
-		var f32 constexpr c_fetch_cube_half_size= 512.0f;
-		var f32 constexpr c_min_dimensions_for_scaling= 128.0f;
+		var f32 constexpr c_fetch_cube_half_size= 384.0f;
+
+		var f32 constexpr c_min_meaningful_sounding_box_dimensions= 192.0f;
+		var f32 constexpr c_min_meaningful_sounding_box_volume=
+			c_min_meaningful_sounding_box_dimensions *
+			c_min_meaningful_sounding_box_dimensions *
+			c_min_meaningful_sounding_box_dimensions;
 
 		var BBox3f fetch_bbox
 		{
@@ -264,16 +269,16 @@ public:
 					return;
 				}
 
-				// Make sure we have some minimal dimensions, so that small ambient sound volumes still aren't too quiet.
-				var Vec3f dimensions_clamped(
-					ust::max( intersection_bbox_dimensions.x, c_min_dimensions_for_scaling ),
-					ust::max( intersection_bbox_dimensions.y, c_min_dimensions_for_scaling ),
-					ust::max( intersection_bbox_dimensions.z, c_min_dimensions_for_scaling ) );
+				var f32 intersection_box_volume=
+					intersection_bbox_dimensions.x * intersection_bbox_dimensions.y * intersection_bbox_dimensions.z;
 
-				var Vec3f axis_areas(
-					dimensions_clamped.y * dimensions_clamped.z,
-					dimensions_clamped.x * dimensions_clamped.z,
-					dimensions_clamped.x * dimensions_clamped.y );
+				// Apply extra scale for small clusters (with small volume), so that they are not too quiet.
+				var f32 extra_scale= ust::max( 1.0f, c_min_meaningful_sounding_box_volume / intersection_box_volume );
+
+				var Vec3f axis_areas_scaled(
+					extra_scale * intersection_bbox_dimensions.y * intersection_bbox_dimensions.z,
+					extra_scale * intersection_bbox_dimensions.x * intersection_bbox_dimensions.z,
+					extra_scale * intersection_bbox_dimensions.x * intersection_bbox_dimensions.y );
 
 				var f32 x_plus_distance=
 					ust::max(
@@ -309,9 +314,9 @@ public:
 					// Square channel vector components to get 1 in sum.
 					// Multiply them by the area of the box cross-section perpendicular to the each basis axis.
 					var Vec3f weights(
-						channel_vector.x * channel_vector.x * axis_areas.x,
-						channel_vector.y * channel_vector.y * axis_areas.y,
-						channel_vector.z * channel_vector.z * axis_areas.z );
+						channel_vector.x * channel_vector.x * axis_areas_scaled.x,
+						channel_vector.y * channel_vector.y * axis_areas_scaled.y,
+						channel_vector.z * channel_vector.z * axis_areas_scaled.z );
 
 					if( channel_vector.x >= 0.0f )
 					{
@@ -343,7 +348,7 @@ public:
 			} );
 
 		// Normalize via dividing by half volume of a cube and scaling by some extra factor.
-		var f32 volume_scale_extra= 32.0f;
+		var f32 volume_scale_extra= 8.0f;
 		var f32 constexpr volume_scale=
 			volume_scale_extra / ( c_fetch_cube_half_size * c_fetch_cube_half_size * c_fetch_cube_half_size * 4.0f );
 
