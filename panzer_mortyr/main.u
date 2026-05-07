@@ -95,13 +95,13 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 
 	if_var( start_map : command_line_options.start_map )
 	{
-		game.TeleportToMap( start_map, command_line_options.skill.deref_or( c_default_skill ) );
+		game.TeleportToMap( start_map, command_line_options.skill.deref_or( c_default_skill ), audio_processor );
 
 		menu.Deactivate(); // Turn-off menu if starting a map.
 	}
 	else if( command_line_options.new_game )
 	{
-		game.StartNewGame( command_line_options.skill.deref_or( c_default_skill ) );
+		game.StartNewGame( command_line_options.skill.deref_or( c_default_skill ), audio_processor );
 
 		menu.Deactivate(); // Turn-off menu if starting a new game.
 	}
@@ -153,7 +153,12 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 						}
 						else
 						{
-							var MenuCommandProcessor mut command_processor{ .game= game };
+							var MenuCommandProcessor mut command_processor
+							{
+								.game= game,
+								.audio_processor= audio_processor
+							};
+
 							variant_visit( &v : menu.ProcessKeyPress( keyboard_event.keysym ) )
 							{
 								command_processor(v);
@@ -176,7 +181,13 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 					{
 						if( console.IsActive() )
 						{
-							var HostCommandProcessor mut command_processor{ .game= game, .console_out_ptr= console_out_ptr };
+							var HostCommandProcessor mut command_processor
+							{
+								.game= game,
+								.console_out_ptr= console_out_ptr,
+								.audio_processor= audio_processor,
+							};
+
 							console.ProcessKeyPress( keyboard_event.keysym, command_processor );
 
 							if( command_processor.quit_requested )
@@ -186,7 +197,12 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 						}
 						else if( menu.IsActive() )
 						{
-							var MenuCommandProcessor mut command_processor{ .game= game };
+							var MenuCommandProcessor mut command_processor
+							{
+								.game= game,
+								.audio_processor= audio_processor
+							};
+
 							variant_visit( &v : menu.ProcessKeyPress( keyboard_event.keysym ) )
 							{
 								command_processor(v);
@@ -274,10 +290,7 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 			// Update game if no console/menu is active.
 			// TODO - update game in multiplayer mode always.
 
-			game.Update( time_delta_s_limited, keyboard_state, mouse_buttons_state, mouse_motion );
-
-			// Update audio as soon as possible after game update - to reduce audio latency.
-			audio_processor.Update( game.GetWorldAudioInfo() );
+			game.Update( time_delta_s_limited, keyboard_state, mouse_buttons_state, mouse_motion, audio_processor );
 		}
 
 		console.Update( time_delta_s );
@@ -388,7 +401,7 @@ struct HostCommandProcessor
 	fn process_new_game( mut this, ust::iterator</ WordsIterator /> mut args  )
 	{
 		var u32 skill= ParseSkillOrGetDefault( args );
-		game.StartNewGame( skill );
+		game.StartNewGame( skill, audio_processor );
 	}
 
 	fn process_quit( mut this )
@@ -403,7 +416,7 @@ struct HostCommandProcessor
 			if_var( map_index : ust::parse_integer_exact</u32/>( map_name ) )
 			{
 				var u32 skill= ParseSkillOrGetDefault( args );
-				game.TeleportToMap( map_index, skill );
+				game.TeleportToMap( map_index, skill, audio_processor );
 			}
 			else
 			{
@@ -437,7 +450,7 @@ struct HostCommandProcessor
 			return;
 		}
 
-		game.Load( save_name_opt.try_deref() );
+		game.Load( save_name_opt.try_deref(), audio_processor );
 	}
 
 	fn ParseSkillOrGetDefault( this, ust::iterator</ WordsIterator /> &mut args ) : u32
@@ -501,6 +514,7 @@ struct HostCommandProcessor
 	bool quit_requested= false;
 	Game &mut @('a') game;
 	ConsoleOutPtr& @('b') console_out_ptr;
+	AudioProcessor &mut @('c') audio_processor;
 }
 
 struct MenuCommandProcessor
@@ -512,7 +526,7 @@ struct MenuCommandProcessor
 
 	op()( this, Menu::CommandNewGame& c )
 	{
-		game.StartNewGame( c.skill );
+		game.StartNewGame( c.skill, audio_processor );
 	}
 
 	op()( this, Menu::CommandLoadGame& c )
@@ -535,6 +549,7 @@ struct MenuCommandProcessor
 
 	bool quit_requested= false;
 	Game &mut @('a') game;
+	AudioProcessor &mut @('b') audio_processor;
 }
 
 fn DrawWorldDrawingStats( TextDrawer &mut text_drawer, [ u32, 2 ] viewport_size, WorldDrawingStats& stats )

@@ -31,15 +31,15 @@ fn Game::constructor(
 {
 }
 
-fn Game::StartNewGame( mut this, u32 skill )
+fn Game::StartNewGame( mut this, u32 skill, AudioProcessor &mut audio_processor )
 {
 	var u32 start_map= global_data_.game_params.deref().start_map;
-	TeleportToMap( start_map, skill );
+	TeleportToMap( start_map, skill, audio_processor );
 }
 
-fn Game::TeleportToMap( mut this, u32 map_index, u32 skill )
+fn Game::TeleportToMap( mut this, u32 map_index, u32 skill, AudioProcessor &mut audio_processor )
 {
-	PerformMapTransition( map_index, skill, ust::null_optional_ref );
+	PerformMapTransition( map_index, skill, ust::null_optional_ref, audio_processor );
 }
 
 fn Game::Save( this, ust::string_view8 save_name )
@@ -71,8 +71,12 @@ fn Game::Save( this, ust::string_view8 save_name )
 	ust::ignore_unused( ok );
 }
 
-fn Game::Load( mut this, ust::string_view8 save_name )
+fn Game::Load( mut this, ust::string_view8 save_name, AudioProcessor &mut audio_processor )
 {
+	// Stop playing sounds from the old map before loading new one.
+	// Doing so we ensure that sounds aren't playing while loading takes place.
+	audio_processor.StopAllWorldSounds();
+
 	// Reset game state and map data prior to loading new ones.
 	// Avoid maintaining two copies of these structures in memory.
 	map_data_.reset();
@@ -112,7 +116,8 @@ fn Game::Update(
 	f32 time_delta_s,
 	KeyboardState& keyboard_state,
 	MouseButtonsState mouse_buttons_state,
-	[ i32, 2 ] mouse_motion )
+	[ i32, 2 ] mouse_motion,
+	AudioProcessor &mut audio_processor )
 {
 	// Rotate camera each frame (unless the player is dead).
 	if( game_state_.empty() || game_state_.try_deref().player.energy > 0u )
@@ -192,8 +197,16 @@ fn Game::Update(
 
 		if( next_map_index != 0u )
 		{
-			PerformMapTransition( next_map_index, skill, player_state.as_ref() );
+			PerformMapTransition( next_map_index, skill, player_state.as_ref(), audio_processor );
 		}
+	}
+
+	if( !map_data_.empty() && !game_state_.empty() )
+	{
+		// Update audio even if no single game logic step was done.
+		// We need this, since camera rotates every frame independent on game logic steps and sound volume depends on camera orientation.
+		audio_processor.Update(
+			ConstructWorldAudioInfo( map_data_.try_deref(), game_state_.try_deref(), camera_controller_ ) );
 	}
 }
 
@@ -242,16 +255,6 @@ fn Game::GetGameEventNotificationsDrawingInfo( this ) : ust::optional</GameEvent
 fn Game::GetCrosshairDrawingInfo( this ) : CrosshairDrawingInfo
 {
 	return ConstructCrosshairDrawingInfo( camera_controller_, map_data_.as_ref(), game_state_.as_ref() );
-}
-
-fn Game::GetWorldAudioInfo( this ) : WorldAudioInfo
-{
-	if( map_data_.empty() || game_state_.empty() )
-	{
-		return WorldAudioInfo();
-	}
-
-	return ConstructWorldAudioInfo( map_data_.try_deref(), game_state_.try_deref(), camera_controller_ );
 }
 
 fn Game::process_noclip( mut this )
@@ -542,13 +545,21 @@ fn Game::process_debug_search_route( mut this )
 }
 
 fn Game::PerformMapTransition(
-	mut this, u32 map_index, u32 skill, ust::optional_ref_imut</PlayerState/> prev_player_state )
+	mut this,
+	u32 map_index,
+	u32 skill,
+	ust::optional_ref_imut</PlayerState/> prev_player_state,
+	AudioProcessor &mut audio_processor )
 {
 	if( map_index == 0u )
 	{
 		ConsoleOutAddTextLine( console_out_, ust::concat( "Can't go to map 0!" ) );
 		return;
 	}
+
+	// Stop playing sounds from the old map before loading new one.
+	// Doing so we ensure that sounds aren't playing while loading takes place.
+	audio_processor.StopAllWorldSounds();
 
 	if( map_data_.empty() || map_index != map_data_.try_deref().map_index )
 	{

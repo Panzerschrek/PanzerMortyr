@@ -140,6 +140,8 @@ fn AudioProcessor::Update( mut this, WorldAudioInfo& world_audio_info )
 				{
 					active_sound_source.is_playing= false;
 				}
+
+				sound_sources_to_remove_.drop_if_exists( sound_source_finished_message.id );
 			}
 			else
 			{
@@ -149,6 +151,19 @@ fn AudioProcessor::Update( mut this, WorldAudioInfo& world_audio_info )
 		else
 		{
 			break;
+		}
+	}
+
+	// Send messages for sound sources removal (if not sent such message yet).
+	foreach( pair : sound_sources_to_remove_ )
+	{
+		var UniqueSoundSourceId id= pair.key();
+		var SoundSourceToRemove &mut sound_source_to_remove= pair.value();
+		if( !sound_source_to_remove.remove_message_sent )
+		{
+			sound_source_to_remove.remove_message_sent=
+				audio_out_ext_.mixer_in_messages_queue_write_end.TryPush(
+					AudioMixer::InMessageRemoveSoundSource{ .id= id } );
 		}
 	}
 
@@ -227,6 +242,13 @@ fn AudioProcessor::Update( mut this, WorldAudioInfo& world_audio_info )
 
 			// Add new one.
 
+			if( sound_sources_to_remove_.exists( sound_source.id ) )
+			{
+				// Avoid adding a sound source having the same ID as some previous source, which isn't removed yet.
+				// Add it next time, when the previous message is removed.
+				continue;
+			}
+
 			if( size_type( sound_source.sound_index ) < typeinfo</ typeof( sounds_data_ ) />.element_count )
 			{
 				var SoundDataNullablePtr& sound_data_nullable_ptr= sounds_data_[ sound_source.sound_index ];
@@ -251,6 +273,33 @@ fn AudioProcessor::Update( mut this, WorldAudioInfo& world_audio_info )
 			}
 		}
 	}
+}
+
+fn AudioProcessor::StopAllWorldSounds( mut this )
+{
+	// Remove all active sounds.
+
+	foreach( &active_sound_source : active_sound_sources_ )
+	{
+		if( active_sound_source.value().is_playing )
+		{
+			var bool message_pushed=
+				audio_out_ext_.mixer_in_messages_queue_write_end.TryPush(
+					AudioMixer::InMessageRemoveSoundSource{ .id= active_sound_source.key() } );
+
+			// If the message queue if full, memorize, that a removal message should be sent and try sending it later.
+
+			sound_sources_to_remove_.insert_new(
+				active_sound_source.key(), SoundSourceToRemove{ .remove_message_sent= message_pushed } );
+		}
+		else
+		{
+			// If this source already finished playing, no extra steps are needed.
+			// It's enough to remove it from the active sound sources hash-map.
+		}
+	}
+
+	active_sound_sources_.clear();
 }
 
 fn AudioProcessor::GetStats( this ) : Stats

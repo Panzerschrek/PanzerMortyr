@@ -216,9 +216,19 @@ fn AudioMixer::ProcessMessageImpl( mut this, InMessageAddSoundSource& message )
 					.is_about_to_be_removed= false,
 				};
 
-			break;
+			return;
 		}
 	}
+
+	// Run out of free slots.
+	// Just assume we finished playing this soruce instantly
+	// and inform the other thread, that this sound source finished playing.
+
+	var bool pushed= out_messages_queue_write_end_.TryPush(
+		OutMessageSoundSourceFinished{ .id= message.id, .sound_data= message.sound_data } );
+
+	// If the output queue is full, try removing this source next time an update for it is requested.
+	ust::ignore_unused(pushed);
 }
 
 fn AudioMixer::ProcessMessageImpl( mut this, InMessageSetSoundSourceVolume& message )
@@ -230,9 +240,19 @@ fn AudioMixer::ProcessMessageImpl( mut this, InMessageSetSoundSourceVolume& mess
 		{
 			// Set new volume in order to gradually change current volume to it and avoid ugly "steps" and "cracks".
 			source.new_volume= message.volume;
-			break;
+			return;
 		}
 	}
+
+	// If we reached this place, it means, that the other thread doesn't know,
+	// that this sound source is already removed or wasn't added at all.
+	// It may happen, for example, if we run out of free slots.
+	// Inform the other thread, that this sound source finished playing.
+
+	var bool pushed= out_messages_queue_write_end_.TryPush( OutMessageSoundSourceFinished{ .id= message.id } );
+
+	// If the output queue is full, try removing this source next time an update for it is requested.
+	ust::ignore_unused(pushed);
 }
 
 fn AudioMixer::ProcessMessageImpl( mut this, InMessageRemoveSoundSource& message )
