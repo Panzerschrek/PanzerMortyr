@@ -21,6 +21,13 @@ fn AudioMixer::constructor(
 				.is_about_to_be_removed= false,
 			} ...
 		],
+		ambient_sounds_
+		[
+			{
+				.volume= zero_init,
+				.sample_counter= 0u,
+			} ...
+		],
 		frequency_= 1u, // Set exact value later.
 	)
 {}
@@ -185,6 +192,76 @@ fn AudioMixer::Mix( mut this, ust::array_view_mut</SamplePairType/> out_sample_p
 			}
 		}
 	}
+
+	foreach( &mut ambient_sound : ambient_sounds_ )
+	{
+		if( ambient_sound.sound_data.empty() )
+		{
+			continue;
+		}
+
+		variant_visit( &sound_data : ambient_sound.sound_data.try_deref() )
+		{
+			var f32 resampling_factor= f32( sound_data.GetFrequency() ) / f32( frequency_ );
+
+			auto sound_data_samples= sound_data.GetSamples();
+
+			type InSampleType= typeof( sound_data_samples[0s] );
+
+			var f32 constexpr sample_scale= GetScaleForSampleType</InSampleType/>();
+			var f32 constexpr sample_offset= GetOffsetForSampleType</InSampleType/>();
+
+			var ChannelsVolume volume
+			[
+				ambient_sound.volume[0] * sample_scale,
+				ambient_sound.volume[1] * sample_scale,
+			];
+
+			if( ambient_sound.volume[0] > 0.0f | ambient_sound.volume[1] > 0.0f )
+			{
+				foreach( &mut out_sample_pair : out_sample_pairs )
+				{
+					// Perform here resampling with linear interpolation.
+					// This works well, since output frequency is almost always higher than frequency of sound files of the original game.
+
+					var f32 src_sample_index_fractional= f32( ambient_sound.sample_counter ) * resampling_factor;
+					var u32 src_sample_index( src_sample_index_fractional );
+
+					var f32 mix_fraction= src_sample_index_fractional - f32( src_sample_index );
+
+					// Perform fetching with wrapping, since ambient sounds are looping.
+					// Use 32-bit modulo operation, since it's faster than 64-bit (for size_type on 64-bit targets).
+					var u32 num_source_samples( sound_data_samples.size() );
+					var InSampleType sample_value0=
+						sound_data_samples[ size_type( ( src_sample_index + 0u ) % num_source_samples ) ];
+					var InSampleType sample_value1=
+						sound_data_samples[ size_type( ( src_sample_index + 1u ) % num_source_samples ) ];
+
+					var f32 mut sample_value=
+						f32( sample_value0 ) * ( 1.0f - mix_fraction ) + f32( sample_value1 ) * mix_fraction;
+
+					static_if( sample_offset != 0.0f )
+					{
+						sample_value+= sample_offset;
+					}
+
+					for( auto mut i= 0s; i < c_num_samples; ++i )
+					{
+						out_sample_pair[i]+= sample_value * volume[i];
+					}
+
+					++ambient_sound.sample_counter;
+				}
+			}
+			else
+			{
+				// An optimization - don't mix sounds with zero volume.
+				// But we still need to advance them in case if volume changes later.
+
+				ambient_sound.sample_counter+= u32( out_sample_pairs.size() );
+			}
+		}
+	}
 }
 
 fn AudioMixer::ProcessMessage( mut this, InMessage& message )
@@ -267,6 +344,18 @@ fn AudioMixer::ProcessMessageImpl( mut this, InMessageRemoveSoundSource& message
 			break;
 		}
 	}
+}
+
+fn AudioMixer::ProcessMessageImpl( mut this, InMessageAddAmbientSound& message )
+{
+	var AmbientSound &mut ambient_sound= ambient_sounds_[ message.slot_index ];
+
+	ambient_sound.sound_data= message.sound_data;
+	ambient_sound.volume= message.volume; // TODO - set new volume instead.
+	ambient_sound.sample_counter= 0u;
+
+	// TODO - send old sound data pointer back.
+	// TODO - cancel previous ambient sound in a nice way.
 }
 
 template</type T/>
