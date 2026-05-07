@@ -213,12 +213,13 @@ public:
 	{
 		var [ [ f32, 2 ], WorldAudioInfo::c_num_ambient_sounds ] mut volumes= zero_init;
 
-		var f32 constexpr fetch_cube_half_size= 128.0f;
+		var f32 constexpr c_fetch_cube_half_size= 512.0f;
+		var f32 constexpr c_min_dimensions_for_scaling= 128.0f;
 
 		var BBox3f fetch_bbox
 		{
-			.min= camera_position_ - Vec3f( fetch_cube_half_size, fetch_cube_half_size, fetch_cube_half_size ),
-			.max= camera_position_ + Vec3f( fetch_cube_half_size, fetch_cube_half_size, fetch_cube_half_size ),
+			.min= camera_position_ - Vec3f( c_fetch_cube_half_size, c_fetch_cube_half_size, c_fetch_cube_half_size ),
+			.max= camera_position_ + Vec3f( c_fetch_cube_half_size, c_fetch_cube_half_size, c_fetch_cube_half_size ),
 		};
 
 		var ust::array_view_imut</ZvoxCluster/> clusters= map_data_.zvox_data.deref().clusters;
@@ -263,6 +264,17 @@ public:
 					return;
 				}
 
+				// Make sure we have some minimal dimensions, so that small ambient sound volumes still aren't too quiet.
+				var Vec3f dimensions_clamped(
+					ust::max( intersection_bbox_dimensions.x, c_min_dimensions_for_scaling ),
+					ust::max( intersection_bbox_dimensions.y, c_min_dimensions_for_scaling ),
+					ust::max( intersection_bbox_dimensions.z, c_min_dimensions_for_scaling ) );
+
+				var Vec3f axis_areas(
+					dimensions_clamped.y * dimensions_clamped.z,
+					dimensions_clamped.x * dimensions_clamped.z,
+					dimensions_clamped.x * dimensions_clamped.y );
+
 				var f32 x_plus_distance=
 					ust::max(
 						0.0f,
@@ -295,10 +307,11 @@ public:
 					var Vec3f& channel_vector= channel_vectors[i];
 
 					// Square channel vector components to get 1 in sum.
+					// Multiply them by the area of the box cross-section perpendicular to the each basis axis.
 					var Vec3f weights(
-						channel_vector.x * channel_vector.x * intersection_bbox_dimensions.y * intersection_bbox_dimensions.z,
-						channel_vector.y * channel_vector.y * intersection_bbox_dimensions.x * intersection_bbox_dimensions.z,
-						channel_vector.z * channel_vector.z * intersection_bbox_dimensions.x * intersection_bbox_dimensions.y );
+						channel_vector.x * channel_vector.x * axis_areas.x,
+						channel_vector.y * channel_vector.y * axis_areas.y,
+						channel_vector.z * channel_vector.z * axis_areas.z );
 
 					if( channel_vector.x >= 0.0f )
 					{
@@ -329,16 +342,17 @@ public:
 				}
 			} );
 
-		// Normalize via dividing by half volume of a cube.
+		// Normalize via dividing by half volume of a cube and scaling by some extra factor.
+		var f32 volume_scale_extra= 32.0f;
 		var f32 constexpr volume_scale=
-			1.0f / ( fetch_cube_half_size * fetch_cube_half_size * fetch_cube_half_size * 4.0f );
+			volume_scale_extra / ( c_fetch_cube_half_size * c_fetch_cube_half_size * c_fetch_cube_half_size * 4.0f );
 
 		foreach( &mut volume_pair : volumes )
 		{
 			foreach( &mut value : volume_pair )
 			{
 				value*= volume_scale;
-				ust::min_assign( value, 1.0f );
+				ust::min_assign( value, 1.0f ); // Ensure maximum volume is one.
 			}
 		}
 
