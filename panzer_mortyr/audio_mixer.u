@@ -115,6 +115,7 @@ fn AudioMixer::Mix( mut this, ust::array_view_mut</SamplePairType/> out_sample_p
 						// Perform here resampling with linear interpolation.
 						// This works well, since output frequency is almost always higher than frequency of sound files of the original game.
 
+						// We have enough f32 precision here, since regular sounds are pretty short.
 						var f32 src_sample_index_fractional= f32( sound_source.sample_counter ) * resampling_factor;
 						var u32 src_sample_index( src_sample_index_fractional );
 
@@ -206,7 +207,10 @@ fn AudioMixer::Mix( mut this, ust::array_view_mut</SamplePairType/> out_sample_p
 
 		variant_visit( &sound_data : ambient_sound.sound_data.try_deref() )
 		{
-			var f32 resampling_factor= f32( sound_data.GetFrequency() ) / f32( frequency_ );
+			// Store resampling factor in 16.16 fixed point format.
+			// We can't use f32 for calculating sample indices for resampling,
+			// since f32 gives not enough precision for long-playing ambient sounds.
+			var u32 resampling_factor= ( sound_data.GetFrequency() << 16 ) / frequency_;
 
 			auto sound_data_samples= sound_data.GetSamples();
 
@@ -244,11 +248,14 @@ fn AudioMixer::Mix( mut this, ust::array_view_mut</SamplePairType/> out_sample_p
 					// Perform here resampling with linear interpolation.
 					// This works well, since output frequency is almost always higher than frequency of sound files of the original game.
 
-					// TODO - make sure we have enough floating point precision here.
-					var f32 src_sample_index_fractional= f32( ambient_sound.sample_counter ) * resampling_factor;
-					var u32 src_sample_index( src_sample_index_fractional );
+					// Calculate fractional sample index in 48.16 fixed format.
+					// This requires only 32-bit by 32-bit multiplication, which is fast even on 32-bit targets.
+					var u64 src_sample_index_fractional( u64( ambient_sound.sample_counter ) * u64( resampling_factor ) );
 
-					var f32 mix_fraction= src_sample_index_fractional - f32( src_sample_index );
+					// Here 64-bit shift is required, which is also pretty fast on 32-bit targets (via "shrdl" instruction).
+					var u32 src_sample_index( src_sample_index_fractional >> 16 );
+
+					var f32 mix_fraction= f32( u32( src_sample_index_fractional ) & 65535u ) * ( 1.0f / 65536.0f );
 
 					// Perform fetching with wrapping, since ambient sounds are looping.
 					// Use 32-bit modulo operation, since it's faster than 64-bit (for size_type on 64-bit targets).
