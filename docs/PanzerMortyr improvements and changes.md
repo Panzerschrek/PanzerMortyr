@@ -97,6 +97,7 @@ Changes:
 Improvements:
 
 * PanzerMortyr outputs higher quality sound - with 44100Hz sample rate (by default) and 32-bit floating-point samples (where it's supported).
+* More active sounds are supported compared to the original game.
 
 
 Changes:
