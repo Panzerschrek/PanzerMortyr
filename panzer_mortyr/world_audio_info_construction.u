@@ -168,8 +168,12 @@ fn ConstructWorldAudioInfo(
 
 			for( auto mut i= 0s; i < WorldAudioInfo::c_num_ambient_sounds; ++i )
 			{
-				info.ambient_sounds[i].file_name= map_description.ambient_sound_files[i];
-				info.ambient_sounds[i].volume= volumes[i];
+				info.ambient_sounds[i]=
+					WorldAudioInfo::AmbientSound
+					{
+						.file_name= map_description.ambient_sound_files[i],
+						.volume= volumes[i]
+					};
 			}
 		}
 	}
@@ -211,6 +215,20 @@ public:
 
 	fn CalculateAmbientSoundVolumes( this ) : [ [ f32, 2 ], WorldAudioInfo::c_num_ambient_sounds ]
 	{
+		// Use a tricky approach here to calculate volumes if ambient sounds.
+		// For each cluster having an ambient sound find an intersection box with a box around the camera.
+		// For each channel vector and each its component find an approximate distance in this box
+		// and multiply it by area of cross-section perpendicular to this component.
+		//
+		// Doing so allows achieving multiple goals:
+		// * Staying deep inside within a cluster with ambient sound produces volume 1 for both channels.
+		// * Staying on a border of a cluster with ambient sound produces volume less than 1 for a channel facing out of the cluster.
+		// * Staying outside a cluster with ambient sound produces more volume for a channel pointing towards this cluster.
+		// * Position to volume function is smooth.
+		// * Camera orientation to volume function is smooth.
+		// * Volume from multiple clusters is added together.
+		// * Volume far away from a cluster with ambient sound is 0, which improves result mixing performance.
+
 		var [ [ f32, 2 ], WorldAudioInfo::c_num_ambient_sounds ] mut volumes= zero_init;
 
 		var f32 constexpr c_fetch_cube_half_size= 384.0f;
