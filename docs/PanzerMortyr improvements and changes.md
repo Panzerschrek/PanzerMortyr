@@ -103,6 +103,7 @@ Changes:
 
 * Due to improved sound quality some sounds sound slightly differently compared to the original game.
 * 3D sound params (attenuation formula, per-channel volume formula) are likely different from the original game.
+* Ambient sound params (per-channel volume formula, max distance) are likely different from the original game.
 
 
 ### General

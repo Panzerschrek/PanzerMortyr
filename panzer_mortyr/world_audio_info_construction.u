@@ -1,3 +1,5 @@
+import "bounding_boxes_hierarchy_visiting.iu"
+import "cluster_utils.iu"
 import "game_state_view_construction.iu"
 import "mat.iu"
 import "math_constants.iu"
@@ -7,11 +9,12 @@ namespace PM
 {
 
 fn ConstructWorldAudioInfo(
+	GameGlobalData& global_data,
 	GameMapData& map_data,
 	GameState& game_state,
 	CameraController& camera_controller ) : WorldAudioInfo
 {
-	var WorldAudioInfo mut info;
+	var WorldAudioInfo mut info{ .ambient_sounds[ zero_init ... ] /* set ambient sounds later */ };
 
 	// To generate proper unique sound IDs, set some unique bits of such IDs depending on kind of sound source (player, entity, environment, etc).
 	var u32 player_sounds_id_mask=          0x10000000u;
@@ -40,7 +43,7 @@ fn ConstructWorldAudioInfo(
 
 	var EntitiesDescription& entities_description= map_data.entities_description.deref();
 
-	var SpatialVolumeCalculator volume_calculator( game_state.player, camera_controller );
+	var SpatialVolumeCalculator volume_calculator( map_data, game_state.player, camera_controller );
 
 	for( auto mut i= 0s; i < game_state.entities.size(); ++i )
 	{
@@ -147,14 +150,44 @@ fn ConstructWorldAudioInfo(
 		}
 	}
 
+	// Process ambient sounds.
+	{
+		var MapsDescription& maps_description= global_data.maps_description.deref();
+
+		if( size_type( map_data.map_index ) < maps_description.maps.size() )
+		{
+			var [ [ f32, 2 ], WorldAudioInfo::c_num_ambient_sounds ] volumes=
+				volume_calculator.CalculateAmbientSoundVolumes();
+
+			var MapsDescription::MapDescription& map_description=
+				maps_description.maps[ size_type( map_data.map_index ) ];
+
+			static_assert(
+				typeinfo</ typeof( map_description.ambient_sound_files ) />.element_count ==
+				WorldAudioInfo::c_num_ambient_sounds );
+
+			for( auto mut i= 0s; i < WorldAudioInfo::c_num_ambient_sounds; ++i )
+			{
+				info.ambient_sounds[i]=
+					WorldAudioInfo::AmbientSound
+					{
+						.file_name= map_description.ambient_sound_files[i],
+						.volume= volumes[i]
+					};
+			}
+		}
+	}
+
 	return info;
 }
 
 class SpatialVolumeCalculator
 {
 public:
-	fn constructor( PlayerState& player_state, CameraController& camera_controller )
+	fn constructor( GameMapData& map_data, PlayerState& player_state, CameraController& camera_controller )
+		@( ust::reference_notation::pollution::param0_param_1_reference )
 		(
+			map_data_= map_data,
 			camera_position_= GetCameraPositionForPlayerWithExtraDepthShift( player_state, camera_controller ),
 			channel_vectors_[ Vec3f::MakeZero() ... ] // Set later.
 		)
@@ -177,6 +210,196 @@ public:
 					ust::sin(  0.5f * channel_vectors_angle ),
 					ust::cos(  0.5f * channel_vectors_angle ),
 					0.0f ) * head_rotation_matrix );
+	}
+
+
+	fn CalculateAmbientSoundVolumes( this ) : [ [ f32, 2 ], WorldAudioInfo::c_num_ambient_sounds ]
+	{
+		// Use a tricky approach here to calculate volumes if ambient sounds.
+		// For each cluster having an ambient sound find an intersection box with a box around the camera.
+		// For each channel vector and each its component find an approximate distance in this box
+		// and multiply it by area of cross-section perpendicular to this component.
+		//
+		// Doing so allows achieving multiple goals:
+		// * Staying deep inside within a cluster with ambient sound produces volume 1 for both channels.
+		// * Staying on a border of a cluster with ambient sound produces volume less than 1 for a channel facing out of the cluster.
+		// * Staying outside a cluster with ambient sound produces more volume for a channel pointing towards this cluster.
+		// * Position to volume function is smooth.
+		// * Camera orientation to volume function is smooth.
+		// * Volume from multiple clusters is added together.
+		// * Volume far away from a cluster with ambient sound is 0, which improves result mixing performance.
+
+		var [ [ f32, 2 ], WorldAudioInfo::c_num_ambient_sounds ] mut volumes= zero_init;
+
+		var f32 constexpr c_fetch_cube_half_size= 384.0f;
+
+		var f32 constexpr c_min_meaningful_sounding_box_dimensions= 144.0f;
+		var f32 constexpr c_min_meaningful_sounding_box_volume=
+			c_min_meaningful_sounding_box_dimensions *
+			c_min_meaningful_sounding_box_dimensions *
+			c_min_meaningful_sounding_box_dimensions;
+
+		var BBox3f fetch_bbox
+		{
+			.min= camera_position_ - Vec3f( c_fetch_cube_half_size, c_fetch_cube_half_size, c_fetch_cube_half_size ),
+			.max= camera_position_ + Vec3f( c_fetch_cube_half_size, c_fetch_cube_half_size, c_fetch_cube_half_size ),
+		};
+
+		var ust::array_view_imut</ZvoxCluster/> clusters= map_data_.zvox_data.deref().clusters;
+		var Vec3f& camera_position= camera_position_;
+		var [ Vec3f, 2 ]& channel_vectors= channel_vectors_;
+
+		VisitBoundingBoxesHierarchyForBBox(
+			map_data_.room_clusters_hierarchy.deref(),
+			fetch_bbox,
+			lambda[&]( ClusterIndexInHierarchy cluster_index )
+			{
+				var ZvoxCluster& cluster= clusters[ size_type( cluster_index ) ];
+
+				var i32 ambient_sound_index= cluster.ambient_sound_index + 256;
+				if( ambient_sound_index < 0 | size_type( ambient_sound_index ) >= WorldAudioInfo::c_num_ambient_sounds )
+				{
+					return;
+				}
+
+				var [ f32, 2 ] &mut volume= volumes[ size_type( ambient_sound_index ) ];
+
+				var BBox3f cluster_bbox= CreateClusterBBox( cluster );
+
+				var BBox3f intersection_bbox
+				{
+					.min(
+						ust::max( fetch_bbox.min.x, cluster_bbox.min.x ),
+						ust::max( fetch_bbox.min.y, cluster_bbox.min.y ),
+						ust::max( fetch_bbox.min.z, cluster_bbox.min.z ) ),
+					.max(
+						ust::min( fetch_bbox.max.x, cluster_bbox.max.x ),
+						ust::min( fetch_bbox.max.y, cluster_bbox.max.y ),
+						ust::min( fetch_bbox.max.z, cluster_bbox.max.z ) ),
+				};
+
+				var Vec3f intersection_bbox_dimensions= intersection_bbox.GetDimensions();
+
+				if( intersection_bbox_dimensions.x <= 0.0f |
+					intersection_bbox_dimensions.y <= 0.0f |
+					intersection_bbox_dimensions.z <= 0.0f )
+				{
+					return;
+				}
+
+				// Apply extra scale for small clusters (with small volume), so that they are not too quiet.
+				var f32 extra_scale= ust::max( 1.0f, c_min_meaningful_sounding_box_volume / cluster_bbox.GetVolume() );
+
+				var Vec3f axis_areas_scaled(
+					extra_scale * intersection_bbox_dimensions.y * intersection_bbox_dimensions.z,
+					extra_scale * intersection_bbox_dimensions.x * intersection_bbox_dimensions.z,
+					extra_scale * intersection_bbox_dimensions.x * intersection_bbox_dimensions.y );
+
+				var f32 x_plus_distance=
+					ust::max(
+						0.0f,
+						intersection_bbox.max.x - ust::max( intersection_bbox.min.x, camera_position.x ) );
+				var f32 x_minus_distance=
+					ust::max(
+						0.0f,
+						ust::min( intersection_bbox.max.x, camera_position.x ) - intersection_bbox.min.x );
+
+				var f32 y_plus_distance=
+					ust::max(
+						0.0f,
+						intersection_bbox.max.y - ust::max( intersection_bbox.min.y, camera_position.y ) );
+				var f32 y_minus_distance=
+					ust::max(
+						0.0f,
+						ust::min( intersection_bbox.max.y, camera_position.y ) - intersection_bbox.min.y );
+
+				var f32 z_plus_distance=
+					ust::max(
+						0.0f,
+						intersection_bbox.max.z - ust::max( intersection_bbox.min.z, camera_position.z ) );
+				var f32 z_minus_distance=
+					ust::max(
+						0.0f,
+						ust::min( intersection_bbox.max.z, camera_position.z ) - intersection_bbox.min.z );
+
+				for( auto mut i= 0s; i < 2s; ++i )
+				{
+					var Vec3f& channel_vector= channel_vectors[i];
+
+					// Square channel vector components to get 1 in sum.
+					// Multiply them by the area of the box cross-section perpendicular to the each basis axis.
+					var Vec3f weights(
+						channel_vector.x * channel_vector.x * axis_areas_scaled.x,
+						channel_vector.y * channel_vector.y * axis_areas_scaled.y,
+						channel_vector.z * channel_vector.z * axis_areas_scaled.z );
+
+					if( channel_vector.x >= 0.0f )
+					{
+						volume[i]+= weights.x * x_plus_distance;
+					}
+					else
+					{
+						volume[i]+= weights.x * x_minus_distance;
+					}
+
+					if( channel_vector.y >= 0.0f )
+					{
+						volume[i]+= weights.y * y_plus_distance;
+					}
+					else
+					{
+						volume[i]+= weights.y * y_minus_distance;
+					}
+
+					if( channel_vector.z >= 0.0f )
+					{
+						volume[i]+= weights.z * z_plus_distance;
+					}
+					else
+					{
+						volume[i]+= weights.z * z_minus_distance;
+					}
+				}
+			} );
+
+		{
+			// Normalize result volume via dividing it by half volume (spatial) of a cube and scaling by some extra factor.
+			var f32 volume_scale_extra= 8.0f;
+			var f32 constexpr volume_scale=
+				volume_scale_extra / ( c_fetch_cube_half_size * c_fetch_cube_half_size * c_fetch_cube_half_size * 4.0f );
+
+			foreach( &mut volume_pair : volumes )
+			{
+				foreach( &mut value : volume_pair )
+				{
+					value*= volume_scale;
+					ust::min_assign( value, 1.0f ); // Ensure maximum volume is one.
+				}
+			}
+		}
+
+		// Ensure that sum volume of all ambient sounds is not greater than one.
+		for( auto mut i= 0s; i < 2s; ++i )
+		{
+			var f32 mut volume_sum= 0.0f;
+
+			foreach( &volume_pair : volumes )
+			{
+				volume_sum+= volume_pair[i];
+			}
+
+			if( volume_sum > 1.0f )
+			{
+				var f32 normalization_scale= 1.0f / volume_sum;
+
+				foreach( &mut volume_pair : volumes )
+				{
+					volume_pair[i]*= normalization_scale;
+				}
+			}
+		}
+
+		return volumes;
 	}
 
 	// Calculate volume at camera position for both channels.
@@ -228,6 +451,7 @@ public:
 	}
 
 private:
+	GameMapData& map_data_;
 	Vec3f camera_position_;
 	[ Vec3f, 2 ] channel_vectors_;
 }
