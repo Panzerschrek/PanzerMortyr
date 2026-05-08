@@ -122,19 +122,34 @@ fn AudioProcessor::Update( mut this, WorldAudioInfo& world_audio_info )
 
 		if( out_sound.file_name != in_sound.file_name )
 		{
-			// Set file name in any case - to avoid reloading sound file again if failed to load it.
-			out_sound.file_name= in_sound.file_name;
-			out_sound.data.reset();
-			out_sound.playing_started= false;
-
-			if( in_sound.file_name[0] != '\0' )
+			if( out_sound.playing )
 			{
-				auto mut fs_lock= game_filesystem_ptr_.lock_mut();
-
-				auto mut sound_data_opt= LoadSoundData( console_out_ptr_, fs_lock.deref(), in_sound.file_name );
-				if( !sound_data_opt.empty() )
+				// An old one is still playing.
+				// Try stopping it.
+				if( !out_sound.remove_message_sent )
 				{
-					out_sound.data= SoundDataNullablePtr( sound_data_opt.try_take() );
+					out_sound.remove_message_sent=
+						audio_out_ext_.mixer_in_messages_queue_write_end.TryPush(
+							AudioMixer::InMessageRemoveAmbientSound{ .slot_index(i) } );
+				}
+			}
+			else
+			{
+				// An old one is not playing anymore.
+				// Can load the new one.
+				out_sound.file_name= in_sound.file_name;
+				out_sound.data.reset();
+				out_sound.remove_message_sent= false;
+
+				if( in_sound.file_name[0] != '\0' )
+				{
+					auto mut fs_lock= game_filesystem_ptr_.lock_mut();
+
+					auto mut sound_data_opt= LoadSoundData( console_out_ptr_, fs_lock.deref(), in_sound.file_name );
+					if( !sound_data_opt.empty() )
+					{
+						out_sound.data= SoundDataNullablePtr( sound_data_opt.try_take() );
+					}
 				}
 			}
 		}
@@ -172,6 +187,10 @@ fn AudioProcessor::Update( mut this, WorldAudioInfo& world_audio_info )
 				}
 
 				sound_sources_to_remove_.drop_if_exists( sound_source_finished_message.id );
+			}
+			else if_var( &ambient_sound_removed_message : message.get</ AudioMixer::OutMessageAmbientSoundRemoved />() )
+			{
+				ambient_sounds_[ ambient_sound_removed_message.slot_index ].playing= false;
 			}
 			else
 			{
@@ -308,12 +327,14 @@ fn AudioProcessor::Update( mut this, WorldAudioInfo& world_audio_info )
 	// Start playing ambient sounds if not done this yet.
 	for( auto mut i= 0s; i < WorldAudioInfo::c_num_ambient_sounds; ++i )
 	{
+		var WorldAudioInfo::AmbientSound& in_ambient_sound= world_audio_info.ambient_sounds[i];
 		var AmbientSound &mut ambient_sound= ambient_sounds_[i];
-		if( !ambient_sound.data.empty() )
+
+		if( ambient_sound.file_name == in_ambient_sound.file_name && !ambient_sound.data.empty() )
 		{
-			if( !ambient_sound.playing_started )
+			if( !ambient_sound.playing )
 			{
-				ambient_sound.playing_started=
+				ambient_sound.playing=
 					messages_queue_write_end.TryPush(
 						AudioMixer::InMessageAddAmbientSound
 						{
@@ -365,7 +386,19 @@ fn AudioProcessor::StopAllWorldSounds( mut this )
 
 	active_sound_sources_.clear();
 
-	// TODO - stop playing ambient sounds.
+	for( auto mut i= 0s; i < WorldAudioInfo::c_num_ambient_sounds; ++i )
+	{
+		var AmbientSound &mut ambient_sound= ambient_sounds_[i];
+		if( ambient_sound.playing )
+		{
+			var bool message_pushed=
+				audio_out_ext_.mixer_in_messages_queue_write_end.TryPush(
+					AudioMixer::InMessageRemoveAmbientSound{ .slot_index(i) } );
+
+			// If the message queue if full, memorize, that a removal message should be sent and try sending it later.
+			ambient_sound.remove_message_sent= message_pushed;
+		}
+	}
 }
 
 fn AudioProcessor::GetStats( this ) : Stats

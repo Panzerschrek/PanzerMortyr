@@ -23,7 +23,8 @@ public:
 			InMessageSetSoundSourceVolume,
 			InMessageRemoveSoundSource,
 			InMessageAddAmbientSound,
-			InMessageSetAmbientSoundVolume ] />;
+			InMessageSetAmbientSoundVolume,
+			InMessageRemoveAmbientSound ] />;
 
 	struct InMessageAddSoundSource
 	{
@@ -56,6 +57,11 @@ public:
 		ChannelsVolume volume;
 	}
 
+	struct InMessageRemoveAmbientSound
+	{
+		u32 slot_index; // 0 to 7
+	}
+
 	// Let's assume audio mixing/outputting is executed 256 times in a second (it should be actually less frequent).
 	// Assume that frame rate is pretty low - only 20 fps.
 	// Assume that we have 32 playing sounds.
@@ -63,11 +69,19 @@ public:
 	// Round it up to the nearest power of two.
 	type OutMessagesQueue= LockFreeQueue</ OutMessage, 512u />;
 
-	type OutMessage= ust::variant</ tup[ OutMessageSoundSourceFinished ] />;
+	type OutMessage= ust::variant</ tup[ OutMessageSoundSourceFinished, OutMessageAmbientSoundRemoved ] />;
 
 	struct OutMessageSoundSourceFinished
 	{
 		UniqueSoundSourceId id;
+
+		// It's needed here only to prevent freeing the shared data on the mixer thread, if it happens to be the last user.
+		ust::shared_ptr_mt_final_nullable</SoundDataAbstract/> sound_data;
+	}
+
+	struct OutMessageAmbientSoundRemoved
+	{
+		u32 slot_index; /// 0 to 7
 
 		// It's needed here only to prevent freeing the shared data on the mixer thread, if it happens to be the last user.
 		ust::shared_ptr_mt_final_nullable</SoundDataAbstract/> sound_data;
@@ -128,6 +142,10 @@ private:
 
 		// Counter of output samples, not sound data samples (using output frequency).
 		u32 sample_counter;
+
+		// Use it to mark ambient sounds to be removed.
+		// Do this instead of removing them to do this in a nice way - with fading out (to avoid "steps" and "cracks").
+		bool is_about_to_be_removed;
 	}
 
 private:
@@ -137,6 +155,7 @@ private:
 	fn ProcessMessageImpl( mut this, InMessageRemoveSoundSource& message );
 	fn ProcessMessageImpl( mut this, InMessageAddAmbientSound& message );
 	fn ProcessMessageImpl( mut this, InMessageSetAmbientSoundVolume& message );
+	fn ProcessMessageImpl( mut this, InMessageRemoveAmbientSound& message );
 
 private:
 	InMessagesQueue::ReadEnd in_messages_queue_read_end_;
