@@ -45,6 +45,7 @@ Gameplay investigation:
 * Investigate what kinds of entities are affected by gravity (what in an entity description turns gravity on and off).
 * Investigate what "zarowka" entity property is and whether it's actually used.
 * Investigate whether it's possible for the player to drown in water by spending too much time in it.
+* Investigate which inventory items are preserved and which are taken away upon entering map 2 and whether health and armor are preserved.
 
 PanzerMortyr general:
 

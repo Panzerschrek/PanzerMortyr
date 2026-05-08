@@ -15,7 +15,10 @@ namespace PM
 {
 
 fn CreateNewMapGameState(
-	GameMapData& map_data, u32 skill, ust::optional_ref_imut</PlayerState/> prev_player_state ) : GameState
+	GameGlobalData& global_data,
+	GameMapData& map_data,
+	u32 skill,
+	ust::optional_ref_imut</PlayerState/> prev_player_state ) : GameState
 {
 	var GameState mut game_state
 	{
@@ -232,71 +235,82 @@ fn CreateNewMapGameState(
 					.horizontal_distance_walked= 0.0f,
 				};
 
+			// Give the player tools which he should have at start.
+			for( auto mut t= 0s; t < typeinfo</ EntitiesDescription::ToolType />.element_count; ++t )
+			{
+				var size_type tool_index( entities_description.tool_type_to_index_map[t] );
+				if( tool_index < entities_description.tools.size() )
+				{
+					game_state.player.inventory[t]= entities_description.tools[ tool_index ].player_start_count;
+				}
+			}
+
+			// Make the best weapon we have active.
+			var [ EntitiesDescription::ToolType, 11 ] weapon_tools
+			[
+				EntitiesDescription::ToolType::Kick,
+				EntitiesDescription::ToolType::WeaponA,
+				EntitiesDescription::ToolType::WeaponB,
+				EntitiesDescription::ToolType::WeaponC,
+				EntitiesDescription::ToolType::WeaponD,
+				EntitiesDescription::ToolType::WeaponE,
+				EntitiesDescription::ToolType::WeaponF,
+				EntitiesDescription::ToolType::WeaponG,
+				EntitiesDescription::ToolType::WeaponH,
+				EntitiesDescription::ToolType::WeaponI,
+				EntitiesDescription::ToolType::WeaponJ,
+			];
+
+			foreach( weapon_tool : weapon_tools )
+			{
+				if( game_state.player.inventory[ size_type(weapon_tool) ] > 0u )
+				{
+					game_state.player.primary_weapon_state.current_weapon= weapon_tool;
+				}
+			}
+
 			if_var( &prev_state : prev_player_state )
 			{
+				var MapsDescription& maps_descrition= global_data.maps_description.deref();
+
+				var bool reset_player_inventory=
+					size_type( map_data.map_index ) < maps_descrition.maps.size() &&
+					maps_descrition.maps[ size_type( map_data.map_index ) ].reset_player_inventory;
+
 				var PlayerState &mut player_state= game_state.player;
 
-				// Preserve health and items from previous state.
+				// Preserve health and armor from previous state.
 				player_state.energy= prev_state.energy;
-				player_state.inventory= prev_state.inventory;
+				player_state.armor= prev_state.armor;
 
-				// But don't preserve keys.
-				player_state.inventory[ size_type( EntitiesDescription::ToolType::KeyA ) ]= 0u;
-				player_state.inventory[ size_type( EntitiesDescription::ToolType::KeyB ) ]= 0u;
-				player_state.inventory[ size_type( EntitiesDescription::ToolType::KeyC ) ]= 0u;
-
-				// Preserve current weapon (if can).
-				if( player_state.inventory[ size_type( prev_state.primary_weapon_state.current_weapon ) ] != 0u )
+				// Preserve inventory except for levels marked with the flag which forces taking all items away.
+				// TODO - maybe preserve default energy (100hp) and armor in such case too?
+				if( !reset_player_inventory )
 				{
-					player_state.primary_weapon_state.current_weapon= prev_state.primary_weapon_state.current_weapon;
-				}
-				else
-				{
-					player_state.primary_weapon_state.current_weapon= EntitiesDescription::ToolType::Kick;
-				}
+					player_state.inventory= prev_state.inventory;
 
-				// Preserve selected tool.
-				player_state.tools_state.selected_tool= prev_state.tools_state.selected_tool;
+					// Don't preserve keys.
+					player_state.inventory[ size_type( EntitiesDescription::ToolType::KeyA ) ]= 0u;
+					player_state.inventory[ size_type( EntitiesDescription::ToolType::KeyB ) ]= 0u;
+					player_state.inventory[ size_type( EntitiesDescription::ToolType::KeyC ) ]= 0u;
 
-				// Preserve night vision and infrared vision if it was active.
-				player_state.tools_state.night_vision_is_active= prev_state.tools_state.night_vision_is_active;
-				player_state.tools_state.infrared_vision_is_active= prev_state.tools_state.infrared_vision_is_active;
-				player_state.tools_state.flashlight_is_active= prev_state.tools_state.flashlight_is_active;
-			}
-			else
-			{
-				// Give the player tools which he should have at start.
-				for( auto mut t= 0s; t < typeinfo</ EntitiesDescription::ToolType />.element_count; ++t )
-				{
-					var size_type tool_index( entities_description.tool_type_to_index_map[t] );
-					if( tool_index < entities_description.tools.size() )
+					// Preserve current weapon (if can).
+					if( player_state.inventory[ size_type( prev_state.primary_weapon_state.current_weapon ) ] != 0u )
 					{
-						game_state.player.inventory[t]= entities_description.tools[ tool_index ].player_start_count;
+						player_state.primary_weapon_state.current_weapon= prev_state.primary_weapon_state.current_weapon;
 					}
-				}
-
-				// Make the best weapon we have active.
-				var [ EntitiesDescription::ToolType, 11 ] weapon_tools
-				[
-					EntitiesDescription::ToolType::Kick,
-					EntitiesDescription::ToolType::WeaponA,
-					EntitiesDescription::ToolType::WeaponB,
-					EntitiesDescription::ToolType::WeaponC,
-					EntitiesDescription::ToolType::WeaponD,
-					EntitiesDescription::ToolType::WeaponE,
-					EntitiesDescription::ToolType::WeaponF,
-					EntitiesDescription::ToolType::WeaponG,
-					EntitiesDescription::ToolType::WeaponH,
-					EntitiesDescription::ToolType::WeaponI,
-					EntitiesDescription::ToolType::WeaponJ,
-				];
-
-				foreach( weapon_tool : weapon_tools )
-				{
-					if( game_state.player.inventory[ size_type(weapon_tool) ] > 0u )
+					else
 					{
-						game_state.player.primary_weapon_state.current_weapon= weapon_tool;
+						player_state.primary_weapon_state.current_weapon= EntitiesDescription::ToolType::Kick;
 					}
+
+					// Preserve selected tool.
+					player_state.tools_state.selected_tool= prev_state.tools_state.selected_tool;
+
+					// Preserve night vision and infrared vision if it was active.
+					player_state.tools_state.night_vision_is_active= prev_state.tools_state.night_vision_is_active;
+					player_state.tools_state.infrared_vision_is_active= prev_state.tools_state.infrared_vision_is_active;
+					player_state.tools_state.flashlight_is_active= prev_state.tools_state.flashlight_is_active;
 				}
 			}
 
