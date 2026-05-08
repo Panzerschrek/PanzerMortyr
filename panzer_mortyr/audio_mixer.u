@@ -24,7 +24,8 @@ fn AudioMixer::constructor(
 		ambient_sounds_
 		[
 			{
-				.volume= zero_init,
+				.current_volume= zero_init,
+				.new_volume= zero_init,
 				.sample_counter= 0u,
 			} ...
 		],
@@ -211,14 +212,28 @@ fn AudioMixer::Mix( mut this, ust::array_view_mut</SamplePairType/> out_sample_p
 			var f32 constexpr sample_scale= GetScaleForSampleType</InSampleType/>();
 			var f32 constexpr sample_offset= GetOffsetForSampleType</InSampleType/>();
 
-			var ChannelsVolume volume
+			var ChannelsVolume start_volume
 			[
-				ambient_sound.volume[0] * sample_scale,
-				ambient_sound.volume[1] * sample_scale,
+				ambient_sound.current_volume[0] * sample_scale,
+				ambient_sound.current_volume[1] * sample_scale,
 			];
 
-			if( ambient_sound.volume[0] > 0.0f | ambient_sound.volume[1] > 0.0f )
+			var ChannelsVolume end_volume
+			[
+				ambient_sound.new_volume[0] * sample_scale,
+				ambient_sound.new_volume[1] * sample_scale,
+			];
+
+			if( start_volume[0] > 0.0f | start_volume[1] > 0.0f | end_volume[0] > 0.0f | end_volume[1] > 0.0f )
 			{
+				// Perform smooth volume change to avoid "cracks" and "steps".
+				var ChannelsVolume mut current_volume= start_volume;
+				var [ f32, c_num_samples ] volume_step_delta
+				[
+					f32( end_volume[0] - start_volume[0] ) / f32( out_sample_pairs.size() ),
+					f32( end_volume[1] - start_volume[1] ) / f32( out_sample_pairs.size() ),
+				];
+
 				foreach( &mut out_sample_pair : out_sample_pairs )
 				{
 					// Perform here resampling with linear interpolation.
@@ -247,11 +262,19 @@ fn AudioMixer::Mix( mut this, ust::array_view_mut</SamplePairType/> out_sample_p
 
 					for( auto mut i= 0s; i < c_num_samples; ++i )
 					{
-						out_sample_pair[i]+= sample_value * volume[i];
+						out_sample_pair[i]+= sample_value * current_volume[i];
 					}
 
 					++ambient_sound.sample_counter;
+
+					for( auto mut i= 0s; i < c_num_samples; ++i )
+					{
+						current_volume[i]+= volume_step_delta[i];
+					}
 				}
+
+				// Update current volume after interpolating it smoothly from old to new value.
+				ambient_sound.current_volume= ambient_sound.new_volume;
 			}
 			else
 			{
@@ -351,7 +374,8 @@ fn AudioMixer::ProcessMessageImpl( mut this, InMessageAddAmbientSound& message )
 	var AmbientSound &mut ambient_sound= ambient_sounds_[ message.slot_index ];
 
 	ambient_sound.sound_data= message.sound_data;
-	ambient_sound.volume= message.volume; // TODO - set new volume instead.
+	ambient_sound.new_volume= message.volume;
+	ambient_sound.current_volume= message.volume;
 	ambient_sound.sample_counter= 0u;
 
 	// TODO - send old sound data pointer back.
@@ -360,9 +384,7 @@ fn AudioMixer::ProcessMessageImpl( mut this, InMessageAddAmbientSound& message )
 
 fn AudioMixer::ProcessMessageImpl( mut this, InMessageSetAmbientSoundVolume& message )
 {
-	var AmbientSound &mut ambient_sound= ambient_sounds_[ message.slot_index ];
-
-	ambient_sound.volume= message.volume; // TODO - set new volume instead.
+	ambient_sounds_[ message.slot_index ].new_volume= message.volume;
 }
 
 template</type T/>
