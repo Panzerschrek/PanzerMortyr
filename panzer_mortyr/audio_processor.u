@@ -156,23 +156,7 @@ fn AudioProcessor::Update( mut this, WorldAudioInfo& world_audio_info )
 		}
 	}
 
-	// TODO - use non-linear volume scale?
-	var f32 volume_scale= ust::max( 0.0f, ust::min( 1.0f, f32( settings_.lock_imut().deref().snd_volume ) / 100.0f ) );
-
-	var bool swap_channels= settings_.lock_imut().deref().snd_swap_channels;
-
-	auto prepare_volume=
-		lambda[=]( [ f32, 2 ]& volume ) : [ f32, 2 ]
-		{
-			var [ f32, 2 ] mut volume_scaled[ volume[0] * volume_scale, volume[1] * volume_scale ];
-			if( swap_channels )
-			{
-				auto tmp= volume_scaled[0];
-				volume_scaled[0]= volume_scaled[1];
-				volume_scaled[1]= tmp;
-			}
-			return volume_scaled;
-		};
+	var VolumeCalculator volume_calculator( settings_.lock_imut().deref() );
 
 	// Read messages from the mixer.
 	// Assume that we can process messages faster than the other thread can emit them and thus this loop ends eventually.
@@ -265,7 +249,7 @@ fn AudioProcessor::Update( mut this, WorldAudioInfo& world_audio_info )
 							AudioMixer::InMessageSetSoundSourceVolume
 							{
 								.id= sound_source.id,
-								.volume= prepare_volume( sound_source.volume )
+								.volume= volume_calculator.CalculateVolume( sound_source.volume )
 							} );
 
 					// It's not a big problem if we failed to update volume if the queue is full.
@@ -297,7 +281,7 @@ fn AudioProcessor::Update( mut this, WorldAudioInfo& world_audio_info )
 							AudioMixer::InMessageAddSoundSource
 							{
 								.id= sound_source.id,
-								.volume= prepare_volume( sound_source.volume ),
+								.volume= volume_calculator.CalculateVolume( sound_source.volume ),
 								.time_s= 0.0f,
 								.sound_data= sound_data_nullable_ptr.try_to_non_nullable(),
 							} ) )
@@ -340,7 +324,7 @@ fn AudioProcessor::Update( mut this, WorldAudioInfo& world_audio_info )
 						AudioMixer::InMessageAddAmbientSound
 						{
 							.slot_index(i),
-							.volume= prepare_volume( in_ambient_sound.volume ),
+							.volume= volume_calculator.CalculateVolume( in_ambient_sound.volume ),
 							.sound_data= ambient_sound.data.try_to_non_nullable(),
 						} );
 
@@ -359,7 +343,7 @@ fn AudioProcessor::Update( mut this, WorldAudioInfo& world_audio_info )
 						AudioMixer::InMessageSetAmbientSoundVolume
 						{
 							.slot_index(i),
-							.volume= prepare_volume( in_ambient_sound.volume ),
+							.volume= volume_calculator.CalculateVolume( in_ambient_sound.volume ),
 						} );
 
 				// It's not a big problem if we failed to update volume if the queue is full.
@@ -520,6 +504,34 @@ fn AudioProcessor::ProcessMessageImpl( mut this, AudioMixer::OutMessageAmbientSo
 fn AudioProcessor::ProcessMessageImpl( mut this, AudioMixer::OutMessageAmbientSoundRemoved& message )
 {
 	ambient_sounds_[ message.slot_index ].playing= false;
+}
+
+class VolumeCalculator
+{
+public:
+	fn constructor( Settings& settings )
+		(
+			// TODO - use non-linear volume scale?
+			volume_scale_= ust::max( 0.0f, ust::min( 1.0f, f32( settings.snd_volume ) / 100.0f ) ),
+			swap_channels_= settings.snd_swap_channels,
+		)
+	{}
+
+	fn CalculateVolume( this, [ f32, 2 ]& volume ) : [ f32, 2 ]
+	{
+		var [ f32, 2 ] mut volume_scaled[ volume[0] * volume_scale_, volume[1] * volume_scale_ ];
+		if( swap_channels_ )
+		{
+			auto tmp= volume_scaled[0];
+			volume_scaled[0]= volume_scaled[1];
+			volume_scaled[1]= tmp;
+		}
+		return volume_scaled;
+	}
+
+private:
+	f32 volume_scale_;
+	bool swap_channels_;
 }
 
 } // namespace PM
