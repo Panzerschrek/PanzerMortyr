@@ -112,6 +112,8 @@ fn AudioProcessor::Update( mut this, WorldAudioInfo& world_audio_info )
 		return;
 	}
 
+	ProcessMessages();
+
 	// Load ambient sounds.
 	// Normally the list of ambient sounds should be changed only upon level transition, so, heavy loading work is performed exactly once per level.
 	// TODO - avoid reloading sound files already loaded, but assigned to different slots.
@@ -157,20 +159,6 @@ fn AudioProcessor::Update( mut this, WorldAudioInfo& world_audio_info )
 	}
 
 	var VolumeCalculator volume_calculator( settings_.lock_imut().deref() );
-
-	// Read messages from the mixer.
-	// Assume that we can process messages faster than the other thread can emit them and thus this loop ends eventually.
-	loop
-	{
-		if_var( &message : audio_out_ext_.mixer_out_messages_queue_read_end.TryPop() )
-		{
-			ProcessMessage( message );
-		}
-		else
-		{
-			break;
-		}
-	}
 
 	// Send messages for sound sources removal (if not sent such message yet).
 	foreach( pair : sound_sources_to_remove_ )
@@ -438,6 +426,10 @@ fn AudioProcessor::SetState( mut this, AudioProcessorState& state )
 {
 	StopAllWorldSounds();
 
+	// Process messages caused by world sounds stopping.
+	// This may help stopping old sounds sometimes before starting new ones.
+	ProcessMessages();
+
 	var VolumeCalculator volume_calculator( settings_.lock_imut().deref() );
 
 	foreach( &active_sound_source : state.active_sound_sources )
@@ -565,6 +557,23 @@ fn AudioProcessor::GetStats( this ) : Stats
 	}
 
 	return stats;
+}
+
+fn AudioProcessor::ProcessMessages( mut this )
+{
+	// Read messages from the mixer.
+	// Assume that we can process messages faster than the other thread can emit them and thus this loop ends eventually.
+	loop
+	{
+		if_var( &message : audio_out_ext_.mixer_out_messages_queue_read_end.TryPop() )
+		{
+			ProcessMessage( message );
+		}
+		else
+		{
+			break;
+		}
+	}
 }
 
 fn AudioProcessor::ProcessMessage( mut this, AudioMixer::OutMessage& message )
