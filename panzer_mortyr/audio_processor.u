@@ -170,20 +170,20 @@ fn AudioProcessor::UpdateWord( mut this, WorldAudioInfo& world_audio_info )
 
 	var VolumeCalculator volume_calculator( settings_.lock_imut().deref() );
 
+	auto &mut messages_queue_write_end= audio_out_ext_.mixer_in_messages_queue_write_end;
+	auto &mut sound_sources_to_remove= sound_sources_to_remove_;
+
 	// Send messages for sound sources removal (if not sent such message yet).
-	foreach( pair : sound_sources_to_remove_ )
+	foreach( pair : sound_sources_to_remove )
 	{
 		var UniqueSoundSourceId id= pair.key();
 		var SoundSourceToRemove &mut sound_source_to_remove= pair.value();
 		if( !sound_source_to_remove.remove_message_sent )
 		{
 			sound_source_to_remove.remove_message_sent=
-				audio_out_ext_.mixer_in_messages_queue_write_end.TryPush(
-					AudioMixer::InMessageRemoveSoundSource{ .id= id } );
+				messages_queue_write_end.TryPush( AudioMixer::InMessageRemoveSoundSource{ .id= id } );
 		}
 	}
-
-	auto &mut messages_queue_write_end= audio_out_ext_.mixer_in_messages_queue_write_end;
 
 	// Mark used sound sources.
 	//
@@ -211,16 +211,13 @@ fn AudioProcessor::UpdateWord( mut this, WorldAudioInfo& world_audio_info )
 			{
 				if( active_sound_source.is_playing )
 				{
-					if( messages_queue_write_end.TryPush( AudioMixer::InMessageRemoveSoundSource{ .id= id } ) )
-					{
-						return false; // Need to remove.
-					}
-					else
-					{
-						// Failed to push to the queue, since it's full.
-						// Preserve this sound source and try removing it later, when the queue isn't full.
-						return true;
-					}
+					sound_sources_to_remove.insert_new(
+						id,
+						SoundSourceToRemove
+						{
+							.remove_message_sent=
+								messages_queue_write_end.TryPush( AudioMixer::InMessageRemoveSoundSource{ .id= id } )
+						} );
 				}
 
 				return false; // Need to remove.
@@ -263,10 +260,10 @@ fn AudioProcessor::UpdateWord( mut this, WorldAudioInfo& world_audio_info )
 
 			// Add new one.
 
-			if( sound_sources_to_remove_.exists( sound_source.id ) )
+			if( sound_sources_to_remove.exists( sound_source.id ) )
 			{
 				// Avoid adding a sound source having the same ID as some previous source, which isn't removed yet.
-				// Add it next time, when the previous message is removed.
+				// Add it next time, when the previous source is removed.
 				continue;
 			}
 
