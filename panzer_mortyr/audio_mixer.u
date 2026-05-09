@@ -365,6 +365,18 @@ fn AudioMixer::ProcessMessage( mut this, InMessage& message )
 
 fn AudioMixer::ProcessMessageImpl( mut this, InMessageAddSoundSource& message )
 {
+	// If a slot already uses the same ID, reuse it.
+	// Normally it shouldn't be the case, but may happen in some tricky cases like level transition.
+	// Prefer doing hard reset (without fading) for the old source rather than having two sources with the same ID.
+	foreach( &mut source : sources_ )
+	{
+		if( source.id == message.id )
+		{
+			AssignNewSoundSourceToSlot( source, frequency_, message );
+			return;
+		}
+	}
+
 	foreach( &mut source : sources_ )
 	{
 		// Search for a free slot.
@@ -372,21 +384,7 @@ fn AudioMixer::ProcessMessageImpl( mut this, InMessageAddSoundSource& message )
 		if( source.id == c_empty_sound_source_id )
 		{
 			// Found a free slot. Assign it to the new source.
-
-			source=
-				SoundSource
-				{
-					.id= message.id,
-					// If a sound starts playing from zero position, we can start with full volume,
-					// since we assume, that the given sound data starts with silence.
-					// Otherwise start with zero volume to avoid "cracks" and "steps".
-					.current_volume= ( message.time_s == 0.0f ? message.volume : ust::make_array( 0.0f, 0.0f ) ),
-					.new_volume= message.volume,
-					.sound_data= message.sound_data,
-					.sample_counter( message.time_s * f32( frequency_ ) ),
-					.is_about_to_be_removed= false,
-				};
-
+			AssignNewSoundSourceToSlot( source, frequency_, message );
 			return;
 		}
 	}
@@ -465,6 +463,23 @@ fn AudioMixer::ProcessMessageImpl( mut this, InMessageSetAmbientSoundVolume& mes
 fn AudioMixer::ProcessMessageImpl( mut this, InMessageRemoveAmbientSound& message )
 {
 	ambient_sounds_[ message.slot_index ].is_about_to_be_removed= true;
+}
+
+fn AudioMixer::AssignNewSoundSourceToSlot( SoundSource &mut source, u32 frequency, InMessageAddSoundSource& message )
+{
+	source=
+		SoundSource
+		{
+			.id= message.id,
+			// If a sound starts playing from zero position, we can start with full volume,
+			// since we assume, that the given sound data starts with silence.
+			// Otherwise start with zero volume to avoid "cracks" and "steps".
+			.current_volume= ( message.time_s == 0.0f ? message.volume : ust::make_array( 0.0f, 0.0f ) ),
+			.new_volume= message.volume,
+			.sound_data= message.sound_data,
+			.sample_counter( message.time_s * f32( frequency ) ),
+			.is_about_to_be_removed= false,
+		};
 }
 
 template</type T/>
