@@ -306,7 +306,6 @@ fn AudioProcessor::Update( mut this, WorldAudioInfo& world_audio_info )
 		}
 	}
 
-
 	// Start playing ambient sounds if not done this yet or update their volume.
 	for( auto mut i= 0s; i < WorldAudioInfo::c_num_ambient_sounds; ++i )
 	{
@@ -433,6 +432,104 @@ fn AudioProcessor::GetState( this ) : AudioProcessorState
 			} () ...
 		],
 	};
+}
+
+fn AudioProcessor::SetState( mut this, AudioProcessorState& state )
+{
+	StopAllWorldSounds();
+
+	var VolumeCalculator volume_calculator( settings_.lock_imut().deref() );
+
+	foreach( &active_sound_source : state.active_sound_sources )
+	{
+		if( size_type( active_sound_source.sound_index ) < SoundsDescription::c_num_sounds )
+		{
+			auto& sound_data_nullable_ptr= sounds_data_[ active_sound_source.sound_index ];
+			if( !sound_data_nullable_ptr.empty() )
+			{
+				active_sound_sources_.insert_new(
+					active_sound_source.id,
+					ActiveSoundSource
+					{
+						.sound_index= active_sound_source.sound_index,
+						.volume= active_sound_source.volume,
+						.used= true,
+						.is_playing= active_sound_source.is_playing,
+						.time_s= active_sound_source.time_s,
+					} );
+
+				if( active_sound_source.is_playing )
+				{
+					var bool pushed=
+						audio_out_ext_.mixer_in_messages_queue_write_end.TryPush(
+							AudioMixer::InMessageAddSoundSource
+							{
+								.id= active_sound_source.id,
+								.volume= volume_calculator.CalculateVolume( active_sound_source.volume ),
+								.time_s= active_sound_source.time_s,
+								.sound_data= sound_data_nullable_ptr.try_to_non_nullable(),
+							} );
+
+					// For now can't handle full queue.
+					ust::ignore_unused( pushed );
+				}
+			}
+		}
+	}
+
+	for( auto mut i= 0s; i < WorldAudioInfo::c_num_ambient_sounds; ++i )
+	{
+		var AudioProcessorState::AmbientSound& in_sound= state.ambient_sounds[i];
+		var AmbientSound &mut out_sound= ambient_sounds_[i];
+
+		if( out_sound.file_name != in_sound.file_name )
+		{
+			if( out_sound.playing )
+			{
+				// An old one is still playing.
+				// Try stopping it.
+				if( !out_sound.remove_message_sent )
+				{
+					out_sound.remove_message_sent=
+						audio_out_ext_.mixer_in_messages_queue_write_end.TryPush(
+							AudioMixer::InMessageRemoveAmbientSound{ .slot_index(i) } );
+				}
+			}
+			else
+			{
+				// An old one is not playing anymore.
+				// Can load the new one.
+				out_sound.file_name= in_sound.file_name;
+				out_sound.data.reset();
+				out_sound.remove_message_sent= false;
+				out_sound.time_s= in_sound.time_s;
+
+				if( in_sound.file_name[0] != '\0' )
+				{
+					auto mut fs_lock= game_filesystem_ptr_.lock_mut();
+
+					auto mut sound_data_opt= LoadSoundData( console_out_ptr_, fs_lock.deref(), in_sound.file_name );
+					if( !sound_data_opt.empty() )
+					{
+						out_sound.data= SoundDataNullablePtr( sound_data_opt.try_take() );
+					}
+				}
+			}
+		}
+
+		if( out_sound.file_name == in_sound.file_name && !out_sound.data.empty() )
+		{
+			out_sound.playing=
+				audio_out_ext_.mixer_in_messages_queue_write_end.TryPush(
+					AudioMixer::InMessageAddAmbientSound
+					{
+						.slot_index(i),
+						.volume= volume_calculator.CalculateVolume( in_sound.volume ),
+						.time_s= in_sound.time_s,
+						.sound_data= out_sound.data.try_to_non_nullable(),
+					} );
+		}
+	}
 }
 
 fn AudioProcessor::GetStats( this ) : Stats
