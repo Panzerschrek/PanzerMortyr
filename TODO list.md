@@ -173,9 +173,6 @@ PanzerMortyr sound:
 
 * Play player's out-of-ammo sounds.
 * Play player's falling sounds (due to fall damage).
-* Play tool-related sounds (if has some).
-* Play necessary sounds while activating a tool (a health pack, armor, a weapon).
-* Play other player-related sounds.
 * Play sounds for pushed enities.
 * Play bird sounds.
 * Play CD music and/or music files ripped from the original CD.
