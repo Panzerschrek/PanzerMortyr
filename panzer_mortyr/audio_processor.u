@@ -105,12 +105,24 @@ fn AudioProcessor::constructor(
 			" bytes." ) );
 }
 
-fn AudioProcessor::Update( mut this, WorldAudioInfo& world_audio_info )
+fn AudioProcessor::Update( mut this )
 {
 	if( !audio_out_ext_.audio_out.IsActive() )
 	{
 		return;
 	}
+
+	ProcessMessages();
+}
+
+fn AudioProcessor::UpdateWord( mut this, WorldAudioInfo& world_audio_info )
+{
+	if( !audio_out_ext_.audio_out.IsActive() )
+	{
+		return;
+	}
+
+	ProcessMessages();
 
 	// Load ambient sounds.
 	// Normally the list of ambient sounds should be changed only upon level transition, so, heavy loading work is performed exactly once per level.
@@ -140,6 +152,7 @@ fn AudioProcessor::Update( mut this, WorldAudioInfo& world_audio_info )
 				out_sound.file_name= in_sound.file_name;
 				out_sound.data.reset();
 				out_sound.remove_message_sent= false;
+				out_sound.time_s= 0.0f;
 
 				if( in_sound.file_name[0] != '\0' )
 				{
@@ -155,68 +168,22 @@ fn AudioProcessor::Update( mut this, WorldAudioInfo& world_audio_info )
 		}
 	}
 
-	// TODO - use non-linear volume scale?
-	var f32 volume_scale= ust::max( 0.0f, ust::min( 1.0f, f32( settings_.lock_imut().deref().snd_volume ) / 100.0f ) );
+	var VolumeCalculator volume_calculator( settings_.lock_imut().deref() );
 
-	var bool swap_channels= settings_.lock_imut().deref().snd_swap_channels;
-
-	auto prepare_volume=
-		lambda[=]( [ f32, 2 ]& volume ) : [ f32, 2 ]
-		{
-			var [ f32, 2 ] mut volume_scaled[ volume[0] * volume_scale, volume[1] * volume_scale ];
-			if( swap_channels )
-			{
-				auto tmp= volume_scaled[0];
-				volume_scaled[0]= volume_scaled[1];
-				volume_scaled[1]= tmp;
-			}
-			return volume_scaled;
-		};
-
-	// Read messages from the mixer.
-	// Assume that we can process messages faster than the other thread can emit them and thus this loop ends eventually.
-	loop
-	{
-		if_var( &message : audio_out_ext_.mixer_out_messages_queue_read_end.TryPop() )
-		{
-			if_var( &sound_source_finished_message : message.get</ AudioMixer::OutMessageSoundSourceFinished />() )
-			{
-				if_var( &mut active_sound_source : active_sound_sources_.find( sound_source_finished_message.id ) )
-				{
-					active_sound_source.is_playing= false;
-				}
-
-				sound_sources_to_remove_.drop_if_exists( sound_source_finished_message.id );
-			}
-			else if_var( &ambient_sound_removed_message : message.get</ AudioMixer::OutMessageAmbientSoundRemoved />() )
-			{
-				ambient_sounds_[ ambient_sound_removed_message.slot_index ].playing= false;
-			}
-			else
-			{
-				halt; // Unhandled variant.
-			}
-		}
-		else
-		{
-			break;
-		}
-	}
+	auto &mut messages_queue_write_end= audio_out_ext_.mixer_in_messages_queue_write_end;
+	auto &mut sound_sources_to_remove= sound_sources_to_remove_;
 
 	// Send messages for sound sources removal (if not sent such message yet).
-	foreach( pair : sound_sources_to_remove_ )
+	foreach( pair : sound_sources_to_remove )
 	{
 		var UniqueSoundSourceId id= pair.key();
 		var SoundSourceToRemove &mut sound_source_to_remove= pair.value();
 		if( !sound_source_to_remove.remove_message_sent )
 		{
 			sound_source_to_remove.remove_message_sent=
-				audio_out_ext_.mixer_in_messages_queue_write_end.TryPush(
-					AudioMixer::InMessageRemoveSoundSource{ .id= id } );
+				messages_queue_write_end.TryPush( AudioMixer::InMessageRemoveSoundSource{ .id= id } );
 		}
 	}
-
-	auto &mut messages_queue_write_end= audio_out_ext_.mixer_in_messages_queue_write_end;
 
 	// Mark used sound sources.
 	//
@@ -244,16 +211,13 @@ fn AudioProcessor::Update( mut this, WorldAudioInfo& world_audio_info )
 			{
 				if( active_sound_source.is_playing )
 				{
-					if( messages_queue_write_end.TryPush( AudioMixer::InMessageRemoveSoundSource{ .id= id } ) )
-					{
-						return false; // Need to remove.
-					}
-					else
-					{
-						// Failed to push to the queue, since it's full.
-						// Preserve this sound source and try removing it later, when the queue isn't full.
-						return true;
-					}
+					sound_sources_to_remove.insert_new(
+						id,
+						SoundSourceToRemove
+						{
+							.remove_message_sent=
+								messages_queue_write_end.TryPush( AudioMixer::InMessageRemoveSoundSource{ .id= id } )
+						} );
 				}
 
 				return false; // Need to remove.
@@ -269,18 +233,23 @@ fn AudioProcessor::Update( mut this, WorldAudioInfo& world_audio_info )
 		if( !active_sound_source_opt.empty() )
 		{
 			// Update.
-			if( active_sound_source_opt.try_deref().is_playing )
 			{
-				var bool pushed=
-					messages_queue_write_end.TryPush(
-						AudioMixer::InMessageSetSoundSourceVolume
-						{
-							.id= sound_source.id,
-							.volume= prepare_volume( sound_source.volume )
-						} );
+				var ActiveSoundSource &mut active_sound_source= active_sound_source_opt.try_deref();
+				if( active_sound_source.is_playing )
+				{
+					active_sound_source.volume= sound_source.volume;
 
-				// It's not a big problem if we failed to update volume if the queue is full.
-				ust::ignore_unused(pushed);
+					var bool pushed=
+						messages_queue_write_end.TryPush(
+							AudioMixer::InMessageSetSoundSourceVolume
+							{
+								.id= sound_source.id,
+								.volume= volume_calculator.CalculateVolume( sound_source.volume )
+							} );
+
+					// It's not a big problem if we failed to update volume if the queue is full.
+					ust::ignore_unused(pushed);
+				}
 			}
 
 			move(active_sound_source_opt);
@@ -291,10 +260,10 @@ fn AudioProcessor::Update( mut this, WorldAudioInfo& world_audio_info )
 
 			// Add new one.
 
-			if( sound_sources_to_remove_.exists( sound_source.id ) )
+			if( sound_sources_to_remove.exists( sound_source.id ) )
 			{
 				// Avoid adding a sound source having the same ID as some previous source, which isn't removed yet.
-				// Add it next time, when the previous message is removed.
+				// Add it next time, when the previous source is removed.
 				continue;
 			}
 
@@ -307,12 +276,21 @@ fn AudioProcessor::Update( mut this, WorldAudioInfo& world_audio_info )
 							AudioMixer::InMessageAddSoundSource
 							{
 								.id= sound_source.id,
-								.volume= prepare_volume( sound_source.volume ),
+								.volume= volume_calculator.CalculateVolume( sound_source.volume ),
+								.time_s= 0.0f,
 								.sound_data= sound_data_nullable_ptr.try_to_non_nullable(),
 							} ) )
 					{
 						active_sound_sources_.insert_new(
-							sound_source.id, ActiveSoundSource{ .used= true, .is_playing= true } );
+							sound_source.id,
+							ActiveSoundSource
+							{
+								.sound_index= sound_source.sound_index,
+								.volume= sound_source.volume,
+								.used= true,
+								.is_playing= true,
+								.time_s= 0.0f,
+							} );
 					}
 					else
 					{
@@ -322,7 +300,6 @@ fn AudioProcessor::Update( mut this, WorldAudioInfo& world_audio_info )
 			}
 		}
 	}
-
 
 	// Start playing ambient sounds if not done this yet or update their volume.
 	for( auto mut i= 0s; i < WorldAudioInfo::c_num_ambient_sounds; ++i )
@@ -341,18 +318,26 @@ fn AudioProcessor::Update( mut this, WorldAudioInfo& world_audio_info )
 						AudioMixer::InMessageAddAmbientSound
 						{
 							.slot_index(i),
-							.volume= prepare_volume( in_ambient_sound.volume ),
+							.volume= volume_calculator.CalculateVolume( in_ambient_sound.volume ),
+							.time_s= ambient_sound.time_s,
 							.sound_data= ambient_sound.data.try_to_non_nullable(),
 						} );
+
+				if( ambient_sound.playing )
+				{
+					ambient_sound.volume= in_ambient_sound.volume;
+				}
 			}
 			else
 			{
+				ambient_sound.volume= in_ambient_sound.volume;
+
 				var bool pushed=
 					messages_queue_write_end.TryPush(
 						AudioMixer::InMessageSetAmbientSoundVolume
 						{
 							.slot_index(i),
-							.volume= prepare_volume( in_ambient_sound.volume ),
+							.volume= volume_calculator.CalculateVolume( in_ambient_sound.volume ),
 						} );
 
 				// It's not a big problem if we failed to update volume if the queue is full.
@@ -370,14 +355,17 @@ fn AudioProcessor::StopAllWorldSounds( mut this )
 	{
 		if( active_sound_source.value().is_playing )
 		{
-			var bool message_pushed=
-				audio_out_ext_.mixer_in_messages_queue_write_end.TryPush(
-					AudioMixer::InMessageRemoveSoundSource{ .id= active_sound_source.key() } );
+			var UniqueSoundSourceId id= active_sound_source.key();
+			if( !sound_sources_to_remove_.exists( id ) )
+			{
+				var bool message_pushed=
+					audio_out_ext_.mixer_in_messages_queue_write_end.TryPush(
+						AudioMixer::InMessageRemoveSoundSource{ .id= id } );
 
-			// If the message queue if full, memorize, that a removal message should be sent and try sending it later.
+				// If the message queue if full, memorize, that a removal message should be sent and try sending it later.
 
-			sound_sources_to_remove_.insert_new(
-				active_sound_source.key(), SoundSourceToRemove{ .remove_message_sent= message_pushed } );
+				sound_sources_to_remove_.insert_new( id, SoundSourceToRemove{ .remove_message_sent= message_pushed } );
+			}
 		}
 		else
 		{
@@ -401,6 +389,166 @@ fn AudioProcessor::StopAllWorldSounds( mut this )
 
 			// If the message queue if full, memorize, that a removal message should be sent and try sending it later.
 			ambient_sound.remove_message_sent= message_pushed;
+		}
+	}
+}
+
+fn AudioProcessor::GetState( this ) : AudioProcessorState
+{
+	var size_type mut ambient_sound_index= 0s;
+	auto& ambient_sounds= ambient_sounds_;
+
+	return AudioProcessorState
+	{
+		.active_sound_sources=
+			active_sound_sources_.iter().map(
+				lambda[&]( ActiveSoundSources::iterator_element_imut& el ) : AudioProcessorState::ActiveSoundSource
+				{
+					var ActiveSoundSource& active_sound_source= el.value();
+					return AudioProcessorState::ActiveSoundSource
+					{
+						.id= el.key(),
+						.sound_index= active_sound_source.sound_index,
+						.volume= active_sound_source.volume,
+						.is_playing= active_sound_source.is_playing,
+						.time_s= active_sound_source.time_s,
+					};
+				} ).collect</ ust::vector />(),
+		.ambient_sounds
+		[
+			lambda[&]() : AudioProcessorState::AmbientSound
+			{
+				var AmbientSound& ambient_sound= ambient_sounds[ ambient_sound_index ];
+				++ambient_sound_index;
+				return AudioProcessorState::AmbientSound
+				{
+					.file_name= ambient_sound.file_name,
+					.playing= ambient_sound.playing,
+					.volume= ambient_sound.volume,
+					.time_s= ambient_sound.time_s,
+				};
+			} () ...
+		],
+	};
+}
+
+fn AudioProcessor::SetState( mut this, AudioProcessorState& state )
+{
+	if( !audio_out_ext_.audio_out.IsActive() )
+	{
+		return;
+	}
+
+	// Make sure all old sound sources are removed.
+	StopAllWorldSounds();
+
+	// Process messages caused by world sounds stopping.
+	// This may help (sometimes) stopping old sounds before starting new ones.
+	ProcessMessages();
+
+	var VolumeCalculator volume_calculator( settings_.lock_imut().deref() );
+
+	foreach( &active_sound_source : state.active_sound_sources )
+	{
+		if( size_type( active_sound_source.sound_index ) < SoundsDescription::c_num_sounds )
+		{
+			auto& sound_data_nullable_ptr= sounds_data_[ active_sound_source.sound_index ];
+			if( !sound_data_nullable_ptr.empty() )
+			{
+				var bool mut is_playing= false;
+
+				if( active_sound_source.is_playing )
+				{
+					if( sound_sources_to_remove_.exists( active_sound_source.id ) )
+					{
+						// This can happen sometimes if we restore state just after stopping previous sounds and some of them aren't stopped yet.
+						// We can't start playing it, since we will recieve soon a finsish message from an old source having the same ID.
+						// Consider this source to be finished to avoid starting playing it again from the beginning later.
+						is_playing= false;
+					}
+					else
+					{
+						var bool pushed=
+							audio_out_ext_.mixer_in_messages_queue_write_end.TryPush(
+								AudioMixer::InMessageAddSoundSource
+								{
+									.id= active_sound_source.id,
+									.volume= volume_calculator.CalculateVolume( active_sound_source.volume ),
+									.time_s= active_sound_source.time_s,
+									.sound_data= sound_data_nullable_ptr.try_to_non_nullable(),
+								} );
+
+						// If failed to push, consider this sound to be non-playing.
+						// We can't handle this case properly.
+						is_playing= pushed;
+					}
+				}
+
+				active_sound_sources_.insert_new(
+					active_sound_source.id,
+					ActiveSoundSource
+					{
+						.sound_index= active_sound_source.sound_index,
+						.volume= active_sound_source.volume,
+						.used= true,
+						.is_playing= is_playing,
+						.time_s= active_sound_source.time_s,
+					} );
+			}
+		}
+	}
+
+	for( auto mut i= 0s; i < WorldAudioInfo::c_num_ambient_sounds; ++i )
+	{
+		var AudioProcessorState::AmbientSound& in_sound= state.ambient_sounds[i];
+		var AmbientSound &mut out_sound= ambient_sounds_[i];
+
+		if( out_sound.file_name != in_sound.file_name )
+		{
+			if( out_sound.playing )
+			{
+				// An old one is still playing.
+				// Try stopping it.
+				if( !out_sound.remove_message_sent )
+				{
+					out_sound.remove_message_sent=
+						audio_out_ext_.mixer_in_messages_queue_write_end.TryPush(
+							AudioMixer::InMessageRemoveAmbientSound{ .slot_index(i) } );
+				}
+			}
+			else
+			{
+				// An old one is not playing anymore.
+				// Can load the new one.
+				out_sound.file_name= in_sound.file_name;
+				out_sound.data.reset();
+				out_sound.remove_message_sent= false;
+				out_sound.time_s= in_sound.time_s;
+
+				if( in_sound.file_name[0] != '\0' )
+				{
+					auto mut fs_lock= game_filesystem_ptr_.lock_mut();
+
+					auto mut sound_data_opt= LoadSoundData( console_out_ptr_, fs_lock.deref(), in_sound.file_name );
+					if( !sound_data_opt.empty() )
+					{
+						out_sound.data= SoundDataNullablePtr( sound_data_opt.try_take() );
+					}
+				}
+			}
+		}
+
+		if( out_sound.file_name == in_sound.file_name && !out_sound.data.empty() )
+		{
+			out_sound.playing=
+				audio_out_ext_.mixer_in_messages_queue_write_end.TryPush(
+					AudioMixer::InMessageAddAmbientSound
+					{
+						.slot_index(i),
+						.volume= volume_calculator.CalculateVolume( in_sound.volume ),
+						.time_s= in_sound.time_s,
+						.sound_data= out_sound.data.try_to_non_nullable(),
+					} );
 		}
 	}
 }
@@ -438,6 +586,90 @@ fn AudioProcessor::GetStats( this ) : Stats
 	}
 
 	return stats;
+}
+
+fn AudioProcessor::ProcessMessages( mut this )
+{
+	// Read messages from the mixer.
+	// Assume that we can process messages faster than the other thread can emit them and thus this loop ends eventually.
+	loop
+	{
+		if_var( &message : audio_out_ext_.mixer_out_messages_queue_read_end.TryPop() )
+		{
+			ProcessMessage( message );
+		}
+		else
+		{
+			break;
+		}
+	}
+}
+
+fn AudioProcessor::ProcessMessage( mut this, AudioMixer::OutMessage& message )
+{
+	variant_visit( &el : message )
+	{
+		ProcessMessageImpl( el );
+	}
+}
+
+fn AudioProcessor::ProcessMessageImpl( mut this, AudioMixer::OutMessageSoundSourceProgress& message )
+{
+	if_var( &mut active_sound_source : active_sound_sources_.find( message.id ) )
+	{
+		active_sound_source.time_s= message.time_s;
+	}
+}
+
+fn AudioProcessor::ProcessMessageImpl( mut this, AudioMixer::OutMessageSoundSourceFinished& message )
+{
+	if_var( &mut active_sound_source : active_sound_sources_.find( message.id ) )
+	{
+		active_sound_source.is_playing= false;
+		active_sound_source.time_s= 0.0f;
+	}
+
+	sound_sources_to_remove_.drop_if_exists( message.id );
+}
+
+fn AudioProcessor::ProcessMessageImpl( mut this, AudioMixer::OutMessageAmbientSoundProgress& message )
+{
+	ambient_sounds_[ message.slot_index ].time_s= message.time_s;
+}
+
+fn AudioProcessor::ProcessMessageImpl( mut this, AudioMixer::OutMessageAmbientSoundRemoved& message )
+{
+	var AmbientSound &mut ambient_sound= ambient_sounds_[ message.slot_index ];
+	ambient_sound.playing= false;
+	ambient_sound.time_s= 0.0f;
+}
+
+class VolumeCalculator
+{
+public:
+	fn constructor( Settings& settings )
+		(
+			// TODO - use non-linear volume scale?
+			volume_scale_= ust::max( 0.0f, ust::min( 1.0f, f32( settings.snd_volume ) / 100.0f ) ),
+			swap_channels_= settings.snd_swap_channels,
+		)
+	{}
+
+	fn CalculateVolume( this, [ f32, 2 ]& volume ) : [ f32, 2 ]
+	{
+		var [ f32, 2 ] mut volume_scaled[ volume[0] * volume_scale_, volume[1] * volume_scale_ ];
+		if( swap_channels_ )
+		{
+			auto tmp= volume_scaled[0];
+			volume_scaled[0]= volume_scaled[1];
+			volume_scaled[1]= tmp;
+		}
+		return volume_scaled;
+	}
+
+private:
+	f32 volume_scale_;
+	bool swap_channels_;
 }
 
 } // namespace PM

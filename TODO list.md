@@ -183,9 +183,9 @@ PanzerMortyr sound:
 * Play CD music and/or music files ripped from the original CD.
 * Consider implementing occlusion-based sound volume attenuation (reduce volume of a sound located behind a wall or in some other room).
 * Play menu sounds.
-* Save playing sounds in save files and resume playing them upon game loading.
 * Consider implementing sound effects like reverberation/echo effects and use them where it makes sense (like while under water oh having an environment suit active).
 * Consider adding a setting for sound quality (sample rate).
 * Allow selecting audio device via settings.
 * Pause/resume game sounds when pausing the game.
 * Tune volume attenuation params and volumes of various player-related, entity-related and projectile-related sounds.
+* Consider adding some workaround for cases when a game is loaded, but a restored sound source can't be started due to some other source with the same ID, which removal is still in progress.

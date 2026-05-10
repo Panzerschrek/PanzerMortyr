@@ -1,4 +1,5 @@
 import "audio_out.iu"
+import "audio_processor_state.iu"
 import "caching_game_resources_loader.iu"
 import "game_filesystem.iu"
 import "sound_loading.iu"
@@ -25,13 +26,21 @@ public:
 		SettingsImutPtr settings,
 		CachingGameResourcesLoaderPtr& caching_game_resources_loader );
 
+	// Call it each frame to update internal state.
+	// It's neccessary to do so in order to avoid filling message queues used by this class.
+	fn Update( mut this );
+
 	// Call it to add new sound sources or to update existing sources.
 	// For a sound to continue playing it should be always present in sound sources list of the given structure.
-	fn Update( mut this, WorldAudioInfo& world_audio_info );
+	fn UpdateWord( mut this, WorldAudioInfo& world_audio_info );
 
 	// Call it upon level transition to stop all sounds emitted in an old level.
 	// This allows to reuse sound source IDs for a new level.
 	fn StopAllWorldSounds( mut this );
+
+	fn GetState( this ) : AudioProcessorState;
+
+	fn SetState( mut this, AudioProcessorState& state );
 
 	fn GetStats( this ) : Stats;
 
@@ -45,12 +54,19 @@ private:
 
 	struct ActiveSoundSource
 	{
+		u8 sound_index; // The number from the GLOS.STD file.
+		[ f32, 2 ] volume; // Input volume, without master volume tweaks.
+
 		// This flag is needed to detect and remove no longer active sound sources.
 		bool used;
 
 		// This flag is "false" if actual playback of the source already ended.
 		// It's used to avoid trying to modify sound sources in mixer's data if it isn't needed anymore.
 		bool is_playing;
+
+		// Playing progress (in seconds).
+		// "f32" has enough precision here, since sounds are pretty short.
+		f32 time_s;
 	}
 
 	struct SoundSourceToRemove
@@ -64,11 +80,27 @@ private:
 		SoundDataNullablePtr data;
 		bool playing= false;
 		bool remove_message_sent= false;
+
+		[ f32, 2 ] volume[ 0.0f ... ]; // Input volume, without master volume tweaks.
+
+		// Playing progress (in seconds).
+		// "f32" gives only a fraction of a second precision here, but for ambient sounds it's enough.
+		f32 time_s= 0.0f;
 	}
 
 	// Use shared multithreaded pointer to share data with the mixer thread.
 	// Store null pointer if failed to load a file.
 	type SoundDataNullablePtr= ust::shared_ptr_mt_final_nullable</ SoundDataAbstract />;
+
+	type ActiveSoundSources= ust::hash_map</ UniqueSoundSourceId, ActiveSoundSource />;
+
+private:
+	fn ProcessMessages( mut this );
+	fn ProcessMessage( mut this, AudioMixer::OutMessage& message );
+	fn ProcessMessageImpl( mut this, AudioMixer::OutMessageSoundSourceProgress& message );
+	fn ProcessMessageImpl( mut this, AudioMixer::OutMessageSoundSourceFinished& message );
+	fn ProcessMessageImpl( mut this, AudioMixer::OutMessageAmbientSoundProgress& message );
+	fn ProcessMessageImpl( mut this, AudioMixer::OutMessageAmbientSoundRemoved& message );
 
 private:
 	ConsoleOutPtr imut console_out_ptr_;
@@ -82,7 +114,7 @@ private:
 	// Store which sources are active (are present in the input sources list).
 	// Even if a a source already ended being played,
 	// we still preserve and entry in this map - to avoid restarting playing it again.
-	ust::hash_map</ UniqueSoundSourceId, ActiveSoundSource /> active_sound_sources_;
+	ActiveSoundSources active_sound_sources_;
 
 	// Memorize sound sources which should be removed (removal is pending).
 	// We need this to prevent adding a new sound source having the same ID until an old one is still playing.
