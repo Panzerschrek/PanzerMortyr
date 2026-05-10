@@ -449,6 +449,35 @@ fn AudioProcessor::SetState( mut this, AudioProcessorState& state )
 			auto& sound_data_nullable_ptr= sounds_data_[ active_sound_source.sound_index ];
 			if( !sound_data_nullable_ptr.empty() )
 			{
+				var bool mut is_playing= false;
+
+				if( active_sound_source.is_playing )
+				{
+					if( sound_sources_to_remove_.exists( active_sound_source.id ) )
+					{
+						// This can happen sometimes if we restore state just after stopping previous sounds and some of them aren't stopped yet.
+						// We can't start playing it, since we will recieve soon a finsish message from an old source having the same ID.
+						// Consider this source to be finished to avoid starting playing it again from the beginning later.
+						is_playing= false;
+					}
+					else
+					{
+						var bool pushed=
+							audio_out_ext_.mixer_in_messages_queue_write_end.TryPush(
+								AudioMixer::InMessageAddSoundSource
+								{
+									.id= active_sound_source.id,
+									.volume= volume_calculator.CalculateVolume( active_sound_source.volume ),
+									.time_s= active_sound_source.time_s,
+									.sound_data= sound_data_nullable_ptr.try_to_non_nullable(),
+								} );
+
+						// If failed to push, consider this sound to be non-playing.
+						// We can't handle this case properly.
+						is_playing= pushed;
+					}
+				}
+
 				active_sound_sources_.insert_new(
 					active_sound_source.id,
 					ActiveSoundSource
@@ -456,25 +485,9 @@ fn AudioProcessor::SetState( mut this, AudioProcessorState& state )
 						.sound_index= active_sound_source.sound_index,
 						.volume= active_sound_source.volume,
 						.used= true,
-						.is_playing= active_sound_source.is_playing,
+						.is_playing= is_playing,
 						.time_s= active_sound_source.time_s,
 					} );
-
-				if( active_sound_source.is_playing )
-				{
-					var bool pushed=
-						audio_out_ext_.mixer_in_messages_queue_write_end.TryPush(
-							AudioMixer::InMessageAddSoundSource
-							{
-								.id= active_sound_source.id,
-								.volume= volume_calculator.CalculateVolume( active_sound_source.volume ),
-								.time_s= active_sound_source.time_s,
-								.sound_data= sound_data_nullable_ptr.try_to_non_nullable(),
-							} );
-
-					// For now can't handle full queue.
-					ust::ignore_unused( pushed );
-				}
 			}
 		}
 	}
