@@ -10,6 +10,8 @@ fn AudioOut::constructor( ConsoleOutPtr& console_out, Settings& settings, AudioM
 		audio_mixer_( AudioMixer( move( mixer ) ) )
 	)
 {
+	ConsoleOutAddTextLine( console_out, "Initialize audio out" );
+
 	if( !settings.snd_audio_enabled )
 	{
 		device_id_= 0u;
@@ -20,6 +22,22 @@ fn AudioOut::constructor( ConsoleOutPtr& console_out, Settings& settings, AudioM
 	unsafe
 	{
 		SDL_InitSubSystem( SDL_INIT_AUDIO );
+
+		safe( ConsoleOutAddTextLine(
+			console_out,
+			ust::concat(
+				"Audio driver: ",
+				unsafe( NullTerminatedStringToStringView( SDL_GetCurrentAudioDriver() ) ) ) ) );
+
+		safe( ConsoleOutAddTextLine( console_out, "Available audio devices: " ) );
+		for( var i32 mut device_index= 0, num_devices= SDL_GetNumAudioDevices( 0 /* iscapture */ );
+			device_index < num_devices;
+			++device_index )
+		{
+			var $(char8) name_ptr= SDL_GetAudioDeviceName( device_index, 0 /* iscapture */ );
+			var ust::string_view8 name= NullTerminatedStringToStringView( name_ptr );
+			safe( ConsoleOutAddTextLine( console_out, ust::concat( "    ", name ) ) );
+		}
 
 		var SDL_AudioSpec desired_spec
 		{
@@ -55,7 +73,7 @@ fn AudioOut::constructor( ConsoleOutPtr& console_out, Settings& settings, AudioM
 
 		safe
 		{
-			ConsoleOutAddTextLine( console_out, "Opened an audio device." );
+			ConsoleOutAddTextLine( console_out, "Opened a default audio device." );
 			// TODO - print audio device name.
 			ConsoleOutAddTextLine( console_out, ust::concat( " frequency: ", ust::to_string8( obtained_spec.freq ) ) );
 			ConsoleOutAddTextLine( console_out, ust::concat( " buffer size: ", ust::to_string8( obtained_spec.samples ) ) );
@@ -96,6 +114,25 @@ fn AudioCallback( $(byte8) userdata, $(Uint8) stream, i32 len ) unsafe call_conv
 			ust::array_view_mut</AudioMixer::SamplePairType/>(
 				ust::byte_ptr_cast</AudioMixer::SamplePairType/>( ust::ptr_cast_to_byte8( stream ) ),
 				size_type(len) / typeinfo</AudioMixer::SamplePairType/>.size_of ) ) );
+}
+
+fn NullTerminatedStringToStringView( $(char8) start ) unsafe : ust::string_view8
+{
+	if( ust::is_nullptr( start ) )
+	{
+		return ust::string_view8();
+	}
+
+	unsafe
+	{
+		var size_type mut length= 0s;
+		while( $>( start + length ) != '\0' )
+		{
+			++length;
+		}
+
+		return ust::string_view8( start, length );
+	}
 }
 
 } // namespace PM
