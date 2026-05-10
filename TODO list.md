@@ -182,7 +182,6 @@ PanzerMortyr sound:
 * Consider implementing occlusion-based sound volume attenuation (reduce volume of a sound located behind a wall or in some other room).
 * Play menu sounds.
 * Consider implementing sound effects like reverberation/echo effects and use them where it makes sense (like while under water oh having an environment suit active).
-* Consider adding a setting for sound quality (sample rate).
 * Allow selecting audio device via settings.
 * Pause/resume game sounds when pausing the game.
 * Tune volume attenuation params and volumes of various player-related, entity-related and projectile-related sounds.
