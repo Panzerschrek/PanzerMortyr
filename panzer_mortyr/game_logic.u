@@ -134,6 +134,7 @@ fn CreateNewMapGameState(
 				.num_steps_since_operation_start= 0u,
 				.navigation_info_index( navigation_info_index ),
 				.alarmed= false,
+				.alarmed_by_seeing_player= false,
 				.player_is_in_sight= false,
 				.lost_energy_in_current_operation= false,
 				.animation_frame= 0u, // Set exact frame later.
@@ -1832,6 +1833,7 @@ fn TriggerEntitiesSpawn( GameMapData& map_data, GameState &mut game_state )
 				.num_steps_since_operation_start= 0u,
 				.navigation_info_index( navigation_info_index ),
 				.alarmed= true, // Spawn triggered entities in alarmed state.
+				.alarmed_by_seeing_player= false,
 				.player_is_in_sight= false,
 				.lost_energy_in_current_operation= false,
 				.animation_frame= 0u, // Set later.
@@ -1937,10 +1939,11 @@ fn ProcessEntitiesLogicStep(
 					game_state.step_index );
 			}
 
-			if( entity.player_is_in_sight )
+			if( entity.player_is_in_sight & !entity.alarmed )
 			{
 				// Go to alarmed state if saw the player at least once.
 				entity.alarmed= true;
+				entity.alarmed_by_seeing_player= true;
 			}
 
 			// Perform operation transition (if necessary).
@@ -1961,9 +1964,12 @@ fn ProcessEntitiesLogicStep(
 					{
 						if( entity.lost_energy_in_current_operation )
 						{
+							var bool mut perform_energy_loss_operation_transition= false;
+
 							if( entity.energy == 0u )
 							{
 								next_operation= u32( energy_loss[2] );
+								perform_energy_loss_operation_transition= true;
 							}
 							else
 							{
@@ -1980,15 +1986,27 @@ fn ProcessEntitiesLogicStep(
 								if( can_use0 && can_use1 )
 								{
 									next_operation= u32( energy_loss[ game_state.random.Next() & 1u ] );
+									perform_energy_loss_operation_transition= true;
 								}
 								else if( can_use0 )
 								{
 									next_operation= u32( energy_loss[0] );
+									perform_energy_loss_operation_transition= true;
 								}
 								else if( can_use1 )
 								{
 									next_operation= u32( energy_loss[1] );
+									perform_energy_loss_operation_transition= true;
 								}
+							}
+
+							if( perform_energy_loss_operation_transition & entity_description.standard_sounds != 0u )
+							{
+								// Investigations have shown, that damage sounds are coupled with "energy_loss" events.
+								EmitEntityRandomDamageSound(
+									game_global_data.sounds_description.deref(),
+									game_state.random,
+									entity.sound_source_slots );
 							}
 						}
 					}
@@ -2001,6 +2019,16 @@ fn ProcessEntitiesLogicStep(
 							{
 								next_operation= u32( player_visible[2] );
 								// TODO - process delay properly.
+
+								if( entity.alarmed_by_seeing_player && entity_description.standard_sounds != 0u )
+								{
+									EmitEntityRandomAlarmSound(
+										game_global_data.sounds_description.deref(),
+										game_state.random,
+										game_state.global_alarm_sounds_state,
+										game_state.step_index,
+										entity.sound_source_slots );
+								}
 							}
 						}
 					}
@@ -2291,6 +2319,7 @@ fn ProcessEntitiesLogicStep(
 										.num_steps_since_operation_start= 0u,
 										.navigation_info_index= ~0u,
 										.alarmed= false,
+										.alarmed_by_seeing_player= false,
 										.player_is_in_sight= false,
 										.lost_energy_in_current_operation= false,
 										.animation_frame= 0u, // Set exact frame later.
