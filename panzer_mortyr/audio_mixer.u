@@ -79,7 +79,26 @@ fn AudioMixer::Mix( mut this, ust::array_view_mut</SamplePairType/> out_sample_p
 
 	if( paused_ )
 	{
-		// TODO - remove sounds if necessary.
+		// While paused still try removing sound sources if their removal was requested.
+
+		foreach( &mut sound_source : sources_ )
+		{
+			if( sound_source.id != c_empty_sound_source_id &&
+				!sound_source.sound_data.empty() &&
+				sound_source.is_about_to_be_removed )
+			{
+				TryRemovingSoundSource( sound_source, out_messages_queue_write_end_ );
+			}
+		}
+
+		for( auto mut i= 0s; i < c_num_ambient_sound_slots; ++i )
+		{
+			var AmbientSound &mut ambient_sound= ambient_sounds_[i];
+			if( !ambient_sound.sound_data.empty() && ambient_sound.is_about_to_be_removed )
+			{
+				TryRemovingAmbientSound( ambient_sound, i, out_messages_queue_write_end_ );
+			}
+		}
 	}
 	else
 	{
@@ -198,26 +217,7 @@ fn AudioMixer::MixAndUpdateSoundSources( mut this, ust::array_view_mut</SamplePa
 			{
 				// Perform removal AFTER performing mixing - to allow fading a sound to be removed.
 
-				// Pass a copy of the shared pointer containing sound data back.
-				// Doing so we ensure that this thread is not the last one owning it
-				// and thus prevent freeing memory of this data on this thread while resetting this shared pointer instance.
-				// We need to prevent freeing memory here, since it may require some mutex locks (inside an allocator) or even system calls.
-				if( out_messages_queue_write_end_.TryPush(
-						OutMessageSoundSourceFinished{ .id= sound_source.id, .sound_data= sound_source.sound_data } ) )
-				{
-					sound_source.id= c_empty_sound_source_id;
-					sound_source.sample_counter= 0u;
-
-					// It's fine to reset it now,
-					// since a copy of this shared pointer is now in the queue and no actual memory freeing should take place.
-					sound_source.sound_data.reset();
-				}
-				else
-				{
-					// If the output queue is full, still assume this sound source to be playing, even if its end was reached.
-					// Assume that we can push a finish message next time.
-					sound_source.current_volume= ust::make_array( 0.0f, 0.0f );
-				}
+				TryRemovingSoundSource( sound_source, out_messages_queue_write_end_ );
 			}
 			else
 			{
@@ -345,26 +345,7 @@ fn AudioMixer::MixAndUpdateAmbientSounds( mut this, ust::array_view_mut</SampleP
 		{
 			// Perform removal AFTER performing mixing - to allow fading an ambient sound to be removed.
 
-			// Pass a copy of the shared pointer containing sound data back.
-			// Doing so we ensure that this thread is not the last one owning it
-			// and thus prevent freeing memory of this data on this thread while resetting this shared pointer instance.
-			// We need to prevent freeing memory here, since it may require some mutex locks (inside an allocator) or even system calls.
-			if( out_messages_queue_write_end_.TryPush(
-				OutMessageAmbientSoundRemoved{ .slot_index(i), .sound_data= ambient_sound.sound_data } ) )
-			{
-				ambient_sound.sample_counter= 0u;
-				ambient_sound.is_about_to_be_removed= false;
-
-				// It's fine to reset it now,
-				// since a copy of this shared pointer is now in the queue and no actual memory freeing should take place.
-				ambient_sound.sound_data.reset();
-			}
-			else
-			{
-				// If the output queue is full, still assume this ambient sound to be playing, even if its end was reached.
-				// Assume that we can push a finish message next time.
-				ambient_sound.current_volume= ust::make_array( 0.0f, 0.0f );
-			}
+			TryRemovingAmbientSound( ambient_sound, i, out_messages_queue_write_end_ );
 		}
 		else
 		{
@@ -622,6 +603,56 @@ fn AudioMixer::AssignNewSoundSourceToSlot( SoundSource &mut source, u32 frequenc
 			.sample_counter( message.time_s * f32( frequency ) ),
 			.is_about_to_be_removed= false,
 		};
+}
+
+fn AudioMixer::TryRemovingSoundSource(
+	SoundSource &mut source, OutMessagesQueue::WriteEnd &mut out_messages_queue_write_end )
+{
+	// Pass a copy of the shared pointer containing sound data back.
+	// Doing so we ensure that this thread is not the last one owning it
+	// and thus prevent freeing memory of this data on this thread while resetting this shared pointer instance.
+	// We need to prevent freeing memory here, since it may require some mutex locks (inside an allocator) or even system calls.
+	if( out_messages_queue_write_end.TryPush(
+			OutMessageSoundSourceFinished{ .id= source.id, .sound_data= source.sound_data } ) )
+	{
+		source.id= c_empty_sound_source_id;
+		source.sample_counter= 0u;
+
+		// It's fine to reset it now,
+		// since a copy of this shared pointer is now in the queue and no actual memory freeing should take place.
+		source.sound_data.reset();
+	}
+	else
+	{
+		// If the output queue is full, still assume this sound source to be playing, even if its end was reached.
+		// Assume that we can push a finish message next time.
+		source.current_volume= ust::make_array( 0.0f, 0.0f );
+	}
+}
+
+fn AudioMixer::TryRemovingAmbientSound(
+	AmbientSound &mut ambient_sound, size_type index, OutMessagesQueue::WriteEnd &mut out_messages_queue_write_end )
+{
+	// Pass a copy of the shared pointer containing sound data back.
+	// Doing so we ensure that this thread is not the last one owning it
+	// and thus prevent freeing memory of this data on this thread while resetting this shared pointer instance.
+	// We need to prevent freeing memory here, since it may require some mutex locks (inside an allocator) or even system calls.
+	if( out_messages_queue_write_end.TryPush(
+		OutMessageAmbientSoundRemoved{ .slot_index(index), .sound_data= ambient_sound.sound_data } ) )
+	{
+		ambient_sound.sample_counter= 0u;
+		ambient_sound.is_about_to_be_removed= false;
+
+		// It's fine to reset it now,
+		// since a copy of this shared pointer is now in the queue and no actual memory freeing should take place.
+		ambient_sound.sound_data.reset();
+	}
+	else
+	{
+		// If the output queue is full, still assume this ambient sound to be playing, even if its end was reached.
+		// Assume that we can push a finish message next time.
+		ambient_sound.current_volume= ust::make_array( 0.0f, 0.0f );
+	}
 }
 
 template</type T/>
