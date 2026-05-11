@@ -170,7 +170,6 @@ PanzerMortyr menus and HUD:
 PanzerMortyr sound:
 
 * Play player's out-of-ammo sounds.
-* Play player's falling sounds (due to fall damage).
 * Play sounds for pushed enities.
 * Play bird sounds.
 * Play CD music and/or music files ripped from the original CD.
