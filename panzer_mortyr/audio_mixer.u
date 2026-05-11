@@ -30,6 +30,13 @@ fn AudioMixer::constructor(
 				.is_about_to_be_removed= false,
 			} ...
 		],
+		single_shot_sounds_
+		[
+			{
+				.volume= zero_init,
+				.sample_counter= 0u,
+			} ...
+		],
 		frequency_= 1u, // Set exact value later.
 	)
 {}
@@ -183,8 +190,8 @@ fn AudioMixer::Mix( mut this, ust::array_view_mut</SamplePairType/> out_sample_p
 					sound_source.id= c_empty_sound_source_id;
 					sound_source.sample_counter= 0u;
 
-					 // It's fine to reset it now,
-					 // since a copy of this shared pointer is now in the queue and no actual memory freeing should take place.
+					// It's fine to reset it now,
+					// since a copy of this shared pointer is now in the queue and no actual memory freeing should take place.
 					sound_source.sound_data.reset();
 				}
 				else
@@ -327,8 +334,8 @@ fn AudioMixer::Mix( mut this, ust::array_view_mut</SamplePairType/> out_sample_p
 				ambient_sound.sample_counter= 0u;
 				ambient_sound.is_about_to_be_removed= false;
 
-				 // It's fine to reset it now,
-				 // since a copy of this shared pointer is now in the queue and no actual memory freeing should take place.
+				// It's fine to reset it now,
+				// since a copy of this shared pointer is now in the queue and no actual memory freeing should take place.
 				ambient_sound.sound_data.reset();
 			}
 			else
@@ -351,6 +358,89 @@ fn AudioMixer::Mix( mut this, ust::array_view_mut</SamplePairType/> out_sample_p
 
 			// It's not a problem if we failed to send progress message. Send it again next time.
 			ust::ignore_unused(pushed);
+		}
+	}
+	foreach( &mut single_shot_sound : single_shot_sounds_ )
+	{
+		if( single_shot_sound.sound_data.empty() )
+		{
+			continue;
+		}
+
+		var bool mut reached_sound_data_end= false;
+
+		variant_visit( &sound_data : single_shot_sound.sound_data.try_deref() )
+		{
+			var f32 resampling_factor= f32( sound_data.GetFrequency() ) / f32( frequency_ );
+
+			auto sound_data_samples= sound_data.GetSamples();
+
+			type InSampleType= typeof( sound_data_samples[0s] );
+
+			var f32 constexpr sample_scale= GetScaleForSampleType</InSampleType/>();
+			var f32 constexpr sample_offset= GetOffsetForSampleType</InSampleType/>();
+
+			var ChannelsVolume volume
+			[
+				single_shot_sound.volume[0] * sample_scale,
+				single_shot_sound.volume[1] * sample_scale,
+			];
+
+			foreach( &mut out_sample_pair : out_sample_pairs )
+			{
+				// Perform here resampling with linear interpolation.
+				// This works well, since output frequency is almost always higher than frequency of sound files of the original game.
+
+				// We have enough f32 precision here, since single-shot sounds are pretty short.
+				var f32 src_sample_index_fractional= f32( single_shot_sound.sample_counter ) * resampling_factor;
+				var u32 src_sample_index( src_sample_index_fractional );
+
+				if( size_type( src_sample_index ) + 1s >= sound_data_samples.size() )
+				{
+					reached_sound_data_end= true;
+					break;
+				}
+
+				var f32 mix_fraction= src_sample_index_fractional - f32( src_sample_index );
+				var InSampleType sample_value0= sound_data_samples[ size_type( src_sample_index ) ];
+				var InSampleType sample_value1= sound_data_samples[ size_type( src_sample_index ) + 1s ];
+
+				var f32 mut sample_value=
+					f32( sample_value0 ) * ( 1.0f - mix_fraction ) + f32( sample_value1 ) * mix_fraction;
+
+				static_if( sample_offset != 0.0f )
+				{
+					sample_value+= sample_offset;
+				}
+
+				for( auto mut i= 0s; i < c_num_samples; ++i )
+				{
+					out_sample_pair[i]+= sample_value * volume[i];
+				}
+
+				++single_shot_sound.sample_counter;
+			}
+		}
+
+		if( reached_sound_data_end )
+		{
+			// Pass a copy of the shared pointer containing sound data back.
+			// Doing so we ensure that this thread is not the last one owning it
+			// and thus prevent freeing memory of this data on this thread while resetting this shared pointer instance.
+			// We need to prevent freeing memory here, since it may require some mutex locks (inside an allocator) or even system calls.
+			if( out_messages_queue_write_end_.TryPush(
+					OutMessageSingleShotSoundFinished{ .sound_data= single_shot_sound.sound_data } ) )
+			{
+				// It's fine to reset it now,
+				// since a copy of this shared pointer is now in the queue and no actual memory freeing should take place.
+				single_shot_sound.sound_data.reset();
+			}
+			else
+			{
+				// If the output queue is full, still assume this single-shot sound to be playing, even if its end was reached.
+				// Assume that we can push a finish message next time.
+				single_shot_sound.volume= ust::make_array( 0.0f, 0.0f );
+			}
 		}
 	}
 }
@@ -463,6 +553,28 @@ fn AudioMixer::ProcessMessageImpl( mut this, InMessageSetAmbientSoundVolume& mes
 fn AudioMixer::ProcessMessageImpl( mut this, InMessageRemoveAmbientSound& message )
 {
 	ambient_sounds_[ message.slot_index ].is_about_to_be_removed= true;
+}
+
+fn AudioMixer::ProcessMessageImpl( mut this, InMessageAddSingleShotSound& message )
+{
+	foreach( &mut slot : single_shot_sounds_ )
+	{
+		if( slot.sound_data.empty() )
+		{
+			slot.sound_data= message.sound_data;
+			slot.volume= message.volume;
+			slot.sample_counter= 0u;
+			return;
+		}
+	}
+
+	// Has no free slots left.
+	// Return sound data back immediately.
+
+	var bool pushed=
+		out_messages_queue_write_end_.TryPush( OutMessageSingleShotSoundFinished{ .sound_data= message.sound_data } );
+
+	ust::ignore_unused( pushed ); // Can't handle here full queue.
 }
 
 fn AudioMixer::AssignNewSoundSourceToSlot( SoundSource &mut source, u32 frequency, InMessageAddSoundSource& message )

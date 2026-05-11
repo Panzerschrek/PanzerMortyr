@@ -24,7 +24,8 @@ public:
 			InMessageRemoveSoundSource,
 			InMessageAddAmbientSound,
 			InMessageSetAmbientSoundVolume,
-			InMessageRemoveAmbientSound ] />;
+			InMessageRemoveAmbientSound,
+			InMessageAddSingleShotSound ] />;
 
 	struct InMessageAddSoundSource
 	{
@@ -64,6 +65,12 @@ public:
 		AmbientSoundSlotIndex slot_index;
 	}
 
+	struct InMessageAddSingleShotSound
+	{
+		[ f32, 2 ] volume;
+		ust::shared_ptr_mt_final</SoundDataAbstract/> sound_data;
+	}
+
 	// Let's assume audio mixing/outputting is executed 256 times in a second (it should be actually less frequent).
 	// Assume that frame rate is pretty low - only 20 fps.
 	// Assume that we have 32 playing sounds.
@@ -76,7 +83,8 @@ public:
 			OutMessageSoundSourceProgress,
 			OutMessageSoundSourceFinished,
 			OutMessageAmbientSoundProgress,
-			OutMessageAmbientSoundRemoved ] />;
+			OutMessageAmbientSoundRemoved,
+			OutMessageSingleShotSoundFinished ] />;
 
 	struct OutMessageSoundSourceProgress
 	{
@@ -106,6 +114,12 @@ public:
 	{
 		AmbientSoundSlotIndex slot_index;
 
+		// It's needed here only to prevent freeing the shared data on the mixer thread, if it happens to be the last user.
+		ust::shared_ptr_mt_final_nullable</SoundDataAbstract/> sound_data;
+	}
+
+	struct OutMessageSingleShotSoundFinished
+	{
 		// It's needed here only to prevent freeing the shared data on the mixer thread, if it happens to be the last user.
 		ust::shared_ptr_mt_final_nullable</SoundDataAbstract/> sound_data;
 	}
@@ -175,6 +189,20 @@ private:
 		bool is_about_to_be_removed;
 	}
 
+	// Sound source, which can only be added, but can't be removed and can't change its volume.
+	// Also it can't be paused.
+	struct SingleShotSound
+	{
+		// Empty for empty slot, non-empty if is playing right now.
+		ust::shared_ptr_mt_final_nullable</SoundDataAbstract/> sound_data;
+
+		[ f32, 2 ] volume;
+
+		// Counter of output samples, not sound data samples (using output frequency).
+		// 32-bit counter is enough for many hours of playing.
+		u32 sample_counter;
+	}
+
 private:
 	fn ProcessMessage( mut this, InMessage& message );
 	fn ProcessMessageImpl( mut this, InMessageAddSoundSource& message );
@@ -183,6 +211,7 @@ private:
 	fn ProcessMessageImpl( mut this, InMessageAddAmbientSound& message );
 	fn ProcessMessageImpl( mut this, InMessageSetAmbientSoundVolume& message );
 	fn ProcessMessageImpl( mut this, InMessageRemoveAmbientSound& message );
+	fn ProcessMessageImpl( mut this, InMessageAddSingleShotSound& message );
 
 	fn AssignNewSoundSourceToSlot( SoundSource &mut source, u32 frequency, InMessageAddSoundSource& message );
 
@@ -195,6 +224,8 @@ private:
 	SoundSources sources_;
 
 	[ AmbientSound, c_num_ambient_sound_slots ] ambient_sounds_;
+
+	[ SingleShotSound, 8 ] single_shot_sounds_;
 }
 
 } // namespace PM

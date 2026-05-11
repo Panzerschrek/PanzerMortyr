@@ -28,7 +28,8 @@ fn AudioProcessor::constructor(
 			} (),
 		console_out_ptr_= move(console_out_ptr),
 		game_filesystem_ptr_= move(game_filesystem_ptr),
-		settings_= move(settings)
+		settings_= move(settings),
+		menu_sound_index_= -1, // Set later.
 	)
 {
 	if( !audio_out_ext_.audio_out.IsActive() )
@@ -43,6 +44,8 @@ fn AudioProcessor::constructor(
 				auto mut lock= caching_game_resources_loader.lock_mut();
 				return lock.deref().LoadSoundsDescription();
 			}();
+
+	menu_sound_index_= sounds_description_ptr.deref().menu;
 
 	// Just preload all sound files listed in the "GLOS.STD" file.
 	// There are not so many of them, only around 10Mb of data total.
@@ -432,6 +435,34 @@ fn AudioProcessor::GetState( this ) : AudioProcessorState
 	};
 }
 
+fn AudioProcessor::PlayMenuSound( mut this )
+{
+	if( !audio_out_ext_.audio_out.IsActive() )
+	{
+		return;
+	}
+
+	if( menu_sound_index_ >= 0 && menu_sound_index_ < i32( SoundsDescription::c_num_sounds ) )
+	{
+		auto& sound_data= sounds_data_[ size_type( menu_sound_index_ ) ];
+		if( !sound_data.empty() )
+		{
+			auto volume=
+				VolumeCalculator( settings_.lock_imut().deref() ).CalculateVolume( ust::make_array( 1.0f, 1.0f ) );
+
+			var bool pushed=
+				audio_out_ext_.mixer_in_messages_queue_write_end.TryPush(
+					AudioMixer::InMessageAddSingleShotSound
+					{
+						.sound_data= sound_data.try_to_non_nullable(),
+						.volume= volume
+					} );
+
+			ust::ignore_unused( pushed ); // Can't handle full queue here.
+		}
+	}
+}
+
 fn AudioProcessor::SetState( mut this, AudioProcessorState& state )
 {
 	if( !audio_out_ext_.audio_out.IsActive() )
@@ -642,6 +673,12 @@ fn AudioProcessor::ProcessMessageImpl( mut this, AudioMixer::OutMessageAmbientSo
 	var AmbientSound &mut ambient_sound= ambient_sounds_[ message.slot_index ];
 	ambient_sound.playing= false;
 	ambient_sound.time_s= 0.0f;
+}
+
+fn AudioProcessor::ProcessMessageImpl( mut this, AudioMixer::OutMessageSingleShotSoundFinished& message )
+{
+	// Don't care.
+	ust::ignore_unused( message );
 }
 
 class VolumeCalculator

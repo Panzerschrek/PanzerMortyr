@@ -177,7 +177,6 @@ PanzerMortyr sound:
 * Play bird sounds.
 * Play CD music and/or music files ripped from the original CD.
 * Consider implementing occlusion-based sound volume attenuation (reduce volume of a sound located behind a wall or in some other room).
-* Play menu sounds.
 * Consider implementing sound effects like reverberation/echo effects and use them where it makes sense (like while under water oh having an environment suit active).
 * Allow selecting audio device via settings.
 * Pause/resume game sounds when pausing the game.
