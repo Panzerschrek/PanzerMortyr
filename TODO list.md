@@ -154,8 +154,6 @@ PanzerMortyr menus and HUD:
 * Implement game save and loading menus with named save slots, brief save summary (level name, skill, number of kills) and a small screenshot.
 * Implement video modes menu.
 * Implement key bindings menu.
-* Make sound options menu functional.
-* Consider playing a test sound while changing sound options (so that it's clear how they affect the result).
 * Allow changing HUD position via settings menu.
 * Allow changing crosshair via settings menu.
 * Implement some stub page for parental lock menu.
@@ -176,6 +174,7 @@ PanzerMortyr sound:
 * Play sounds for pushed enities.
 * Play bird sounds.
 * Play CD music and/or music files ripped from the original CD.
+* Allow disabling Mortyr's voice (there is a menu option for this).
 * Consider implementing occlusion-based sound volume attenuation (reduce volume of a sound located behind a wall or in some other room).
 * Consider implementing sound effects like reverberation/echo effects and use them where it makes sense (like while under water oh having an environment suit active).
 * Allow selecting audio device via settings.
