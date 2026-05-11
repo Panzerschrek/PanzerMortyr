@@ -127,44 +127,49 @@ fn AudioProcessor::UpdateWord( mut this, WorldAudioInfo& world_audio_info )
 
 	ProcessMessages();
 
-	// Load ambient sounds.
-	// Normally the list of ambient sounds should be changed only upon level transition, so, heavy loading work is performed exactly once per level.
-	// TODO - avoid reloading sound files already loaded, but assigned to different slots.
-	for( auto mut i= 0s; i < WorldAudioInfo::c_num_ambient_sounds; ++i )
+	var bool ambient_sound_enabled= settings_.lock_imut().deref().snd_ambient_sound_enabled;
+
+	if( ambient_sound_enabled )
 	{
-		var WorldAudioInfo::AmbientSound& in_sound= world_audio_info.ambient_sounds[i];
-		var AmbientSound &mut out_sound= ambient_sounds_[i];
-
-		if( out_sound.file_name != in_sound.file_name )
+		// Load ambient sounds.
+		// Normally the list of ambient sounds should be changed only upon level transition, so, heavy loading work is performed exactly once per level.
+		// TODO - avoid reloading sound files already loaded, but assigned to different slots.
+		for( auto mut i= 0s; i < WorldAudioInfo::c_num_ambient_sounds; ++i )
 		{
-			if( out_sound.playing )
-			{
-				// An old one is still playing.
-				// Try stopping it.
-				if( !out_sound.remove_message_sent )
-				{
-					out_sound.remove_message_sent=
-						audio_out_ext_.mixer_in_messages_queue_write_end.TryPush(
-							AudioMixer::InMessageRemoveAmbientSound{ .slot_index(i) } );
-				}
-			}
-			else
-			{
-				// An old one is not playing anymore.
-				// Can load the new one.
-				out_sound.file_name= in_sound.file_name;
-				out_sound.data.reset();
-				out_sound.remove_message_sent= false;
-				out_sound.time_s= 0.0f;
+			var WorldAudioInfo::AmbientSound& in_sound= world_audio_info.ambient_sounds[i];
+			var AmbientSound &mut out_sound= ambient_sounds_[i];
 
-				if( in_sound.file_name[0] != '\0' )
+			if( out_sound.file_name != in_sound.file_name )
+			{
+				if( out_sound.playing )
 				{
-					auto mut fs_lock= game_filesystem_ptr_.lock_mut();
-
-					auto mut sound_data_opt= LoadSoundData( console_out_ptr_, fs_lock.deref(), in_sound.file_name );
-					if( !sound_data_opt.empty() )
+					// An old one is still playing.
+					// Try stopping it.
+					if( !out_sound.remove_message_sent )
 					{
-						out_sound.data= SoundDataNullablePtr( sound_data_opt.try_take() );
+						out_sound.remove_message_sent=
+							audio_out_ext_.mixer_in_messages_queue_write_end.TryPush(
+								AudioMixer::InMessageRemoveAmbientSound{ .slot_index(i) } );
+					}
+				}
+				else
+				{
+					// An old one is not playing anymore.
+					// Can load the new one.
+					out_sound.file_name= in_sound.file_name;
+					out_sound.data.reset();
+					out_sound.remove_message_sent= false;
+					out_sound.time_s= 0.0f;
+
+					if( in_sound.file_name[0] != '\0' )
+					{
+						auto mut fs_lock= game_filesystem_ptr_.lock_mut();
+
+						auto mut sound_data_opt= LoadSoundData( console_out_ptr_, fs_lock.deref(), in_sound.file_name );
+						if( !sound_data_opt.empty() )
+						{
+							out_sound.data= SoundDataNullablePtr( sound_data_opt.try_take() );
+						}
 					}
 				}
 			}
@@ -304,47 +309,67 @@ fn AudioProcessor::UpdateWord( mut this, WorldAudioInfo& world_audio_info )
 		}
 	}
 
-	// Start playing ambient sounds if not done this yet or update their volume.
-	for( auto mut i= 0s; i < WorldAudioInfo::c_num_ambient_sounds; ++i )
+	if( ambient_sound_enabled )
 	{
-		var WorldAudioInfo::AmbientSound& in_ambient_sound= world_audio_info.ambient_sounds[i];
-		var AmbientSound &mut ambient_sound= ambient_sounds_[i];
-
-		if( ambient_sound.file_name == in_ambient_sound.file_name && !ambient_sound.data.empty() )
+		// Start playing ambient sounds if not done this yet or update their volume.
+		for( auto mut i= 0s; i < WorldAudioInfo::c_num_ambient_sounds; ++i )
 		{
-			if( !ambient_sound.playing )
+			var WorldAudioInfo::AmbientSound& in_ambient_sound= world_audio_info.ambient_sounds[i];
+			var AmbientSound &mut ambient_sound= ambient_sounds_[i];
+
+			if( ambient_sound.file_name == in_ambient_sound.file_name && !ambient_sound.data.empty() )
 			{
-				static_assert( WorldAudioInfo::c_num_ambient_sounds == AudioMixer::c_num_ambient_sound_slots );
+				if( !ambient_sound.playing )
+				{
+					static_assert( WorldAudioInfo::c_num_ambient_sounds == AudioMixer::c_num_ambient_sound_slots );
 
-				ambient_sound.playing=
-					messages_queue_write_end.TryPush(
-						AudioMixer::InMessageAddAmbientSound
-						{
-							.slot_index(i),
-							.volume= volume_calculator.CalculateVolume( in_ambient_sound.volume ),
-							.time_s= ambient_sound.time_s,
-							.sound_data= ambient_sound.data.try_to_non_nullable(),
-						} );
+					ambient_sound.playing=
+						messages_queue_write_end.TryPush(
+							AudioMixer::InMessageAddAmbientSound
+							{
+								.slot_index(i),
+								.volume= volume_calculator.CalculateVolume( in_ambient_sound.volume ),
+								.time_s= ambient_sound.time_s,
+								.sound_data= ambient_sound.data.try_to_non_nullable(),
+							} );
 
-				if( ambient_sound.playing )
+					if( ambient_sound.playing )
+					{
+						ambient_sound.volume= in_ambient_sound.volume;
+					}
+				}
+				else
 				{
 					ambient_sound.volume= in_ambient_sound.volume;
+
+					var bool pushed=
+						messages_queue_write_end.TryPush(
+							AudioMixer::InMessageSetAmbientSoundVolume
+							{
+								.slot_index(i),
+								.volume= volume_calculator.CalculateVolume( in_ambient_sound.volume ),
+							} );
+
+					// It's not a big problem if we failed to update volume if the queue is full.
+					ust::ignore_unused(pushed);
 				}
 			}
-			else
+		}
+	}
+	else
+	{
+		// If ambient sounds are disabled, remove ambient sounds which are still playing.
+		for( auto mut i= 0s; i < WorldAudioInfo::c_num_ambient_sounds; ++i )
+		{
+			var AmbientSound &mut ambient_sound= ambient_sounds_[i];
+
+			if( ambient_sound.playing )
 			{
-				ambient_sound.volume= in_ambient_sound.volume;
-
-				var bool pushed=
-					messages_queue_write_end.TryPush(
-						AudioMixer::InMessageSetAmbientSoundVolume
-						{
-							.slot_index(i),
-							.volume= volume_calculator.CalculateVolume( in_ambient_sound.volume ),
-						} );
-
-				// It's not a big problem if we failed to update volume if the queue is full.
-				ust::ignore_unused(pushed);
+				if( !ambient_sound.remove_message_sent )
+				{
+					ambient_sound.remove_message_sent=
+						messages_queue_write_end.TryPush( AudioMixer::InMessageRemoveAmbientSound{ .slot_index(i) } );
+				}
 			}
 		}
 	}
