@@ -39,6 +39,7 @@ fn AudioMixer::constructor(
 		],
 		frequency_= 1u, // Set exact value later.
 		paused_= false,
+		new_paused_= false,
 	)
 {}
 
@@ -77,26 +78,47 @@ fn AudioMixer::Mix( mut this, ust::array_view_mut</SamplePairType/> out_sample_p
 		}
 	}
 
+	// Mix regular sounds and ambient sounds. They can be paused.
+
 	if( paused_ )
 	{
-		// While paused still try removing sound sources if their removal was requested.
-
-		foreach( &mut sound_source : sources_ )
+		if( new_paused_ )
 		{
-			if( sound_source.id != c_empty_sound_source_id &&
-				!sound_source.sound_data.empty() &&
-				sound_source.is_about_to_be_removed )
+			// While paused still try removing sound sources if their removal was requested.
+
+			foreach( &mut sound_source : sources_ )
 			{
-				TryRemovingSoundSource( sound_source, out_messages_queue_write_end_ );
+				if( sound_source.id != c_empty_sound_source_id &&
+					!sound_source.sound_data.empty() &&
+					sound_source.is_about_to_be_removed )
+				{
+					TryRemovingSoundSource( sound_source, out_messages_queue_write_end_ );
+				}
+			}
+
+			for( auto mut i= 0s; i < c_num_ambient_sound_slots; ++i )
+			{
+				var AmbientSound &mut ambient_sound= ambient_sounds_[i];
+				if( !ambient_sound.sound_data.empty() && ambient_sound.is_about_to_be_removed )
+				{
+					TryRemovingAmbientSound( ambient_sound, i, out_messages_queue_write_end_ );
+				}
 			}
 		}
-
-		for( auto mut i= 0s; i < c_num_ambient_sound_slots; ++i )
+		else
 		{
-			var AmbientSound &mut ambient_sound= ambient_sounds_[i];
-			if( !ambient_sound.sound_data.empty() && ambient_sound.is_about_to_be_removed )
+			// If leaving paused state, mix sounds and gradually increase result volume.
+			MixAndUpdateSoundSources( out_sample_pairs );
+			MixAndUpdateAmbientSounds( out_sample_pairs );
+
+			var f32 mut volume= 0.0f, volume_step= 1.0f / f32( out_sample_pairs.size() );
+			foreach( &mut out_sample_pair : out_sample_pairs )
 			{
-				TryRemovingAmbientSound( ambient_sound, i, out_messages_queue_write_end_ );
+				foreach( &mut channel_value : out_sample_pair )
+				{
+					channel_value*= volume;
+				}
+				volume+= volume_step;
 			}
 		}
 	}
@@ -104,7 +126,24 @@ fn AudioMixer::Mix( mut this, ust::array_view_mut</SamplePairType/> out_sample_p
 	{
 		MixAndUpdateSoundSources( out_sample_pairs );
 		MixAndUpdateAmbientSounds( out_sample_pairs );
+
+		if( new_paused_ )
+		{
+			// If entering paused state, mix sounds and gradually decrease result volume.
+
+			var f32 mut volume= 1.0f, volume_step= -1.0f / f32( out_sample_pairs.size() );
+			foreach( &mut out_sample_pair : out_sample_pairs )
+			{
+				foreach( &mut channel_value : out_sample_pair )
+				{
+					channel_value*= volume;
+				}
+				volume+= volume_step;
+			}
+		}
 	}
+
+	paused_= new_paused_;
 
 	// Output single-shot sounds even if paused.
 
@@ -461,7 +500,8 @@ fn AudioMixer::ProcessMessage( mut this, InMessage& message )
 
 fn AudioMixer::ProcessMessageImpl( mut this, InMessageSetPaused& message )
 {
-	paused_= message.paused;
+	// Store pause request in a separate variable - in order to enable sounds fading in pause transitions.
+	new_paused_= message.paused;
 }
 
 fn AudioMixer::ProcessMessageImpl( mut this, InMessageAddSoundSource& message )
