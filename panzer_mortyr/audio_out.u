@@ -43,13 +43,13 @@ fn AudioOut::constructor( ConsoleOutPtr& console_out, Settings& settings, AudioM
 		{
 			.freq= ( settings.snd_high_quality ? 44100 : 22050 ),
 			.format( AUDIO_F32LSB ),
-			.channels( 2 ), // Require stereo sound.
+			.channels( AudioMixer::c_num_samples ), // Require stereo sound.
 			.silence(0), // This will be filled by SDL_OpenAudioDevice call.
-			.samples( 512 ), // TODO - tune this to reduce sound latency.
+			.samples( 512 ), // Use the lowest value recommended by the SDL2 documentation to have as little latency as possible.
 			.padding= zero_init,
 			.size= 0u, // This will be filled by SDL_OpenAudioDevice call.
 			.callback( AudioCallback ), // This callback is executed in a separate thread.
-			.userdata= ust::ptr_cast_to_byte8( audio_mixer_.get_ptr() ),
+			.userdata= ust::ptr_cast_to_byte8( audio_mixer_.get_ptr() ), // Pass a raw pointer to the audio mixer instance.
 		};
 
 		var SDL_AudioSpec mut obtained_spec= zero_init;
@@ -57,7 +57,7 @@ fn AudioOut::constructor( ConsoleOutPtr& console_out, Settings& settings, AudioM
 		device_id_=
 			SDL_OpenAudioDevice(
 				ust::nullptr</char8/>(), // Use default device name.
-				0, // Perform oudio playing, not recording.
+				0, // Perform audio playing, not recording.
 				$<( cast_mut( desired_spec ) ), // What spec we want.
 				$<( obtained_spec ), // What spec we get.
 				// Allow changing frequency and samples. But we can't deal with format and channels changes.
@@ -74,12 +74,11 @@ fn AudioOut::constructor( ConsoleOutPtr& console_out, Settings& settings, AudioM
 		safe
 		{
 			ConsoleOutAddTextLine( console_out, "Opened a default audio device." );
-			// TODO - print audio device name.
 			ConsoleOutAddTextLine( console_out, ust::concat( " frequency: ", ust::to_string8( obtained_spec.freq ) ) );
 			ConsoleOutAddTextLine( console_out, ust::concat( " buffer size: ", ust::to_string8( obtained_spec.samples ) ) );
 		}
 
-		// Prepare audio thread data before unpausing audio thread and this launching audio thread.
+		// Prepare mixer before unpausing the device and this launching the audio thread.
 		audio_mixer_.deref().SetFrequency( u32( obtained_spec.freq ) );
 
 		// Run the device, which is created in paused state.
