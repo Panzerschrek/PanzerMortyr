@@ -178,3 +178,5 @@ PanzerMortyr sound:
 * Allow selecting audio device via settings.
 * Tune volume attenuation params and volumes of various player-related, entity-related and projectile-related sounds.
 * Consider adding some workaround for cases when a game is loaded, but a restored sound source can't be started due to some other source with the same ID, which removal is still in progress.
+* Consider emitting a sound while entering acid or lava different from the sound played upon water entering.
+* Ensure player damage sounds are played as in the original game.
