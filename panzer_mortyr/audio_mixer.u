@@ -1,3 +1,4 @@
+import "/math.iu"
 import "audio_mixer.iu"
 import "math_constants.iu"
 
@@ -38,6 +39,9 @@ fn AudioMixer::constructor(
 			} ...
 		],
 		frequency_= 1u, // Set exact value later.
+		underwater_effect_active_= false,
+		new_underwater_effect_active_= false,
+		underwater_effect_accumulator_[ 0.0f ... ],
 		paused_= false,
 		new_paused_= false,
 	)
@@ -111,6 +115,8 @@ fn AudioMixer::Mix( mut this, ust::array_view_mut</SamplePairType/> out_sample_p
 			MixAndUpdateSoundSources( out_sample_pairs );
 			MixAndUpdateAmbientSounds( out_sample_pairs );
 
+			ApplyUnderwaterEffect( out_sample_pairs );
+
 			var f32 mut volume= 0.0f, volume_step= 1.0f / f32( out_sample_pairs.size() );
 			foreach( &mut out_sample_pair : out_sample_pairs )
 			{
@@ -126,6 +132,8 @@ fn AudioMixer::Mix( mut this, ust::array_view_mut</SamplePairType/> out_sample_p
 	{
 		MixAndUpdateSoundSources( out_sample_pairs );
 		MixAndUpdateAmbientSounds( out_sample_pairs );
+
+		ApplyUnderwaterEffect( out_sample_pairs );
 
 		if( new_paused_ )
 		{
@@ -490,6 +498,87 @@ fn AudioMixer::MixAndUpdateSingleShotSounds( mut this, ust::array_view_mut</Samp
 	}
 }
 
+fn AudioMixer::ApplyUnderwaterEffect( mut this, ust::array_view_mut</SamplePairType/> out_sample_pairs )
+{
+	// This formula is tuned to produce nice effect with high frequences mostly filtered-out.
+	var f32 mix_ratio= ust::exp( -f32( frequency_ ) / 18000.0f );
+	var f32 one_minus_mix_ratio= 1.0f - mix_ratio;
+
+	if( underwater_effect_active_ )
+	{
+		if( new_underwater_effect_active_ )
+		{
+			// Apply underwater effect with full power.
+
+			foreach( &mut out_sample_pair : out_sample_pairs )
+			{
+				for( auto mut i= 0s; i < c_num_samples; ++i )
+				{
+					underwater_effect_accumulator_[i]=
+						underwater_effect_accumulator_[i] * one_minus_mix_ratio + out_sample_pair[i] * mix_ratio;
+
+					out_sample_pair[i]= underwater_effect_accumulator_[i];
+				}
+			}
+		}
+		else
+		{
+			// Gradually reduce underwater effect.
+			var f32 mut transition_mix_factor= 1.0f;
+			var f32 transition_mix_factor_step= -1.0f / f32( out_sample_pairs.size() );
+
+			foreach( &mut out_sample_pair : out_sample_pairs )
+			{
+				for( auto mut i= 0s; i < c_num_samples; ++i )
+				{
+					underwater_effect_accumulator_[i]=
+						underwater_effect_accumulator_[i] * one_minus_mix_ratio + out_sample_pair[i] * mix_ratio;
+
+					out_sample_pair[i]=
+						underwater_effect_accumulator_[i] * transition_mix_factor +
+						out_sample_pair[i] * ( 1.0f - transition_mix_factor );
+				}
+
+				transition_mix_factor+= transition_mix_factor_step;
+			}
+		}
+	}
+	else
+	{
+		if( new_underwater_effect_active_ )
+		{
+			// Gradually increase underwater effect.
+			var f32 mut transition_mix_factor= 0.0f;
+			var f32 transition_mix_factor_step= 1.0f / f32( out_sample_pairs.size() );
+
+			foreach( &mut out_sample_pair : out_sample_pairs )
+			{
+				for( auto mut i= 0s; i < c_num_samples; ++i )
+				{
+					underwater_effect_accumulator_[i]=
+						underwater_effect_accumulator_[i] * one_minus_mix_ratio + out_sample_pair[i] * mix_ratio;
+
+					out_sample_pair[i]=
+						underwater_effect_accumulator_[i] * transition_mix_factor +
+						out_sample_pair[i] * ( 1.0f - transition_mix_factor );
+				}
+
+				transition_mix_factor+= transition_mix_factor_step;
+			}
+		}
+		else
+		{
+			// No underwater effect is required. Reset the accumulator.
+			for( auto mut i= 0s; i < c_num_samples; ++i )
+			{
+				underwater_effect_accumulator_[i] = 0.0f;
+			}
+		}
+	}
+
+	underwater_effect_active_= new_underwater_effect_active_;
+}
+
 fn AudioMixer::ProcessMessage( mut this, InMessage& message )
 {
 	variant_visit( &el : message )
@@ -502,6 +591,12 @@ fn AudioMixer::ProcessMessageImpl( mut this, InMessageSetPaused& message )
 {
 	// Store pause request in a separate variable - in order to enable sounds fading in pause transitions.
 	new_paused_= message.paused;
+}
+
+fn AudioMixer::ProcessMessageImpl( mut this, InMessageSetUnderwater& message )
+{
+	// Store underwater effect request in a separate variable - in order to perform smooth transition.
+	new_underwater_effect_active_= message.underwater;
 }
 
 fn AudioMixer::ProcessMessageImpl( mut this, InMessageAddSoundSource& message )
