@@ -139,8 +139,9 @@ fn AudioProcessor::UpdateWord( mut this, WorldAudioInfo& world_audio_info )
 	if( ambient_sound_enabled )
 	{
 		// Load ambient sounds.
-		// Normally the list of ambient sounds should be changed only upon level transition, so, heavy loading work is performed exactly once per level.
-		// TODO - avoid reloading sound files already loaded, but assigned to different slots.
+		// Normally the list of ambient sounds should be changed only upon level transition,
+		// so, heavy loading work is performed exactly once per level.
+		// TODO - avoid reloading sound files already loaded but assigned to different slots.
 		for( auto mut i= 0s; i < WorldAudioInfo::c_num_ambient_sounds; ++i )
 		{
 			var WorldAudioInfo::AmbientSound& in_sound= world_audio_info.ambient_sounds[i];
@@ -289,7 +290,7 @@ fn AudioProcessor::UpdateWord( mut this, WorldAudioInfo& world_audio_info )
 				continue;
 			}
 
-			if( size_type( sound_source.sound_index ) < typeinfo</ typeof( sounds_data_ ) />.element_count )
+			if( size_type( sound_source.sound_index ) < SoundsDescription::c_num_sounds )
 			{
 				var SoundDataNullablePtr& sound_data_nullable_ptr= sounds_data_[ sound_source.sound_index ];
 				if( !sound_data_nullable_ptr.empty() )
@@ -377,13 +378,10 @@ fn AudioProcessor::UpdateWord( mut this, WorldAudioInfo& world_audio_info )
 		{
 			var AmbientSound &mut ambient_sound= ambient_sounds_[i];
 
-			if( ambient_sound.playing )
+			if( ambient_sound.playing && !ambient_sound.remove_message_sent )
 			{
-				if( !ambient_sound.remove_message_sent )
-				{
-					ambient_sound.remove_message_sent=
-						messages_queue_write_end.TryPush( AudioMixer::InMessageRemoveAmbientSound{ .slot_index(i) } );
-				}
+				ambient_sound.remove_message_sent=
+					messages_queue_write_end.TryPush( AudioMixer::InMessageRemoveAmbientSound{ .slot_index(i) } );
 			}
 		}
 	}
@@ -412,7 +410,7 @@ fn AudioProcessor::StopAllWorldSounds( mut this )
 		else
 		{
 			// If this source already finished playing, no extra steps are needed.
-			// It's enough to remove it from the active sound sources hash-map.
+			// It's enough to remove it from the hash-map of active sound sources.
 		}
 	}
 
@@ -431,6 +429,35 @@ fn AudioProcessor::StopAllWorldSounds( mut this )
 
 			// If the message queue if full, memorize, that a removal message should be sent and try sending it later.
 			ambient_sound.remove_message_sent= message_pushed;
+		}
+	}
+}
+
+fn AudioProcessor::PlayMenuSound( mut this )
+{
+	if( !audio_out_ext_.audio_out.IsActive() )
+	{
+		return;
+	}
+
+	if( menu_sound_index_ >= 0 && menu_sound_index_ < i32( SoundsDescription::c_num_sounds ) )
+	{
+		auto& sound_data= sounds_data_[ size_type( menu_sound_index_ ) ];
+		if( !sound_data.empty() )
+		{
+			// Use full volume for menu sounds and scale it by master volume.
+			auto volume=
+				VolumeCalculator( settings_.lock_imut().deref() ).CalculateVolume( ust::make_array( 1.0f, 1.0f ) );
+
+			var bool pushed=
+				audio_out_ext_.mixer_in_messages_queue_write_end.TryPush(
+					AudioMixer::InMessageAddSingleShotSound
+					{
+						.sound_data= sound_data.try_to_non_nullable(),
+						.volume= volume
+					} );
+
+			ust::ignore_unused( pushed ); // Can't handle full queue here.
 		}
 	}
 }
@@ -472,35 +499,6 @@ fn AudioProcessor::GetState( this ) : AudioProcessorState
 			} () ...
 		],
 	};
-}
-
-fn AudioProcessor::PlayMenuSound( mut this )
-{
-	if( !audio_out_ext_.audio_out.IsActive() )
-	{
-		return;
-	}
-
-	if( menu_sound_index_ >= 0 && menu_sound_index_ < i32( SoundsDescription::c_num_sounds ) )
-	{
-		auto& sound_data= sounds_data_[ size_type( menu_sound_index_ ) ];
-		if( !sound_data.empty() )
-		{
-			// Use full volume for menu sounds and scale it by master volume.
-			auto volume=
-				VolumeCalculator( settings_.lock_imut().deref() ).CalculateVolume( ust::make_array( 1.0f, 1.0f ) );
-
-			var bool pushed=
-				audio_out_ext_.mixer_in_messages_queue_write_end.TryPush(
-					AudioMixer::InMessageAddSingleShotSound
-					{
-						.sound_data= sound_data.try_to_non_nullable(),
-						.volume= volume
-					} );
-
-			ust::ignore_unused( pushed ); // Can't handle full queue here.
-		}
-	}
 }
 
 fn AudioProcessor::SetState( mut this, AudioProcessorState& state )
