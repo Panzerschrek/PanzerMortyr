@@ -177,6 +177,5 @@ PanzerMortyr sound:
 * Consider implementing occlusion-based sound volume attenuation (reduce volume of a sound located behind a wall or in some other room).
 * Consider implementing sound effects like reverberation/echo effects and use them where it makes sense (like while under water oh having an environment suit active).
 * Allow selecting audio device via settings.
-* Pause/resume game sounds when pausing the game.
 * Tune volume attenuation params and volumes of various player-related, entity-related and projectile-related sounds.
 * Consider adding some workaround for cases when a game is loaded, but a restored sound source can't be started due to some other source with the same ID, which removal is still in progress.
