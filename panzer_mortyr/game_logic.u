@@ -1978,611 +1978,623 @@ fn ProcessEntitiesLogicStep(
 		// It's needed, since we can't iterate over entities and modify other entities in the same time.
 		var ust::optional</DelayedShotAlarm/> mut delayed_shot_alarm;
 
+		// Take a copy ( not a reference ) to be able to access the whole game state structure later.
+		var EntityState mut entity= game_state.entities[entity_index].try_deref();
+
+		var ust::optional</EntityNavigationState/> mut entity_navigation_state_opt;
+		if( size_type( entity.navigation_info_index ) < game_state.entity_navigation_states.size() )
 		{
-			var EntityState &mut entity= game_state.entities[entity_index].try_deref();
+			// Take a copy ( not a reference ) to be able to access the whole game state structure later.
+			entity_navigation_state_opt=
+				game_state.entity_navigation_states[ size_type( entity.navigation_info_index ) ];
+		}
 
-			var ust::optional_ref_mut</EntityNavigationState/> mut entity_navigation_state_opt;
-			if( size_type( entity.navigation_info_index ) < game_state.entity_navigation_states.size() )
+		var EntitiesDescription::EntityDescription& entity_description=
+			entities_description.entities[ size_type( entity.kind ) ];
+
+		// Check for player visibility only on even steps for even entities and on odd steps for odd entities.
+		// Such sparse update is needed, since this calculation are costly.
+		// Doing this only each second step isn't that problematic, it means only that enemies react slightly slower.
+		if( ( entity_index & 1s ) == ( size_type( game_state.step_index ) & 1s ) )
+		{
+			UpdateEntityPlayerInSightFlag(
+				map_data,
+				game_state.broken_quad_bits,
+				game_state.dynamic_cluster_colliders,
+				entity_description,
+				entity,
+				game_state.player );
+		}
+
+		// For now update movement target each step.
+		// It's necessary to select new target just afer reaching the old one.
+		if_var( &mut entity_navigation_state : entity_navigation_state_opt )
+		{
+			UpdateEntityMovementTarget(
+				map_data,
+				game_state.broken_quad_bits,
+				game_state.dynamic_cluster_colliders,
+				route_search_context,
+				entity_description,
+				entity,
+				entity_navigation_state,
+				game_state.random,
+				game_state.step_index );
+		}
+
+		if( entity.player_is_in_sight & !entity.alarmed )
+		{
+			// Go to alarmed state if saw the player at least once.
+			entity.alarmed= true;
+			entity.alarmed_by_seeing_player= true;
+		}
+
+		// Perform operation transition (if necessary).
+		var u32 mut next_operation= ~0u;
+
+		{
+			var EntitiesDescription::Operation& operation=
+				entity_description.operations[ size_type( entity.current_operation ) ];
+
+			// TODO - determine exact priorities of different operation transition conditions.
+
+			if_var( &operation_control : operation.operation_control )
 			{
-				entity_navigation_state_opt=
-					game_state.entity_navigation_states[ size_type( entity.navigation_info_index ) ];
-			}
-
-			var EntitiesDescription::EntityDescription& entity_description=
-				entities_description.entities[ size_type( entity.kind ) ];
-
-			// Check for player visibility only on even steps for even entities and on odd steps for odd entities.
-			// Such sparse update is needed, since this calculation are costly.
-			// Doing this only each second step isn't that problematic, it means only that enemies react slightly slower.
-			if( ( entity_index & 1s ) == ( size_type( game_state.step_index ) & 1s ) )
-			{
-				UpdateEntityPlayerInSightFlag(
-					map_data,
-					game_state.broken_quad_bits,
-					game_state.dynamic_cluster_colliders,
-					entity_description,
-					entity,
-					game_state.player );
-			}
-
-			// For now update movement target each step.
-			// It's necessary to select new target just afer reaching the old one.
-			if_var( &mut entity_navigation_state : entity_navigation_state_opt )
-			{
-				UpdateEntityMovementTarget(
-					map_data,
-					game_state.broken_quad_bits,
-					game_state.dynamic_cluster_colliders,
-					route_search_context,
-					entity_description,
-					entity,
-					entity_navigation_state,
-					game_state.random,
-					game_state.step_index );
-			}
-
-			if( entity.player_is_in_sight & !entity.alarmed )
-			{
-				// Go to alarmed state if saw the player at least once.
-				entity.alarmed= true;
-				entity.alarmed_by_seeing_player= true;
-			}
-
-			// Perform operation transition (if necessary).
-			var u32 mut next_operation= ~0u;
-
-			{
-				var EntitiesDescription::Operation& operation=
-					entity_description.operations[ size_type( entity.current_operation ) ];
-
-				// TODO - determine exact priorities of different operation transition conditions.
-
-				if_var( &operation_control : operation.operation_control )
+				// Always check if damaged or killed.
+				// Keep it first here (killed enemies should die).
+				// TODO - check if we need some delay.
+				if_var( &energy_loss : operation_control.energy_loss )
 				{
-					// Always check if damaged or killed.
-					// Keep it first here (killed enemies should die).
-					// TODO - check if we need some delay.
-					if_var( &energy_loss : operation_control.energy_loss )
+					if( entity.lost_energy_in_current_operation )
 					{
-						if( entity.lost_energy_in_current_operation )
-						{
-							var bool mut perform_energy_loss_operation_transition= false;
+						var bool mut perform_energy_loss_operation_transition= false;
 
-							if( entity.energy == 0u )
+						if( entity.energy == 0u )
+						{
+							next_operation= u32( energy_loss[2] );
+							perform_energy_loss_operation_transition= true;
+						}
+						else
+						{
+							var bool can_use0=
+								energy_loss[0] >= 0 &&
+								size_type( energy_loss[0] ) < entity_description.operations.size() &&
+								energy_loss[0] != i32( entity.current_operation );
+
+							var bool can_use1=
+								energy_loss[1] >= 0 &&
+								size_type( energy_loss[1] ) < entity_description.operations.size() &&
+								energy_loss[1] != i32( entity.current_operation );
+
+							if( can_use0 && can_use1 )
 							{
-								next_operation= u32( energy_loss[2] );
+								next_operation= u32( energy_loss[ game_state.random.Next() & 1u ] );
 								perform_energy_loss_operation_transition= true;
 							}
-							else
+							else if( can_use0 )
 							{
-								var bool can_use0=
-									energy_loss[0] >= 0 &&
-									size_type( energy_loss[0] ) < entity_description.operations.size() &&
-									energy_loss[0] != i32( entity.current_operation );
-
-								var bool can_use1=
-									energy_loss[1] >= 0 &&
-									size_type( energy_loss[1] ) < entity_description.operations.size() &&
-									energy_loss[1] != i32( entity.current_operation );
-
-								if( can_use0 && can_use1 )
-								{
-									next_operation= u32( energy_loss[ game_state.random.Next() & 1u ] );
-									perform_energy_loss_operation_transition= true;
-								}
-								else if( can_use0 )
-								{
-									next_operation= u32( energy_loss[0] );
-									perform_energy_loss_operation_transition= true;
-								}
-								else if( can_use1 )
-								{
-									next_operation= u32( energy_loss[1] );
-									perform_energy_loss_operation_transition= true;
-								}
+								next_operation= u32( energy_loss[0] );
+								perform_energy_loss_operation_transition= true;
 							}
-
-							if( perform_energy_loss_operation_transition & entity_description.standard_sounds != 0u )
+							else if( can_use1 )
 							{
-								// Investigations have shown, that damage sounds are coupled with "energy_loss" events.
-								EmitEntityRandomDamageSound(
+								next_operation= u32( energy_loss[1] );
+								perform_energy_loss_operation_transition= true;
+							}
+						}
+
+						if( perform_energy_loss_operation_transition & entity_description.standard_sounds != 0u )
+						{
+							// Investigations have shown, that damage sounds are coupled with "energy_loss" events.
+							EmitEntityRandomDamageSound(
+								game_global_data.sounds_description.deref(),
+								game_state.random,
+								entity.sound_source_slots );
+						}
+					}
+				}
+
+				if( next_operation == ~0u )
+				{
+					if_var( &player_visible : operation_control.player_visible )
+					{
+						if( entity.alarmed )
+						{
+							next_operation= u32( player_visible[2] );
+							// TODO - process delay properly.
+
+							if( entity.alarmed_by_seeing_player && entity_description.standard_sounds != 0u )
+							{
+								EmitEntityRandomAlarmSound(
 									game_global_data.sounds_description.deref(),
 									game_state.random,
+									game_state.global_alarm_sounds_state,
+									game_state.step_index,
 									entity.sound_source_slots );
 							}
 						}
 					}
-
-					if( next_operation == ~0u )
+				}
+				if( next_operation == ~0u )
+				{
+					if_var( &inside_shooting_zone_a : operation_control.inside_shooting_zone_a )
 					{
-						if_var( &player_visible : operation_control.player_visible )
+						if( entity.player_is_in_sight && // Attack only if the player is visible.
+							entity.ammo > 0u && // Attack only if has ammo.
+							game_state.player.energy > 0u /* Attack only if the player is alive. */ )
 						{
-							if( entity.alarmed )
+							var u32 period( inside_shooting_zone_a[0] );
+							if( period != 0u && entity.num_steps_since_operation_start % period == 0u )
 							{
-								next_operation= u32( player_visible[2] );
-								// TODO - process delay properly.
-
-								if( entity.alarmed_by_seeing_player && entity_description.standard_sounds != 0u )
+								if_var( &target_position : entity.last_seen_player_position )
 								{
-									EmitEntityRandomAlarmSound(
-										game_global_data.sounds_description.deref(),
-										game_state.random,
-										game_state.global_alarm_sounds_state,
-										game_state.step_index,
-										entity.sound_source_slots );
-								}
-							}
-						}
-					}
-					if( next_operation == ~0u )
-					{
-						if_var( &inside_shooting_zone_a : operation_control.inside_shooting_zone_a )
-						{
-							if( entity.player_is_in_sight && // Attack only if the player is visible.
-								entity.ammo > 0u && // Attack only if has ammo.
-								game_state.player.energy > 0u /* Attack only if the player is alive. */ )
-							{
-								var u32 period( inside_shooting_zone_a[0] );
-								if( period != 0u && entity.num_steps_since_operation_start % period == 0u )
-								{
-									if_var( &target_position : entity.last_seen_player_position )
+									// Perform melee atack if the target is in attack range.
+									var f32 max_distance= f32( entity_description.direct_contact );
+									if( ( target_position - entity.position ).SquareLength() <=
+										max_distance * max_distance )
 									{
-										// Perform melee atack if the target is in attack range.
-										var f32 max_distance= f32( entity_description.direct_contact );
-										if( ( target_position - entity.position ).SquareLength() <=
-											max_distance * max_distance )
-										{
-											next_operation= inside_shooting_zone_a[2];
-										}
+										next_operation= inside_shooting_zone_a[2];
 									}
 								}
 							}
 						}
 					}
-					if( next_operation == ~0u )
+				}
+				if( next_operation == ~0u )
+				{
+					if_var( &inside_shooting_zone_b : operation_control.inside_shooting_zone_b )
 					{
-						if_var( &inside_shooting_zone_b : operation_control.inside_shooting_zone_b )
+						// TODO - check what else condition is necessary.
+						// Maybe add some random element?
+						if( entity.player_is_in_sight && // Attack only if the player is visible.
+							entity.ammo > 0u && // Attack only if has ammo.
+							game_state.player.energy > 0u /* Attack only if the player is alive. */ )
 						{
-							// TODO - check what else condition is necessary.
-							// Maybe add some random element?
-							if( entity.player_is_in_sight && // Attack only if the player is visible.
-								entity.ammo > 0u && // Attack only if has ammo.
-								game_state.player.energy > 0u /* Attack only if the player is alive. */ )
+							var u32 period( inside_shooting_zone_b[0] );
+							if( period != 0u && entity.num_steps_since_operation_start % period == 0u )
 							{
-								var u32 period( inside_shooting_zone_b[0] );
-								if( period != 0u && entity.num_steps_since_operation_start % period == 0u )
-								{
-									next_operation= inside_shooting_zone_b[2];
-								}
+								next_operation= inside_shooting_zone_b[2];
 							}
 						}
 					}
-					if( next_operation == ~0u )
+				}
+				if( next_operation == ~0u )
+				{
+					if_var( &convenient_position : operation_control.convenient_position )
 					{
-						if_var( &convenient_position : operation_control.convenient_position )
+						// Assume player should be visible and be in optimal distance to trigger this state transition.
+
+						if( entity.player_is_in_sight && // Attack only if the player is visible.
+							entity.ammo > 0u && // Attack only if has ammo.
+							game_state.player.energy > 0u && // Attack only if the player is alive.
+							entity.num_steps_since_operation_start == convenient_position[0] )
 						{
-							// Assume player should be visible and be in optimal distance to trigger this state transition.
-
-							if( entity.player_is_in_sight && // Attack only if the player is visible.
-								entity.ammo > 0u && // Attack only if has ammo.
-								game_state.player.energy > 0u && // Attack only if the player is alive.
-								entity.num_steps_since_operation_start == convenient_position[0] )
+							if_var( &player_position : entity.last_seen_player_position )
 							{
-								if_var( &player_position : entity.last_seen_player_position )
-								{
-									var f32 square_distance= ( player_position - entity.position ).SquareLength();
-									var EntityDistanceRange optimal_range= GetEntityDistanceRanges( entity_description ).optimal;
+								var f32 square_distance= ( player_position - entity.position ).SquareLength();
+								var EntityDistanceRange optimal_range= GetEntityDistanceRanges( entity_description ).optimal;
 
-									if( square_distance >= optimal_range.distance_min * optimal_range.distance_min &&
-										square_distance <= optimal_range.distance_max * optimal_range.distance_max )
+								if( square_distance >= optimal_range.distance_min * optimal_range.distance_min &&
+									square_distance <= optimal_range.distance_max * optimal_range.distance_max )
+								{
+									if( game_state.random.Next() % 10u < convenient_position[2] )
 									{
-										if( game_state.random.Next() % 10u < convenient_position[2] )
-										{
-											next_operation= convenient_position[1];
-										}
+										next_operation= convenient_position[1];
 									}
 								}
 							}
 						}
 					}
-					if( next_operation == ~0u )
+				}
+				if( next_operation == ~0u )
+				{
+					if_var( &transformation : operation_control.transformation )
 					{
-						if_var( &transformation : operation_control.transformation )
+						if( entity.num_steps_since_operation_start == transformation[1] )
 						{
-							if( entity.num_steps_since_operation_start == transformation[1] )
+							next_operation= ( entity.ammo > 0u ? transformation[2] : transformation[3] );
+						}
+					}
+				}
+				if( next_operation == ~0u )
+				{
+					if_var( &within_sight : operation_control.within_sight )
+					{
+						if( entity.num_steps_since_operation_start == within_sight[0] )
+						{
+							// TODO - perform proper player to entity check, not reverse check as now.
+							var bool player_sees_this_entity= entity.player_is_in_sight;
+							if( player_sees_this_entity )
 							{
-								next_operation= ( entity.ammo > 0u ? transformation[2] : transformation[3] );
+								next_operation= within_sight[1];
 							}
 						}
 					}
-					if( next_operation == ~0u )
+				}
+				if( next_operation == ~0u )
+				{
+					if_var( &randomness : operation_control.randomness )
 					{
-						if_var( &within_sight : operation_control.within_sight )
+						// Random state transition with no other condition.
+						if( entity.num_steps_since_operation_start == u32( randomness[0] ) )
 						{
-							if( entity.num_steps_since_operation_start == within_sight[0] )
+							if( randomness[2] >= 0 && game_state.random.Next() % 100u <= u32(randomness[1]) )
 							{
-								// TODO - perform proper player to entity check, not reverse check as now.
-								var bool player_sees_this_entity= entity.player_is_in_sight;
-								if( player_sees_this_entity )
+								next_operation= u32( randomness[2] );
+							}
+							else if( randomness[4] >= 0 && game_state.random.Next() % 100u <= u32(randomness[3]) )
+							{
+								next_operation= u32( randomness[4] );
+							}
+						}
+					}
+				}
+				if( next_operation == ~0u )
+				{
+					if_var( & timeout : operation_control.timeout )
+					{
+						// Timeout should be (generally) the last checked option.
+						if( entity.num_steps_since_operation_start >= timeout[0] )
+						{
+							next_operation= u32( timeout[1] );
+						}
+					}
+				}
+
+				if( next_operation == ~0u )
+				{
+					// Shoot if no operation transition is scheduled.
+					if_var( &item : operation_control.item )
+					{
+						if( entity.num_steps_since_operation_start == u32( item[4] ) )
+						{
+							delayed_shot_alarm=
+								EntityShoot(
+									game_params,
+									entities_description,
+									game_state.skill,
+									item,
+									entity,
+									u32( entity_index ),
+									game_state.player.crouching_phase,
+									game_state.random,
+									game_state.projectiles,
+									game_state.muzzle_flashes,
+									game_state.muzzle_lights );
+						}
+					}
+				}
+			}
+
+			if_var( &collision_with_enemy : operation.collision_with_enemy )
+			{
+				// State transition used only by the destructible wall on map 24.
+				// Just check if some other entity (nearly) touches this entity.
+
+				var bool mut collided= false;
+
+				if_var( &mut collider_bbox : CalculateEntityColliderBBox( entity, operation ) )
+				{
+					var f32 distance_eps= 1.0f;
+					collider_bbox.min-= Vec3f( distance_eps, distance_eps, distance_eps );
+					collider_bbox.max+= Vec3f( distance_eps, distance_eps, distance_eps );
+
+					foreach( &collider : game_state.colliders )
+					{
+						if( collider.bbox.Instersects( collider_bbox ) && collider.entity_index != c_player_entity_index )
+						{
+							collided= true;
+						}
+					}
+				}
+
+				if( collided )
+				{
+					next_operation= collision_with_enemy.new_operation;
+				}
+			}
+
+			if_var( &rotation_for_shot : operation.rotation_for_shot )
+			{
+				if_var( &target_position : entity.last_seen_player_position )
+				{
+					var Vec2f vec_to_movement_target= target_position.xy() - entity.position.xy();
+
+					var f32 target_azimuth= ust::atan2( -vec_to_movement_target.x, vec_to_movement_target.y );
+
+					var f32 angle_delta= CalculateRotationAngleDelta( entity.azimuth, target_azimuth );
+
+					if( ust::abs( angle_delta ) <= ust::abs( Convert1024Angle( f32( rotation_for_shot.deviation_angle ) ) ) )
+					{
+						if( rotation_for_shot.new_operation_if_target_in_view >= 0 &&
+							size_type( rotation_for_shot.new_operation_if_target_in_view ) < entity_description.operations.size() &&
+							u32( rotation_for_shot.new_operation_if_target_in_view ) != entity.current_operation )
+						{
+							next_operation= u32( rotation_for_shot.new_operation_if_target_in_view );
+						}
+					}
+					else
+					{
+						if( rotation_for_shot.new_operation_if_target_not_in_view >= 0 &&
+							size_type( rotation_for_shot.new_operation_if_target_not_in_view ) < entity_description.operations.size() &&
+							u32( rotation_for_shot.new_operation_if_target_not_in_view ) != entity.current_operation )
+						{
+							next_operation= u32( rotation_for_shot.new_operation_if_target_not_in_view );
+						}
+					}
+				}
+			}
+
+			if_var( &directional_shot : operation.directional_shot )
+			{
+				if( entity.num_steps_since_operation_start == directional_shot.time &&
+					// Perform tank shot only if player is still alive.
+					game_state.player.energy > 0u )
+				{
+					EntityDirectionalShot(
+						entities_description,
+						directional_shot,
+						entity,
+						u32( entity_index ),
+						game_state.random,
+						game_state.projectiles,
+						game_state.muzzle_flashes,
+						game_state.muzzle_lights );
+				}
+			}
+
+			if_var( &if_alive : operation.if_alive )
+			{
+				if( if_alive.time != 0u && entity.num_steps_since_operation_start == if_alive.time )
+				{
+					next_operation= ( entity.energy > 0u ? if_alive.new_operation[0] : if_alive.new_operation[1] );
+				}
+			}
+
+			if_var( &stopper : operation.stopper )
+			{
+				if( stopper.time != 0u &&
+					entity.num_steps_since_operation_start % stopper.time == 0u )
+				{
+					next_operation= stopper.new_operation;
+				}
+			}
+
+			if_var( &object_rotation : operation.object_rotation )
+			{
+				// Perform rotation.
+				entity.azimuth= Convert1024Angle( f32( object_rotation.rotation ) ) * f32( entity.num_steps_since_operation_start );
+
+				// It looks like object rotation also includes tomeout-based state transition.
+				if( next_operation == ~0u )
+				{
+					if( entity.num_steps_since_operation_start == object_rotation.time )
+					{
+						next_operation= object_rotation.new_operation;
+					}
+				}
+			}
+
+			if_var( &supply_drop : operation.supply_drop )
+			{
+				// Emit new entity if it's dropped.
+				// This will increase the total amout of entities, but it's not a big deal,
+				// since (generally) items are dropped only once and dropped items can't drop other items.
+
+				if( entity.num_steps_since_operation_start == supply_drop.time )
+				{
+					if( size_type( supply_drop.special_object ) < entities_description.entities.size() )
+					{
+						var EntitiesDescription::EntityDescription& new_entity_description=
+							entities_description.entities[ size_type( supply_drop.special_object ) ];
+
+						if( size_type( c_start_operation ) < new_entity_description.operations.size() )
+						{
+							new_spawned_entity.reset(
+								EntityState
 								{
-									next_operation= within_sight[1];
-								}
-							}
-						}
-					}
-					if( next_operation == ~0u )
-					{
-						if_var( &randomness : operation_control.randomness )
-						{
-							// Random state transition with no other condition.
-							if( entity.num_steps_since_operation_start == u32( randomness[0] ) )
-							{
-								if( randomness[2] >= 0 && game_state.random.Next() % 100u <= u32(randomness[1]) )
-								{
-									next_operation= u32( randomness[2] );
-								}
-								else if( randomness[4] >= 0 && game_state.random.Next() % 100u <= u32(randomness[3]) )
-								{
-									next_operation= u32( randomness[4] );
-								}
-							}
-						}
-					}
-					if( next_operation == ~0u )
-					{
-						if_var( & timeout : operation_control.timeout )
-						{
-							// Timeout should be (generally) the last checked option.
-							if( entity.num_steps_since_operation_start >= timeout[0] )
-							{
-								next_operation= u32( timeout[1] );
-							}
-						}
-					}
-
-					if( next_operation == ~0u )
-					{
-						// Shoot if no operation transition is scheduled.
-						if_var( &item : operation_control.item )
-						{
-							if( entity.num_steps_since_operation_start == u32( item[4] ) )
-							{
-								delayed_shot_alarm=
-									EntityShoot(
-										game_params,
-										entities_description,
-										game_state.skill,
-										item,
-										entity,
-										u32( entity_index ),
-										game_state.player.crouching_phase,
-										game_state.random,
-										game_state.projectiles,
-										game_state.muzzle_flashes,
-										game_state.muzzle_lights );
-							}
-						}
-					}
-				}
-
-				if_var( &collision_with_enemy : operation.collision_with_enemy )
-				{
-					// State transition used only by the destructible wall on map 24.
-					// Just check if some other entity (nearly) touches this entity.
-
-					var bool mut collided= false;
-
-					if_var( &mut collider_bbox : CalculateEntityColliderBBox( entity, operation ) )
-					{
-						var f32 distance_eps= 1.0f;
-						collider_bbox.min-= Vec3f( distance_eps, distance_eps, distance_eps );
-						collider_bbox.max+= Vec3f( distance_eps, distance_eps, distance_eps );
-
-						foreach( &collider : game_state.colliders )
-						{
-							if( collider.bbox.Instersects( collider_bbox ) && collider.entity_index != c_player_entity_index )
-							{
-								collided= true;
-							}
-						}
-					}
-
-					if( collided )
-					{
-						next_operation= collision_with_enemy.new_operation;
-					}
-				}
-
-				if_var( &rotation_for_shot : operation.rotation_for_shot )
-				{
-					if_var( &target_position : entity.last_seen_player_position )
-					{
-						var Vec2f vec_to_movement_target= target_position.xy() - entity.position.xy();
-
-						var f32 target_azimuth= ust::atan2( -vec_to_movement_target.x, vec_to_movement_target.y );
-
-						var f32 angle_delta= CalculateRotationAngleDelta( entity.azimuth, target_azimuth );
-
-						if( ust::abs( angle_delta ) <= ust::abs( Convert1024Angle( f32( rotation_for_shot.deviation_angle ) ) ) )
-						{
-							if( rotation_for_shot.new_operation_if_target_in_view >= 0 &&
-								size_type( rotation_for_shot.new_operation_if_target_in_view ) < entity_description.operations.size() &&
-								u32( rotation_for_shot.new_operation_if_target_in_view ) != entity.current_operation )
-							{
-								next_operation= u32( rotation_for_shot.new_operation_if_target_in_view );
-							}
-						}
-						else
-						{
-							if( rotation_for_shot.new_operation_if_target_not_in_view >= 0 &&
-								size_type( rotation_for_shot.new_operation_if_target_not_in_view ) < entity_description.operations.size() &&
-								u32( rotation_for_shot.new_operation_if_target_not_in_view ) != entity.current_operation )
-							{
-								next_operation= u32( rotation_for_shot.new_operation_if_target_not_in_view );
-							}
-						}
-					}
-				}
-
-				if_var( &directional_shot : operation.directional_shot )
-				{
-					if( entity.num_steps_since_operation_start == directional_shot.time &&
-						// Perform tank shot only if player is still alive.
-						game_state.player.energy > 0u )
-					{
-						EntityDirectionalShot(
-							entities_description,
-							directional_shot,
-							entity,
-							u32( entity_index ),
-							game_state.random,
-							game_state.projectiles,
-							game_state.muzzle_flashes,
-							game_state.muzzle_lights );
-					}
-				}
-
-				if_var( &if_alive : operation.if_alive )
-				{
-					if( if_alive.time != 0u && entity.num_steps_since_operation_start == if_alive.time )
-					{
-						next_operation= ( entity.energy > 0u ? if_alive.new_operation[0] : if_alive.new_operation[1] );
-					}
-				}
-
-				if_var( &stopper : operation.stopper )
-				{
-					if( stopper.time != 0u &&
-						entity.num_steps_since_operation_start % stopper.time == 0u )
-					{
-						next_operation= stopper.new_operation;
-					}
-				}
-
-				if_var( &object_rotation : operation.object_rotation )
-				{
-					// Perform rotation.
-					entity.azimuth= Convert1024Angle( f32( object_rotation.rotation ) ) * f32( entity.num_steps_since_operation_start );
-
-					// It looks like object rotation also includes tomeout-based state transition.
-					if( next_operation == ~0u )
-					{
-						if( entity.num_steps_since_operation_start == object_rotation.time )
-						{
-							next_operation= object_rotation.new_operation;
-						}
-					}
-				}
-
-				if_var( &supply_drop : operation.supply_drop )
-				{
-					// Emit new entity if it's dropped.
-					// This will increase the total amout of entities, but it's not a big deal,
-					// since (generally) items are dropped only once and dropped items can't drop other items.
-
-					if( entity.num_steps_since_operation_start == supply_drop.time )
-					{
-						if( size_type( supply_drop.special_object ) < entities_description.entities.size() )
-						{
-							var EntitiesDescription::EntityDescription& new_entity_description=
-								entities_description.entities[ size_type( supply_drop.special_object ) ];
-
-							if( size_type( c_start_operation ) < new_entity_description.operations.size() )
-							{
-								new_spawned_entity.reset(
-									EntityState
-									{
-										.kind= supply_drop.special_object,
-										.position= entity.position,
-										.azimuth= entity.azimuth,
-										.energy= new_entity_description.energy,
-										.ammo= new_entity_description.ammunition,
-										.current_operation= c_start_operation,
-										.num_steps_since_operation_start= 0u,
-										.navigation_info_index= ~0u,
-										.alarmed= false,
-										.alarmed_by_seeing_player= false,
-										.player_is_in_sight= false,
-										.lost_energy_in_current_operation= false,
-										.animation_frame= 0u, // Set exact frame later.
-										.directional_animation_frame= 0u, // Set exact frame later.
-										.velocity_z= 0.0f,
-										.collider_index= ~0u,
-									} );
-							}
-						}
-					}
-				}
-
-				if_var( &gasoline_explosion : operation.gasoline_explosion )
-				{
-					foreach( &explosion : gasoline_explosion.explosions )
-					{
-						if( explosion[2] != 0 && entity.num_steps_since_operation_start == u32( explosion[0] ) )
-						{
-							game_state.explosion_particles.Insert(
-								ExplosionParticle
-								{
-									.large= true,
-									.position( entity.position.xy(), entity.position.z + f32( explosion[1] ) ),
-									.age_steps= 0u,
+									.kind= supply_drop.special_object,
+									.position= entity.position,
+									.azimuth= entity.azimuth,
+									.energy= new_entity_description.energy,
+									.ammo= new_entity_description.ammunition,
+									.current_operation= c_start_operation,
+									.num_steps_since_operation_start= 0u,
+									.navigation_info_index= ~0u,
+									.alarmed= false,
+									.alarmed_by_seeing_player= false,
+									.player_is_in_sight= false,
+									.lost_energy_in_current_operation= false,
+									.animation_frame= 0u, // Set exact frame later.
+									.directional_animation_frame= 0u, // Set exact frame later.
+									.velocity_z= 0.0f,
+									.collider_index= ~0u,
 								} );
 						}
 					}
-
-					if( gasoline_explosion.damage_area[0] > 0u && gasoline_explosion.damage_area[1] > 0u )
-					{
-						// Entity explosion damage in the original works a little bit strange.
-						// Investigations have shown, that it's applied to entities in the surrounding area each game step
-						// if current operation contains "wybuch_benzyny".
-						//
-						// It's not clear, how exactly this damage is dealed, so, use the same approach as for splash damage of projectiles,
-						// which includes distance-based attenuation.
-
-						delayed_explosion_splash_damage=
-							DelayedExplosionSplashDamage
-							{
-								.center= entity.position,
-								.radius= f32( gasoline_explosion.damage_area[0] ),
-								// Scale damage somewhat down. Its' too high without this.
-								.splash_base_damage= f32( gasoline_explosion.damage_area[1] ) / 2.0f,
-							};
-					}
 				}
+			}
 
-				if_var( &smoke_emission : operation.smoke_emission )
+			if_var( &gasoline_explosion : operation.gasoline_explosion )
+			{
+				foreach( &explosion : gasoline_explosion.explosions )
 				{
-					if( smoke_emission.emission_period != 0u &&
-						entity.num_steps_since_operation_start % smoke_emission.emission_period == 0u )
+					if( explosion[2] != 0 && entity.num_steps_since_operation_start == u32( explosion[0] ) )
 					{
-						var Vec3f start_position=
-							entity.position +
-							Vec3f(
-								f32( smoke_emission.pos_x ),
-								f32( smoke_emission.pos_y ),
-								f32( smoke_emission.pos_z ) );
-
-						game_state.smoke_particles.Insert(
-							SmokeParticle
+						game_state.explosion_particles.Insert(
+							ExplosionParticle
 							{
-								.smoke_model= smoke_emission.smoke_model,
-								.center= start_position,
-								.position= start_position,
-								.velocity(
-									f32( smoke_emission.velocity_x ),
-									f32( smoke_emission.velocity_y ),
-									f32( smoke_emission.velocity_z ) ),
-								.sequential_index=
-									entity.num_steps_since_operation_start / smoke_emission.emission_period,
+								.large= true,
+								.position( entity.position.xy(), entity.position.z + f32( explosion[1] ) ),
 								.age_steps= 0u,
 							} );
 					}
 				}
 
-				if_var( &smoke : operation.smoke )
+				if( gasoline_explosion.damage_area[0] > 0u && gasoline_explosion.damage_area[1] > 0u )
 				{
-					if( entity.num_steps_since_operation_start >= smoke.time && smoke.delta > 0u )
-					{
-						// Just ignore all parameters and spawn the same smoke effect as for projectile hits.
-						if( entity.num_steps_since_operation_start == smoke.time )
-						{
-							var Mat4f rotation_matrix= Mat4f::MakeRotationZ( entity.azimuth );
-							var Vec3f offset=
-								Vec3f( f32( smoke.position_x ), f32( smoke.position_y ), f32( smoke.position_z ) ) *
-								rotation_matrix;
+					// Entity explosion damage in the original works a little bit strange.
+					// Investigations have shown, that it's applied to entities in the surrounding area each game step
+					// if current operation contains "wybuch_benzyny".
+					//
+					// It's not clear, how exactly this damage is dealed, so, use the same approach as for splash damage of projectiles,
+					// which includes distance-based attenuation.
 
-							game_state.projectile_hit_smoke_emitters.Insert(
-								ProjectileHitSmokeEmitter
-								{
-									.position= entity.position + offset,
-									.hit_point_normal= Vec3f( 0.0f, 1.0f, 0.0f ) * rotation_matrix,
-									.age_steps= 0u,
-								} );
-						}
-					}
+					delayed_explosion_splash_damage=
+						DelayedExplosionSplashDamage
+						{
+							.center= entity.position,
+							.radius= f32( gasoline_explosion.damage_area[0] ),
+							// Scale damage somewhat down. Its' too high without this.
+							.splash_base_damage= f32( gasoline_explosion.damage_area[1] ) / 2.0f,
+						};
 				}
+			}
 
-				if( next_operation != ~0u )
+			if_var( &smoke_emission : operation.smoke_emission )
+			{
+				if( smoke_emission.emission_period != 0u &&
+					entity.num_steps_since_operation_start % smoke_emission.emission_period == 0u )
 				{
-					if( size_type( next_operation ) < entity_description.operations.size() )
-					{
-						entity.current_operation= next_operation;
-						entity.num_steps_since_operation_start= 0u;
-						entity.lost_energy_in_current_operation= false;
+					var Vec3f start_position=
+						entity.position +
+						Vec3f(
+							f32( smoke_emission.pos_x ),
+							f32( smoke_emission.pos_y ),
+							f32( smoke_emission.pos_z ) );
 
-						// Emit a sound if switching to an operation having it.
-						if_var( &sound : entity_description.operations[ size_type( entity.current_operation ) ].sound )
+					game_state.smoke_particles.Insert(
+						SmokeParticle
 						{
-							if( sound.sound_index <= 255u )
+							.smoke_model= smoke_emission.smoke_model,
+							.center= start_position,
+							.position= start_position,
+							.velocity(
+								f32( smoke_emission.velocity_x ),
+								f32( smoke_emission.velocity_y ),
+								f32( smoke_emission.velocity_z ) ),
+							.sequential_index=
+								entity.num_steps_since_operation_start / smoke_emission.emission_period,
+							.age_steps= 0u,
+						} );
+				}
+			}
+
+			if_var( &smoke : operation.smoke )
+			{
+				if( entity.num_steps_since_operation_start >= smoke.time && smoke.delta > 0u )
+				{
+					// Just ignore all parameters and spawn the same smoke effect as for projectile hits.
+					if( entity.num_steps_since_operation_start == smoke.time )
+					{
+						var Mat4f rotation_matrix= Mat4f::MakeRotationZ( entity.azimuth );
+						var Vec3f offset=
+							Vec3f( f32( smoke.position_x ), f32( smoke.position_y ), f32( smoke.position_z ) ) *
+							rotation_matrix;
+
+						game_state.projectile_hit_smoke_emitters.Insert(
+							ProjectileHitSmokeEmitter
 							{
-								EmitSound( entity.sound_source_slots, u8( sound.sound_index ), sound.power );
-							}
-						}
-
-						// Emit an explosion sound if swtiching to an operation having gasoline explosion effect.
-						if( !entity_description.operations[ size_type( entity.current_operation ) ].gasoline_explosion.empty() )
-						{
-							EmitEntityExplosionSound(
-								game_global_data.sounds_description.deref(), entity.sound_source_slots );
-						}
-					}
-					else
-					{
-						// Remove this entity if non-existing operation is specified.
-						// This is used by some entities which should be completely destroyed.
-						need_to_remove_entity= true;
+								.position= entity.position + offset,
+								.hit_point_normal= Vec3f( 0.0f, 1.0f, 0.0f ) * rotation_matrix,
+								.age_steps= 0u,
+							} );
 					}
 				}
 			}
 
-			var EntitiesDescription::Operation& operation=
-				entity_description.operations[ size_type( entity.current_operation ) ];
-
-			// Perform entity movement.
-			MoveEntity(
-				map_data,
-				game_state.broken_quad_bits,
-				game_state.dynamic_cluster_colliders,
-				game_state.colliders,
-				game_state.projectiles,
-				game_state.projectile_hit_events,
-				entity,
-				entity_navigation_state_opt,
-				u32(entity_index),
-				entity_description,
-				operation );
-
-			// Calculate current frame based on animation params.
-			// TODO - perform extra animation logic for some special animation kinds.
-
+			if( next_operation != ~0u )
 			{
-				var u32 animation_step=
-					operation.animation.start_step +
-					entity.num_steps_since_operation_start % ust::max( 1u, operation.animation.num_steps );
+				if( size_type( next_operation ) < entity_description.operations.size() )
+				{
+					entity.current_operation= next_operation;
+					entity.num_steps_since_operation_start= 0u;
+					entity.lost_energy_in_current_operation= false;
 
-				entity.animation_frame= animation_step / c_num_steps_per_animation_frame;
+					// Emit a sound if switching to an operation having it.
+					if_var( &sound : entity_description.operations[ size_type( entity.current_operation ) ].sound )
+					{
+						if( sound.sound_index <= 255u )
+						{
+							EmitSound( entity.sound_source_slots, u8( sound.sound_index ), sound.power );
+						}
+					}
+
+					// Emit an explosion sound if swtiching to an operation having gasoline explosion effect.
+					if( !entity_description.operations[ size_type( entity.current_operation ) ].gasoline_explosion.empty() )
+					{
+						EmitEntityExplosionSound(
+							game_global_data.sounds_description.deref(), entity.sound_source_slots );
+					}
+				}
+				else
+				{
+					// Remove this entity if non-existing operation is specified.
+					// This is used by some entities which should be completely destroyed.
+					need_to_remove_entity= true;
+				}
 			}
-			{
-				var u32 animation_step=
-					operation.directional_animation.start_step +
-					entity.num_steps_since_operation_start % ust::max( 1u, operation.directional_animation.num_steps );
-
-				entity.directional_animation_frame= animation_step / c_num_steps_per_animation_frame;
-			}
-
-			// Increase step counter after doing any other logic.
-			// It's needed in order to make results (like animation frame) of step #0 observable.
-
-			++entity.num_steps_since_operation_start;
 		}
+
+		var EntitiesDescription::Operation& operation=
+			entity_description.operations[ size_type( entity.current_operation ) ];
+
+		// Perform entity movement.
+		MoveEntity(
+			map_data,
+			game_state.broken_quad_bits,
+			game_state.dynamic_cluster_colliders,
+			game_state.colliders,
+			game_state.projectiles,
+			game_state.projectile_hit_events,
+			entity,
+			entity_navigation_state_opt.as_ref(),
+			u32(entity_index),
+			entity_description,
+			operation );
+
+		// Calculate current frame based on animation params.
+		// TODO - perform extra animation logic for some special animation kinds.
+
+		{
+			var u32 animation_step=
+				operation.animation.start_step +
+				entity.num_steps_since_operation_start % ust::max( 1u, operation.animation.num_steps );
+
+			entity.animation_frame= animation_step / c_num_steps_per_animation_frame;
+		}
+		{
+			var u32 animation_step=
+				operation.directional_animation.start_step +
+				entity.num_steps_since_operation_start % ust::max( 1u, operation.directional_animation.num_steps );
+
+			entity.directional_animation_frame= animation_step / c_num_steps_per_animation_frame;
+		}
+
+		// Increase step counter after doing any other logic.
+		// It's needed in order to make results (like animation frame) of step #0 observable.
+
+		++entity.num_steps_since_operation_start;
 
 		if( need_to_remove_entity )
 		{
+			move( entity );
+
 			RemoveEntityCollider( entity_index, game_state );
 			game_state.entities[ entity_index ].reset();
 		}
 		else
 		{
+
+			if( !entity_navigation_state_opt.empty() &&
+				size_type( entity.navigation_info_index ) < game_state.entity_navigation_states.size() )
+			{
+				game_state.entity_navigation_states[ size_type( entity.navigation_info_index ) ]=
+					entity_navigation_state_opt.try_take();
+			}
+
+			game_state.entities[ entity_index ]= move( entity );
+
 			// Add entity back to the colliders list (if necessary).
 			AddEntityCollider( entities_description, entity_index, game_state );
 		}
