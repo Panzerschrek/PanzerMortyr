@@ -1340,7 +1340,13 @@ fn PerformPlayerMovement(
 			EmitPlayerFallSound( global_data.sounds_description.deref(), game_state.player.sound_source_slots );
 		}
 
-		// TODO - apply fall damage here if necessary.
+		// An experinemtal formula approximating fall damage values in the original game.
+		var f32 damage= vertical_velocity_change * -4.8f - 140.0f;
+		if( damage > 0.0f )
+		{
+			// Armor doesn't absorb fall damage.
+			DamagePlayerIgnoringArmor( global_data.sounds_description.deref(), game_state.player, u32( damage ) );
+		}
 	}
 
 	if( move_result.ground_planes_mask == 0u )
@@ -1439,6 +1445,13 @@ fn PerformPlayerMovement(
 
 	if( new_in_liquid & !game_state.player.in_liquid )
 	{
+		// Upon entering a liquid volume slow-down the player to avoid fall damage. Use jump velocity delta as a limit.
+		var f32 speed= game_state.player.velocity.Length();
+		if( speed > ust::abs( c_jump_vertical_velocity_add ) )
+		{
+			game_state.player.velocity*= ust::abs( c_jump_vertical_velocity_add ) / speed;
+		}
+
 		// TODO - emit different sounds if entering not water but acid or lava.
 		EmitPlayerWaterEnteringSound( global_data.sounds_description.deref(), game_state.player.sound_source_slots );
 	}
@@ -3471,6 +3484,34 @@ fn DamagePlayer( SoundsDescription& sounds_description, PlayerState &mut player_
 	}
 }
 
+fn DamagePlayerIgnoringArmor( SoundsDescription& sounds_description, PlayerState &mut player_state, u32 damage )
+{
+	if( damage == 0u )
+	{
+		return;
+	}
+
+	if( player_state.invulnerability )
+	{
+		return;
+	}
+
+	var u32 energy_loss= ust::min( damage, player_state.energy );
+	if( energy_loss > 0u )
+	{
+		player_state.energy-= energy_loss;
+
+		if( player_state.energy == 0u )
+		{
+			EmitPlayerDeathSound( sounds_description, player_state.sound_source_slots );
+		}
+		else
+		{
+			EmitPlayerDamageSound( sounds_description, player_state.sound_source_slots );
+		}
+	}
+}
+
 fn DamageEntity( EntityState &mut entity, u32 damage )
 {
 	if( damage == 0u )
@@ -4335,23 +4376,7 @@ fn DealPlayerEnvironmentalDamage(
 	if( ( is_in_acid & !game_state.player.tools_state.acid_protection_suit_is_active ) | is_in_lava )
 	{
 		// Armor can't absorb environmental damage, so that only energy is damaged.
-
-		var u32 damage= ust::min( c_environmental_damage, game_state.player.energy );
-		if( damage > 0u )
-		{
-			game_state.player.energy-= damage;
-
-			if( game_state.player.energy == 0u )
-			{
-				EmitPlayerDeathSound( sounds_description, game_state.player.sound_source_slots );
-			}
-			else
-			{
-				// Emit damage sound if is damaged in acid or lava.
-				// TODO - check if the original game does this.
-				EmitPlayerDamageSound( sounds_description, game_state.player.sound_source_slots );
-			}
-		}
+		DamagePlayerIgnoringArmor( sounds_description, game_state.player, c_environmental_damage );
 	}
 }
 
@@ -6188,6 +6213,9 @@ fn MoveEntity(
 	{
 		ClampVerticalVelocity( entity.velocity_z, move_result.trace_clip_result.collision_events[i].plane_normal );
 	}
+
+	// Don't care about fall damage for entities.
+	// They move mostly using the global navigation graph and it's built in such a way, so it's almost impossible to fall.
 
 	entity.position= move_result.trace_clip_result.position_clipped;
 
