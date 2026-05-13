@@ -72,6 +72,7 @@ Changes:
 * Grenade throwing animation may look slightly different. The exact pattern of lowering animation in the original game is unclear.
 * Sky decorations (aircrafts) move differently from the original game. It's unclear how exactly their movement should work, so, it's just guessed.
 * Notes (used for story telling) work differently. They are displayed if player is close to a note cluster and is looking towards it. Gameplay is not paused and it's possible to rotate the player's camera and move while a note is displayed. And it's possible to read the same note again, in the original game a note is shown only once by touching a note cluster and it can't be reactivated later.
+* Fall damage for the player slightly differs from the original game, but is roughly the same.
 
 
 ### HUD and menus
