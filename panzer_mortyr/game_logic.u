@@ -2639,9 +2639,11 @@ fn ProcessDynamicClustersLogicStep( GameGlobalData& global_data, GameMapData& ma
 
 	for( auto mut i= 0s; i < game_state.dynamic_clusters.size(); ++i )
 	{
-		var DynamicClusterState &mut cluster_state= game_state.dynamic_clusters[i];
+		// Take a copy ( not a reference ) in order to be able to access the whole game state structure later.
+		var DynamicClusterState mut cluster_state= game_state.dynamic_clusters[i];
+		var DynamicClusterCollider mut cluster_collider= game_state.dynamic_cluster_colliders[i];
 
-		var ZvoxCluster& cluster= clusters[ size_type( game_state.dynamic_cluster_colliders[i].cluster_index ) ];
+		var ZvoxCluster& cluster= clusters[ size_type( cluster_collider.cluster_index ) ];
 
 		var bool mut is_button_operated= false;
 		var u32 mut current_cluster_targets_activation_mask= 0u;
@@ -2684,9 +2686,7 @@ fn ProcessDynamicClustersLogicStep( GameGlobalData& global_data, GameMapData& ma
 							cluster_state.sound_source_slot );
 					}
 				}
-				else if(
-					!is_button_operated &&
-					game_state.dynamic_cluster_colliders[i].bbox.InstersectsOrTouches( player_touch_bbox ) )
+				else if( !is_button_operated && cluster_collider.bbox.InstersectsOrTouches( player_touch_bbox ) )
 				{
 					if( HasNecessaryKeyForDynamicCluster( cluster, game_state.player ) )
 					{
@@ -2701,18 +2701,7 @@ fn ProcessDynamicClustersLogicStep( GameGlobalData& global_data, GameMapData& ma
 			DynamicClusterState::MovementStage::MoveForward ->
 			{
 				if( PushMoveDynamicCluster(
-						global_data,
-						map_data,
-						game_state.broken_quad_bits,
-						game_state.dynamic_cluster_colliders[i],
-						movement_direction * movement_speed,
-						game_state.colliders,
-						game_state.entities,
-						game_state.dynamic_cluster_colliders,
-						game_state.player,
-						game_state.projectiles,
-						game_state.projectile_hit_events,
-						game_state.static_sound_sources ) )
+						global_data, map_data, game_state, cluster_collider, movement_direction * movement_speed ) )
 				{
 					cluster_state.distance_from_start+= movement_speed;
 
@@ -2759,9 +2748,7 @@ fn ProcessDynamicClustersLogicStep( GameGlobalData& global_data, GameMapData& ma
 					// Auto-return some dynamic clusters to their initial position.
 					cluster_state.num_steps_to_movement_stage_transition= c_dynamic_cluster_activation_delay_steps;
 				}
-				else if(
-					!is_button_operated &&
-					game_state.dynamic_cluster_colliders[i].bbox.InstersectsOrTouches( player_touch_bbox ) )
+				else if( !is_button_operated && cluster_collider.bbox.InstersectsOrTouches( player_touch_bbox ) )
 				{
 					if( HasNecessaryKeyForDynamicCluster( cluster, game_state.player ) )
 					{
@@ -2776,18 +2763,7 @@ fn ProcessDynamicClustersLogicStep( GameGlobalData& global_data, GameMapData& ma
 			DynamicClusterState::MovementStage::MoveBackward ->
 			{
 				if( PushMoveDynamicCluster(
-						global_data,
-						map_data,
-						game_state.broken_quad_bits,
-						game_state.dynamic_cluster_colliders[i],
-						movement_direction * (-movement_speed),
-						game_state.colliders,
-						game_state.entities,
-						game_state.dynamic_cluster_colliders,
-						game_state.player,
-						game_state.projectiles,
-						game_state.projectile_hit_events,
-						game_state.static_sound_sources ) )
+						global_data, map_data, game_state, cluster_collider, movement_direction * (-movement_speed) ) )
 				{
 					cluster_state.distance_from_start-= movement_speed;
 
@@ -2810,10 +2786,14 @@ fn ProcessDynamicClustersLogicStep( GameGlobalData& global_data, GameMapData& ma
 			},
 		}
 
-		game_state.dynamic_cluster_colliders[i].bbox=
+		cluster_collider.bbox=
 			CreateDynamicClusterBBox(
 				cluster,
 				movement_direction * cluster_state.distance_from_start );
+
+		// Store updated state.
+		game_state.dynamic_clusters[i]= move( cluster_state );
+		game_state.dynamic_cluster_colliders[i]= move( cluster_collider );
 	}
 
 	// Activate dynamic clusters by other dynamic clusters.
@@ -2976,16 +2956,9 @@ fn ProcessClusterKeyRequirement( ZvoxCluster& cluster, PlayerState &mut player, 
 fn PushMoveDynamicCluster(
 	GameGlobalData& global_data,
 	GameMapData& map_data,
-	BitArrayView broken_quad_bits,
+	GameState &mut game_state,
 	DynamicClusterCollider& dynamic_cluster_collider,
-	Vec3f& in_movement_vector,
-	ust::array_view_mut</Collider/> colliders,
-	ust::array_view_mut</ ust::optional</EntityState/> /> entities,
-	ust::array_view_imut</DynamicClusterCollider/> dynamic_cluster_colliders,
-	PlayerState &mut player_state,
-	ProjectilesContainer &mut projectiles,
-	ust::vector</ProjectileHitEvent/> &mut projectile_hit_events,
-	StaticSoundSources &mut static_sound_sources ) : bool
+	Vec3f& in_movement_vector ) : bool
 {
 	var f32 movement_vector_length= in_movement_vector.Length();
 	if( movement_vector_length == 0.0f )
@@ -3011,14 +2984,14 @@ fn PushMoveDynamicCluster(
 
 	// Check all colliders of entities and players if they are in the way.
 	// It's not fully correct, since entities without permanent colliders (like pick-ups) are ignored, but it's mostly fine.
-	for( auto mut i= 0s; i < colliders.size(); ++i )
+	for( auto mut i= 0s; i < game_state.colliders.size(); ++i )
 	{
 		var TraceCollisionResult trace_collision_result=
 			CollisionTraceSingleDynamicCluster(
 				map_data,
-				broken_quad_bits,
+				game_state.broken_quad_bits,
 				dynamic_cluster_collider,
-				colliders[i].bbox,
+				game_state.colliders[i].bbox,
 				Vec3f::MakeZero(),
 				opposite_movement_vector );
 
@@ -3035,20 +3008,21 @@ fn PushMoveDynamicCluster(
 
 			// Check if this collider can be pushed the whole movement distance.
 			// Temporary move this collider itself near to infinity to avoid self-collisions.
-			var BBox3f collider_bbox= colliders[i].bbox;
-			colliders[i].bbox= BBox3f{ .min( 10000.0f, 10000.0f, 10000.0f ), .max( 10001.0f, 10001.0f, 10001.0f ) };
+			var BBox3f collider_bbox= game_state.colliders[i].bbox;
+			game_state.colliders[i].bbox=
+				BBox3f{ .min( 10000.0f, 10000.0f, 10000.0f ), .max( 10001.0f, 10001.0f, 10001.0f ) };
 
 			var TraceCollisionResult push_trace_collision_result=
 				CollisionTrace(
 					map_data,
-					broken_quad_bits,
-					dynamic_cluster_colliders,
-					colliders,
+					game_state.broken_quad_bits,
+					game_state.dynamic_cluster_colliders,
+					game_state.colliders,
 					collider_bbox,
 					Vec3f::MakeZero(),
 					push_vector );
 
-			colliders[i].bbox= collider_bbox;
+			game_state.colliders[i].bbox= collider_bbox;
 
 			if( push_trace_collision_result.clipped_move_distance <= 1.0f )
 			{
@@ -3071,7 +3045,7 @@ fn PushMoveDynamicCluster(
 
 		if( relative_distance_to_collider < 1.0f )
 		{
-			var Collider &mut collider= colliders[ collider_index ];
+			var Collider &mut collider= game_state.colliders[ collider_index ];
 
 			var Vec3f push_vector=
 				movement_vector_elongated * ( 1.0f - relative_distance_to_collider );
@@ -3082,17 +3056,17 @@ fn PushMoveDynamicCluster(
 				push_vector,
 				collider.bbox,
 				collider.entity_index,
-				projectiles,
-				projectile_hit_events );
+				game_state.projectiles,
+				game_state.projectile_hit_events );
 
 			// Modify player/entity position directly.
 			if( collider.entity_index == c_player_entity_index )
 			{
-				player_state.position+= push_vector;
+				game_state.player.position+= push_vector;
 			}
-			else if( size_type( collider.entity_index ) < entities.size() )
+			else if( size_type( collider.entity_index ) < game_state.entities.size() )
 			{
-				if_var( &mut entity : entities[ size_type( collider.entity_index ) ] )
+				if_var( &mut entity : game_state.entities[ size_type( collider.entity_index ) ] )
 				{
 					entity.position+= push_vector;
 				}
@@ -3104,8 +3078,12 @@ fn PushMoveDynamicCluster(
 		}
 	}
 
+	auto& broken_quad_bits= game_state.broken_quad_bits;
+	auto &mut static_sound_sources= game_state.static_sound_sources;
+	auto &mut projectile_hit_events= game_state.projectile_hit_events;
+
 	// Hit projectiles by moving this dynamc cluster.
-	projectiles.Retain(
+	game_state.projectiles.Retain(
 		lambda[&]( Projectile &mut projectile ) : bool
 		{
 			if_var( &intersection_result :
