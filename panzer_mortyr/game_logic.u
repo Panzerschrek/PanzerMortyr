@@ -1940,13 +1940,6 @@ fn TriggerEntitiesSpawn( GameMapData& map_data, GameState &mut game_state )
 	}
 }
 
-struct DelayedExplosionSplashDamage
-{
-	Vec3f center;
-	f32 radius;
-	f32 splash_base_damage;
-}
-
 fn ProcessEntitiesLogicStep(
 	GameGlobalData& game_global_data,
 	GameMapData& map_data,
@@ -1980,10 +1973,6 @@ fn ProcessEntityLogicStep(
 
 	var bool mut need_to_remove_entity= false;
 	var ust::optional</EntityState/> mut new_spawned_entity;
-
-	// Memorize possible explosion damage event to apply it later.
-	// It's needed, since we can't iterate over entities and apply damage for other entities in the same time.
-	var ust::optional</DelayedExplosionSplashDamage/> mut delayed_explosion_splash_damage;
 
 	// Memorize possible shot alarm event to apply it later.
 	// It's needed, since we can't iterate over entities and modify other entities in the same time.
@@ -2451,14 +2440,16 @@ fn ProcessEntityLogicStep(
 				// It's not clear, how exactly this damage is dealed, so, use the same approach as for splash damage of projectiles,
 				// which includes distance-based attenuation.
 
-				delayed_explosion_splash_damage=
-					DelayedExplosionSplashDamage
-					{
-						.center= entity.position,
-						.radius= f32( gasoline_explosion.damage_area[0] ),
-						// Scale damage somewhat down. Its' too high without this.
-						.splash_base_damage= f32( gasoline_explosion.damage_area[1] ) / 2.0f,
-					};
+				ApplySplashDamage(
+					game_global_data.sounds_description.deref(),
+					entity.position,
+					f32( gasoline_explosion.damage_area[0] ),
+					// Scale damage somewhat down. Its' too high without this.
+					f32( gasoline_explosion.damage_area[1] ) / 2.0f,
+					game_state.random,
+					game_state.colliders,
+					game_state.entities,
+					game_state.player );
 			}
 		}
 
@@ -2617,22 +2608,6 @@ fn ProcessEntityLogicStep(
 		var size_type new_entity_index= game_state.entities.size();
 		game_state.entities.push_back( new_spawned_entity.try_take() );
 		AddEntityCollider( entities_description, new_entity_index, game_state );
-	}
-
-	if_var( &d : delayed_explosion_splash_damage )
-	{
-		ApplySplashDamage(
-			game_global_data.sounds_description.deref(),
-			d.center,
-			d.radius,
-			d.splash_base_damage,
-			game_state.random,
-			game_state.colliders,
-			game_state.entities,
-			game_state.player,
-			// Avoid applying splash damage to this entity.
-			// It's needed for the tank enemy, which deals splash damage around it. It should not damage itself.
-			u32( entity_index ) );
 	}
 
 	if_var( &d : delayed_shot_alarm )
@@ -3605,8 +3580,7 @@ fn ProcessProjectileHitEventsLogicStep( GameGlobalData& global_data, GameMapData
 				game_state.random,
 				game_state.colliders,
 				game_state.entities,
-				game_state.player,
-				~0u );
+				game_state.player );
 		}
 
 		switch( weapon_tool.collision_handling[ collision_kind_index ] )
@@ -3857,16 +3831,10 @@ fn ApplySplashDamage(
 	PseudoRandomGenerator &mut rand,
 	ust::array_view_imut</Collider/> colliders,
 	ust::array_view_mut</ust::optional</EntityState/>/> entities,
-	PlayerState &mut player,
-	u32 ignore_entity_index )
+	PlayerState &mut player )
 {
 	foreach( &collider : colliders )
 	{
-		if( collider.entity_index == ignore_entity_index )
-		{
-			continue;
-		}
-
 		var Vec3f bbox_dimensions= collider.bbox.GetDimensions();
 		var f32 approximate_bbox_radius=
 			0.5f * ust::min( bbox_dimensions.x, ust::min( bbox_dimensions.y, bbox_dimensions.z ) );
