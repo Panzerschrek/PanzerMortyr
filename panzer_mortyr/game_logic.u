@@ -1971,8 +1971,6 @@ fn ProcessEntityLogicStep(
 	// Remove entity from colliders list before processing collisions - to avoid colliding with itself.
 	RemoveEntityCollider( entity_index, game_state );
 
-	var bool mut need_to_remove_entity= false;
-
 	// Take a copy ( not a reference ) to be able to access the whole game state structure later.
 	var EntityState mut entity= game_state.entities[entity_index].try_deref();
 
@@ -2518,7 +2516,9 @@ fn ProcessEntityLogicStep(
 			{
 				// Remove this entity if non-existing operation is specified.
 				// This is used by some entities which should be completely destroyed.
-				need_to_remove_entity= true;
+				RemoveEntityCollider( entity_index, game_state );
+				game_state.entities[ entity_index ].reset();
+				return;
 			}
 		}
 	}
@@ -2560,31 +2560,21 @@ fn ProcessEntityLogicStep(
 
 	// Increase step counter after doing any other logic.
 	// It's needed in order to make results (like animation frame) of step #0 observable.
-
 	++entity.num_steps_since_operation_start;
 
-	if( need_to_remove_entity )
+	// Update entity navigation info if necessary.
+	if( !entity_navigation_state_opt.empty() &&
+		size_type( entity.navigation_info_index ) < game_state.entity_navigation_states.size() )
 	{
-		move( entity );
-
-		RemoveEntityCollider( entity_index, game_state );
-		game_state.entities[ entity_index ].reset();
+		game_state.entity_navigation_states[ size_type( entity.navigation_info_index ) ]=
+			entity_navigation_state_opt.try_take();
 	}
-	else
-	{
 
-		if( !entity_navigation_state_opt.empty() &&
-			size_type( entity.navigation_info_index ) < game_state.entity_navigation_states.size() )
-		{
-			game_state.entity_navigation_states[ size_type( entity.navigation_info_index ) ]=
-				entity_navigation_state_opt.try_take();
-		}
+	// Update entity state.
+	game_state.entities[ entity_index ]= move( entity );
 
-		game_state.entities[ entity_index ]= move( entity );
-
-		// Add entity back to the colliders list (if necessary).
-		AddEntityCollider( entities_description, entity_index, game_state );
-	}
+	// Add entity back to the colliders list (if necessary).
+	AddEntityCollider( entities_description, entity_index, game_state );
 }
 
 fn ProcessDynamicClustersLogicStep( GameGlobalData& global_data, GameMapData& map_data, GameState &mut game_state )
