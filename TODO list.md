@@ -83,7 +83,6 @@ PanzerMortyr game logic:
 * Implement remaining entity state transitions (used only by some enemy types).
 * Implement ammo seeking behavior for enemies.
 * Fix ugly injury-based entity state transitions, when an injury operation is changed while some other injury operation is already in process.
-* Implement pushing pushable entities.
 * Break glass quads and quads with breakable materials while applying spash damage.
 * Implement jetpack tool.
 * Implement invisibility tool (false documents) and enemy properties allowing to uncover the player having invisibility.
@@ -168,7 +167,7 @@ PanzerMortyr menus and HUD:
 PanzerMortyr sound:
 
 * Play player's out-of-ammo sounds.
-* Play sounds for pushed enities.
+* Consider playing sounds for pushed enities.
 * Play bird sounds.
 * Play CD music and/or music files ripped from the original CD.
 * Allow disabling Mortyr's voice (there is a menu option for this).
