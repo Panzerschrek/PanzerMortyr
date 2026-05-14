@@ -3131,12 +3131,13 @@ fn PushMoveEntities(
 			continue;
 		}
 
-		var Collider &mut collider= game_state.colliders[ size_type( entity.collider_index ) ];
+		// Take a copy to allow modifying it later.
+		var BBox3f mut collider_bbox= game_state.colliders[ size_type( entity.collider_index ) ].bbox;
 
 		var BBox3f minkowski_sum_bbox
 		{
-			.min= collider.bbox.min - bbox.max,
-			.max= collider.bbox.max - bbox.min,
+			.min= collider_bbox.min - bbox.max,
+			.max= collider_bbox.max - bbox.min,
 		};
 
 		if_var( intersection : FindRayBBoxIntersection( movement_start_position, movement_vector, minkowski_sum_bbox ) )
@@ -3146,8 +3147,39 @@ fn PushMoveEntities(
 				continue;
 			}
 
-			// TODO
-			entity.position.z-= 8.0f;
+			var Vec3f entity_movement_vector= movement_vector * ( 1.0f - intersection.near_point_distance );
+
+			// Move initial collider out of map bounds - to avoid self-collision.
+			{
+				var BBox3f &mut bbox= game_state.colliders[ size_type( entity.collider_index ) ].bbox;
+				bbox.min.z+= 10000.0f;
+				bbox.max.z+= 10000.0f;
+			}
+
+			// Perform simple collision detection against the world and other entities.
+
+			var TraceCollisionResult trace_collision_result=
+				CollisionTrace(
+					map_data,
+					game_state.broken_quad_bits,
+					game_state.dynamic_cluster_colliders,
+					game_state.colliders,
+					collider_bbox,
+					Vec3f( 0.0f, 0.0f, 0.0f ),
+					entity_movement_vector );
+
+			if( trace_collision_result.clipped_move_distance >= 0.0f && trace_collision_result.extra_push.empty() )
+			{
+				// Apply clipped movement.
+				var Vec3f entity_actual_movement_vector=
+					entity_movement_vector * ust::min( 1.0f, trace_collision_result.clipped_move_distance );
+
+				entity.position+= entity_actual_movement_vector;
+				collider_bbox.min+= entity_actual_movement_vector;
+				collider_bbox.max+= entity_actual_movement_vector;
+			}
+
+			game_state.colliders[ size_type( entity.collider_index ) ].bbox= collider_bbox;
 		}
 	}
 }
