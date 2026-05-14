@@ -58,6 +58,7 @@ Fixed bugs:
 
 * Game speed doesn't depend on screen refresh rate.
 * Elevators and doors reverse their movement if blocked, so that they don't occupy the same place as the blocker entity.
+* Pushable entities can't be pushed out of map bounds by pushing a chain of two or more entities.
 
 Changes:
 
@@ -73,6 +74,7 @@ Changes:
 * Sky decorations (aircrafts) move differently from the original game. It's unclear how exactly their movement should work, so, it's just guessed.
 * Notes (used for story telling) work differently. They are displayed if player is close to a note cluster and is looking towards it. Gameplay is not paused and it's possible to rotate the player's camera and move while a note is displayed. And it's possible to read the same note again, in the original game a note is shown only once by touching a note cluster and it can't be reactivated later.
 * Fall damage for the player slightly differs from the original game, but is roughly the same.
+* It's not possible to push an entity indirectly by pushing some another entity.
 
 
 ### HUD and menus

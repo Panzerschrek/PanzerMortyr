@@ -1272,6 +1272,11 @@ fn PerformPlayerMovement(
 
 	var BBox3f player_bbox= GetPlayerColliderBBox( entities_description, game_state.player.crouching_phase );
 
+	// Push pushable entities using unclipped movement vector.
+	// It's mostly fine to do so.
+	// Even if player's movement is clipped, we still can push some entities, but only a little bit.
+	PushMoveEntities( map_data, game_state, player_bbox, movement_start_position, movement_end_position );
+
 	var CollisionStepMoveResult move_result=
 		CollisionStepMove(
 			map_data,
@@ -1436,7 +1441,7 @@ fn PerformPlayerMovement(
 	}
 
 	// After the player was moved, add his collider back.
-	AddPlayerCollider( map_data.entities_description.deref(), game_state );
+	AddPlayerCollider( entities_description, game_state );
 
 	// Check if in liquid.
 	var Vec3f player_center_position= game_state.player.position + ( player_bbox.min + player_bbox.max ) * 0.5f;
@@ -1492,7 +1497,12 @@ fn PerformPlayerMovement(
 	// since actual movement including clipping may be a little bit more complex.
 	// But it's mostly fine.
 	CollideMovedEntityWithProjectiles(
-		movement_start_position, Vec3f( game_state.player.position ), player_bbox, c_player_entity_index, game_state );
+		movement_start_position,
+		game_state.player.position,
+		player_bbox,
+		c_player_entity_index,
+		game_state.projectiles,
+		game_state.projectile_hit_events );
 }
 
 fn ApplyPlayerUnclippedMovement(
@@ -2967,15 +2977,19 @@ fn PushMoveDynamicCluster(
 
 		if( relative_distance_to_collider < 1.0f )
 		{
-			// Take a copy of a collider.
-			var Collider mut collider= game_state.colliders[ collider_index ];
+			var Collider &mut collider= game_state.colliders[ collider_index ];
 
 			var Vec3f push_vector=
 				movement_vector_elongated * ( 1.0f - relative_distance_to_collider );
 
 			// Collide with projectiles if is pushed.
 			CollideMovedEntityWithProjectiles(
-				Vec3f::MakeZero(), push_vector, collider.bbox, collider.entity_index, game_state );
+				Vec3f::MakeZero(),
+				push_vector,
+				collider.bbox,
+				collider.entity_index,
+				game_state.projectiles,
+				game_state.projectile_hit_events );
 
 			// Modify player/entity position directly.
 			if( collider.entity_index == c_player_entity_index )
@@ -2993,9 +3007,6 @@ fn PushMoveDynamicCluster(
 			// Modify bbox of the collider directly.
 			collider.bbox.min+= push_vector;
 			collider.bbox.max+= push_vector;
-
-			// Actualize stored collider value.
-			game_state.colliders[ collider_index ]= move( collider );
 		}
 	}
 
@@ -3087,6 +3098,146 @@ fn PushMoveDynamicCluster(
 		} );
 
 	return true;
+}
+
+// Enumerate all entities and push pushable ones.
+// Since all entities are enumerated, pushing them may be costly and thus it's better to avoid calling this function too often.
+fn PushMoveEntities(
+	GameMapData& map_data,
+	GameState &mut game_state,
+	BBox3f& bbox,
+	Vec3f& movement_start_position,
+	Vec3f& movement_end_position )
+{
+	// Allow only horizontal movement for pushing.
+	// Scale-down movement vector to slow-down the pusher object.
+	var Vec3f movement_vector( ( movement_end_position.xy() - movement_start_position.xy() ) * 0.5f, 0.0f );
+
+	if( movement_vector.xy().SquareLength() == 0.0f )
+	{
+		return;
+	}
+
+	var EntitiesDescription& entities_description= map_data.entities_description.deref();
+
+	for( auto mut entity_index= 0s; entity_index < game_state.entities.size(); ++entity_index )
+	{
+		auto &mut entity_opt= game_state.entities[ entity_index ];
+
+		if( entity_opt.empty() )
+		{
+			continue;
+		}
+
+		var EntityState &mut entity= entity_opt.try_deref();
+
+		auto& param_akt_opt= entities_description.entities[ size_type( entity.kind ) ].param_akt;
+		if( param_akt_opt.empty() )
+		{
+			continue; // Only entities having "param_akt" can be pushed.
+		}
+
+		if( param_akt_opt.try_deref()[3] == 0u )
+		{
+			continue; // Pushing is disabled.
+		}
+
+		// It's a pushable entity.
+
+		if( size_type( entity.collider_index ) >= game_state.colliders.size() )
+		{
+			continue; // Has no valid collider. It may happen if an entity is destroyed.
+		}
+
+		// Take a copy to allow modifying it later.
+		var BBox3f mut collider_bbox= game_state.colliders[ size_type( entity.collider_index ) ].bbox;
+
+		// Detect collsion between the pusher's movement and the entity collider
+		// by performing line intersection check with a minkowski-sum bbox.
+
+		var BBox3f minkowski_sum_bbox
+		{
+			.min= collider_bbox.min - bbox.max,
+			.max= collider_bbox.max - bbox.min,
+		};
+
+		if_var( intersection : FindRayBBoxIntersection( movement_start_position, movement_vector, minkowski_sum_bbox ) )
+		{
+			if( intersection.near_point_distance > 1.0f | intersection.far_point_distance < 0.0f )
+			{
+				continue; // The entity is too far away or is behind the pusher.
+			}
+
+			var f32 normal_length= intersection.near_point_normal.Length();
+			if( normal_length == 0.0f )
+			{
+				continue;
+			}
+
+			var Vec3f normal_normalized= intersection.near_point_normal / -normal_length;
+
+			// Push only the amount needed to be pushed after reaching the entity bbox.
+			var Vec3f movement_vector_fraction= movement_vector * ( 1.0f - intersection.near_point_distance );
+
+			var f32 normal_dot= movement_vector_fraction.Dot( normal_normalized );
+
+			if( normal_dot <= 0.0f )
+			{
+				// Moving away from the entity, can't push it.
+				continue;
+			}
+
+			var f32 movement_vector_fraction_length= movement_vector_fraction.Length();
+			if( movement_vector_fraction_length == 0.0f )
+			{
+				continue;
+			}
+
+			var f32 angle_cos= normal_dot / movement_vector_fraction_length;
+
+			var Vec3f direct_movement_component= normal_normalized * normal_dot;
+			var Vec3f side_movement_component= movement_vector_fraction - direct_movement_component;
+
+			// Reduce side movement component to avoid pushing entities while moving almost perpendicular to them.
+			var Vec3f entity_movement_vector= direct_movement_component + side_movement_component * angle_cos;
+
+			// Temporary move this collider itself near to infinity to avoid self-collisions.
+			game_state.colliders[ size_type( entity.collider_index ) ].bbox=
+				BBox3f{ .min( 10000.0f, 10000.0f, 10000.0f ), .max( 10001.0f, 10001.0f, 10001.0f ) };
+
+			// Perform collision detection against the world and other entities.
+			// Use a collision function allowing sliding along walls, but not steps climbing.
+			// Doing so we ensure that we don't push an entity into another entity.
+
+			var CollisionTraceClipResult collision_trace_clip_result=
+				CollisionTraceAndClip(
+					map_data,
+					game_state.broken_quad_bits,
+					game_state.dynamic_cluster_colliders,
+					game_state.colliders,
+					collider_bbox,
+					Vec3f::MakeZero(),
+					entity_movement_vector );
+
+			// Apply clipped movement.
+			var Vec3f& entity_actual_movement_vector= collision_trace_clip_result.position_clipped;
+
+			entity.position+= entity_actual_movement_vector;
+			collider_bbox.min+= entity_actual_movement_vector;
+			collider_bbox.max+= entity_actual_movement_vector;
+
+			game_state.colliders[ size_type( entity.collider_index ) ].bbox= collider_bbox;
+
+			// Collide with projectiles if is pushed.
+			CollideMovedEntityWithProjectiles(
+				Vec3f::MakeZero(),
+				entity_actual_movement_vector,
+				collider_bbox,
+				u32( entity_index ),
+				game_state.projectiles,
+				game_state.projectile_hit_events );
+		}
+	}
 }
 
 fn ProcessProjectilesLogicStep( GameGlobalData& global_data, GameMapData& map_data, GameState &mut game_state )
@@ -4366,7 +4517,12 @@ fn InteractWithTriggerVolumes(
 }
 
 fn CollideMovedEntityWithProjectiles(
-	Vec3f& old_position, Vec3f& new_position, BBox3f& bbox, u32 entity_index, GameState &mut game_state )
+	Vec3f& old_position,
+	Vec3f& new_position,
+	BBox3f& bbox,
+	u32 entity_index,
+	ProjectilesContainer &mut projectiles,
+	ust::vector</ProjectileHitEvent/> &mut projectile_hit_events )
 {
 	if( old_position == new_position )
 	{
@@ -4384,9 +4540,7 @@ fn CollideMovedEntityWithProjectiles(
 		.max= bbox.max + old_position,
 	};
 
-	auto &mut projectile_hit_events= game_state.projectile_hit_events;
-
-	game_state.projectiles.Retain(
+	projectiles.Retain(
 		lambda[&]( Projectile& projectile ) : bool
 		{
 			if( projectile.owner_entity_index != entity_index ) // Don't collide with owner.
@@ -6116,7 +6270,13 @@ fn MoveEntity(
 	{
 		// Using straight movement from start to end isn't fully correct, since actual movement with clipping may be more complex.
 		// But it's mostly fine.
-		CollideMovedEntityWithProjectiles( old_position, entity.position, collider_bbox, entity_index, game_state );
+		CollideMovedEntityWithProjectiles(
+			old_position,
+			entity.position,
+			collider_bbox,
+			entity_index,
+			game_state.projectiles,
+			game_state.projectile_hit_events );
 	}
 }
 
