@@ -1273,6 +1273,8 @@ fn PerformPlayerMovement(
 	var BBox3f player_bbox= GetPlayerColliderBBox( entities_description, game_state.player.crouching_phase );
 
 	// Push pushable entities using unclipped movement vector.
+	// It's mostly fine to do so.
+	// Even if player's movement is clipped, we still can push some entities, but only a little bit.
 	PushMoveEntities( map_data, game_state, player_bbox, movement_start_position, movement_end_position );
 
 	var CollisionStepMoveResult move_result=
@@ -3098,6 +3100,8 @@ fn PushMoveDynamicCluster(
 	return true;
 }
 
+// Enumerate all entities and push pushable ones.
+// Since all entities are enumerated, pushing them may be costly and thus it's better to avoid calling this function too often.
 fn PushMoveEntities(
 	GameMapData& map_data,
 	GameState &mut game_state,
@@ -3130,23 +3134,26 @@ fn PushMoveEntities(
 		auto& param_akt_opt= entities_description.entities[ size_type( entity.kind ) ].param_akt;
 		if( param_akt_opt.empty() )
 		{
-			continue;
+			continue; // Only entities having "param_akt" can be pushed.
 		}
 
 		if( param_akt_opt.try_deref()[3] == 0u )
 		{
-			continue;
+			continue; // Pushing is disabled.
 		}
 
 		// It's a pushable entity.
 
 		if( size_type( entity.collider_index ) >= game_state.colliders.size() )
 		{
-			continue;
+			continue; // Has no valid collider. It may happen if an entity is destroyed.
 		}
 
 		// Take a copy to allow modifying it later.
 		var BBox3f mut collider_bbox= game_state.colliders[ size_type( entity.collider_index ) ].bbox;
+
+		// Detect collsion between the pusher's movement and the entity collider
+		// by performing line intersection check with a minkowski-sum bbox.
 
 		var BBox3f minkowski_sum_bbox
 		{
@@ -3158,7 +3165,7 @@ fn PushMoveEntities(
 		{
 			if( intersection.near_point_distance > 1.0f | intersection.far_point_distance < 0.0f )
 			{
-				continue;
+				continue; // The entity is too far away or is behind the pusher.
 			}
 
 			var f32 normal_length= intersection.near_point_normal.Length();
@@ -3169,6 +3176,7 @@ fn PushMoveEntities(
 
 			var Vec3f normal_normalized= intersection.near_point_normal / -normal_length;
 
+			// Push only the amount needed to be pushed after reaching the entity bbox.
 			var Vec3f movement_vector_fraction= movement_vector * ( 1.0f - intersection.near_point_distance );
 
 			var f32 normal_dot= movement_vector_fraction.Dot( normal_normalized );
@@ -3199,6 +3207,7 @@ fn PushMoveEntities(
 
 			// Perform collision detection against the world and other entities.
 			// Use a collision function allowing sliding along walls, but not steps climbing.
+			// Doing so we ensure that we don't push an entity into another entity.
 
 			var CollisionTraceClipResult collision_trace_clip_result=
 				CollisionTraceAndClip(
