@@ -1272,6 +1272,9 @@ fn PerformPlayerMovement(
 
 	var BBox3f player_bbox= GetPlayerColliderBBox( entities_description, game_state.player.crouching_phase );
 
+	// Push pushable entities using unclipped movement vector.
+	PushMoveEntities( map_data, game_state, player_bbox, movement_start_position, movement_end_position );
+
 	var CollisionStepMoveResult move_result=
 		CollisionStepMove(
 			map_data,
@@ -3087,6 +3090,66 @@ fn PushMoveDynamicCluster(
 		} );
 
 	return true;
+}
+
+fn PushMoveEntities(
+	GameMapData& map_data,
+	GameState &mut game_state,
+	BBox3f& bbox,
+	Vec3f& movement_start_position,
+	Vec3f& movement_end_position )
+{
+	// Allow only horizontal movement for pushing.
+	var Vec3f movement_vector( movement_end_position.xy() - movement_start_position.xy(), 0.0f );
+
+	var EntitiesDescription& entities_description= map_data.entities_description.deref();
+
+	foreach( &mut entity_opt : game_state.entities )
+	{
+		if( entity_opt.empty() )
+		{
+			continue;
+		}
+
+		var EntityState &mut entity= entity_opt.try_deref();
+
+		auto& param_akt_opt= entities_description.entities[ size_type( entity.kind ) ].param_akt;
+		if( param_akt_opt.empty() )
+		{
+			continue;
+		}
+
+		if( param_akt_opt.try_deref()[3] == 0u )
+		{
+			continue;
+		}
+
+		// It's a pushable entity.
+
+		if( size_type( entity.collider_index ) >= game_state.colliders.size() )
+		{
+			continue;
+		}
+
+		var Collider &mut collider= game_state.colliders[ size_type( entity.collider_index ) ];
+
+		var BBox3f minkowski_sum_bbox
+		{
+			.min= collider.bbox.min - bbox.max,
+			.max= collider.bbox.max - bbox.min,
+		};
+
+		if_var( intersection : FindRayBBoxIntersection( movement_start_position, movement_vector, minkowski_sum_bbox ) )
+		{
+			if( intersection.near_point_distance > 1.0f | intersection.far_point_distance < 0.0f )
+			{
+				continue;
+			}
+
+			// TODO
+			entity.position.z-= 8.0f;
+		}
+	}
 }
 
 fn ProcessProjectilesLogicStep( GameGlobalData& global_data, GameMapData& map_data, GameState &mut game_state )
