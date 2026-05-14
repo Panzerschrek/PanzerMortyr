@@ -3436,318 +3436,327 @@ fn DamageEntity( EntityState &mut entity, u32 damage )
 
 fn ProcessProjectileHitEventsLogicStep( GameGlobalData& global_data, GameMapData& map_data, GameState &mut game_state )
 {
-	var EntitiesDescription& entities_description= map_data.entities_description.deref();
-
-	var ust::array_view_imut</ZvoxCluster/> clusters= map_data.zvox_data.deref().clusters;
-	var ust::array_view_imut</ZmapQuad/> quads= map_data.zmap_data.deref().quads;
-
 	for( auto mut i= 0s; i < game_state.projectile_hit_events.size(); ++i )
 	{
 		// Take a copy to be able to access the whole game state structure later.
 		var ProjectileHitEvent projectile_hit_event= game_state.projectile_hit_events[i];
 
-		var EntitiesDescription::Tool& weapon_tool=
-			entities_description.tools[ size_type( projectile_hit_event.weapon_tool_index ) ];
+		ProcessProjectileHitEvent( global_data, map_data, game_state, projectile_hit_event );
+	}
 
-		var size_type mut collision_kind_index= 0s; // See EntitiesDescription::Tool::collision_handling.
+	game_state.projectile_hit_events.clear();
+}
 
-		if( projectile_hit_event.hit_entity_index != ~0u )
+fn ProcessProjectileHitEvent(
+	GameGlobalData& global_data,
+	GameMapData& map_data,
+	GameState &mut game_state,
+	ProjectileHitEvent& projectile_hit_event )
+{
+	var EntitiesDescription& entities_description= map_data.entities_description.deref();
+
+	var ust::array_view_imut</ZvoxCluster/> clusters= map_data.zvox_data.deref().clusters;
+	var ust::array_view_imut</ZmapQuad/> quads= map_data.zmap_data.deref().quads;
+
+	var EntitiesDescription::Tool& weapon_tool=
+		entities_description.tools[ size_type( projectile_hit_event.weapon_tool_index ) ];
+
+	var size_type mut collision_kind_index= 0s; // See EntitiesDescription::Tool::collision_handling.
+
+	if( projectile_hit_event.hit_entity_index != ~0u )
+	{
+		if( weapon_tool.splash_damage_area_size == 0u )
 		{
-			if( weapon_tool.splash_damage_area_size == 0u )
-			{
-				// No splash damage - damage hit entity directly.
-				DamageEntityOrPlayer(
-					global_data.sounds_description.deref(),
-					game_state.entities,
-					game_state.player,
-					projectile_hit_event.hit_entity_index,
-					weapon_tool.damage );
-			}
-
-			collision_kind_index= 1s;
-
-			if( size_type( projectile_hit_event.hit_entity_index ) < game_state.entities.size() )
-			{
-				if_var( &entity : game_state.entities[ size_type( projectile_hit_event.hit_entity_index ) ] )
-				{
-					var size_type entity_kind( entity.kind );
-					if( entity_kind < entities_description.entities.size() )
-					{
-						if( entities_description.entities[ entity_kind ].susceptible != 0u )
-						{
-							collision_kind_index= 2s;
-						}
-					}
-				}
-			}
-			else if( projectile_hit_event.hit_entity_index == c_player_entity_index )
-			{
-				// Use hit effects for the player as for alive enemy entities.
-				collision_kind_index= 2s;
-			}
-
-			if( weapon_tool.napalm != 0u )
-			{
-				game_state.damaging_flames.Insert(
-					DamagingFlame{ .entity_index= projectile_hit_event.hit_entity_index, .age_steps= 0u } );
-			}
-		}
-
-		if( weapon_tool.splash_damage_area_size > 0u )
-		{
-			// Apply splash damage.
-
-			// Assume this param to be radius.
-			var f32 splash_damage_radius( weapon_tool.splash_damage_area_size );
-			// Assume splash base damage equal to weapon damage.
-			var f32 splash_base_damage( weapon_tool.damage );
-
-			ApplySplashDamage(
+			// No splash damage - damage hit entity directly.
+			DamageEntityOrPlayer(
 				global_data.sounds_description.deref(),
-				projectile_hit_event.position,
-				splash_damage_radius,
-				splash_base_damage,
-				game_state );
+				game_state.entities,
+				game_state.player,
+				projectile_hit_event.hit_entity_index,
+				weapon_tool.damage );
 		}
 
-		switch( weapon_tool.collision_handling[ collision_kind_index ] )
+		collision_kind_index= 1s;
+
+		if( size_type( projectile_hit_event.hit_entity_index ) < game_state.entities.size() )
 		{
-			EntitiesDescription::Tool::c_projectile_collision_effect_flame ->
+			if_var( &entity : game_state.entities[ size_type( projectile_hit_event.hit_entity_index ) ] )
 			{
-				var Vec3f mut flame_position= projectile_hit_event.position;
-
-				// Slightly offset flame position using hit point normal.
-				// It's necessary to avoid ugly clipping of flame billboards on walls.
-				if( size_type( projectile_hit_event.hit_quad_index ) < quads.size() )
+				var size_type entity_kind( entity.kind );
+				if( entity_kind < entities_description.entities.size() )
 				{
-					var Vec3f normal= CalculateQuadNormal( quads[ size_type( projectile_hit_event.hit_quad_index ) ] );
-					var f32 normal_length= normal.Length();
-					if( normal_length != 0.0f )
+					if( entities_description.entities[ entity_kind ].susceptible != 0u )
 					{
-						var f32 scale= 3.0f / normal_length;
-						flame_position.x+= normal.x * scale;
-						flame_position.y+= normal.y * scale;
-						if( normal.z > 0.0f ) // Offset down, but not up.
+						collision_kind_index= 2s;
+					}
+				}
+			}
+		}
+		else if( projectile_hit_event.hit_entity_index == c_player_entity_index )
+		{
+			// Use hit effects for the player as for alive enemy entities.
+			collision_kind_index= 2s;
+		}
+
+		if( weapon_tool.napalm != 0u )
+		{
+			game_state.damaging_flames.Insert(
+				DamagingFlame{ .entity_index= projectile_hit_event.hit_entity_index, .age_steps= 0u } );
+		}
+	}
+
+	if( weapon_tool.splash_damage_area_size > 0u )
+	{
+		// Apply splash damage.
+
+		// Assume this param to be radius.
+		var f32 splash_damage_radius( weapon_tool.splash_damage_area_size );
+		// Assume splash base damage equal to weapon damage.
+		var f32 splash_base_damage( weapon_tool.damage );
+
+		ApplySplashDamage(
+			global_data.sounds_description.deref(),
+			projectile_hit_event.position,
+			splash_damage_radius,
+			splash_base_damage,
+			game_state );
+	}
+
+	switch( weapon_tool.collision_handling[ collision_kind_index ] )
+	{
+		EntitiesDescription::Tool::c_projectile_collision_effect_flame ->
+		{
+			var Vec3f mut flame_position= projectile_hit_event.position;
+
+			// Slightly offset flame position using hit point normal.
+			// It's necessary to avoid ugly clipping of flame billboards on walls.
+			if( size_type( projectile_hit_event.hit_quad_index ) < quads.size() )
+			{
+				var Vec3f normal= CalculateQuadNormal( quads[ size_type( projectile_hit_event.hit_quad_index ) ] );
+				var f32 normal_length= normal.Length();
+				if( normal_length != 0.0f )
+				{
+					var f32 scale= 3.0f / normal_length;
+					flame_position.x+= normal.x * scale;
+					flame_position.y+= normal.y * scale;
+					if( normal.z > 0.0f ) // Offset down, but not up.
+					{
+						var f32 vertical_scale= 12.0f / normal_length;
+						flame_position.z+= normal.z * vertical_scale;
+					}
+				}
+			}
+
+			if( !IsPointInLiquidOrNearby( map_data, flame_position ) ) // Avoid spawning flames in liquids.
+			{
+				// Check if this flame hit a dynamic cluster.
+				// If so - attach it to this cluster.
+				var u32 mut dynamic_cluster_object_index= ~0u;
+				var Vec3f mut relative_position= Vec3f::MakeZero();
+
+				// Use linear search. It's mostly fine, since we have only a few of dynamic clusters.
+				for( auto mut i= 0s; i < game_state.dynamic_cluster_colliders.size(); ++i )
+				{
+					var DynamicClusterCollider& collider= game_state.dynamic_cluster_colliders[i];
+					if( size_type( collider.cluster_index ) < clusters.size() )
+					{
+						var ZvoxCluster& cluster= clusters[ size_type( collider.cluster_index ) ];
+						if( cluster.num_quads >= 0 &&
+							projectile_hit_event.hit_quad_index >= cluster.c.first_quad_index &&
+							projectile_hit_event.hit_quad_index < cluster.c.first_quad_index + u32( cluster.num_quads ) )
 						{
-							var f32 vertical_scale= 12.0f / normal_length;
-							flame_position.z+= normal.z * vertical_scale;
+							dynamic_cluster_object_index= u32(i);
+							relative_position= flame_position - collider.bbox.GetCenter();
+							break;
 						}
 					}
 				}
 
-				if( !IsPointInLiquidOrNearby( map_data, flame_position ) ) // Avoid spawning flames in liquids.
-				{
-					// Check if this flame hit a dynamic cluster.
-					// If so - attach it to this cluster.
-					var u32 mut dynamic_cluster_object_index= ~0u;
-					var Vec3f mut relative_position= Vec3f::MakeZero();
-
-					// Use linear search. It's mostly fine, since we have only a few of dynamic clusters.
-					for( auto mut i= 0s; i < game_state.dynamic_cluster_colliders.size(); ++i )
+				game_state.flame_particles.Insert(
+					FlameParticle
 					{
-						var DynamicClusterCollider& collider= game_state.dynamic_cluster_colliders[i];
-						if( size_type( collider.cluster_index ) < clusters.size() )
-						{
-							var ZvoxCluster& cluster= clusters[ size_type( collider.cluster_index ) ];
-							if( cluster.num_quads >= 0 &&
-								projectile_hit_event.hit_quad_index >= cluster.c.first_quad_index &&
-								projectile_hit_event.hit_quad_index < cluster.c.first_quad_index + u32( cluster.num_quads ) )
-							{
-								dynamic_cluster_object_index= u32(i);
-								relative_position= flame_position - collider.bbox.GetCenter();
-								break;
-							}
-						}
-					}
-
-					game_state.flame_particles.Insert(
-						FlameParticle
-						{
-							.position= flame_position,
-							.dynamic_cluster_object_index= dynamic_cluster_object_index,
-							.relative_position= relative_position,
-							.age_steps= 0u,
-						} );
-				}
-			},
-			EntitiesDescription::Tool::c_projectile_collision_effect_small_explosion ->
-			{
-				game_state.explosion_particles.Insert(
-					ExplosionParticle{ .large= false, .position= projectile_hit_event.position, .age_steps= 0u, } );
-			},
-			EntitiesDescription::Tool::c_projectile_collision_effect_large_explosion ->
-			{
-				game_state.explosion_particles.Insert(
-					ExplosionParticle{ .large= true, .position= projectile_hit_event.position, .age_steps= 0u, } );
-			},
-			EntitiesDescription::Tool::c_projectile_collision_effect_smoke_source ->
-			{
-				var Vec3f mut smoke_emitter_normal( 0.0f, 0.0f, -1.0f );
-
-				if( size_type( projectile_hit_event.hit_quad_index ) < quads.size() )
-				{
-					var Vec3f normal= CalculateQuadNormal( quads[ size_type( projectile_hit_event.hit_quad_index ) ] );
-					var f32 normal_length= normal.Length();
-					if( normal_length > 0.0f )
-					{
-						smoke_emitter_normal= normal / normal_length;
-					}
-				}
-				else if( size_type( projectile_hit_event.hit_entity_index ) < game_state.entities.size() )
-				{
-					// For entities approximate smoke emitter normal using direction towards entity bbox center.
-					if_var( &entity : game_state.entities[ size_type( projectile_hit_event.hit_entity_index ) ] )
-					{
-						if( size_type( entity.collider_index ) < game_state.colliders.size() )
-						{
-							var BBox3f& collider_bbox= game_state.colliders[ size_type( entity.collider_index ) ].bbox;
-							var Vec3f vec_from_center= projectile_hit_event.position - collider_bbox.GetCenter();
-							var f32 vec_from_center_length= vec_from_center.Length();
-							if( vec_from_center_length > 0.0f )
-							{
-								smoke_emitter_normal= vec_from_center / vec_from_center_length;
-							}
-						}
-					}
-				}
-
-				game_state.projectile_hit_smoke_emitters.Insert(
-					ProjectileHitSmokeEmitter
-					{
-						.position= projectile_hit_event.position,
-						.hit_point_normal= smoke_emitter_normal,
+						.position= flame_position,
+						.dynamic_cluster_object_index= dynamic_cluster_object_index,
+						.relative_position= relative_position,
 						.age_steps= 0u,
 					} );
-			},
-			// TODO - handle other known kinds.
-			default -> {},
-		}
-
-		if( size_type( projectile_hit_event.hit_cluster_index ) < clusters.size() &&
-			size_type( projectile_hit_event.hit_quad_index ) < quads.size() )
-		{
-			var ZmapQuad& quad= quads[ size_type( projectile_hit_event.hit_quad_index ) ];
-			if( IsMapQuadBreakable( global_data, map_data, quad ) )
-			{
-				if( !game_state.broken_quad_bits.GetAndSetBitToOne( size_type( projectile_hit_event.hit_quad_index ) ) )
-				{
-					game_state.breaking_glass_effects.Insert(
-						BreakingGlassEffect
-						{
-							.hit_position= projectile_hit_event.position,
-							.cluster_index= projectile_hit_event.hit_cluster_index,
-							.quad_index= projectile_hit_event.hit_quad_index,
-							.age_steps= 0u,
-						} );
-
-					EmitGlassBreakingSound(
-						game_state.static_sound_sources,
-						global_data.sounds_description.deref(),
-						projectile_hit_event.position );
-				}
 			}
-		}
-
-		if( weapon_tool.wall_mark >= 0 )
+		},
+		EntitiesDescription::Tool::c_projectile_collision_effect_small_explosion ->
 		{
-			// TODO - add a bullet hole.
-		}
-
-		if( weapon_tool.light_at_hit_point[1] > 0u )
+			game_state.explosion_particles.Insert(
+				ExplosionParticle{ .large= false, .position= projectile_hit_event.position, .age_steps= 0u, } );
+		},
+		EntitiesDescription::Tool::c_projectile_collision_effect_large_explosion ->
 		{
-			game_state.projectile_hit_lights.Insert(
-				ProjectileHitLight
-				{
-					.position= projectile_hit_event.position,
-					.power( weapon_tool.light_at_hit_point[1] ),
-					.color_index( weapon_tool.light_at_hit_point[0] ),
-					.age_steps= 0u,
-				} );
-		}
-
-		if( weapon_tool.stars == EntitiesDescription::Tool::c_sparks_effect_id )
+			game_state.explosion_particles.Insert(
+				ExplosionParticle{ .large= true, .position= projectile_hit_event.position, .age_steps= 0u, } );
+		},
+		EntitiesDescription::Tool::c_projectile_collision_effect_smoke_source ->
 		{
+			var Vec3f mut smoke_emitter_normal( 0.0f, 0.0f, -1.0f );
+
 			if( size_type( projectile_hit_event.hit_quad_index ) < quads.size() )
 			{
 				var Vec3f normal= CalculateQuadNormal( quads[ size_type( projectile_hit_event.hit_quad_index ) ] );
 				var f32 normal_length= normal.Length();
 				if( normal_length > 0.0f )
 				{
-					var Vec3f normal_normalized= normal / normal_length;
-
-					// Generate sparks travelling with random direction and speed.
-					for( auto mut i= 0s; i < 32s; ++i )
+					smoke_emitter_normal= normal / normal_length;
+				}
+			}
+			else if( size_type( projectile_hit_event.hit_entity_index ) < game_state.entities.size() )
+			{
+				// For entities approximate smoke emitter normal using direction towards entity bbox center.
+				if_var( &entity : game_state.entities[ size_type( projectile_hit_event.hit_entity_index ) ] )
+				{
+					if( size_type( entity.collider_index ) < game_state.colliders.size() )
 					{
-						var [ f32, 3 ] direction_raw[
-							f32( game_state.random.Next() ) * ( 2.0f / f32( PseudoRandomGenerator::c_max ) ) - 1.0f ... ];
-						var Vec3f direction( direction_raw );
-
-						var f32 direction_length= direction.Length();
-
-						// Ignore random vectors outside unit sphere. Doing so gives nice spherical distribution.
-						// Also ignore zero vectors.
-						if( direction_length > 1.0f | direction_length == 0.0f )
+						var BBox3f& collider_bbox= game_state.colliders[ size_type( entity.collider_index ) ].bbox;
+						var Vec3f vec_from_center= projectile_hit_event.position - collider_bbox.GetCenter();
+						var f32 vec_from_center_length= vec_from_center.Length();
+						if( vec_from_center_length > 0.0f )
 						{
-							continue;
+							smoke_emitter_normal= vec_from_center / vec_from_center_length;
 						}
-
-						// If random direction is facing away from the hit plane - reflect it.
-						// There is no reason to spawn sparks flying towards hit plane, since they are invisible anyway.
-
-						var Vec3f mut direction_corrected= direction;
-						var f32 normal_dot= direction.Dot( normal_normalized );
-						if( normal_dot < 0.0f )
-						{
-							direction_corrected -= ( 2.0f * normal_dot / direction_length ) * normal_normalized;
-						}
-
-						var f32 c_sparks_speed_scale= 8.0f;
-
-						game_state.spark_particles.Insert(
-							SparkParticle
-							{
-								.position= projectile_hit_event.position,
-								// Since direction vector isn't normalized, result speeds are variating, which gives good result.
-								.velocity= direction_corrected * c_sparks_speed_scale,
-								.age_steps= 0u,
-							} );
 					}
 				}
 			}
-		}
 
-		if( size_type( projectile_hit_event.hit_cluster_index ) < clusters.size() &&
-			size_type( projectile_hit_event.hit_quad_index ) < quads.size() )
-		{
-			EmitProjectileHitSound(
-				game_state.static_sound_sources,
-				weapon_tool,
-				GetMaterialPropertiesForMapQuad( global_data, map_data, projectile_hit_event.hit_quad_index ),
-				projectile_hit_event.position );
-		}
-		else if( projectile_hit_event.hit_entity_index != ~0u )
-		{
-			EmitProjectileObjectHitSound( game_state.static_sound_sources, weapon_tool, projectile_hit_event.position );
-		}
-
-		if( weapon_tool.splash_damage_area_size > 0u )
-		{
-			// Projectiles with splash damage emit explosion sounds.
-			EmitExplosionSound(
-				game_state.static_sound_sources,
-				global_data.sounds_description.deref(),
-				projectile_hit_event.position );
-		}
-
-		// Alarm entities by nearby projectile hits.
-		AlarmEnemiesByNearbyEvent(
-			game_state.colliders,
-			game_state.entities,
-			projectile_hit_event.position,
-			c_projectile_hit_enemy_alarm_max_distance );
+			game_state.projectile_hit_smoke_emitters.Insert(
+				ProjectileHitSmokeEmitter
+				{
+					.position= projectile_hit_event.position,
+					.hit_point_normal= smoke_emitter_normal,
+					.age_steps= 0u,
+				} );
+		},
+		// TODO - handle other known kinds.
+		default -> {},
 	}
 
-	game_state.projectile_hit_events.clear();
+	if( size_type( projectile_hit_event.hit_cluster_index ) < clusters.size() &&
+		size_type( projectile_hit_event.hit_quad_index ) < quads.size() )
+	{
+		var ZmapQuad& quad= quads[ size_type( projectile_hit_event.hit_quad_index ) ];
+		if( IsMapQuadBreakable( global_data, map_data, quad ) )
+		{
+			if( !game_state.broken_quad_bits.GetAndSetBitToOne( size_type( projectile_hit_event.hit_quad_index ) ) )
+			{
+				game_state.breaking_glass_effects.Insert(
+					BreakingGlassEffect
+					{
+						.hit_position= projectile_hit_event.position,
+						.cluster_index= projectile_hit_event.hit_cluster_index,
+						.quad_index= projectile_hit_event.hit_quad_index,
+						.age_steps= 0u,
+					} );
+
+				EmitGlassBreakingSound(
+					game_state.static_sound_sources,
+					global_data.sounds_description.deref(),
+					projectile_hit_event.position );
+			}
+		}
+	}
+
+	if( weapon_tool.wall_mark >= 0 )
+	{
+		// TODO - add a bullet hole.
+	}
+
+	if( weapon_tool.light_at_hit_point[1] > 0u )
+	{
+		game_state.projectile_hit_lights.Insert(
+			ProjectileHitLight
+			{
+				.position= projectile_hit_event.position,
+				.power( weapon_tool.light_at_hit_point[1] ),
+				.color_index( weapon_tool.light_at_hit_point[0] ),
+				.age_steps= 0u,
+			} );
+	}
+
+	if( weapon_tool.stars == EntitiesDescription::Tool::c_sparks_effect_id )
+	{
+		if( size_type( projectile_hit_event.hit_quad_index ) < quads.size() )
+		{
+			var Vec3f normal= CalculateQuadNormal( quads[ size_type( projectile_hit_event.hit_quad_index ) ] );
+			var f32 normal_length= normal.Length();
+			if( normal_length > 0.0f )
+			{
+				var Vec3f normal_normalized= normal / normal_length;
+
+				// Generate sparks travelling with random direction and speed.
+				for( auto mut i= 0s; i < 32s; ++i )
+				{
+					var [ f32, 3 ] direction_raw[
+						f32( game_state.random.Next() ) * ( 2.0f / f32( PseudoRandomGenerator::c_max ) ) - 1.0f ... ];
+					var Vec3f direction( direction_raw );
+
+					var f32 direction_length= direction.Length();
+
+					// Ignore random vectors outside unit sphere. Doing so gives nice spherical distribution.
+					// Also ignore zero vectors.
+					if( direction_length > 1.0f | direction_length == 0.0f )
+					{
+						continue;
+					}
+
+					// If random direction is facing away from the hit plane - reflect it.
+					// There is no reason to spawn sparks flying towards hit plane, since they are invisible anyway.
+
+					var Vec3f mut direction_corrected= direction;
+					var f32 normal_dot= direction.Dot( normal_normalized );
+					if( normal_dot < 0.0f )
+					{
+						direction_corrected -= ( 2.0f * normal_dot / direction_length ) * normal_normalized;
+					}
+
+					var f32 c_sparks_speed_scale= 8.0f;
+
+					game_state.spark_particles.Insert(
+						SparkParticle
+						{
+							.position= projectile_hit_event.position,
+							// Since direction vector isn't normalized, result speeds are variating, which gives good result.
+							.velocity= direction_corrected * c_sparks_speed_scale,
+							.age_steps= 0u,
+						} );
+				}
+			}
+		}
+	}
+
+	if( size_type( projectile_hit_event.hit_cluster_index ) < clusters.size() &&
+		size_type( projectile_hit_event.hit_quad_index ) < quads.size() )
+	{
+		EmitProjectileHitSound(
+			game_state.static_sound_sources,
+			weapon_tool,
+			GetMaterialPropertiesForMapQuad( global_data, map_data, projectile_hit_event.hit_quad_index ),
+			projectile_hit_event.position );
+	}
+	else if( projectile_hit_event.hit_entity_index != ~0u )
+	{
+		EmitProjectileObjectHitSound( game_state.static_sound_sources, weapon_tool, projectile_hit_event.position );
+	}
+
+	if( weapon_tool.splash_damage_area_size > 0u )
+	{
+		// Projectiles with splash damage emit explosion sounds.
+		EmitExplosionSound(
+			game_state.static_sound_sources,
+			global_data.sounds_description.deref(),
+			projectile_hit_event.position );
+	}
+
+	// Alarm entities by nearby projectile hits.
+	AlarmEnemiesByNearbyEvent(
+		game_state.colliders,
+		game_state.entities,
+		projectile_hit_event.position,
+		c_projectile_hit_enemy_alarm_max_distance );
 }
 
 fn ApplySplashDamage(
