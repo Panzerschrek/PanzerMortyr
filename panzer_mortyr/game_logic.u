@@ -517,7 +517,7 @@ fn nodiscard ProcessGameLogicStep(
 
 	DealPlayerEnvironmentalDamage( global_data.sounds_description.deref(), map_data, game_state );
 
-	var u32 next_map_index= InteractWithTriggerVolumes( global_data.sounds_description.deref(), map_data, game_state );
+	var u32 next_map_index= InteractWithTriggerVolumes( global_data, map_data, game_state );
 
 	++game_state.step_index;
 
@@ -4499,7 +4499,7 @@ fn DealPlayerEnvironmentalDamage(
 
 // Returns next map index if requires map transition or 0 if requires no one.
 fn InteractWithTriggerVolumes(
-	SoundsDescription& sounds_description, GameMapData& map_data, GameState &mut game_state ) : u32
+	GameGlobalData& global_data, GameMapData& map_data, GameState &mut game_state ) : u32
 {
 	var u32 mut next_map_index= 0u;
 
@@ -4546,7 +4546,32 @@ fn InteractWithTriggerVolumes(
 		{
 			ZvoxTriggerVolume::c_trigger_type_map_end ->
 			{
-				next_map_index= u32( trigger_volume.trigger_param );
+				var bool mut leave_condition_satisfied= true;
+
+				var MapsDescription& maps_description= global_data.maps_description.deref();
+				if( size_type( map_data.map_index ) < maps_description.maps.size() )
+				{
+					auto& leave_condition= maps_description.maps[ size_type( map_data.map_index ) ].leave_condition;
+
+					if( leave_condition[0] >= 0 )
+					{
+						foreach( &entity_opt : game_state.entities )
+						{
+							if_var( &entity : entity_opt )
+							{
+								if( entity.kind == u32( leave_condition[0] ) )
+								{
+									leave_condition_satisfied &= entity.energy == 0u;
+								}
+							}
+						}
+					}
+				}
+
+				if( leave_condition_satisfied )
+				{
+					next_map_index= u32( trigger_volume.trigger_param );
+				}
 			},
 			ZvoxTriggerVolume::c_trigger_type_secret_area ->
 			{
@@ -4555,7 +4580,8 @@ fn InteractWithTriggerVolumes(
 					game_state.player.activated_triggers_mask |= trigger_mask;
 					game_state.player.last_opened_secret_area_step= game_state.step_index;
 
-					EmitSecretFoundSound( sounds_description, game_state.player.sound_source_slots );
+					EmitSecretFoundSound(
+						global_data.sounds_description.deref(), game_state.player.sound_source_slots );
 				}
 			},
 			ZvoxTriggerVolume::c_trigger_type_character_speech ->
