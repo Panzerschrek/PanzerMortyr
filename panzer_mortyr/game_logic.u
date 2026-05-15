@@ -1,4 +1,5 @@
 import "/assert.iu"
+import "/string_conversions.iu"
 import "bounding_boxes_hierarchy_visiting.iu"
 import "cluster_utils.iu"
 import "collisions.iu"
@@ -15,6 +16,7 @@ namespace PM
 {
 
 fn CreateNewMapGameState(
+	ConsoleOutPtr& console_out,
 	GameGlobalData& global_data,
 	GameMapData& map_data,
 	u32 skill,
@@ -86,9 +88,12 @@ fn CreateNewMapGameState(
 	// Map source entities 1 to 1 to runtime entities. It's needed for index stability.
 	game_state.entities.resize( zpoz_entities.size() );
 
-	foreach( pair : zpoz_entities.iter().zip( game_state.entities.iter() ) )
+	var size_type mut num_total_enemies= 0s;
+
+	for( auto mut entity_index= 0s; entity_index < zpoz_entities.size(); ++entity_index )
 	{
-		var ZpozEntity& in_entity= pair.first;
+		var ZpozEntity& in_entity= zpoz_entities[ entity_index ];
+		var ust::optional</EntityState/> &mut out_entity= game_state.entities[ entity_index ];
 
 		if( in_entity.alive_flag == 0u16 )
 		{
@@ -99,6 +104,29 @@ fn CreateNewMapGameState(
 		{
 			// Do not place player spawn entities.
 			continue;
+		}
+
+		if( size_type( in_entity.kind ) >= entities_description.entities.size() )
+		{
+			continue;
+		}
+
+		var EntitiesDescription::EntityDescription& entity_description=
+			entities_description.entities[ size_type( in_entity.kind ) ];
+
+		if( size_type( c_start_operation ) >= entity_description.operations.size() )
+		{
+			continue;
+		}
+
+		if( !ShouldSpawnEntity( global_data.game_params.deref(), skill, entity_description, entity_index ) )
+		{
+			continue;
+		}
+
+		if( entity_description.mode == EntitiesDescription::EntityDescription::c_mode_enemy )
+		{
+			++num_total_enemies; // Count enemies including ones spawned later via a trigger.
 		}
 
 		var size_type navigation_info_index( in_entity.data[16] );
@@ -145,20 +173,7 @@ fn CreateNewMapGameState(
 			}
 		}
 
-		if( size_type( in_entity.kind ) >= entities_description.entities.size() )
-		{
-			continue;
-		}
-
-		var EntitiesDescription::EntityDescription& entity_description=
-			entities_description.entities[ size_type( in_entity.kind ) ];
-
-		if( size_type( c_start_operation ) >= entity_description.operations.size() )
-		{
-			continue;
-		}
-
-		pair.second=
+		out_entity=
 			EntityState
 			{
 				.kind( in_entity.kind ),
@@ -179,7 +194,7 @@ fn CreateNewMapGameState(
 				.collider_index= ~0u,
 			};
 
-		with( &mut entity : pair.second.try_deref() )
+		with( &mut entity : out_entity.try_deref() )
 		{
 			// Emit a sound if spawning an entity in state requiring such sound.
 			if_var( &sound : entity_description.operations[ size_type( entity.current_operation ) ].sound )
@@ -191,6 +206,17 @@ fn CreateNewMapGameState(
 			}
 		}
 	}
+
+	ConsoleOutAddTextLine(
+		console_out,
+		ust::concat(
+			"On map ",
+			ust::to_string8( map_data.map_index ),
+			" with skill ",
+			ust::to_string8( skill ),
+			" has ",
+			ust::to_string8( num_total_enemies ),
+			" enemies" ) );
 
 	// Map entity navigation infos 1 to 1 to what is stored in the map data.
 	game_state.entity_navigation_states.resize(
@@ -391,6 +417,36 @@ fn CreateNewMapGameState(
 	return game_state;
 }
 
+fn ShouldSpawnEntity(
+	GameParams& game_params,
+	u32 skill,
+	EntitiesDescription::EntityDescription& entity_description,
+	size_type entity_index ) : bool
+{
+	if( entity_description.mode != EntitiesDescription::EntityDescription::c_mode_enemy )
+	{
+		return true; // Perform skill-based removal only for enemies.
+	}
+
+	if( entity_description.disable_reduction != 0u )
+	{
+		return true; // For this entity kind reduction is desabled.
+	}
+
+	// The formula below was guessed based on enemy reduction observed on map 1 of the original game.
+	// It seems to be the right one, the total number of enemies for each skill level calculated via it
+	// matches the same number observable in the original game ( for all levels where such observation was performed ).
+
+	var u32 reduction= game_params.enemies_reduction[ skill ];
+
+	var size_type mut preserve_mask= 0b11111111s;
+	if( ( reduction & 1u ) != 0u ) { preserve_mask &= 0b11110111s; }
+	if( ( reduction & 2u ) != 0u ) { preserve_mask &= 0b11011101s; }
+	if( ( reduction & 4u ) != 0u ) { preserve_mask &= 0b10101010s; }
+
+	return ( ( 1s << ( entity_index % 8s ) ) & preserve_mask ) != 0s;
+}
+
 fn nodiscard ProcessGameLogicStep(
 	GameGlobalData& global_data,
 	GameMapData& map_data,
@@ -412,7 +468,7 @@ fn nodiscard ProcessGameLogicStep(
 	PerformPlayerMovement( global_data, map_data, player_input, game_state );
 
 	// Spawn new entities before entity update step, so that they are properly animated.
-	TriggerEntitiesSpawn( map_data, game_state );
+	TriggerEntitiesSpawn( global_data.game_params.deref(), map_data, game_state );
 
 	var RouteSearchContext mut route_search_context
 	{
@@ -1827,7 +1883,7 @@ fn IsMapQuadBreakable( GameGlobalData& global_data, GameMapData& map_data, ZmapQ
 	return false;
 }
 
-fn TriggerEntitiesSpawn( GameMapData& map_data, GameState &mut game_state )
+fn TriggerEntitiesSpawn( GameParams& game_params, GameMapData& map_data, GameState &mut game_state )
 {
 	// Spawn enemies behind the player's back.
 
@@ -1849,17 +1905,38 @@ fn TriggerEntitiesSpawn( GameMapData& map_data, GameState &mut game_state )
 
 	var ust::array_view_imut</ZpozEntity/> zpoz_entities= zpoz_data.entities;
 
-	for( var size_type mut i= 0s, i_end= ust::min( zpoz_entities.size(), game_state.entities.size() ); i < i_end; ++i )
+	for(
+		var size_type mut entity_index= 0s, i_end= ust::min( zpoz_entities.size(), game_state.entities.size() );
+		entity_index < i_end;
+		++entity_index )
 	{
-		if( !game_state.entities[i].empty() )
+		if( !game_state.entities[entity_index].empty() )
 		{
 			// Already spawned this entity.
 			continue;
 		}
 
-		var ZpozEntity& in_entity= zpoz_entities[i];
+		var ZpozEntity& in_entity= zpoz_entities[entity_index];
 
 		if( in_entity.alive_flag == 0u16 )
+		{
+			continue;
+		}
+
+		if( size_type( in_entity.kind ) >= entities_description.entities.size() )
+		{
+			continue;
+		}
+
+		var EntitiesDescription::EntityDescription& entity_description=
+			entities_description.entities[ size_type( in_entity.kind ) ];
+
+		if( size_type( c_start_operation ) >= entity_description.operations.size() )
+		{
+			continue;
+		}
+
+		if( !ShouldSpawnEntity( game_params, game_state.skill, entity_description, entity_index ) )
 		{
 			continue;
 		}
@@ -1895,20 +1972,7 @@ fn TriggerEntitiesSpawn( GameMapData& map_data, GameState &mut game_state )
 			continue;
 		}
 
-		if( size_type( in_entity.kind ) >= entities_description.entities.size() )
-		{
-			continue;
-		}
-
-		var EntitiesDescription::EntityDescription& entity_description=
-			entities_description.entities[ size_type( in_entity.kind ) ];
-
-		if( size_type( c_start_operation ) >= entity_description.operations.size() )
-		{
-			continue;
-		}
-
-		game_state.entities[i]=
+		game_state.entities[entity_index]=
 			EntityState
 			{
 				.kind( in_entity.kind ),
@@ -1929,7 +1993,7 @@ fn TriggerEntitiesSpawn( GameMapData& map_data, GameState &mut game_state )
 				.collider_index= ~0u,
 			};
 
-		with( &mut entity : game_state.entities[i].try_deref() )
+		with( &mut entity : game_state.entities[entity_index].try_deref() )
 		{
 			// Emit a sound if spawning an entity in state requiring such sound.
 			if_var( &sound : entity_description.operations[ size_type( entity.current_operation ) ].sound )
@@ -1941,7 +2005,7 @@ fn TriggerEntitiesSpawn( GameMapData& map_data, GameState &mut game_state )
 			}
 		}
 
-		AddEntityCollider( entities_description, i, game_state );
+		AddEntityCollider( entities_description, entity_index, game_state );
 	}
 }
 
