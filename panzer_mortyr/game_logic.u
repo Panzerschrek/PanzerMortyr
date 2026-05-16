@@ -188,7 +188,7 @@ fn CreateNewMapGameState(
 				.alarmed= false,
 				.alarmed_by_seeing_player= false,
 				.player_is_in_sight= false,
-				.lost_energy_in_current_operation= false,
+				.lost_energy_in_current_step= false,
 				.animation_frame= 0u, // Set exact frame later.
 				.directional_animation_frame= 0u, // Set exact frame later.
 				.velocity_z= 0.0f,
@@ -1993,7 +1993,7 @@ fn TriggerEntitiesSpawn( GameParams& game_params, GameMapData& map_data, GameSta
 				.alarmed= true, // Spawn triggered entities in alarmed state.
 				.alarmed_by_seeing_player= false,
 				.player_is_in_sight= false,
-				.lost_energy_in_current_operation= false,
+				.lost_energy_in_current_step= false,
 				.animation_frame= 0u, // Set later.
 				.directional_animation_frame= 0u, // Set later.
 				.velocity_z= 0.0f,
@@ -2097,10 +2097,9 @@ fn ProcessEntityLogicStep(
 		{
 			// Always check if damaged or killed.
 			// Keep it first here (killed enemies should die).
-			// TODO - check if we need some delay.
 			if_var( &energy_loss : operation_control.energy_loss )
 			{
-				if( entity.lost_energy_in_current_operation )
+				if( entity.lost_energy_in_current_step )
 				{
 					var bool mut perform_energy_loss_operation_transition= false;
 
@@ -2111,36 +2110,39 @@ fn ProcessEntityLogicStep(
 					}
 					else
 					{
+						// If damaged, but not killed, try a transition to an injury state.
+
 						var bool can_use0=
-							energy_loss[0] >= 0 &&
-							size_type( energy_loss[0] ) < entity_description.operations.size() &&
-							energy_loss[0] != i32( entity.current_operation );
+							energy_loss[0] >= 0 && size_type( energy_loss[0] ) < entity_description.operations.size();
 
 						var bool can_use1=
-							energy_loss[1] >= 0 &&
-							size_type( energy_loss[1] ) < entity_description.operations.size() &&
-							energy_loss[1] != i32( entity.current_operation );
+							energy_loss[1] >= 0 && size_type( energy_loss[1] ) < entity_description.operations.size();
 
-						if( can_use0 && can_use1 )
+						if( ( can_use0 | can_use1 ) &&
+							// Perform injury-based state transition randomly with a chance specified per-entity.
+							game_state.random.Next() % 100u < entity_description.injury_randomness )
 						{
-							next_operation= u32( energy_loss[ game_state.random.Next() & 1u ] );
-							perform_energy_loss_operation_transition= true;
-						}
-						else if( can_use0 )
-						{
-							next_operation= u32( energy_loss[0] );
-							perform_energy_loss_operation_transition= true;
-						}
-						else if( can_use1 )
-						{
-							next_operation= u32( energy_loss[1] );
-							perform_energy_loss_operation_transition= true;
+							if( can_use0 & can_use1 )
+							{
+								next_operation= u32( energy_loss[ game_state.random.Next() & 1u ] );
+								perform_energy_loss_operation_transition= true;
+							}
+							else if( can_use0 )
+							{
+								next_operation= u32( energy_loss[0] );
+								perform_energy_loss_operation_transition= true;
+							}
+							else if( can_use1 )
+							{
+								next_operation= u32( energy_loss[1] );
+								perform_energy_loss_operation_transition= true;
+							}
 						}
 					}
 
 					if( perform_energy_loss_operation_transition & entity_description.standard_sounds != 0u )
 					{
-						// Investigations have shown, that damage sounds are coupled with "energy_loss" events.
+						// Investigations have shown, that damage sounds are coupled with "energy_loss"-based state transitions.
 						EmitEntityRandomDamageSound(
 							game_global_data.sounds_description.deref(), game_state.random, entity.sound_source_slots );
 					}
@@ -2440,7 +2442,7 @@ fn ProcessEntityLogicStep(
 								.alarmed= false,
 								.alarmed_by_seeing_player= false,
 								.player_is_in_sight= false,
-								.lost_energy_in_current_operation= false,
+								.lost_energy_in_current_step= false,
 								.animation_frame= 0u, // Set exact frame later.
 								.directional_animation_frame= 0u, // Set exact frame later.
 								.velocity_z= 0.0f,
@@ -2544,7 +2546,7 @@ fn ProcessEntityLogicStep(
 			{
 				entity.current_operation= next_operation;
 				entity.num_steps_since_operation_start= 0u;
-				entity.lost_energy_in_current_operation= false;
+				entity.lost_energy_in_current_step= false;
 
 				// Emit a sound if switching to an operation having it.
 				if_var( &sound : entity_description.operations[ size_type( entity.current_operation ) ].sound )
@@ -2606,6 +2608,9 @@ fn ProcessEntityLogicStep(
 	// Increase step counter after doing any other logic.
 	// It's needed in order to make results (like animation frame) of step #0 observable.
 	++entity.num_steps_since_operation_start;
+
+	// Reset "damaged" flag.
+	entity.lost_energy_in_current_step= false;
 
 	// Update entity navigation info if necessary.
 	if( !entity_navigation_state_opt.empty() &&
@@ -3644,7 +3649,7 @@ fn DamageEntity( EntityState &mut entity, u32 damage )
 	{
 		// TODO - investigate whether enemies have armor.
 		entity.energy-= ust::min( damage, entity.energy );
-		entity.lost_energy_in_current_operation= true;
+		entity.lost_energy_in_current_step= true;
 
 		// Alarm enemies being hit.
 		entity.alarmed= true;
