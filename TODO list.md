@@ -32,7 +32,6 @@ Gameplay investigation:
 * Investigate how enemies spot the player - their field of view, view distance, spot chance, etc.
 * Investigate what some unknown fileds of entity description format mean, especially ones which affect state transitions.
 * Investigate how different entity parameters affect their behavior.
-* Investigate what "BUTLA_TLENU" is.
 * Investigate misfire behavior.
 * Investigate whether enemies have armor.
 * Investigate where maximum amount of current armor (not inventory armor) is specified.
