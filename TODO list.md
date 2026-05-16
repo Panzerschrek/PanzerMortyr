@@ -37,7 +37,6 @@ Gameplay investigation:
 * Investigate whether enemies have armor.
 * Investigate where maximum amount of current armor (not inventory armor) is specified.
 * Investigate whether weapon amplifier is ever used in the original game.
-* Investigate whether silencer is ever used in the original game.
 * Investigate whether super armor is ever used in the original game.
 * Investigate how the ability for entities to be covered with blood is stored.
 * Investigate whether armor absorbs flame damage.
