@@ -100,7 +100,6 @@ PanzerMortyr game logic:
 * Implement misfire - sometimes enemies don't shoot, even if shooting animation is playing.
 * Ensure projectiles speed is correct (isn't too small or too big).
 * Consider storing a bounding box of the current attack target of an entity in the entity struture.
-* Don't perform level transition if hasn't satifsy transition requirements necessary for some levels - like killing a boss or collecting all necessary items.
 * Handle properly game end - show end cinematic and credits after it.
 * Adjust rotation angles for grenade projectiles, so that they look nicely.
 * Tune granades exposion delay.
