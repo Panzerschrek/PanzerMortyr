@@ -2,7 +2,6 @@ This list contains things to be done.
 
 Map format investigation:
 
-* Investigate how surfaces with emissive flag work.
 * Investigate meaning of remaining fields of "ZvoxFogVolume" struct.
 * Investigate meaning of remaining fields of "ZvoxTriggerVolume" struct.
 * Investigate meaning of remaining fields of "ZpozEntityNavigationInfo" struct.
@@ -35,8 +34,6 @@ Gameplay investigation:
 * Investigate misfire behavior.
 * Investigate whether enemies have armor.
 * Investigate where maximum amount of current armor (not inventory armor) is specified.
-* Investigate whether weapon amplifier is ever used in the original game.
-* Investigate whether super armor is ever used in the original game.
 * Investigate how the ability for entities to be covered with blood is stored.
 * Investigate whether armor absorbs flame damage.
 * Investigate what kinds of entities are affected by gravity (what in an entity description turns gravity on and off).
@@ -70,6 +67,9 @@ PanzerMortyr game logic:
 * Implement logic elements specific for dog enemies.
 * Implement logic elements specific for gestapo enemies.
 * Implement logic specific for multiplayer entities.
+* Implement weapon amplifier (multiplayer-only power-up).
+* Implement omni protection (multiplayer-only power-up).
+* Implement CTF flags (multiplayer).
 * Consider storing entities rotation using quaternions.
 * Consider extrapolating game logic one or two steps further, using extrapolated data to make movements and animations smooth (mix position, angle, animation) and correcting possible extrapolation errors.
 * Consider using fixed point arithmetic for game calculations in order to make game logic deterministic (across different machines) and thus allowing multiplayer mode with client-side game logic calculations.
@@ -84,7 +84,7 @@ PanzerMortyr game logic:
 * Implement flame particles emitted by explosive decorations ("wybuch_benzyny"/"plomienie").
 * Spawn bullet holes on walls, including holes attached to dynamic (movable) clusters.
 * Leave blood makrs on walls.
-* Leave footsteps where they should be.
+* Leave footstep decals where they should be.
 * Implement remaining projectile hit effects (blood).
 * Rework code doing first person weapon idle/walking animations. Consider adding states where no animation is played at all.
 * Implement weapon switching in case of out of ammo.
@@ -98,21 +98,23 @@ PanzerMortyr game logic:
 * Implement misfire - sometimes enemies don't shoot, even if shooting animation is playing.
 * Ensure projectiles speed is correct (isn't too small or too big).
 * Consider storing a bounding box of the current attack target of an entity in the entity struture.
-* Handle properly game end - show end cinematic and credits after it.
+* Handle properly game ending - show the ending cinematic and credits after it.
 * Adjust rotation angles for grenade projectiles, so that they look nicely.
 * Tune granades exposion delay.
 * Tune projectiles maximum age.
 * Implement behavior specific for the mind control weapon - with enemies attacking their allies.
-* Perform proper player to entity visibility check while doing entity state transition based on "w_zasiegu_widocznosci" property.
+* Consider performing proper player to entity visibility check while doing entity state transition based on "w_zasiegu_widocznosci" property.
 * Make sure muzzle flashes are drawn as close to the original game as possible (their position is correct).
-* Consider disabling all or at least some weapons of the player if weapon shot start position is in water or other liquid.
+* Consider disabling all or at least some weapons of the player if weapon shot start position is in water or other liquid. The original game allow shooting in water, but PanzerMortyr shouldn't allow this.
 * Consider extinguishing damaging flames on entities located inside liquids.
+* Consider despawning flamethrower projectiles in liquids.
 * Consider reducing brightness of Volkssturm smoking lights - they are way to bright.
-* Perform camera rotation upon player's death as the original game does. It seems to be full circle azimuth rotation and a rotation to some fixed elevation.
+* Perform camera rotation upon player's death as the original game does. It seems to be a full circle azimuth rotation and a rotation to some fixed elevation.
 * Consider disabling burning effect for non-enemy entities. It doesn't look well for things made of iron or other non-burnable materials.
 * Implement some sort of collision avoidance for enemies - to fix cases where enemies block each other in their movement. Maybe use global navigation graph for this and mark occupied edges or nodes.
 * Consider optimizing global navigation graph calculation even more - to reduce map loading time.
 * Consider not creating edges in global navigation graph requiring jumping down too deep (to avoid fall damage).
+* Avoid creating global navigation graph nodes located in liquids, but allow them in shallow water (but not acid or lava).
 
 PanzerMortyr rendering:
 
@@ -146,7 +148,6 @@ PanzerMortyr menus and HUD:
 * Implement video modes menu.
 * Implement key bindings menu.
 * Allow changing HUD position via settings menu.
-* Allow changing crosshair via settings menu.
 * Implement some stub page for parental lock menu.
 * Make advanced options menu functinal.
 * Extend existing setting menus/add new ones for extra options specific for PanzerMortyr.
