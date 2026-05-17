@@ -9,6 +9,7 @@ import "billboards.iu"
 import "breaking_glass.iu"
 import "caustics.iu"
 import "cluster_utils.iu"
+import "decals.iu"
 import "fog.iu"
 import "gl_functions.iu"
 import "image_loading.iu"
@@ -147,6 +148,19 @@ fn WorldDrawer::constructor(
 					c_max_semitransparent_polygon_indices * typeinfo</u16/>.size_of ),
 			.max_indices= c_max_semitransparent_polygon_indices,
 		},
+		decal_polygons_buffer_
+		{
+			.vertex_buffer=
+				BufferObject::CreateUninitializedDynamicDrawBuffer(
+					GLenum( GL_ARRAY_BUFFER ),
+					c_max_decal_polygon_vertices * typeinfo</MapVertex/>.size_of ),
+			.max_vertices= c_max_decal_polygon_vertices,
+			.index_buffer=
+				BufferObject::CreateUninitializedDynamicDrawBuffer(
+					GLenum( GL_ELEMENT_ARRAY_BUFFER ),
+					c_max_decal_polygon_indices * typeinfo</u16/>.size_of ),
+			.max_indices= c_max_decal_polygon_indices,
+		},
 		test_primitive_vertex_buffer_object_=
 			BufferObject::CreateUninitializedDynamicDrawBuffer(
 				GLenum( GL_ARRAY_BUFFER ),
@@ -162,6 +176,9 @@ fn WorldDrawer::constructor(
 
 	PrepareVertexArrayObjectWithMapVertexFormat(
 		semitransparent_polygons_buffer_.vertex_array_object, semitransparent_polygons_buffer_.vertex_buffer );
+
+	PrepareVertexArrayObjectWithMapVertexFormat(
+		decal_polygons_buffer_.vertex_array_object, decal_polygons_buffer_.vertex_buffer );
 
 	test_primitive_vertex_array_object_.Bind();
 	test_primitive_vertex_buffer_object_.Bind();
@@ -542,6 +559,10 @@ fn WorldDrawer::DrawPartial(
 
 	drawing_stats.num_visible_breakable_triangles+= u32( breakable_polygons_buffer_.indices.size() ) / 3u;
 
+	ResetDynamicPolygonsBuffer( decal_polygons_buffer_ );
+	CreateDecalPolygons( drawing_info.decals, decal_polygons_buffer_.vertices, decal_polygons_buffer_.indices );
+	UploadDynamicPolygonsBuffer( decal_polygons_buffer_ );
+
 	var bool caustics_enabled= settings_.lock_imut().deref().r_caustics_enabled;
 	var bool draw_water_clusters_as_normal= !caustics_enabled;
 
@@ -551,6 +572,7 @@ fn WorldDrawer::DrawPartial(
 		drawing_info.dynamic_cluster_objects,
 		drawing_info.highligted_cluster_indices,
 		breakable_polygons_buffer_,
+		decal_polygons_buffer_,
 		map_shader_,
 		camera_matrices.view_matrix,
 		draw_water_clusters_as_normal,
@@ -1887,6 +1909,7 @@ fn DrawMapPolygons(
 	ust::array_view_imut</WorldDrawingInfo::DynamicClusterObject/> dynamic_cluster_objects,
 	ust::array_view_imut</u32/> highlighted_cluster_indices,
 	DynamicPolygonsBuffer& breakable_polygons_buffer,
+	DynamicPolygonsBuffer& decal_polygons_buffer,
 	ShaderProgram &mut shader,
 	Mat4f& view_matrix,
 	bool draw_water_clusters_as_normal,
@@ -2030,6 +2053,17 @@ fn DrawMapPolygons(
 	unsafe( glDrawElements(
 		GLenum( GL_TRIANGLES ),
 		GLsizei( ust::min( breakable_polygons_buffer.indices.size(), breakable_polygons_buffer.max_indices ) ),
+		GLenum( GL_UNSIGNED_SHORT ),
+		ust::nullptr</byte8/>() ) );
+
+
+	// Draw decal polygons prepared prior to this function.
+	decal_polygons_buffer.vertex_array_object.Bind();
+	decal_polygons_buffer.index_buffer.Bind();
+
+	unsafe( glDrawElements(
+		GLenum( GL_TRIANGLES ),
+		GLsizei( ust::min( decal_polygons_buffer.indices.size(), decal_polygons_buffer.max_indices ) ),
 		GLenum( GL_UNSIGNED_SHORT ),
 		ust::nullptr</byte8/>() ) );
 }
@@ -3727,6 +3761,9 @@ var size_type c_max_breakable_polygon_indices= c_max_breakable_polygon_vertices 
 // We require so many, since we can have a lot of glass shards.
 var size_type c_max_semitransparent_polygon_vertices= 16384s;
 var size_type c_max_semitransparent_polygon_indices= c_max_semitransparent_polygon_vertices * 3s / 2s;
+
+var size_type c_max_decal_polygon_vertices= 1024s;
+var size_type c_max_decal_polygon_indices= c_max_decal_polygon_vertices * 3s / 2s;
 
 var GLState g_buffer_clear_gl_state
 {
