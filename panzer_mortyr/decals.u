@@ -8,20 +8,26 @@ namespace PM
 
 fn CreateDecalPolygons(
 	ust::array_view_imut</WorldDrawingInfo::Decal/> decals,
+	ust::array_view_imut</ZvoxCluster/> clusters,
 	ust::array_view_imut</ZmapQuad/> quads,
 	ust::vector</MapVertex/> &mut out_vertices,
 	ust::vector</u16/> &mut out_indices )
 {
+	var [ DecalPolygonVertex, c_max_decal_polygon_vertices ] mut decal_vertices[ Vec3f::MakeZero() ... ];
+
 	foreach( &decal : decals )
 	{
-		if( size_type( decal.quad_index ) >= quads.size() )
+		if( size_type( decal.quad_index ) >= quads.size() || size_type( decal.cluster_index ) >= clusters.size() )
 		{
 			continue;
 		}
 
+		var ZvoxCluster& cluster= clusters[ size_type( decal.cluster_index ) ];
+		var ZmapQuad& quad= quads[ size_type( decal.quad_index ) ];
+
 		// Rotate the decal so it lies in the plane of its parent quad.
 
-		var Vec3f quad_normal= CalculateQuadNormal( quads[ size_type( decal.quad_index ) ] );
+		var Vec3f quad_normal= CalculateQuadNormal( quad );
 
 		// TODO - avoid calculating angles here, calculate matrices directly.
 		var f32 azimuth= ust::atan2( quad_normal.x, -quad_normal.y );
@@ -29,85 +35,74 @@ fn CreateDecalPolygons(
 
 		var Mat4f rotation_matrix= Mat4f::MakeRotationX( elevation ) * Mat4f::MakeRotationZ( azimuth );
 
-		var f32 half_size= 8.0f;
+		// Take quad as base for decal polygon.
+		for( auto mut i= 0s; i < 4s; ++i )
+		{
+			auto& in_vertex= quad.vertices[i];
 
-		var [ Vec3f, 2 ] basis_vecs
-		[
-			Vec3f( 1.0f, 0.0f, 0.0f ) * rotation_matrix,
-			Vec3f( 0.0f, 1.0f, 0.0f ) * rotation_matrix,
-		];
+			decal_vertices[i]=
+				Vec3f(
+					f32( i32( in_vertex[0] ) + i32( cluster.c.center[0] ) ),
+					f32( i32( in_vertex[1] ) + i32( cluster.c.center[1] ) ),
+					f32( i32( in_vertex[2] ) + i32( cluster.c.center[2] ) ) );
+		}
 
-		var Vec3f decal_corner= decal.position - ( basis_vecs[0] + basis_vecs[1] ) * half_size;
+		var size_type num_decal_vertices= 4s;
 
-		var [ Planef, 2 ] tc_planes
-		[
-			Planef::CreateFromNormalAndPoint( basis_vecs[0] / ( half_size * 4.0f ), decal_corner ),
-			Planef::CreateFromNormalAndPoint( basis_vecs[1] / ( half_size * 4.0f ), decal_corner ),
-		];
-
-		var [ Vec3f, 4 ] vertex_positions
-		[
-			decal.position + ( - basis_vecs[0] - basis_vecs[1] ) * half_size,
-			decal.position + (   basis_vecs[0] - basis_vecs[1] ) * half_size,
-			decal.position + ( - basis_vecs[0] + basis_vecs[1] ) * half_size,
-			decal.position + (   basis_vecs[0] + basis_vecs[1] ) * half_size,
-		];
-
-		var [ Vec2f, 4 ] tex_coords
-		[
-			( tc_planes[0].GetDistanceForPoint( vertex_positions[0] ), tc_planes[1].GetDistanceForPoint( vertex_positions[0] ) ),
-			( tc_planes[0].GetDistanceForPoint( vertex_positions[1] ), tc_planes[1].GetDistanceForPoint( vertex_positions[1] ) ),
-			( tc_planes[0].GetDistanceForPoint( vertex_positions[2] ), tc_planes[1].GetDistanceForPoint( vertex_positions[2] ) ),
-			( tc_planes[0].GetDistanceForPoint( vertex_positions[3] ), tc_planes[1].GetDistanceForPoint( vertex_positions[3] ) ),
-		];
+		// TODO - clip decal quad using decal planes.
 
 		var size_type base_vertex= out_vertices.size();
 
-		var f32 texture_layer= 153.0f;
+		{
+			var f32 texture_layer= 153.0f; // TODO - select texture layer based on decal type.
 
-		out_vertices.push_back(
-			MapVertex
+			var f32 half_size= 8.0f;
+
+			var [ Vec3f, 2 ] basis_vecs
+			[
+				Vec3f( 1.0f, 0.0f, 0.0f ) * rotation_matrix,
+				Vec3f( 0.0f, 1.0f, 0.0f ) * rotation_matrix,
+			];
+
+			var Vec3f decal_corner= decal.position - ( basis_vecs[0] + basis_vecs[1] ) * half_size;
+
+			var [ Planef, 2 ] tc_planes
+			[
+				Planef::CreateFromNormalAndPoint( basis_vecs[0] / ( half_size * 4.0f ), decal_corner ),
+				Planef::CreateFromNormalAndPoint( basis_vecs[1] / ( half_size * 4.0f ), decal_corner ),
+			];
+
+			for( auto mut i= 0s; i < num_decal_vertices; ++i )
 			{
-				.position[ vertex_positions[0].x, vertex_positions[0].y, vertex_positions[0].z ],
-				.tex_coordinates[ tex_coords[0].x, tex_coords[0].y, texture_layer ],
-				.light[ 255u8 ... ],
-				.fog_params= zero_init,
-			} );
+				var DecalPolygonVertex& decal_vertex= decal_vertices[i];
 
-		out_vertices.push_back(
-			MapVertex
-			{
-				.position[ vertex_positions[1].x, vertex_positions[1].y, vertex_positions[1].z ],
-				.tex_coordinates[ tex_coords[1].x, tex_coords[1].y, texture_layer ],
-				.light[ 255u8 ... ],
-				.fog_params= zero_init,
-			} );
+				out_vertices.push_back(
+					MapVertex
+					{
+						.position[ decal_vertex.x, decal_vertex.y, decal_vertex.z ],
+						.tex_coordinates
+						[
+							tc_planes[0].GetDistanceForPoint( decal_vertex ),
+							tc_planes[1].GetDistanceForPoint( decal_vertex ),
+							texture_layer
+						],
+						.light[ 255u8 ... ], // TODO - set proper light.
+						.fog_params= zero_init,
+					} );
+			}
+		}
 
-		out_vertices.push_back(
-			MapVertex
-			{
-				.position[ vertex_positions[2].x, vertex_positions[2].y, vertex_positions[2].z ],
-				.tex_coordinates[ tex_coords[2].x, tex_coords[2].y, texture_layer ],
-				.light[ 255u8 ... ],
-				.fog_params= zero_init,
-			} );
-
-		out_vertices.push_back(
-			MapVertex
-			{
-				.position[ vertex_positions[3].x, vertex_positions[3].y, vertex_positions[3].z ],
-				.tex_coordinates[ tex_coords[3].x, tex_coords[3].y, texture_layer ],
-				.light[ 255u8 ... ],
-				.fog_params= zero_init,
-			} );
-
-		out_indices.push_back( u16( base_vertex + 0s ) );
-		out_indices.push_back( u16( base_vertex + 1s ) );
-		out_indices.push_back( u16( base_vertex + 2s ) );
-		out_indices.push_back( u16( base_vertex + 3s ) );
-		out_indices.push_back( u16( base_vertex + 2s ) );
-		out_indices.push_back( u16( base_vertex + 1s ) );
+		for( auto mut i= 2s; i < num_decal_vertices; ++i )
+		{
+			out_indices.push_back( u16( base_vertex ) );
+			out_indices.push_back( u16( base_vertex + i - 1s ) );
+			out_indices.push_back( u16( base_vertex + i - 0s ) );
+		}
 	}
 }
+
+type DecalPolygonVertex= Vec3f;
+
+var size_type c_max_decal_polygon_vertices= 12s;
 
 } // namespace PM
