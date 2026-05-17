@@ -15,6 +15,8 @@ fn CreateDecalPolygons(
 	ust::vector</MapVertex/> &mut out_vertices,
 	ust::vector</u16/> &mut out_indices )
 {
+	var f32 c_min_decal_surface_angle_cos= 0.5f;
+
 	var f32 decal_half_size= 8.0f;
 
 	var f32 decal_radius= ust::sqrt( 3.0f ) * decal_half_size;
@@ -32,13 +34,15 @@ fn CreateDecalPolygons(
 
 		// Rotate the decal so it lies in the plane of its parent quad.
 
-		var Vec3f quad_normal= CalculateQuadNormal( quads[ size_type( decal.quad_index ) ] );
+		var Vec3f source_quad_normal= CalculateQuadNormal( quads[ size_type( decal.quad_index ) ] );
+		var f32 source_quad_normal_length= source_quad_normal.Length();
 
 		// TODO - avoid calculating angles here, calculate matrices directly.
-		var f32 azimuth= ust::atan2( quad_normal.x, -quad_normal.y );
-		var f32 elevation= ust::atan2( quad_normal.xy().Length(), quad_normal.z );
+		var f32 azimuth= ust::atan2( source_quad_normal.x, -source_quad_normal.y );
+		var f32 elevation= ust::atan2( source_quad_normal.xy().Length(), source_quad_normal.z );
 
 		var Mat4f rotation_matrix= Mat4f::MakeRotationX( elevation ) * Mat4f::MakeRotationZ( azimuth );
+
 
 		var [ Vec3f, 2 ] basis_vecs
 		[
@@ -78,6 +82,15 @@ fn CreateDecalPolygons(
 			{
 				var ZvoxCluster& cluster= clusters[ packed_quad_index.GetClusterIndex() ];
 				var ZmapQuad& quad= quads[ packed_quad_index.GetQuadIndex() ];
+
+				var Vec3f quad_normal= CalculateQuadNormal( quad );
+
+				// Ensure this quad is facing roughly the same direction as the source quad.
+				if( source_quad_normal.Dot( quad_normal ) <
+					c_min_decal_surface_angle_cos * source_quad_normal_length * quad_normal.Length() )
+				{
+					return;
+				}
 
 				// Take quad geometry as a base for the decal polygon.
 				for( auto mut i= 0s; i < 4s; ++i )
