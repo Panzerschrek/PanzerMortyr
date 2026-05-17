@@ -17,7 +17,7 @@ fn CreateDecalPolygons(
 		mut decal_vertices[ Vec3f::MakeZero() ... ],
 		mut decal_vertices_clipped[ Vec3f::MakeZero() ... ];
 
-	foreach( &decal : decals )
+	foreach( &decal : decals ) label decals_loop
 	{
 		if( size_type( decal.quad_index ) >= quads.size() || size_type( decal.cluster_index ) >= clusters.size() )
 		{
@@ -37,7 +37,7 @@ fn CreateDecalPolygons(
 
 		var Mat4f rotation_matrix= Mat4f::MakeRotationX( elevation ) * Mat4f::MakeRotationZ( azimuth );
 
-		// Take quad as base for decal polygon.
+		// Take quad geometry as a base for the decal polygon.
 		for( auto mut i= 0s; i < 4s; ++i )
 		{
 			auto& in_vertex= quad.vertices[i];
@@ -59,22 +59,43 @@ fn CreateDecalPolygons(
 
 		var f32 half_size= 8.0f;
 
-		var Vec3f decal_corner= decal.position - ( basis_vecs[0] + basis_vecs[1] ) * half_size;
+		var Vec3f corner_vector= ( basis_vecs[0] + basis_vecs[1] ) * half_size;
+		var [ Vec3f, 2 ] decal_corners[ decal.position - corner_vector, decal.position + corner_vector ];
 
-		var Planef clip_plane= Planef::CreateFromNormalAndPoint( basis_vecs[0], decal_corner );
+		var [ Planef, 4 ] clip_planes
+		[
+			// Decal side clip planes.
+			Planef::CreateFromNormalAndPoint(  basis_vecs[0], decal_corners[0] ),
+			Planef::CreateFromNormalAndPoint(  basis_vecs[1], decal_corners[0] ),
+			Planef::CreateFromNormalAndPoint( -basis_vecs[0], decal_corners[1] ),
+			Planef::CreateFromNormalAndPoint( -basis_vecs[1], decal_corners[1] ),
+		];
 
-		num_decal_vertices=
-			ClipPolygon(
-				clip_plane,
-				ust::array_view_imut</ DecalPolygonVertex />( decal_vertices ).subrange_end( num_decal_vertices ),
-				decal_vertices_clipped );
-
-		if( num_decal_vertices < 3s )
+		// Clip the decal's polygon using decal planes. Perform clipping in pairs.
+		for( auto mut i= 0s; i < 4s; i+= 2s )
 		{
-			continue;
-		}
+			num_decal_vertices=
+				ClipPolygon(
+					clip_planes[ i + 0s ],
+					ust::array_view_imut</ DecalPolygonVertex />( decal_vertices ).subrange_end( num_decal_vertices ),
+					decal_vertices_clipped );
 
-		// TODO - clip decal quad using decal planes.
+			if( num_decal_vertices < 3s )
+			{
+				continue label decals_loop;
+			}
+
+			num_decal_vertices=
+				ClipPolygon(
+					clip_planes[ i + 1s ],
+					ust::array_view_imut</ DecalPolygonVertex />( decal_vertices_clipped ).subrange_end( num_decal_vertices ),
+					decal_vertices );
+
+			if( num_decal_vertices < 3s )
+			{
+				continue label decals_loop;
+			}
+		}
 
 		var size_type base_vertex= out_vertices.size();
 
@@ -83,13 +104,13 @@ fn CreateDecalPolygons(
 
 			var [ Planef, 2 ] tc_planes
 			[
-				Planef::CreateFromNormalAndPoint( basis_vecs[0] / ( half_size * 4.0f ), decal_corner ),
-				Planef::CreateFromNormalAndPoint( basis_vecs[1] / ( half_size * 4.0f ), decal_corner ),
+				Planef::CreateFromNormalAndPoint( basis_vecs[0] / ( half_size * 4.0f ), decal_corners[0] ),
+				Planef::CreateFromNormalAndPoint( basis_vecs[1] / ( half_size * 4.0f ), decal_corners[0] ),
 			];
 
 			for( auto mut i= 0s; i < num_decal_vertices; ++i )
 			{
-				var DecalPolygonVertex& decal_vertex= decal_vertices_clipped[i];
+				var DecalPolygonVertex& decal_vertex= decal_vertices[i];
 
 				out_vertices.push_back(
 					MapVertex
