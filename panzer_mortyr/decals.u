@@ -24,8 +24,8 @@ fn CreateDecalPolygons(
 	var f32 decal_radius= ust::sqrt( 3.0f ) * decal_half_size;
 
 	var [ DecalPolygonVertex, c_max_decal_polygon_vertices ]
-		mut decal_vertices[ Vec3f::MakeZero() ... ],
-		mut decal_vertices_clipped[ Vec3f::MakeZero() ... ];
+		mut decal_vertices[ { .position= Vec3f::MakeZero(), .light= Vec3f::MakeZero() } ... ],
+		mut decal_vertices_clipped[ { .position= Vec3f::MakeZero(), .light= Vec3f::MakeZero() } ... ];
 
 	foreach( &decal : decals )
 	{
@@ -149,11 +149,17 @@ fn CreateDecalPolygons(
 					{
 						var size_type quad_vertex_index( u32( polygon_data[ 2s + polygon_vertex_index ] ) );
 
-						decal_vertices[polygon_vertex_index]=
-							Vec3f(
-								f32( cluster.c.center[0] ) + f32( vertex_data[ quad_vertex_index * 6s + 0s ] ),
-								f32( cluster.c.center[1] ) + f32( vertex_data[ quad_vertex_index * 6s + 1s ] ),
-								f32( cluster.c.center[2] ) + f32( vertex_data[ quad_vertex_index * 6s + 2s ] ) );
+						var u32 c( vertex_data[ quad_vertex_index * 6s + 5s ] );
+
+						decal_vertices[ polygon_vertex_index ]=
+							DecalPolygonVertex
+							{
+								.position(
+									f32( cluster.c.center[0] ) + f32( vertex_data[ quad_vertex_index * 6s + 0s ] ),
+									f32( cluster.c.center[1] ) + f32( vertex_data[ quad_vertex_index * 6s + 1s ] ),
+									f32( cluster.c.center[2] ) + f32( vertex_data[ quad_vertex_index * 6s + 2s ] ) ),
+								.light( f32( ( c >> 16 ) & 255u ), f32( ( c >> 8 ) & 255u ), f32( c & 255u ) ),
+							};
 					}
 
 					var size_type mut num_decal_vertices= polygon_vertex_count;
@@ -193,14 +199,20 @@ fn CreateDecalPolygons(
 						out_vertices.push_back(
 							MapVertex
 							{
-								.position[ decal_vertex.x, decal_vertex.y, decal_vertex.z ],
+								.position[ decal_vertex.position.x, decal_vertex.position.y, decal_vertex.position.z ],
 								.tex_coordinates
 								[
-									tc_planes[0].GetDistanceForPoint( decal_vertex ),
-									tc_planes[1].GetDistanceForPoint( decal_vertex ),
+									tc_planes[0].GetDistanceForPoint( decal_vertex.position ),
+									tc_planes[1].GetDistanceForPoint( decal_vertex.position ),
 									texture_layer
 								],
-								.light[ 255u8 ... ], // TODO - set proper light.
+								.light
+								[
+									( ust::max( 0.0f, ust::min( decal_vertex.light.x, 255.0f ) ) ),
+									( ust::max( 0.0f, ust::min( decal_vertex.light.y, 255.0f ) ) ),
+									( ust::max( 0.0f, ust::min( decal_vertex.light.z, 255.0f ) ) ),
+									255u8,
+								],
 								.fog_params= zero_init,
 							} );
 					}
@@ -216,7 +228,11 @@ fn CreateDecalPolygons(
 	}
 }
 
-type DecalPolygonVertex= Vec3f;
+struct DecalPolygonVertex
+{
+	Vec3f position;
+	Vec3f light;
+}
 
 var size_type c_max_decal_polygon_vertices= 12s;
 
@@ -226,12 +242,12 @@ fn ClipPolygon(
 	[ DecalPolygonVertex, c_max_decal_polygon_vertices ] &mut out_vertices ) : size_type
 {
 	var DecalPolygonVertex mut prev_v= in_vertices.back();
-	var f32 mut prev_dist= plane.GetDistanceForPoint( prev_v );
+	var f32 mut prev_dist= plane.GetDistanceForPoint( prev_v.position );
 	var size_type mut out_vertex_count= 0s;
 
 	foreach( &v : in_vertices )
 	{
-		var f32 dist= plane.GetDistanceForPoint( v );
+		var f32 dist= plane.GetDistanceForPoint( v.position );
 
 		if( dist > 0.0f )
 		{
@@ -277,14 +293,19 @@ fn ClipPolygon(
 	return out_vertex_count;
 }
 
-fn GetLinePlaneIntersection( Vec3f& v0, Vec3f& v1, Planef& plane ) : Vec3f
+fn GetLinePlaneIntersection( DecalPolygonVertex& v0, DecalPolygonVertex& v1, Planef& plane ) : DecalPolygonVertex
 {
-	var f32 dist0= plane.GetDistanceForPoint( v0 );
-	var f32 dist1= plane.GetDistanceForPoint( v1 );
+	var f32 dist0= plane.GetDistanceForPoint( v0.position );
+	var f32 dist1= plane.GetDistanceForPoint( v1.position );
 	var f32 dist_sum= dist1 - dist0;
 	var f32 k0= dist0 / dist_sum;
 	var f32 k1= dist1 / dist_sum;
-	return v0 * k1 - v1 * k0;
+	return DecalPolygonVertex
+	{
+
+		.position= v0.position * k1 - v1.position * k0,
+		.light= v0.light * k1 - v1.light * k0,
+	};
 }
 
 } // namespace PM
