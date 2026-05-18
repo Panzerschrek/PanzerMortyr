@@ -10,7 +10,7 @@ out vec4 color;
 
 void main()
 {
-	vec4 texture_color= texture( fu_texture, vec3( f_texture_coordinates, f_texture_layer ) );
+	vec3 texture_color= texture( fu_texture, vec3( f_texture_coordinates, f_texture_layer ) ).rgb;
 
-	color= vec4( texture_color.rgb * f_light, texture_color.a );
+	color= vec4( texture_color * f_light, 1.0 );
 }
