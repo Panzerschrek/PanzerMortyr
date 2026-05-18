@@ -62,11 +62,14 @@ fn WorldDrawer::constructor(
 			embed</char8/>( "shaders/map.vert.glsl" ), // Use the same vertex shader as for map polygons.
 			embed</char8/>( "shaders/map_mirror.frag.glsl" ) ),
 		map_caustics_shader_(
-			embed</char8/>( "shaders/map.vert.glsl" ), // Use the same vertex shader as for map polygons
+			embed</char8/>( "shaders/map.vert.glsl" ), // Use the same vertex shader as for map polygons.
 			embed</char8/>( "shaders/map_caustics.frag.glsl" ) ),
 		map_dynamic_light_shader_(
 			embed</char8/>( "shaders/map_dynamic_light.vert.glsl" ),
 			embed</char8/>( "shaders/map_dynamic_light.frag.glsl" ) ),
+		decals_shader_(
+			embed</char8/>( "shaders/map.vert.glsl" ), // Use the same vertex shader as for map polygons.
+			embed</char8/>( "shaders/decals.frag.glsl" ) ),
 		model_shader_(
 			embed</char8/>( "shaders/model.vert.glsl" ),
 			embed</char8/>( "shaders/model.frag.glsl" ) ),
@@ -582,7 +585,6 @@ fn WorldDrawer::DrawPartial(
 		drawing_info.dynamic_cluster_objects,
 		drawing_info.highligted_cluster_indices,
 		breakable_polygons_buffer_,
-		decal_polygons_buffer_,
 		map_shader_,
 		camera_matrices.view_matrix,
 		draw_water_clusters_as_normal,
@@ -604,6 +606,9 @@ fn WorldDrawer::DrawPartial(
 			mirrored,
 			drawing_stats );
 	}
+
+	DrawDecalPolygons(
+		map_data, decal_polygons_buffer_, decals_shader_, camera_matrices.view_matrix, global_light_params, mirrored );
 
 	var bool dynamic_lights_enabled= settings_.lock_imut().deref().r_dynamic_lights_enabled;
 
@@ -1938,7 +1943,6 @@ fn DrawMapPolygons(
 	ust::array_view_imut</WorldDrawingInfo::DynamicClusterObject/> dynamic_cluster_objects,
 	ust::array_view_imut</u32/> highlighted_cluster_indices,
 	DynamicPolygonsBuffer& breakable_polygons_buffer,
-	DynamicPolygonsBuffer& decal_polygons_buffer,
 	ShaderProgram &mut shader,
 	Mat4f& view_matrix,
 	bool draw_water_clusters_as_normal,
@@ -2082,17 +2086,6 @@ fn DrawMapPolygons(
 	unsafe( glDrawElements(
 		GLenum( GL_TRIANGLES ),
 		GLsizei( ust::min( breakable_polygons_buffer.indices.size(), breakable_polygons_buffer.max_indices ) ),
-		GLenum( GL_UNSIGNED_SHORT ),
-		ust::nullptr</byte8/>() ) );
-
-
-	// Draw decal polygons prepared prior to this function.
-	decal_polygons_buffer.vertex_array_object.Bind();
-	decal_polygons_buffer.index_buffer.Bind();
-
-	unsafe( glDrawElements(
-		GLenum( GL_TRIANGLES ),
-		GLsizei( ust::min( decal_polygons_buffer.indices.size(), decal_polygons_buffer.max_indices ) ),
 		GLenum( GL_UNSIGNED_SHORT ),
 		ust::nullptr</byte8/>() ) );
 }
@@ -2414,6 +2407,46 @@ fn DrawDynamicPolygonsWithDynamicLights(
 			GLenum( GL_UNSIGNED_SHORT ),
 			ust::nullptr</byte8/>() ) );
 	}
+}
+
+fn DrawDecalPolygons(
+	MapDrawData& map_data,
+	DynamicPolygonsBuffer& decal_polygons_buffer,
+	ShaderProgram &mut shader,
+	Mat4f& view_matrix,
+	GlobalLightParams& global_light_params,
+	bool mirrored )
+{
+	if( mirrored )
+	{
+		SetGLState( GetMirroredGLState( g_map_drawing_gl_state ) );
+	}
+	else
+	{
+		SetGLState( g_map_drawing_gl_state );
+	}
+
+	var u32 texture_slot= 0u;
+
+	unsafe( glActiveTexture( GLenum( GL_TEXTURE0 ) + GLenum(texture_slot) ) );
+	map_data.map_textures_array.Bind();
+
+	shader.Bind();
+	shader.SetUniform( "vu_matrix", view_matrix );
+	shader.SetUniform( "fu_texture", texture_slot );
+
+	shader.SetUniform( "vu_light_add", Vec3f( global_light_params.light_add ) );
+	shader.SetUniform( "vu_light_scale", Vec3f( global_light_params.light_scale ) );
+
+	// Draw decal polygons prepared prior to this function.
+	decal_polygons_buffer.vertex_array_object.Bind();
+	decal_polygons_buffer.index_buffer.Bind();
+
+	unsafe( glDrawElements(
+		GLenum( GL_TRIANGLES ),
+		GLsizei( ust::min( decal_polygons_buffer.indices.size(), decal_polygons_buffer.max_indices ) ),
+		GLenum( GL_UNSIGNED_SHORT ),
+		ust::nullptr</byte8/>() ) );
 }
 
 fn ExecuteClusterMeshDrawing( GeometryBufferChunk& geometry_buffer_chunk )
@@ -3104,10 +3137,21 @@ fn LoadMapTextures(
 							- 1u
 							- ( subtile_y * subtile_size + y );
 
-						var [ u8, 4 ] pixel=
+						var [ u8, 4 ] mut pixel=
 							texture_32_image_data.pixels[ size_type(
 								src_x +
 								src_y * ( MaterialsDescription::c_texture_size * MaterialsDescription::c_texture_file_num_tiles_x ) ) ];
+
+						// Make black color to transparent.
+						var u8 almost_black= 4u8;
+						if( pixel[0] <= almost_black & pixel[1] <= almost_black & pixel[2] <= almost_black )
+						{
+							pixel[3]= 0u8;
+						}
+						else
+						{
+							pixel[3]= 255u8;
+						}
 
 						texture_data[ x + y * MaterialsDescription::c_texture_size ]= pixel;
 						texture_data[ ( x + subtile_size ) + y * MaterialsDescription::c_texture_size ]= pixel;
