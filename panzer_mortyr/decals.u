@@ -11,6 +11,7 @@ fn CreateDecalPolygons(
 	ust::array_view_imut</WorldDrawingInfo::Decal/> decals,
 	ust::array_view_imut</ZvoxCluster/> clusters,
 	ust::array_view_imut</ZmapQuad/> quads,
+	ZmapLamData& zmap_lam_data,
 	QuadsHierarchy& quads_hierarchy,
 	ust::vector</MapVertex/> &mut out_vertices,
 	ust::vector</u16/> &mut out_indices )
@@ -81,8 +82,10 @@ fn CreateDecalPolygons(
 			},
 			lambda[&]( PackedQuadIndex packed_quad_index )
 			{
+				var size_type quad_index= packed_quad_index.GetQuadIndex();
+
 				var ZvoxCluster& cluster= clusters[ packed_quad_index.GetClusterIndex() ];
-				var ZmapQuad& quad= quads[ packed_quad_index.GetQuadIndex() ];
+				var ZmapQuad& quad= quads[ quad_index ];
 
 				var Vec3f quad_normal= CalculateQuadNormal( quad );
 				var f32 quad_normal_length= quad_normal.Length();
@@ -106,72 +109,108 @@ fn CreateDecalPolygons(
 					return;
 				}
 
-				// Take quad geometry as a base for the decal polygon.
-				for( auto mut i= 0s; i < 4s; ++i )
+				if( quad_index >= zmap_lam_data.tessellated_quads.size() )
 				{
-					auto& in_vertex= quad.vertices[i];
-
-					decal_vertices[i]=
-						Vec3f(
-							f32( i32( in_vertex[0] ) + i32( cluster.c.center[0] ) ),
-							f32( i32( in_vertex[1] ) + i32( cluster.c.center[1] ) ),
-							f32( i32( in_vertex[2] ) + i32( cluster.c.center[2] ) ) );
+					return;
 				}
 
-				var size_type mut num_decal_vertices= 4s;
-
-				// Clip the decal's polygon using decal planes. Perform clipping in pairs.
-				for( auto mut i= 0s; i < 4s; i+= 2s )
+				var ZmapLamTesselaltedQuad& tessellated_quad= zmap_lam_data.tessellated_quads[ quad_index ];
+				if( tessellated_quad.vertex_count == 0u )
 				{
-					num_decal_vertices=
-						ClipPolygon(
-							clip_planes[ i + 0s ],
-							ust::array_view_imut</ DecalPolygonVertex />( decal_vertices ).subrange_end( num_decal_vertices ),
-							decal_vertices_clipped );
-
-					if( num_decal_vertices < 3s )
-					{
-						return;
-					}
-
-					num_decal_vertices=
-						ClipPolygon(
-							clip_planes[ i + 1s ],
-							ust::array_view_imut</ DecalPolygonVertex />( decal_vertices_clipped ).subrange_end( num_decal_vertices ),
-							decal_vertices );
-
-					if( num_decal_vertices < 3s )
-					{
-						return;
-					}
+					return;
 				}
 
-				var size_type base_vertex= out_vertices.size();
+				var size_type tessellated_vertex_count( tessellated_quad.vertex_count );
+				var size_type tessellatted_quad_data_offset( tessellated_quad.data_offset );
 
-				for( auto mut i= 0s; i < num_decal_vertices; ++i )
+				var ust::array_view_imut</byte32/> vertex_data=
+					zmap_lam_data.tessellated_quads_data.range().subrange(
+						tessellatted_quad_data_offset,
+						tessellatted_quad_data_offset + tessellated_vertex_count * 6s );
+
+				var size_type polygons_data_offset= tessellatted_quad_data_offset + tessellated_vertex_count * 6s;
+
+				var size_type polygon_count( u32( zmap_lam_data.tessellated_quads_data[ polygons_data_offset ] ) );
+
+				var ust::array_view_imut</byte32/> polygons_data=
+					zmap_lam_data.tessellated_quads_data.range().subrange(
+						polygons_data_offset + 2s,
+						polygons_data_offset + 2s + polygon_count * 8s );
+
+				for( auto mut polygon_index= 0s; polygon_index < polygon_count; ++polygon_index ) label quad_polygons
 				{
-					var DecalPolygonVertex& decal_vertex= decal_vertices[i];
+					var ust::array_view_imut</byte32/> polygon_data=
+						polygons_data.subrange( polygon_index * 8s, polygon_index * 8s + 8s );
 
-					out_vertices.push_back(
-						MapVertex
+					var size_type polygon_vertex_count( u32( polygon_data[0s] ) );
+
+					// Take geometry of a quad's subpolygon as a base for the decal polygon.
+					for( auto mut polygon_vertex_index= 0s; polygon_vertex_index < polygon_vertex_count; ++polygon_vertex_index )
+					{
+						var size_type quad_vertex_index( u32( polygon_data[ 2s + polygon_vertex_index ] ) );
+
+						decal_vertices[polygon_vertex_index]=
+							Vec3f(
+								f32( cluster.c.center[0] ) + f32( vertex_data[ quad_vertex_index * 6s + 0s ] ),
+								f32( cluster.c.center[1] ) + f32( vertex_data[ quad_vertex_index * 6s + 1s ] ),
+								f32( cluster.c.center[2] ) + f32( vertex_data[ quad_vertex_index * 6s + 2s ] ) );
+					}
+
+					var size_type mut num_decal_vertices= polygon_vertex_count;
+
+					// Clip the decal's polygon using decal planes. Perform clipping in pairs.
+					for( auto mut plane_index= 0s; plane_index < 4s; plane_index+= 2s )
+					{
+						num_decal_vertices=
+							ClipPolygon(
+								clip_planes[ plane_index + 0s ],
+								ust::array_view_imut</ DecalPolygonVertex />( decal_vertices ).subrange_end( num_decal_vertices ),
+								decal_vertices_clipped );
+
+						if( num_decal_vertices < 3s )
 						{
-							.position[ decal_vertex.x, decal_vertex.y, decal_vertex.z ],
-							.tex_coordinates
-							[
-								tc_planes[0].GetDistanceForPoint( decal_vertex ),
-								tc_planes[1].GetDistanceForPoint( decal_vertex ),
-								texture_layer
-							],
-							.light[ 255u8 ... ], // TODO - set proper light.
-							.fog_params= zero_init,
-						} );
-				}
+							continue label quad_polygons;
+						}
 
-				for( auto mut i= 2s; i < num_decal_vertices; ++i )
-				{
-					out_indices.push_back( u16( base_vertex ) );
-					out_indices.push_back( u16( base_vertex + i - 1s ) );
-					out_indices.push_back( u16( base_vertex + i - 0s ) );
+						num_decal_vertices=
+							ClipPolygon(
+								clip_planes[ plane_index + 1s ],
+								ust::array_view_imut</ DecalPolygonVertex />( decal_vertices_clipped ).subrange_end( num_decal_vertices ),
+								decal_vertices );
+
+						if( num_decal_vertices < 3s )
+						{
+							continue label quad_polygons;
+						}
+					}
+
+					var size_type base_vertex= out_vertices.size();
+
+					for( auto mut vertex_index= 0s; vertex_index < num_decal_vertices; ++vertex_index )
+					{
+						var DecalPolygonVertex& decal_vertex= decal_vertices[ vertex_index ];
+
+						out_vertices.push_back(
+							MapVertex
+							{
+								.position[ decal_vertex.x, decal_vertex.y, decal_vertex.z ],
+								.tex_coordinates
+								[
+									tc_planes[0].GetDistanceForPoint( decal_vertex ),
+									tc_planes[1].GetDistanceForPoint( decal_vertex ),
+									texture_layer
+								],
+								.light[ 255u8 ... ], // TODO - set proper light.
+								.fog_params= zero_init,
+							} );
+					}
+
+					for( auto mut triangle_index= 2s; triangle_index < num_decal_vertices; ++triangle_index )
+					{
+						out_indices.push_back( u16( base_vertex ) );
+						out_indices.push_back( u16( base_vertex + triangle_index - 1s ) );
+						out_indices.push_back( u16( base_vertex + triangle_index - 0s ) );
+					}
 				}
 			} );
 	}
