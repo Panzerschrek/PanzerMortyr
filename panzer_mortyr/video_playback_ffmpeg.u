@@ -106,6 +106,16 @@ fn PlayVideo( ConsoleOutPtr& console_out, ust::filesystem_path file_path )
 			return;
 		}
 
+		with( ret : avcodec_parameters_to_context( decoder_context, stream.codecpar ) )
+		{
+			if( ret != 0 )
+			{
+				ConsoleOutAddTextLine( console_out, ust::concat( "avcodec_parameters_to_context failed! Error: ", GetFFmpegError( ret ) ) );
+				avformat_close_input( $<( format_context ) );
+				return;
+			}
+		}
+
 		with( ret : avcodec_open2( decoder_context, decoder, ust::nullptr</ $(AVDictionary) />() ) )
 		{
 			if( ret != 0 )
@@ -115,6 +125,47 @@ fn PlayVideo( ConsoleOutPtr& console_out, ust::filesystem_path file_path )
 				return;
 			}
 		}
+
+		var $(AVPacket) mut packet= av_packet_alloc();
+		if( ust::is_nullptr( packet ) )
+		{
+			ConsoleOutAddTextLine( console_out, "Failed to alloc packet!" );
+			avformat_close_input( $<( format_context ) );
+			return;
+		}
+
+		var $(AVFrame) frame= av_frame_alloc();
+		if( ust::is_nullptr( frame ) )
+		{
+			ConsoleOutAddTextLine( console_out, "Failed to alloc frame!" );
+			avformat_close_input( $<( format_context ) );
+			return;
+		}
+
+		var size_type mut num_frames= 0s;
+		loop label frame_reading
+		{
+			if( av_read_frame( format_context, packet ) != 0 )
+			{
+				break;
+			}
+
+			if( $>(packet).stream_index == i32( video_stream_index ) )
+			{
+				if( avcodec_send_packet( decoder_context, packet ) < 0 )
+				{
+					ConsoleOutAddTextLine( console_out, "Failed to decode packet!" );
+					break;
+				}
+
+				while( avcodec_receive_frame( decoder_context, frame ) >= 0 )
+				{
+					++num_frames;
+				}
+			}
+		}
+
+		ConsoleOutAddTextLine( console_out, ust::concat( "Number of frames: ", ust::to_string8( num_frames ) ) );
 
 		/*
 		var $(AVCodecParserContext) parser_context= av_parser_init( i32( $>(decoder).id ) );
@@ -127,6 +178,7 @@ fn PlayVideo( ConsoleOutPtr& console_out, ust::filesystem_path file_path )
 		}
 		*/
 
+		av_packet_free( $<( packet ) );
 		avformat_close_input( $<( format_context ) );
 	}
 }
