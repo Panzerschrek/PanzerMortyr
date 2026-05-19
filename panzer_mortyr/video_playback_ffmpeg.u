@@ -14,20 +14,70 @@ fn PlayVideo( ConsoleOutPtr& console_out, ust::filesystem_path file_path )
 	var ust::string8 mut file_path_nt= ust::concat( file_path, "\0" );
 	unsafe
 	{
-		av_log_set_level( AV_LOG_TRACE );
+		av_log_set_level( AV_LOG_DEBUG );
 
-		var $(AVFormatContext) mut context= zero_init;
+		var $(AVFormatContext) mut format_context= zero_init;
 
-		var i32 avformat_open_input_ret=
+		with( ret :
 			avformat_open_input(
-				$<(context),
+				$<(format_context),
 				file_path_nt.data(),
 				ust::nullptr</AVInputFormat/>(),
-				ust::nullptr</ $(AVDictionary) />() );
-		if( avformat_open_input_ret != 0 )
+				ust::nullptr</ $(AVDictionary) />() ) )
 		{
-			ConsoleOutAddTextLine( console_out, ust::concat( "Failed to open a video! Error: ", GetFFmpegError( avformat_open_input_ret ) ) );
+			if( ret != 0 )
+			{
+				ConsoleOutAddTextLine( console_out, ust::concat( "Failed to open a video! Error: ", GetFFmpegError( ret ) ) );
+				return;
+			}
 		}
+
+		ConsoleOutAddTextLine( console_out, "Opened video input" );
+
+		with( ret : avformat_find_stream_info( format_context, ust::nullptr</ $(AVDictionary) />() ) )
+		{
+			if( ret != 0 )
+			{
+				ConsoleOutAddTextLine( console_out, ust::concat( "Failed to fomd stream info! Error: ", GetFFmpegError( ret ) ) );
+				avformat_close_input( $<( format_context ) );
+				return;
+			}
+		}
+
+		ConsoleOutAddTextLine( console_out, ust::concat( "Found steam info. Has ", ust::to_string8( $>(format_context).nb_streams ), " streams" ) );
+
+		var u32 mut video_stream_index= ~0u;
+		for( auto mut stream_index= 0u; stream_index < $>(format_context).nb_streams; ++stream_index )
+		{
+			if( $>( $>( $>( $>(format_context).streams + stream_index ) ).codecpar ).codec_type == AVMEDIA_TYPE_VIDEO )
+			{
+				video_stream_index= stream_index;
+				break;
+			}
+		}
+
+		if( video_stream_index == ~0u )
+		{
+			ConsoleOutAddTextLine( console_out, "Failed to get video stream" );
+			avformat_close_input( $<( format_context ) );
+			return;
+		}
+
+		ConsoleOutAddTextLine( console_out, ust::concat( "Video stream index is ", ust::to_string8( video_stream_index ) ) );
+
+		var AVStream &mut stream= $>( $>( $>(format_context).streams + video_stream_index ) );
+
+		var $(AVCodec) decoder= avcodec_find_decoder( $>( stream.codecpar ).codec_id );
+		if( ust::is_nullptr( decoder ) )
+		{
+			ConsoleOutAddTextLine( console_out, "Failed to find decoder!" );
+			avformat_close_input( $<( format_context ) );
+			return;
+		}
+
+		ConsoleOutAddTextLine( console_out, "Found a decoder" );
+
+		avformat_close_input( $<( format_context ) );
 	}
 }
 
