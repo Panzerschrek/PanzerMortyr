@@ -16,6 +16,7 @@ Improvements:
 * Models are always drawn in full quality.
 * Fog has higher quality - it's calculated per-pixel, not per-vertex. Only for semitransparent polygons it's calculated per-vertex (as in the original game).
 * Dynamic light is calculated per-pixel (for world geometry).
+* Decals aren't clipped by map quad borders where such clipping isn't necessary. They can be applied to multiple adjacent map quads.
 
 Fixed bugs:
 
@@ -24,6 +25,7 @@ Fixed bugs:
 * Near Z plane clipping for first person weapon models is fixed.
 * First person weapon models aren't ugly distorted while zooming.
 * Fog density isn't affected by zooming.
+* Decals are drawn in mirrors properly.
 
 Changes:
 

@@ -69,7 +69,8 @@ This documents describes various interesting facts about the original game.
 * The movable shuttle model on map 29 has missing glass quads. They are there, but they are not displayed properly.
 * On map 23 at the final room there is a glass box miss-placed right at top of the spinning eagle logo.
 * Pre-recorded player inputs in a played demo (at game start) are applied shortly after starting a new game.
-* Bullet decals are cut by borders of a quad with bullet center, even if it's not necessary (with an adjacent quad lying in the same plane).
+* Bullet hole decals are cut by borders of a quad with hole center, even if it's not necessary (with an adjacent quad lying in the same plane).
+* Bullet hole decals aren't drawn in mirrors.
 * Some maps contain holes in their geometry, where a hall-of-mirrors effect can be seen.
 * Clusters visibility information is sometimes incorrectly calculated and thus a hall-of-mirrors effect can be seen due to missing clusters which should be actually drawn.
 * In a couple of places (map exit door button on map 34, elevator buttons on map 3) buttons move in wrong direction.
