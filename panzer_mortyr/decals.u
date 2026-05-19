@@ -18,6 +18,35 @@ fn CreateDecalPolygons(
 	ust::vector</MapVertex/> &mut out_vertices,
 	ust::vector</u16/> &mut out_indices )
 {
+	// Decals work in the following way:
+	//  All map quads around a decal are visited.
+	//  Quads too far away or facing in direction too far away from the decal's direction are ignored.
+	//  Each tessellated polygon of a quad is clipped by 4 clip planes of a decal to obtain the result geometry.
+	//  Finally texture coordinates are calculated based on texture coordante planes.
+	//
+	// Using tessellated gemoetry is necessary to get lighting data.
+	// No proper lighting data is used for quads with no tessellated geometry (like for dynamic clusters),
+	// in such cases some stub light is used instead.
+	//
+	// Quads hierarchy is used to fetch only quads located nearby.
+	// It isn't trivial to visit this hierarchy, but it's still pretty fast.
+	//
+	// For decals attached to a dynamic cluster only quads of this dynamic cluster are visited.
+	// Doing so we avoid creating decal polygons on nearby quads.
+	// No quads hierarchy is used for dynamic clusters, instead all quads of a dynamic cluster are visited.
+	//
+	// As the last step all result decal vertices are moved slightly towards the camera.
+	// This is necessary to prevent Z-fighting.
+	// The magninute of such offset is proportional to the distance to the camera.
+	// Using some fixed offset isn't enough, since Z-buffer precision decreases with distance.
+	//
+	// No frustum-culling or more advanced visibility checks are performed for decals.
+	// Doing culling adds extra cost and doesn't help at all in the worst case, when all decals are visible.
+	//
+	// All described above isn't trivial and requires a lot of computations.
+	// Thus the total number of decals should be pretty low (no more than a couple of hundreds).
+	//
+
 	var size_type first_decal_vertex_index= out_vertices.size();
 
 	var DecalPolygonVertex zero_vertex{ .position= Vec3f::MakeZero(), .light= Vec3f::MakeZero() };
@@ -27,6 +56,7 @@ fn CreateDecalPolygons(
 	{
 		var Mat4f rotation_matrix= Mat4f::MakeRotationX( decal.elevation ) * Mat4f::MakeRotationZ( decal.azimuth );
 
+		// These vectors all have one length.
 		var [ Vec3f, 3 ] basis_vecs
 		[
 			( rotation_matrix.values[0][0], rotation_matrix.values[0][1], rotation_matrix.values[0][2] ),
@@ -49,6 +79,7 @@ fn CreateDecalPolygons(
 		var f32 constexpr base_texture_layer= 153.0f; // This should match texture layer used for decal textures!
 		var f32 texture_layer= base_texture_layer + f32( decal.texture_index );
 
+		// Use a pair of plane equations for calculating texture coordinates for decals.
 		var [ Planef, 2 ] tc_planes
 		[
 			Planef::CreateFromNormalAndPoint(
@@ -58,15 +89,19 @@ fn CreateDecalPolygons(
 
 		if( size_type( decal.dynamic_cluster_object_index ) < dynamic_cluster_objects.size() )
 		{
+			// This decal is attached to a dynamic cluster object.
+
 			var WorldDrawingInfo::DynamicClusterObject& dynamic_cluster_object=
 				dynamic_cluster_objects[ size_type( decal.dynamic_cluster_object_index ) ];
 
 			var ZvoxCluster& cluster= clusters[ size_type( dynamic_cluster_object.cluster_index ) ];
 
+			// Use cluster center with dynamic translation.
 			var Vec3f cluster_offset=
 				Vec3f( f32( cluster.c.center[0] ), f32( cluster.c.center[1] ), f32( cluster.c.center[2] ) ) +
 				dynamic_cluster_object.translation;
 
+			// Visit all quads of this cluster.
 			if( cluster.num_quads > 0 && cluster.c.first_quad_index >= 0u )
 			{
 				for( var size_type mut
@@ -93,6 +128,8 @@ fn CreateDecalPolygons(
 		}
 		else
 		{
+			// Static decal - attached to the world.
+
 			var f32 decal_radius= ust::sqrt( 3.0f ) * decal.half_size;
 
 			// Visit all quads nearby and create decal polygons for them.
@@ -142,14 +179,17 @@ fn CreateDecalPolygons(
 // Need two of them for clipping.
 type DecalPolygonVertexBuffers= tup[ DecalPolygonVertices, DecalPolygonVertices ];
 
+// Use a fixed-size buffer for decal polygon vertices.
+// We don't need many of them, since a decal has 4 sides and it's clipped by a polygon having maximum 6 sides.
+// The maximum number of sides is thus 10 (means 10 vertices). Use a little bit more than that to be sure we have enough space.
 type DecalPolygonVertices= [ DecalPolygonVertex, c_max_decal_polygon_vertices ];
-
 var size_type c_max_decal_polygon_vertices= 12s;
 
 struct DecalPolygonVertex
 {
 	Vec3f position;
 	Vec3f light;
+	// Store no texture coordinates here - they are calculated later based on position.
 }
 
 type DevalClipPlanes= [ Planef, 4 ];
@@ -256,7 +296,7 @@ fn EmitDecalPolygonsForMapQuad(
 		}
 	}
 
-	// Fallback for quads having no tessellated data.
+	// A fallback for quads having no tessellated data.
 
 	// Take quad geometry as a base for the decal polygon.
 	for( auto mut i= 0s; i < 4s; ++i )
@@ -311,6 +351,8 @@ fn EmitDecalPolygon(
 		}
 	}
 
+	// Create vertices of the result polygon.
+
 	var size_type base_vertex= out_vertices.size();
 
 	for( auto mut vertex_index= 0s; vertex_index < num_decal_vertices; ++vertex_index )
@@ -338,6 +380,8 @@ fn EmitDecalPolygon(
 			} );
 	}
 
+	// Create tria ngle indices of the result polygon.
+
 	for( auto mut triangle_index= 2s; triangle_index < num_decal_vertices; ++triangle_index )
 	{
 		out_indices.push_back( u16( base_vertex ) );
@@ -346,6 +390,7 @@ fn EmitDecalPolygon(
 	}
 }
 
+// Input polygon is expected to be convex.
 fn ClipPolygon(
 	Planef& plane,
 	ust::array_view_imut</DecalPolygonVertex/> in_vertices,
