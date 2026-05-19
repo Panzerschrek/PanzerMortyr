@@ -84,7 +84,6 @@ PanzerMortyr game logic:
 * Implement invisibility tool (false documents) and enemy properties allowing to uncover the player having invisibility.
 * Implement flame particles emitted by explosive decorations ("wybuch_benzyny"/"plomienie").
 * Leave blood makrs on walls.
-* Leave footstep decals where they should be.
 * Implement remaining projectile hit effects (blood).
 * Rework code doing first person weapon idle/walking animations. Consider adding states where no animation is played at all.
 * Implement weapon switching in case of out of ammo.
