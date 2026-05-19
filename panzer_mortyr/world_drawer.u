@@ -9,6 +9,7 @@ import "billboards.iu"
 import "breaking_glass.iu"
 import "caustics.iu"
 import "cluster_utils.iu"
+import "decals.iu"
 import "fog.iu"
 import "gl_functions.iu"
 import "image_loading.iu"
@@ -61,11 +62,14 @@ fn WorldDrawer::constructor(
 			embed</char8/>( "shaders/map.vert.glsl" ), // Use the same vertex shader as for map polygons.
 			embed</char8/>( "shaders/map_mirror.frag.glsl" ) ),
 		map_caustics_shader_(
-			embed</char8/>( "shaders/map.vert.glsl" ), // Use the same vertex shader as for map polygons
+			embed</char8/>( "shaders/map.vert.glsl" ), // Use the same vertex shader as for map polygons.
 			embed</char8/>( "shaders/map_caustics.frag.glsl" ) ),
 		map_dynamic_light_shader_(
 			embed</char8/>( "shaders/map_dynamic_light.vert.glsl" ),
 			embed</char8/>( "shaders/map_dynamic_light.frag.glsl" ) ),
+		decals_shader_(
+			embed</char8/>( "shaders/map.vert.glsl" ), // Use the same vertex shader as for map polygons.
+			embed</char8/>( "shaders/decals.frag.glsl" ) ),
 		model_shader_(
 			embed</char8/>( "shaders/model.vert.glsl" ),
 			embed</char8/>( "shaders/model.frag.glsl" ) ),
@@ -147,6 +151,19 @@ fn WorldDrawer::constructor(
 					c_max_semitransparent_polygon_indices * typeinfo</u16/>.size_of ),
 			.max_indices= c_max_semitransparent_polygon_indices,
 		},
+		decal_polygons_buffer_
+		{
+			.vertex_buffer=
+				BufferObject::CreateUninitializedDynamicDrawBuffer(
+					GLenum( GL_ARRAY_BUFFER ),
+					c_max_decal_polygon_vertices * typeinfo</MapVertex/>.size_of ),
+			.max_vertices= c_max_decal_polygon_vertices,
+			.index_buffer=
+				BufferObject::CreateUninitializedDynamicDrawBuffer(
+					GLenum( GL_ELEMENT_ARRAY_BUFFER ),
+					c_max_decal_polygon_indices * typeinfo</u16/>.size_of ),
+			.max_indices= c_max_decal_polygon_indices,
+		},
 		test_primitive_vertex_buffer_object_=
 			BufferObject::CreateUninitializedDynamicDrawBuffer(
 				GLenum( GL_ARRAY_BUFFER ),
@@ -162,6 +179,9 @@ fn WorldDrawer::constructor(
 
 	PrepareVertexArrayObjectWithMapVertexFormat(
 		semitransparent_polygons_buffer_.vertex_array_object, semitransparent_polygons_buffer_.vertex_buffer );
+
+	PrepareVertexArrayObjectWithMapVertexFormat(
+		decal_polygons_buffer_.vertex_array_object, decal_polygons_buffer_.vertex_buffer );
 
 	test_primitive_vertex_array_object_.Bind();
 	test_primitive_vertex_buffer_object_.Bind();
@@ -542,6 +562,23 @@ fn WorldDrawer::DrawPartial(
 
 	drawing_stats.num_visible_breakable_triangles+= u32( breakable_polygons_buffer_.indices.size() ) / 3u;
 
+	ResetDynamicPolygonsBuffer( decal_polygons_buffer_ );
+
+	CreateDecalPolygons(
+		drawing_info.decals,
+		drawing_info.dynamic_cluster_objects,
+		map_data.zvox_data.deref().clusters,
+		map_data.zmap_data.deref().quads,
+		map_data.zmap_lam_data.deref(),
+		map_data.quads_hierarchy.deref(),
+		camera_position,
+		decal_polygons_buffer_.vertices,
+		decal_polygons_buffer_.indices );
+
+	UploadDynamicPolygonsBuffer( decal_polygons_buffer_ );
+
+	drawing_stats.num_decals+= u32( drawing_info.decals.size() );
+
 	var bool caustics_enabled= settings_.lock_imut().deref().r_caustics_enabled;
 	var bool draw_water_clusters_as_normal= !caustics_enabled;
 
@@ -572,6 +609,9 @@ fn WorldDrawer::DrawPartial(
 			mirrored,
 			drawing_stats );
 	}
+
+	DrawDecalPolygons(
+		map_data, decal_polygons_buffer_, decals_shader_, camera_matrices.view_matrix, global_light_params, mirrored );
 
 	var bool dynamic_lights_enabled= settings_.lock_imut().deref().r_dynamic_lights_enabled;
 
@@ -610,6 +650,21 @@ fn WorldDrawer::DrawPartial(
 			DrawDynamicPolygonsWithDynamicLights(
 				game_params_.deref(),
 				breakable_polygons_buffer_,
+				map_dynamic_light_shader_,
+				map_data.map_textures_array,
+				camera_matrices.view_matrix,
+				drawing_info.dynamic_light_sources,
+				dynamic_light_scissor_rects,
+				global_light_params.light_scale,
+				mirrored );
+		}
+
+		if( !decal_polygons_buffer_.vertices.empty() && !decal_polygons_buffer_.indices.empty() )
+		{
+			// Apply dynamic lights to decals polygons.
+			DrawDynamicPolygonsWithDynamicLights(
+				game_params_.deref(),
+				decal_polygons_buffer_,
 				map_dynamic_light_shader_,
 				map_data.map_textures_array,
 				camera_matrices.view_matrix,
@@ -1194,12 +1249,14 @@ fn WorldDrawer::SetMap( mut this, u32 map_index )
 	var GameResourceNullablePtr</ZmapLamData/> zmap_lam_data_nullable_ptr= caching_game_resources_loader.LoadZmapLamFile( map_index );
 	var GameResourceNullablePtr</ZmapLemData/> zmap_lem_data_nullable_ptr= caching_game_resources_loader.LoadZmapLemFile( map_index );
 	var GameResourceNullablePtr</RoomClustersHierarchy/> room_clusters_hierarchy_nullable_ptr= caching_game_resources_loader.LoadRoomClustersHierarchy( map_index );
+	var GameResourceNullablePtr</QuadsHierarchy/> quads_hierarchy_nullable_ptr= caching_game_resources_loader.LoadQuadsHierarchy( map_index );
 
 	if( zmap_data_nullable_ptr.empty() ||
 		zvox_data_nullable_ptr.empty() ||
 		zmap_lam_data_nullable_ptr.empty() ||
 		zmap_lam_data_nullable_ptr.empty() ||
-		room_clusters_hierarchy_nullable_ptr.empty() )
+		room_clusters_hierarchy_nullable_ptr.empty() ||
+		quads_hierarchy_nullable_ptr.empty() )
 	{
 		return;
 	}
@@ -1209,6 +1266,7 @@ fn WorldDrawer::SetMap( mut this, u32 map_index )
 	var GameResourcePtr</ZmapLamData/> zmap_lam_data_ptr= zmap_lam_data_nullable_ptr.try_to_non_nullable();
 	var GameResourcePtr</ZmapLemData/> zmap_lem_data_ptr= zmap_lem_data_nullable_ptr.try_to_non_nullable();
 	var GameResourcePtr</RoomClustersHierarchy/> room_clusters_hierarchy_ptr= room_clusters_hierarchy_nullable_ptr.try_to_non_nullable();
+	var GameResourcePtr</QuadsHierarchy/> quads_hierarchy_ptr= quads_hierarchy_nullable_ptr.try_to_non_nullable();
 
 	var ZmapData& zmap_data= zmap_data_ptr.deref();
 	var ZvoxData& zvox_data= zvox_data_ptr.deref();
@@ -1554,6 +1612,7 @@ fn WorldDrawer::SetMap( mut this, u32 map_index )
 				.zmap_lam_data= zmap_lam_data_ptr,
 				.zmap_lem_data= zmap_lem_data_ptr,
 				.room_clusters_hierarchy= room_clusters_hierarchy_ptr,
+				.quads_hierarchy= quads_hierarchy_ptr,
 				.room_clusters_bsp_tree= room_clusters_bsp_tree,
 				.light_sources= move(light_sources),
 				.vertex_array_object= move(vertex_array_object),
@@ -2353,6 +2412,45 @@ fn DrawDynamicPolygonsWithDynamicLights(
 	}
 }
 
+fn DrawDecalPolygons(
+	MapDrawData& map_data,
+	DynamicPolygonsBuffer& decal_polygons_buffer,
+	ShaderProgram &mut shader,
+	Mat4f& view_matrix,
+	GlobalLightParams& global_light_params,
+	bool mirrored )
+{
+	if( mirrored )
+	{
+		SetGLState( GetMirroredGLState( g_map_drawing_gl_state ) );
+	}
+	else
+	{
+		SetGLState( g_map_drawing_gl_state );
+	}
+
+	var u32 texture_slot= 0u;
+
+	unsafe( glActiveTexture( GLenum( GL_TEXTURE0 ) + GLenum(texture_slot) ) );
+	map_data.map_textures_array.Bind();
+
+	shader.Bind();
+	shader.SetUniform( "vu_matrix", view_matrix );
+	shader.SetUniform( "fu_texture", texture_slot );
+
+	shader.SetUniform( "vu_light_add", Vec3f( global_light_params.light_add ) );
+	shader.SetUniform( "vu_light_scale", Vec3f( global_light_params.light_scale ) );
+
+	decal_polygons_buffer.vertex_array_object.Bind();
+	decal_polygons_buffer.index_buffer.Bind();
+
+	unsafe( glDrawElements(
+		GLenum( GL_TRIANGLES ),
+		GLsizei( ust::min( decal_polygons_buffer.indices.size(), decal_polygons_buffer.max_indices ) ),
+		GLenum( GL_UNSIGNED_SHORT ),
+		ust::nullptr</byte8/>() ) );
+}
+
 fn ExecuteClusterMeshDrawing( GeometryBufferChunk& geometry_buffer_chunk )
 {
 	unsafe( glDrawElementsBaseVertex(
@@ -3053,6 +3151,23 @@ fn LoadMapTextures(
 					}
 				}
 
+				if( row > 0u && subtile_x > 0u )
+				{
+					// Make black color to transparent for textures used as decals.
+					foreach( &mut pixel : texture_data )
+					{
+						var u8 almost_black= 8u8;
+						if( pixel[0] <= almost_black & pixel[1] <= almost_black & pixel[2] <= almost_black )
+						{
+							pixel[3]= 0u8;
+						}
+						else
+						{
+							pixel[3]= 255u8;
+						}
+					}
+				}
+
 				var u32 dst_layer=
 					u32( materials_block.textures.size() + 2s ) *
 						( MaterialsDescription::c_texture_file_num_tiles_x * MaterialsDescription::c_texture_file_num_tiles_y ) +
@@ -3727,6 +3842,10 @@ var size_type c_max_breakable_polygon_indices= c_max_breakable_polygon_vertices 
 // We require so many, since we can have a lot of glass shards.
 var size_type c_max_semitransparent_polygon_vertices= 16384s;
 var size_type c_max_semitransparent_polygon_indices= c_max_semitransparent_polygon_vertices * 3s / 2s;
+
+// Enough vertices for 512 decals considering each decal is split in two parts.
+var size_type c_max_decal_polygon_vertices= 4096s;
+var size_type c_max_decal_polygon_indices= c_max_decal_polygon_vertices * 3s / 2s;
 
 var GLState g_buffer_clear_gl_state
 {

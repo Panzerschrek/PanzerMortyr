@@ -120,7 +120,6 @@ PanzerMortyr rendering:
 
 * Apply additional tessellation for tessellated polygons in order to perform smoother light values interpolation (naively triangulating them doesn't produce good result always).
 * Use smooth animation for animated models (with two or more frames interpolation).
-* Draw decals (bullet holes, blood, footsteps).
 * Draw animated water circle decals on map quads with "wet" property enabled in points where a rain particle hits such quad.
 * Draw injured enemies covered with blood.
 * Suport light soruces with conic shape and use such source kind for flashlight.
