@@ -3903,42 +3903,42 @@ fn ProcessProjectileHitEvent(
 	if( weapon_tool.wall_mark >= 0 &&
 		size_type( projectile_hit_event.hit_quad_index ) < quads.size() )
 	{
-		// TODO - check materials property, for some materials bullet holes are disabled.
-
-		// Check if this flame hit a dynamic cluster.
-		// If so - attach it to this cluster.
-		var u32 mut dynamic_cluster_object_index= ~0u;
-		var Vec3f mut position= projectile_hit_event.position;
-
-		// Use linear search. It's mostly fine, since we have only a few of dynamic clusters.
-		for( auto mut i= 0s; i < game_state.dynamic_cluster_colliders.size(); ++i )
+		var ZmapQuad& quad= quads[ size_type( projectile_hit_event.hit_quad_index ) ];
+		if( !IsMapQuadBreakable( global_data, map_data, quad )
+			/* TODO - maybe check here also some material property enabling/disabling bullet holes? */ )
 		{
-			var DynamicClusterCollider& collider= game_state.dynamic_cluster_colliders[i];
-			if( size_type( collider.cluster_index ) < clusters.size() )
+			// Check if this bullet hole hit a dynamic cluster.
+			// If so - attach it to this cluster.
+			var u32 mut dynamic_cluster_object_index= ~0u;
+			var Vec3f mut position= projectile_hit_event.position;
+
+			// Use linear search. It's mostly fine, since we have only a few of dynamic clusters.
+			for( auto mut i= 0s; i < game_state.dynamic_cluster_colliders.size(); ++i )
 			{
-				var ZvoxCluster& cluster= clusters[ size_type( collider.cluster_index ) ];
-				if( cluster.num_quads >= 0 &&
-					projectile_hit_event.hit_quad_index >= cluster.c.first_quad_index &&
-					projectile_hit_event.hit_quad_index < cluster.c.first_quad_index + u32( cluster.num_quads ) )
+				var DynamicClusterCollider& collider= game_state.dynamic_cluster_colliders[i];
+				if(projectile_hit_event.hit_cluster_index == collider.cluster_index )
 				{
 					dynamic_cluster_object_index= u32(i);
 					position= projectile_hit_event.position - collider.bbox.GetCenter();
 					break;
 				}
 			}
+
+			var Vec3f quad_normal= CalculateQuadNormal( quad );
+
+			game_state.bullet_holes.slots[
+				game_state.bullet_holes.num_bullet_holes % BulletHolesContainer::c_max_bullet_holes ]=
+				BulletHole
+				{
+					.position= position,
+					// Rotate the bullet hole so that it lies in the plane of its parent quad.
+					.azimuth= ust::atan2( quad_normal.x, -quad_normal.y ),
+					.elevation= ust::atan2( quad_normal.xy().Length(), quad_normal.z ),
+					.dynamic_cluster_object_index= dynamic_cluster_object_index,
+				};
+
+			++game_state.bullet_holes.num_bullet_holes;
 		}
-
-		var Vec3f quad_normal= CalculateQuadNormal( quads[ size_type( projectile_hit_event.hit_quad_index ) ] );
-
-		game_state.bullet_holes.push_back(
-			BulletHole
-			{
-				.position= position,
-				// Rotate the bullet hole so that it lies in the plane of its parent quad.
-				.azimuth= ust::atan2( quad_normal.x, -quad_normal.y ),
-				.elevation= ust::atan2( quad_normal.xy().Length(), quad_normal.z ),
-				.dynamic_cluster_object_index= dynamic_cluster_object_index,
-			} );
 	}
 
 	if( weapon_tool.light_at_hit_point[1] > 0u )
