@@ -39,6 +39,7 @@ Gameplay investigation:
 * Investigate what kinds of entities are affected by gravity (what in an entity description turns gravity on and off).
 * Investigate what "zarowka" entity property is and whether it's actually used.
 * Investigate whether it's possible for the player to drown in water by spending too much time in it.
+* Investigate whether bullet holes may be disabled by material properties.
 
 PanzerMortyr general:
 
@@ -82,7 +83,6 @@ PanzerMortyr game logic:
 * Implement jetpack tool.
 * Implement invisibility tool (false documents) and enemy properties allowing to uncover the player having invisibility.
 * Implement flame particles emitted by explosive decorations ("wybuch_benzyny"/"plomienie").
-* Spawn bullet holes on walls, including holes attached to dynamic (movable) clusters.
 * Leave blood makrs on walls.
 * Leave footstep decals where they should be.
 * Implement remaining projectile hit effects (blood).
