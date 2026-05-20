@@ -9,34 +9,13 @@ namespace PM
 
 fn PlayVideo( ConsoleOutPtr& console_out, ust::filesystem_path file_path )
 {
+	unsafe( av_log_set_level( AV_LOG_DEBUG ) );
+
 	ConsoleOutAddTextLine( console_out, "Try playing a video" );
 
 	var ust::string8 mut file_path_nt= ust::concat( file_path, "\0" );
 	unsafe
 	{
-		av_log_set_level( AV_LOG_DEBUG );
-
-		{
-			var $(byte8) mut state= zero_init;
-			loop
-			{
-				var $(AVCodecParser) parser= av_parser_iterate( $<(state) );
-				if( ust::is_nullptr( parser ) )
-				{
-					break;
-				}
-
-				ConsoleOutAddTextLine( console_out, "has a parser. Supported codecs: " );
-				foreach( c : $>(parser).codec_ids )
-				{
-					if( c != i32( AV_CODEC_ID_NONE ) )
-					{
-						ConsoleOutAddTextLine( console_out, ust::to_string8(c) );
-					}
-				}
-			}
-		}
-
 		var $(AVFormatContext) mut format_context= zero_init;
 
 		with( ret :
@@ -98,7 +77,7 @@ fn PlayVideo( ConsoleOutPtr& console_out, ust::filesystem_path file_path )
 
 		ConsoleOutAddTextLine( console_out, ust::concat( "Found a decoder. Codec id is ", ust::to_string8( $>(decoder).id  ) ) );
 
-		var $(AVCodecContext) decoder_context= avcodec_alloc_context3( decoder );
+		var $(AVCodecContext) mut decoder_context= avcodec_alloc_context3( decoder );
 		if( ust::is_nullptr( decoder_context ) )
 		{
 			ConsoleOutAddTextLine( console_out, "Failed to alloc decoder context!" );
@@ -134,21 +113,25 @@ fn PlayVideo( ConsoleOutPtr& console_out, ust::filesystem_path file_path )
 			return;
 		}
 
-		var $(AVFrame) frame= av_frame_alloc();
+		var $(AVFrame) mut frame= av_frame_alloc();
 		if( ust::is_nullptr( frame ) )
 		{
 			ConsoleOutAddTextLine( console_out, "Failed to alloc frame!" );
+			av_packet_free( $<( packet ) );
+			avcodec_free_context( $<( decoder_context ) );
 			avformat_close_input( $<( format_context ) );
 			return;
 		}
 
-		var size_type mut num_frames= 0s;
-		loop label frame_reading
+		var size_type mut num_packets= 0s, mut num_frames= 0s;
+		loop
 		{
 			if( av_read_frame( format_context, packet ) != 0 )
 			{
 				break;
 			}
+
+			++num_packets;
 
 			if( $>(packet).stream_index == i32( video_stream_index ) )
 			{
@@ -165,20 +148,12 @@ fn PlayVideo( ConsoleOutPtr& console_out, ust::filesystem_path file_path )
 			}
 		}
 
+		ConsoleOutAddTextLine( console_out, ust::concat( "Number of packets: ", ust::to_string8( num_packets ) ) );
 		ConsoleOutAddTextLine( console_out, ust::concat( "Number of frames: ", ust::to_string8( num_frames ) ) );
 
-		/*
-		var $(AVCodecParserContext) parser_context= av_parser_init( i32( $>(decoder).id ) );
-
-		if( ust::is_nullptr( parser_context ) )
-		{
-			ConsoleOutAddTextLine( console_out, "Failed to init parser!" );
-			avformat_close_input( $<( format_context ) );
-			return;
-		}
-		*/
-
 		av_packet_free( $<( packet ) );
+		av_frame_free( $<( frame ) );
+		avcodec_free_context( $<( decoder_context ) );
 		avformat_close_input( $<( format_context ) );
 	}
 }
