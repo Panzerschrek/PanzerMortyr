@@ -1,5 +1,6 @@
 import "/string_conversions.iu"
 import "gl_state.iu"
+import "performance_counter.iu"
 import "shader_program.iu"
 import "texture.u"
 import "video_playback.iu"
@@ -21,6 +22,7 @@ fn PlayVideo( ConsoleOutPtr& console_out, ust::filesystem_path file_path, OpenGL
 
 	var [ u32, 2 ] video_size= stream.GetSize();
 	var f32 video_framerate= stream.GetFramerate();
+	var f32 frame_duration_s= 1.0f / video_framerate;
 
 	ConsoleOutAddTextLine( console_out, ust::concat( "Framerate is ", ust::to_string8( u32( video_framerate ) ) ) );
 
@@ -38,6 +40,25 @@ fn PlayVideo( ConsoleOutPtr& console_out, ust::filesystem_path file_path, OpenGL
 		GLenum( GL_UNSIGNED_BYTE ),
 		ust::nullptr</byte8/>() ) );
 
+	{
+		auto first_frame_opt= stream.GetNextFrame();
+		if( first_frame_opt.empty() )
+		{
+			return;
+		}
+
+		texture.Bind();
+
+		unsafe( glTexSubImage2D(
+			GLenum( GL_TEXTURE_2D ),
+			0,
+			0, 0,
+			GLsizei( video_size[0] ), GLsizei( video_size[1] ),
+			GLenum( GL_RGBA ),
+			GLenum( GL_UNSIGNED_BYTE ),
+			ust::ptr_cast_to_byte8( first_frame_opt.try_deref().range().data() ) ) );
+	}
+
 	// Use linear filter.
 	unsafe( glTexParameteri( GLenum( GL_TEXTURE_2D ), GLenum( GL_TEXTURE_MIN_FILTER ), GLint( GL_LINEAR ) ) );
 	unsafe( glTexParameteri( GLenum( GL_TEXTURE_2D ), GLenum( GL_TEXTURE_MAG_FILTER ), GLint( GL_LINEAR ) ) );
@@ -49,28 +70,44 @@ fn PlayVideo( ConsoleOutPtr& console_out, ust::filesystem_path file_path, OpenGL
 	var ShaderProgram mut shader(
 		embed</char8/>( "shaders/video.vert.glsl" ), embed</char8/>( "shaders/video.frag.glsl" ) );
 
-	var size_type mut num_frames= 0s;
+	// Always have a next frame ready.
+	var ust::optional</ IVideoStream::FrameData /> mut next_frame_data= stream.GetNextFrame();
+
+	var PerformanceCounter performance_counter;
+	var PerformanceCounter::TimePoint start_time= performance_counter.GetCurrentTime();
+	var f32 mut last_frame_time_s= 0.0f;
 
 	loop
 	{
-		auto frame_opt= stream.GetNextFrame();
-		if( frame_opt.empty() )
+		var f32 current_time_s=
+			performance_counter.CalculateDurationS( start_time, performance_counter.GetCurrentTime() );
+
+		if( current_time_s >= last_frame_time_s + frame_duration_s )
 		{
-			break;
+			// It's time to show a new frame.
+
+			// TODO - handle the case when source framerate is higher than the target one (like 120fps video on 60fps display).
+
+			if( next_frame_data.empty() )
+			{
+				break;
+			}
+
+			texture.Bind();
+
+			unsafe( glTexSubImage2D(
+				GLenum( GL_TEXTURE_2D ),
+				0,
+				0, 0,
+				GLsizei( video_size[0] ), GLsizei( video_size[1] ),
+				GLenum( GL_RGBA ),
+				GLenum( GL_UNSIGNED_BYTE ),
+				ust::ptr_cast_to_byte8( next_frame_data.try_deref().range().data() ) ) );
+
+			next_frame_data.reset();
+
+			last_frame_time_s+= frame_duration_s;
 		}
-
-		var IVideoStream::FrameData& frame_data= frame_opt.try_deref();
-
-		texture.Bind();
-
-		unsafe( glTexSubImage2D(
-			GLenum( GL_TEXTURE_2D ),
-			0,
-			0, 0,
-			GLsizei( video_size[0] ), GLsizei( video_size[1] ),
-			GLenum( GL_RGBA ),
-			GLenum( GL_UNSIGNED_BYTE ),
-			ust::ptr_cast_to_byte8( frame_data.range().data() ) ) );
 
 		SetGLState( g_video_drawing_gl_state );
 
@@ -86,10 +123,12 @@ fn PlayVideo( ConsoleOutPtr& console_out, ust::filesystem_path file_path, OpenGL
 
 		window.SwapWindow();
 
-		++num_frames;
+		// Try loading next frame after swapping window - to have enough time for doing it.
+		if( next_frame_data.empty() )
+		{
+			next_frame_data= stream.GetNextFrame();
+		}
 	}
-
-	ConsoleOutAddTextLine( console_out, ust::concat( "Number of frames: ", ust::to_string8( num_frames ) ) );
 }
 
 var GLState g_video_drawing_gl_state
