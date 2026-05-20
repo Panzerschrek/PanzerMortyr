@@ -1,3 +1,4 @@
+import "/assert.iu"
 import "/string_conversions.iu"
 import "gl_state.iu"
 import "performance_counter.iu"
@@ -26,46 +27,16 @@ fn PlayVideo( ConsoleOutPtr& console_out, ust::filesystem_path file_path, OpenGL
 
 	ConsoleOutAddTextLine( console_out, ust::concat( "Framerate is ", ust::to_string8( u32( video_framerate ) ) ) );
 
-	var Texture mut texture= Texture::Create( GLenum( GL_TEXTURE_2D ) );
-	texture.Bind();
+	var Texture mut texture= CreateVideoFrameTexture( video_size );
 
-	unsafe( glTexImage2D(
-		GLenum( GL_TEXTURE_2D ),
-		0,
-		GLint( GL_RGBA8 ),
-		GLsizei( video_size[0] ),
-		GLsizei( video_size[1] ),
-		0,
-		GLenum( GL_RGBA ),
-		GLenum( GL_UNSIGNED_BYTE ),
-		ust::nullptr</byte8/>() ) );
-
+	if_var( &first_frame : stream.GetNextFrame() )
 	{
-		auto first_frame_opt= stream.GetNextFrame();
-		if( first_frame_opt.empty() )
-		{
-			return;
-		}
-
-		texture.Bind();
-
-		unsafe( glTexSubImage2D(
-			GLenum( GL_TEXTURE_2D ),
-			0,
-			0, 0,
-			GLsizei( video_size[0] ), GLsizei( video_size[1] ),
-			GLenum( GL_RGBA ),
-			GLenum( GL_UNSIGNED_BYTE ),
-			ust::ptr_cast_to_byte8( first_frame_opt.try_deref().range().data() ) ) );
+		UpdateVideoFrameTexture( texture, video_size, first_frame );
 	}
-
-	// Use linear filter.
-	unsafe( glTexParameteri( GLenum( GL_TEXTURE_2D ), GLenum( GL_TEXTURE_MIN_FILTER ), GLint( GL_LINEAR ) ) );
-	unsafe( glTexParameteri( GLenum( GL_TEXTURE_2D ), GLenum( GL_TEXTURE_MAG_FILTER ), GLint( GL_LINEAR ) ) );
-
-	// Clamp texture coordinates to edge.
-	unsafe( glTexParameteri( GLenum( GL_TEXTURE_2D ), GLenum( GL_TEXTURE_WRAP_S ), GLint( GL_CLAMP_TO_EDGE ) ) );
-	unsafe( glTexParameteri( GLenum( GL_TEXTURE_2D ), GLenum( GL_TEXTURE_WRAP_T ), GLint( GL_CLAMP_TO_EDGE ) ) );
+	else
+	{
+		return;
+	}
 
 	var ShaderProgram mut shader(
 		embed</char8/>( "shaders/video.vert.glsl" ), embed</char8/>( "shaders/video.frag.glsl" ) );
@@ -80,52 +51,9 @@ fn PlayVideo( ConsoleOutPtr& console_out, ust::filesystem_path file_path, OpenGL
 	loop
 	{
 		// Process events while playing a video.
+		if( !ProcessSDLEventsInVideoPlayback( console_out ) )
 		{
-			var SDL_Event mut event= zero_init;
-			while( unsafe( SDL_PollEvent( $<(event) ) ) != 0 )
-			{
-				switch( SDL_EventType( size_type( event.union_contents[0] ) ) )
-				{
-					SDL_QUIT ->
-					{
-						// if quiting is requested, abort playback and push the quit event back.
-						ConsoleOutAddTextLine( console_out, "Quit is requested - abort video playback" );
-						unsafe( SDL_PushEvent( $<( event ) ) );
-						return;
-					},
-					SDL_WINDOWEVENT ->
-					{
-						var SDL_WindowEventID event_id( unsafe( cast_ref_unsafe</SDL_WindowEvent/>( event ) ).event );
-						if( event_id == SDL_WINDOWEVENT_CLOSE )
-						{
-							// If closing is requested, abort playback and push the close event back.
-							ConsoleOutAddTextLine( console_out, "Closing is requested - abort video playback" );
-							unsafe( SDL_PushEvent( $<( event ) ) );
-							return;
-						}
-					},
-					SDL_KEYDOWN ->
-					{
-						// Assume we have only single window and we process only keyboard events from it.
-						auto scancode= unsafe( cast_ref_unsafe</SDL_KeyboardEvent/>( event ) ).keysym.scancode;
-						if( scancode == SDL_SCANCODE_ESCAPE ||
-							scancode == SDL_SCANCODE_RETURN ||
-							scancode == SDL_SCANCODE_SPACE )
-						{
-							// Abort video playback on key push.
-							ConsoleOutAddTextLine( console_out, "A key was pressed - abort video playback" );
-							return;
-						}
-					},
-					SDL_MOUSEBUTTONDOWN ->
-					{
-						// Abort video playback on mouse push.
-						ConsoleOutAddTextLine( console_out, "A mouse button was pressed - abort video playback" );
-						return;
-					},
-					default -> {},
-				}
-			}
+			break;
 		}
 
 		var f32 current_time_s=
@@ -137,38 +65,21 @@ fn PlayVideo( ConsoleOutPtr& console_out, ust::filesystem_path file_path, OpenGL
 
 			// TODO - handle the case when source framerate is higher than the target one (like 120fps video on 60fps display).
 
-			if( next_frame_data.empty() )
+			if_var( &frame_data : next_frame_data )
+			{
+				UpdateVideoFrameTexture( texture, video_size, frame_data );
+			}
+			else
 			{
 				break;
 			}
-
-			texture.Bind();
-
-			unsafe( glTexSubImage2D(
-				GLenum( GL_TEXTURE_2D ),
-				0,
-				0, 0,
-				GLsizei( video_size[0] ), GLsizei( video_size[1] ),
-				GLenum( GL_RGBA ),
-				GLenum( GL_UNSIGNED_BYTE ),
-				ust::ptr_cast_to_byte8( next_frame_data.try_deref().range().data() ) ) );
 
 			next_frame_data.reset();
 
 			last_frame_time_s+= frame_duration_s;
 		}
 
-		SetGLState( g_video_drawing_gl_state );
-
-		var u32 texture_slot= 0u;
-
-		unsafe( glActiveTexture( GLenum( GL_TEXTURE0 ) + GLenum(texture_slot) ) );
-		texture.Bind();
-
-		shader.Bind();
-		shader.SetUniform( "fu_texture", texture_slot );
-
-		unsafe( glDrawArrays( GLenum( GL_TRIANGLES ), GLint(0), GLsizei(6) ) );
+		DrawVideoFrame( shader, texture );
 
 		window.SwapWindow();
 
@@ -178,6 +89,119 @@ fn PlayVideo( ConsoleOutPtr& console_out, ust::filesystem_path file_path, OpenGL
 			next_frame_data= stream.GetNextFrame();
 		}
 	}
+}
+
+fn CreateVideoFrameTexture( [ u32, 2 ] video_size ) : Texture
+{
+	var Texture mut texture= Texture::Create( GLenum( GL_TEXTURE_2D ) );
+	texture.Bind();
+
+	unsafe( glTexImage2D(
+		GLenum( GL_TEXTURE_2D ),
+		0,
+		GLint( GL_RGBA8 ),
+		GLsizei( video_size[0] ),
+		GLsizei( video_size[1] ),
+		0,
+		GLenum( GL_RGBA ),
+		GLenum( GL_UNSIGNED_BYTE ),
+		ust::nullptr</byte8/>() ) );
+
+	// Use linear filter.
+	unsafe( glTexParameteri( GLenum( GL_TEXTURE_2D ), GLenum( GL_TEXTURE_MIN_FILTER ), GLint( GL_LINEAR ) ) );
+	unsafe( glTexParameteri( GLenum( GL_TEXTURE_2D ), GLenum( GL_TEXTURE_MAG_FILTER ), GLint( GL_LINEAR ) ) );
+
+	// Clamp texture coordinates to edge.
+	unsafe( glTexParameteri( GLenum( GL_TEXTURE_2D ), GLenum( GL_TEXTURE_WRAP_S ), GLint( GL_CLAMP_TO_EDGE ) ) );
+	unsafe( glTexParameteri( GLenum( GL_TEXTURE_2D ), GLenum( GL_TEXTURE_WRAP_T ), GLint( GL_CLAMP_TO_EDGE ) ) );
+
+	return texture;
+}
+
+fn UpdateVideoFrameTexture( Texture &mut texture, [ u32, 2 ] video_size, IVideoStream::FrameData& frame_data )
+{
+	assert( frame_data.size() == size_type( video_size[0] * video_size[1] ) );
+
+	texture.Bind();
+
+	unsafe( glTexSubImage2D(
+		GLenum( GL_TEXTURE_2D ),
+		0,
+		0,
+		0,
+		GLsizei( video_size[0] ),
+		GLsizei( video_size[1] ),
+		GLenum( GL_RGBA ),
+		GLenum( GL_UNSIGNED_BYTE ),
+		ust::ptr_cast_to_byte8( frame_data.range().data() ) ) );
+}
+
+// Returns false if should stop playback.
+fn ProcessSDLEventsInVideoPlayback( ConsoleOutPtr& console_out ) : bool
+{
+	var SDL_Event mut event= zero_init;
+	while( unsafe( SDL_PollEvent( $<(event) ) ) != 0 )
+	{
+		switch( SDL_EventType( size_type( event.union_contents[0] ) ) )
+		{
+			SDL_QUIT ->
+			{
+				// If quiting is requested, abort playback and push the quit event back.
+				ConsoleOutAddTextLine( console_out, "Quit is requested - abort video playback" );
+				unsafe( SDL_PushEvent( $<( event ) ) );
+				return false;
+			},
+			SDL_WINDOWEVENT ->
+			{
+				var SDL_WindowEventID event_id( unsafe( cast_ref_unsafe</SDL_WindowEvent/>( event ) ).event );
+				if( event_id == SDL_WINDOWEVENT_CLOSE )
+				{
+					// If closing is requested, abort playback and push the close event back.
+					ConsoleOutAddTextLine( console_out, "Closing is requested - abort video playback" );
+					unsafe( SDL_PushEvent( $<( event ) ) );
+					return false;
+				}
+			},
+			SDL_KEYDOWN ->
+			{
+				// Assume we have only single window and we process only keyboard events from it.
+				auto scancode= unsafe( cast_ref_unsafe</SDL_KeyboardEvent/>( event ) ).keysym.scancode;
+				if( scancode == SDL_SCANCODE_ESCAPE ||
+					scancode == SDL_SCANCODE_RETURN ||
+					scancode == SDL_SCANCODE_SPACE )
+				{
+					// Abort video playback on key push.
+					ConsoleOutAddTextLine( console_out, "A key was pressed - abort video playback" );
+					return false;
+				}
+			},
+			SDL_MOUSEBUTTONDOWN ->
+			{
+				// Abort video playback on mouse push.
+				ConsoleOutAddTextLine( console_out, "A mouse button was pressed - abort video playback" );
+				return false;
+			},
+			default -> {},
+		}
+	}
+
+	return true;
+}
+
+fn DrawVideoFrame( ShaderProgram &mut shader, Texture& texture )
+{
+	SetGLState( g_video_drawing_gl_state );
+
+	var u32 texture_slot= 0u;
+
+	unsafe( glActiveTexture( GLenum( GL_TEXTURE0 ) + GLenum(texture_slot) ) );
+	texture.Bind();
+
+	shader.Bind();
+	shader.SetUniform( "fu_texture", texture_slot );
+
+	// Draw 2 triangles. Vertex coordinates are generated by the shader.
+	unsafe( glDrawArrays( GLenum( GL_TRIANGLES ), GLint(0), GLsizei(6) ) );
 }
 
 var GLState g_video_drawing_gl_state
