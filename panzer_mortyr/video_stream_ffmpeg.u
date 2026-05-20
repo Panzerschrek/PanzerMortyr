@@ -14,14 +14,16 @@ public:
 		u32 video_stream_index,
 		$(AVCodecContext) decoder_context,
 		$(AVPacket) packet,
-		$(AVFrame) frame ) unsafe
+		$(AVFrame) frame,
+		$(SwsContext) scale_context ) unsafe
 		(
 			console_out_= move(console_out),
 			format_context_= format_context,
 			video_stream_index_= video_stream_index,
 			decoder_context_= decoder_context,
 			packet_= packet,
-			frame_= frame
+			frame_= frame,
+			scale_context_= scale_context,
 		)
 	{
 	}
@@ -30,6 +32,7 @@ public:
 	{
 		unsafe
 		{
+			sws_freeContext( scale_context_ );
 			av_packet_free( $<( packet_ ) );
 			av_frame_free( $<( frame_ ) );
 			avcodec_free_context( $<( decoder_context_ ) );
@@ -52,12 +55,30 @@ public: // IVideoStream
 					{
 						// TODO - call av_frame_unref here?
 
-						// TODO - decode frame properly.
-						return ImageData
+						var i32 width= $>( decoder_context_ ).width;
+						var i32 height= $>( decoder_context_ ).height;
+
+						var ImageData mut image_data
 						{
-							.size[ 1u, 1u ],
-							.pixels( 1s, ust::make_array( 255u8, 0u8, 255u8, 128u8 ) ),
+							.size[ u32(width), u32(height) ],
+							.pixels( size_type( u32(width) * u32(height) ), ust::make_zeroed</RGBAColor/>() ),
 						};
+
+						var $(AVFrame) mut dst_frame= av_frame_alloc();
+
+						sws_scale_frame( scale_context_, dst_frame, frame_ );
+
+						//image_data.pixels.range().to_byte8_range();
+
+						ust::memory_copy_aligned(
+							typeinfo</ byte8 />.align_of,
+							ust::ptr_cast_to_byte8( image_data.pixels.data() ),
+							ust::ptr_cast_to_byte8( $>(dst_frame).data[0] ),
+							image_data.pixels.size() * typeinfo</ RGBAColor />.size_of );
+
+						av_frame_free( $<( dst_frame ) );
+
+						return image_data;
 					},
 					AVERROR( EAGAIN ) ->
 					{
@@ -114,6 +135,7 @@ private:
 	$(AVCodecContext) decoder_context_;
 	$(AVPacket) packet_;
 	$(AVFrame) frame_;
+	$(SwsContext) scale_context_;
 }
 
 fn OpenVideoStream( ConsoleOutPtr& console_out, ust::filesystem_path file_path ) : ust::box_nullable</IVideoStream/>
@@ -232,8 +254,41 @@ fn OpenVideoStream( ConsoleOutPtr& console_out, ust::filesystem_path file_path )
 			return VideoStreamBoxNullable();
 		}
 
+		var $(SwsContext) scale_context=
+			sws_getContext(
+				// Src.
+				$>( decoder_context ).width,
+				$>( decoder_context ).height,
+				$>( decoder_context ).pix_fmt,
+				// Dst.
+				$>( decoder_context ).width,
+				$>( decoder_context ).height,
+				AV_PIX_FMT_RGBA,
+				// Other params.
+				0,
+				ust::nullptr</SwsFilter/>(),
+				ust::nullptr</SwsFilter/>(),
+				ust::nullptr</f64/>() );
+
+		if( ust::is_nullptr( scale_context ) )
+		{
+			ConsoleOutAddTextLine( console_out, "Failed to get scale context!" );
+			av_frame_free( $<( frame ) );
+			av_packet_free( $<( packet ) );
+			avcodec_free_context( $<( decoder_context ) );
+			avformat_close_input( $<( format_context ) );
+			return VideoStreamBoxNullable();
+		}
+
 		return ust::make_box(
-			VideoStreamFFmpeg( console_out, format_context, video_stream_index, decoder_context, packet, frame ) );
+			VideoStreamFFmpeg(
+				console_out,
+				format_context,
+				video_stream_index,
+				decoder_context,
+				packet,
+				frame,
+				scale_context ) );
 	}
 }
 
