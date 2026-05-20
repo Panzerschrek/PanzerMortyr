@@ -11,11 +11,13 @@ class VideoStreamFFmpeg final : IVideoStream
 public:
 	fn constructor(
 		$(AVFormatContext) format_context,
+		u32 video_stream_index,
 		$(AVCodecContext) decoder_context,
 		$(AVPacket) packet,
 		$(AVFrame) frame ) unsafe
 		(
 			format_context_= format_context,
+			video_stream_index_= video_stream_index,
 			decoder_context_= decoder_context,
 			packet_= packet,
 			frame_= frame
@@ -38,23 +40,52 @@ public: // IVideoStream
 
 	fn virtual final GetNextFrame( mut this ) : ust::optional</ImageData/>
 	{
-		// TODO
-		unsafe
+		loop
 		{
-			switch( avcodec_receive_frame( decoder_context_, frame_ ) )
+			unsafe
 			{
-				0 ->
+				switch( avcodec_receive_frame( decoder_context_, frame_ ) )
 				{
-					// TODO
-					return ust::null_optional;
-				},
-				default -> { return ust::null_optional; }
+					0 ->
+					{
+						// TODO - call av_frame_unref here?
+
+						// TODO - decode frame properly.
+						return ImageData
+						{
+							.size[ 1u, 1u ],
+							.pixels( 1s, ust::make_array( 255u8, 0u8, 255u8, 128u8 ) ),
+						};
+					},
+					AVERROR( EAGAIN ) ->
+					{
+						// Try extracting and sending a new video packet.
+						loop
+						{
+							if( av_read_frame( format_context_, packet_ ) != 0 )
+							{
+								return ust::null_optional;
+							}
+
+							if( $>(packet_).stream_index == i32( video_stream_index_ ) )
+							{
+								if( avcodec_send_packet( decoder_context_, packet_ ) != 0 )
+								{
+									return ust::null_optional;
+								}
+								break;
+							}
+						}
+					},
+					default -> { return ust::null_optional; }
+				}
 			}
 		}
 	}
 
 private:
 	$(AVFormatContext) format_context_;
+	u32 video_stream_index_;
 	$(AVCodecContext) decoder_context_;
 	$(AVPacket) packet_;
 	$(AVFrame) frame_;
@@ -176,8 +207,8 @@ fn OpenVideoStream( ConsoleOutPtr& console_out, ust::filesystem_path file_path )
 			return VideoStreamBoxNullable();
 		}
 
-		return ust::make_box( VideoStreamFFmpeg( format_context, decoder_context, packet, frame ) );
-	} label some
+		return ust::make_box( VideoStreamFFmpeg( format_context, video_stream_index, decoder_context, packet, frame ) );
+	}
 }
 
 type VideoStreamBoxNullable= ust::box_nullable</IVideoStream/>;
@@ -199,5 +230,29 @@ fn GetFFmpegError( i32 code ) : ust::string8
 		return ust::string_view8( $<(text[0]), length );
 	}
 }
+
+fn constexpr AVERROR( i32 code ) : i32
+{
+	return -code;
+}
+
+/*
+
+fn constexpr FFERRTAG( char8 a, char8 b, char8 c, char8 d ) : i32
+{
+	return FFERRTAG( u32(a), u32(b), u32(c), u32(d) );
+}
+
+fn constexpr FFERRTAG( u32 a, u32 b, u32 c, u32 d ) : i32
+{
+	return -i32( MKTAG( a, b, c, d ) );
+}
+
+fn constexpr MKTAG( u32 a, u32 b, u32 c,u32 d) : u32
+{
+	return a | ( b << 8 ) | ( c << 16 ) | ( d << 24 );
+}
+
+*/
 
 } // namespace PM
