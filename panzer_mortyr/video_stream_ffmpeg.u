@@ -2,7 +2,6 @@ import "/string_conversions.iu"
 import "/ffmpeg/ffmpeg.iu"
 import "video_stream.iu"
 
-
 namespace PM
 {
 
@@ -10,12 +9,14 @@ class VideoStreamFFmpeg final : IVideoStream
 {
 public:
 	fn constructor(
+		ConsoleOutPtr mut console_out,
 		$(AVFormatContext) format_context,
 		u32 video_stream_index,
 		$(AVCodecContext) decoder_context,
 		$(AVPacket) packet,
 		$(AVFrame) frame ) unsafe
 		(
+			console_out_= move(console_out),
 			format_context_= format_context,
 			video_stream_index_= video_stream_index,
 			decoder_context_= decoder_context,
@@ -44,7 +45,8 @@ public: // IVideoStream
 		{
 			unsafe
 			{
-				switch( avcodec_receive_frame( decoder_context_, frame_ ) )
+				var i32 receive_frame_res= avcodec_receive_frame( decoder_context_, frame_ );
+				switch( receive_frame_res )
 				{
 					0 ->
 					{
@@ -62,28 +64,51 @@ public: // IVideoStream
 						// Try extracting and sending a new video packet.
 						loop
 						{
-							if( av_read_frame( format_context_, packet_ ) != 0 )
+							var i32 read_packet_res= av_read_frame( format_context_, packet_ );
+							if( read_packet_res != 0 )
 							{
+								if( read_packet_res == AVERROR_EOF )
+								{
+									ConsoleOutAddTextLine( console_out_, "End of stream reached." );
+									return ust::null_optional;
+								}
+
+								ConsoleOutAddTextLine(
+									console_out_,
+									ust::concat(
+										"Failed to read a packet! Error: ", GetFFmpegError( read_packet_res ) ) );
 								return ust::null_optional;
 							}
 
-							if( $>(packet_).stream_index == i32( video_stream_index_ ) )
+							if( $>( packet_ ).stream_index == i32( video_stream_index_ ) )
 							{
-								if( avcodec_send_packet( decoder_context_, packet_ ) != 0 )
+								var i32 send_packet_res= avcodec_send_packet( decoder_context_, packet_ );
+								if( send_packet_res != 0 )
 								{
+									ConsoleOutAddTextLine(
+										console_out_,
+										ust::concat(
+											"Failed to send a packet! Error: ", GetFFmpegError( send_packet_res ) ) );
 									return ust::null_optional;
 								}
 								break;
 							}
 						}
 					},
-					default -> { return ust::null_optional; }
+					default ->
+					{
+						ConsoleOutAddTextLine(
+							console_out_,
+							ust::concat( "Failed to receive a frame! Error: ", GetFFmpegError( receive_frame_res ) ) );
+						return ust::null_optional;
+					}
 				}
 			}
 		}
 	}
 
 private:
+	ConsoleOutPtr imut console_out_;
 	$(AVFormatContext) format_context_;
 	u32 video_stream_index_;
 	$(AVCodecContext) decoder_context_;
@@ -207,7 +232,8 @@ fn OpenVideoStream( ConsoleOutPtr& console_out, ust::filesystem_path file_path )
 			return VideoStreamBoxNullable();
 		}
 
-		return ust::make_box( VideoStreamFFmpeg( format_context, video_stream_index, decoder_context, packet, frame ) );
+		return ust::make_box(
+			VideoStreamFFmpeg( console_out, format_context, video_stream_index, decoder_context, packet, frame ) );
 	}
 }
 
@@ -236,7 +262,7 @@ fn constexpr AVERROR( i32 code ) : i32
 	return -code;
 }
 
-/*
+auto constexpr AVERROR_EOF = FFERRTAG( 'E','O','F',' ' );
 
 fn constexpr FFERRTAG( char8 a, char8 b, char8 c, char8 d ) : i32
 {
@@ -252,7 +278,5 @@ fn constexpr MKTAG( u32 a, u32 b, u32 c,u32 d) : u32
 {
 	return a | ( b << 8 ) | ( c << 16 ) | ( d << 24 );
 }
-
-*/
 
 } // namespace PM
