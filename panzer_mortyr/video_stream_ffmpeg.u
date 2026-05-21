@@ -71,93 +71,94 @@ public: // IVideoStream
 	{
 		loop
 		{
-			unsafe
+			unsafe // Because of external calls.
 			{
 				var i32 receive_frame_res= avcodec_receive_frame( decoder_context_, frame_ );
-				switch( receive_frame_res )
+				if( receive_frame_res == 0 )
 				{
-					0 ->
+					// Received a frame.
+
+					// Perform here conversion to RGBA from whatever format a video uses.
+					// Scale context should be created for this format.
+
+					var i32 width= $>( decoder_context_ ).width;
+					var i32 height= $>( decoder_context_ ).height;
+
+					var FrameData mut frame_data;
+					frame_data.resize_uninitialized( size_type( u32(width) * u32(height) ) );
+
+					// sws_scale uses "uint8_t" for raw bytes.
+					var $(uint8_t) mut dst_ptr=
+						ust::byte_ptr_cast</ uint8_t />( ust::ptr_cast_to_byte8( frame_data.data() ) );
+
+					// We use simple width-based stride.
+					var i32 mut dst_stride= width * i32( typeinfo</ RGBAColor />.size_of );
+
+					sws_scale(
+						scale_context_,
+						// Provide all src pointers and strides.
+						$<( $>( frame_ ).data[0] ),
+						$<( $>( frame_ ).linesize[0] ),
+						0, // Start from line 0.
+						height, // Copy the whole image.
+						// RGBA format has single plane.
+						// It's enough to provide only single pointer for destination and for stride.
+						$<( dst_ptr ),
+						$<( dst_stride ) );
+
+					av_frame_unref( frame_ ); // Free received frame data.
+
+					return frame_data;
+				}
+				else if( receive_frame_res == AVERROR( EAGAIN ) )
+				{
+					// No frame is available now.
+					// Try extracting and sending a new video packet.
+
+					// Use a loop here to be able to ignore packets from streams other than the one used for video.
+					loop
 					{
-						// Perform here conversion to RGBA from whatever format a video uses.
-						// Scale context should be created for this format.
-
-						var i32 width= $>( decoder_context_ ).width;
-						var i32 height= $>( decoder_context_ ).height;
-
-						var FrameData mut frame_data;
-						frame_data.resize_uninitialized( size_type( u32(width) * u32(height) ) );
-
-						// sws_scale uses "uint8_t" for raw bytes.
-						var $(uint8_t) mut dst_ptr=
-							ust::byte_ptr_cast</ uint8_t />( ust::ptr_cast_to_byte8( frame_data.data() ) );
-
-						// We use simple width-based stride.
-						var i32 mut dst_stride= width * i32( typeinfo</ RGBAColor />.size_of );
-
-						sws_scale(
-							scale_context_,
-							// Provide all src pointers and strides.
-							$<( $>( frame_ ).data[0] ),
-							$<( $>( frame_ ).linesize[0] ),
-							0, // Start from line 0.
-							height, // Copy the whole image.
-							// RGBA format has single plane.
-							// It's enough to provide only single pointer for destination and for stride.
-							$<( dst_ptr ),
-							$<( dst_stride ) );
-
-						av_frame_unref( frame_ ); // Free received frame data.
-
-						return frame_data;
-					},
-					AVERROR( EAGAIN ) ->
-					{
-						// Try extracting and sending a new video packet.
-						loop
+						var i32 read_packet_res= av_read_frame( format_context_, packet_ );
+						if( read_packet_res != 0 )
 						{
-							var i32 read_packet_res= av_read_frame( format_context_, packet_ );
-							if( read_packet_res != 0 )
+							if( read_packet_res == AVERROR_EOF )
 							{
-								if( read_packet_res == AVERROR_EOF )
-								{
-									ConsoleOutAddTextLine( console_out_, "End of stream reached." );
-									return ust::null_optional;
-								}
-
-								ConsoleOutAddTextLine(
-									console_out_,
-									ust::concat(
-										"Failed to read a packet! Error: ", GetFFmpegError( read_packet_res ) ) );
+								ConsoleOutAddTextLine( console_out_, "End of stream reached." );
 								return ust::null_optional;
 							}
 
-							if( $>( packet_ ).stream_index == i32( video_stream_index_ ) )
-							{
-								var i32 send_packet_res= avcodec_send_packet( decoder_context_, packet_ );
+							ConsoleOutAddTextLine(
+								console_out_,
+								ust::concat( "Failed to read a packet! Error: ", GetFFmpegError( read_packet_res ) ) );
+							return ust::null_optional;
+						}
 
-								av_packet_unref( packet_ ); // Free received packet data.
-
-								if( send_packet_res != 0 )
-								{
-									ConsoleOutAddTextLine(
-										console_out_,
-										ust::concat(
-											"Failed to send a packet! Error: ", GetFFmpegError( send_packet_res ) ) );
-									return ust::null_optional;
-								}
-								break;
-							}
+						if( $>( packet_ ).stream_index == i32( video_stream_index_ ) )
+						{
+							var i32 send_packet_res= avcodec_send_packet( decoder_context_, packet_ );
 
 							av_packet_unref( packet_ ); // Free received packet data.
+
+							if( send_packet_res != 0 )
+							{
+								ConsoleOutAddTextLine(
+									console_out_,
+									ust::concat(
+										"Failed to send a packet! Error: ", GetFFmpegError( send_packet_res ) ) );
+								return ust::null_optional;
+							}
+							break;
 						}
-					},
-					default ->
-					{
-						ConsoleOutAddTextLine(
-							console_out_,
-							ust::concat( "Failed to receive a frame! Error: ", GetFFmpegError( receive_frame_res ) ) );
-						return ust::null_optional;
+
+						av_packet_unref( packet_ ); // Free received packet data.
 					}
+				}
+				else
+				{
+					ConsoleOutAddTextLine(
+						console_out_,
+						ust::concat( "Failed to receive a frame! Error: ", GetFFmpegError( receive_frame_res ) ) );
+					return ust::null_optional;
 				}
 			}
 		}
