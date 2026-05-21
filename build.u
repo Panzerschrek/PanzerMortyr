@@ -422,12 +422,38 @@ fn GetPackageInfo( BK::BuildSystemInterface &mut build_system_interface ) : BK::
 			} );
 	}
 
+	var bool mut use_ffmpleg= false;
+
+	var ust::filesystem_path ffmpeg_src_path=
+		ust::path::join( build_system_interface.GetCurrentPackageSourceDirectory(), "FFmpeg" );
+
+	if( !build_system_interface.GetConfigurationOption( "disable_ffmpeg" ).empty() )
+	{
+		build_system_interface.LogInfo( "\"ffmpeg\" is disabled via configuration options, bulding without it" );
+	}
+	else
+	{
+		result_match( ust::get_metadata_for_path( ffmpeg_src_path ) )
+		{
+			Ok(m) ->
+			{
+				if( m.kind == ust::file_kind::directory )
+				{
+					use_ffmpleg= true;
+					build_system_interface.LogInfo( "Found \"ffmpeg\", bulding with it" );
+				}
+			},
+			Err(e) ->
+			{
+				build_system_interface.LogError( "Failed to find \"ffmpeg\", building without it" );
+			}
+		}
+	}
+
 	var ust::string_view8 ffmpeg_wrapper_target_name= "ffmpeg";
 
+	if( use_ffmpleg )
 	{
-		var ust::filesystem_path ffmpeg_source_path=
-			ust::path::join( build_system_interface.GetCurrentPackageSourceDirectory(), "FFmpeg" );
-
 		var BK::BuildTarget mut ffmpeg_wrapper_target
 		{
 			.target_type = BK::BuildTargetType::Library,
@@ -473,7 +499,7 @@ fn GetPackageInfo( BK::BuildSystemInterface &mut build_system_interface ) : BK::
 			"--",
 			"-std=c11",
 			"-I",
-			ust::path::join( ffmpeg_source_path ),
+			ust::path::join( ffmpeg_src_path ),
 			"-I",
 			ust::path::join( build_system_interface.GetCurrentPackageSourceDirectory(), "ffmpeg_build/" ),
 			// Set clang "--target" option matching our current target triple.
@@ -520,7 +546,7 @@ fn GetPackageInfo( BK::BuildSystemInterface &mut build_system_interface ) : BK::
 			.private_dependencies= ust::make_array( BK::DependencyName{ .name= common_lib_target_name } )
 		} );
 
-	var [ ust::filesystem_path_view, 71 ] panzer_mortyr_source_files
+	var [ ust::filesystem_path_view, 70 ] panzer_mortyr_source_files
 	[
 		"audio_mixer.u",
 		"audio_out.u",
@@ -590,7 +616,6 @@ fn GetPackageInfo( BK::BuildSystemInterface &mut build_system_interface ) : BK::
 		"triangles_sorting.u",
 		"vertex_array_object.u",
 		"video_playback.u",
-		"video_stream_ffmpeg.u",
 		"world_audio_info_construction.u",
 		"world_drawer.u"
 	];
@@ -600,6 +625,15 @@ fn GetPackageInfo( BK::BuildSystemInterface &mut build_system_interface ) : BK::
 	foreach( &f : panzer_mortyr_source_files )
 	{
 		panzer_mortyr_source_files_full.push_back( ust::path::join( "panzer_mortyr", f ) );
+	}
+
+	if( use_ffmpleg )
+	{
+		panzer_mortyr_source_files_full.push_back( ust::path::join( "panzer_mortyr", "video_stream_ffmpeg.u" ) );
+	}
+	else
+	{
+		panzer_mortyr_source_files_full.push_back( ust::path::join( "panzer_mortyr", "video_stream_stub.u" ) );
 	}
 
 	var ust::vector</ ust::filesystem_path /> mut panzer_mortyr_external_libraries;
@@ -642,7 +676,18 @@ fn GetPackageInfo( BK::BuildSystemInterface &mut build_system_interface ) : BK::
 	}
 	else
 	{
+		// Set "rpath" to "$ORIGIN" to be able to load shared libraries from the same directory where the executable is located.
 		panzer_mortyr_external_libraries.push_back( "-rpath=$ORIGIN" );
+	}
+
+	var ust::vector</ BK::DependencyName /> mut panzer_mortyr_dependencies=
+		ust::make_array(
+			BK::DependencyName{ .name= common_lib_target_name },
+			BK::DependencyName{ .name= sdl_wrapper_target_name } );
+
+	if( use_ffmpleg )
+	{
+		panzer_mortyr_dependencies.push_back( BK::DependencyName{ .name= ffmpeg_wrapper_target_name } );
 	}
 
 	build_targets.push_back(
@@ -651,10 +696,7 @@ fn GetPackageInfo( BK::BuildSystemInterface &mut build_system_interface ) : BK::
 			.target_type = BK::BuildTargetType::Executable,
 			.name= "panzer_mortyr",
 			.source_files= move( panzer_mortyr_source_files_full ),
-			.private_dependencies= ust::make_array(
-				BK::DependencyName{ .name= common_lib_target_name },
-				BK::DependencyName{ .name= sdl_wrapper_target_name },
-				BK::DependencyName{ .name= ffmpeg_wrapper_target_name } ),
+			.private_dependencies= move( panzer_mortyr_dependencies ),
 			.external_libraries= move( panzer_mortyr_external_libraries ),
 		} );
 
