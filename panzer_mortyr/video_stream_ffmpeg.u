@@ -78,28 +78,33 @@ public: // IVideoStream
 				{
 					0 ->
 					{
-						// TODO - call av_frame_unref here?
+						// Perform here conversion to RGBA from whatever format a video uses.
+						// Scale context should be created for this format.
 
 						var i32 width= $>( decoder_context_ ).width;
 						var i32 height= $>( decoder_context_ ).height;
 
 						var FrameData mut frame_data;
+						frame_data.resize_uninitialized( size_type( u32(width) * u32(height) ) );
 
-						{
-							frame_data.resize_uninitialized( size_type( u32(width) * u32(height) ) );
+						// sws_scale uses "uint8_t" for raw bytes.
+						var $(uint8_t) mut dst_ptr=
+							ust::byte_ptr_cast</ uint8_t />( ust::ptr_cast_to_byte8( frame_data.data() ) );
 
-							var $(AVFrame) mut dst_frame= av_frame_alloc();
+						// We use simple width-based stride.
+						var i32 mut dst_stride= width * i32( typeinfo</ RGBAColor />.size_of );
 
-							sws_scale_frame( scale_context_, dst_frame, frame_ );
-
-							ust::memory_copy_aligned(
-								typeinfo</ byte8 />.align_of,
-								ust::ptr_cast_to_byte8( frame_data.data() ),
-								ust::ptr_cast_to_byte8( $>(dst_frame).data[0] ),
-								frame_data.size() * typeinfo</ RGBAColor />.size_of );
-
-							av_frame_free( $<( dst_frame ) );
-						}
+						sws_scale(
+							scale_context_,
+							// Provide all src pointers and strides.
+							$<( $>( frame_ ).data[0] ),
+							$<( $>( frame_ ).linesize[0] ),
+							0, // Start from line 0.
+							height, // Copy the whole image.
+							// RGBA format has single plane.
+							// It's enough to provide only single pointer for destination and for stride.
+							$<( dst_ptr ),
+							$<( dst_stride ) );
 
 						av_frame_unref( frame_ ); // Free received frame data.
 
@@ -284,6 +289,8 @@ fn OpenVideoStream( ConsoleOutPtr& console_out, ust::filesystem_path file_path )
 			return VideoStreamBoxNullable();
 		}
 
+		// Create scale context for converting to RGBA.
+		// Perform just conversion, without size change.
 		var $(SwsContext) scale_context=
 			sws_getContext(
 				// Src.
