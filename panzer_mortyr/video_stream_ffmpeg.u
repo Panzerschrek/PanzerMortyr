@@ -10,12 +10,12 @@ class VideoStreamFFmpeg final : IVideoStream
 public:
 	fn constructor(
 		ConsoleOutPtr mut console_out,
-		$(AVFormatContext) format_context,
-		u32 video_stream_index,
-		$(AVCodecContext) decoder_context,
-		$(AVPacket) packet,
-		$(AVFrame) frame,
-		$(SwsContext) scale_context ) unsafe
+		$(AVFormatContext) format_context, // Should be valid.
+		u32 video_stream_index, // Should be valid index of a video stream.
+		$(AVCodecContext) decoder_context, // Should be valid and prepared for given format.
+		$(AVPacket) packet, // Should be valid.
+		$(AVFrame) frame, // Should be valid.
+		$(SwsContext) scale_context /* Should be valid context for 1 to 1 scaling to RGBA format */ ) unsafe
 		(
 			console_out_= move(console_out),
 			format_context_= format_context,
@@ -25,8 +25,7 @@ public:
 			frame_= frame,
 			scale_context_= scale_context,
 		)
-	{
-	}
+	{}
 
 	fn destructor()
 	{
@@ -41,7 +40,6 @@ public:
 	}
 
 public: // IVideoStream
-
 	fn virtual final GetSize( this ) : [ u32, 2 ]
 	{
 		return unsafe( ust::make_array( u32( $>( decoder_context_ ).width ), u32( $>( decoder_context_ ).height ) ) );
@@ -49,6 +47,8 @@ public: // IVideoStream
 
 	fn virtual final GetFramerate( this ) : f32
 	{
+		// Assume we have fixed framerate with each frame needed to be shown equal amount of time.
+
 		// TODO - check if it's correct to use this framerate.
 		var AVRational framerate=
 			unsafe( $>( $>( $>( format_context_ ).streams + video_stream_index_ ) ).r_frame_rate );
@@ -71,7 +71,7 @@ public: // IVideoStream
 	{
 		loop
 		{
-			unsafe // Because of external calls.
+			unsafe // Because of external C calls.
 			{
 				var i32 receive_frame_res= avcodec_receive_frame( decoder_context_, frame_ );
 				if( receive_frame_res == 0 )
@@ -87,7 +87,7 @@ public: // IVideoStream
 					var FrameData mut frame_data;
 					frame_data.resize_uninitialized( size_type( u32(width) * u32(height) ) );
 
-					// sws_scale uses "uint8_t" for raw bytes.
+					// "sws_scale" uses "uint8_t" for raw bytes.
 					var $(uint8_t) mut dst_ptr=
 						ust::byte_ptr_cast</ uint8_t />( ust::ptr_cast_to_byte8( frame_data.data() ) );
 
@@ -123,13 +123,14 @@ public: // IVideoStream
 						{
 							if( read_packet_res == AVERROR_EOF )
 							{
-								ConsoleOutAddTextLine( console_out_, "End of stream reached." );
+								safe( ConsoleOutAddTextLine( console_out_, "End of stream reached." ) );
 								return ust::null_optional;
 							}
 
-							ConsoleOutAddTextLine(
+							safe( ConsoleOutAddTextLine(
 								console_out_,
-								ust::concat( "Failed to read a packet! Error: ", GetFFmpegError( read_packet_res ) ) );
+								ust::concat(
+									"Failed to read a packet! Error: ", GetFFmpegError( read_packet_res ) ) ) );
 							return ust::null_optional;
 						}
 
@@ -141,10 +142,10 @@ public: // IVideoStream
 
 							if( send_packet_res != 0 )
 							{
-								ConsoleOutAddTextLine(
+								safe( ConsoleOutAddTextLine(
 									console_out_,
 									ust::concat(
-										"Failed to send a packet! Error: ", GetFFmpegError( send_packet_res ) ) );
+										"Failed to send a packet! Error: ", GetFFmpegError( send_packet_res ) ) ) );
 								return ust::null_optional;
 							}
 							break;
@@ -155,9 +156,9 @@ public: // IVideoStream
 				}
 				else
 				{
-					ConsoleOutAddTextLine(
+					safe( ConsoleOutAddTextLine(
 						console_out_,
-						ust::concat( "Failed to receive a frame! Error: ", GetFFmpegError( receive_frame_res ) ) );
+						ust::concat( "Failed to receive a frame! Error: ", GetFFmpegError( receive_frame_res ) ) ) );
 					return ust::null_optional;
 				}
 			}
@@ -176,9 +177,12 @@ private:
 
 fn OpenVideoStream( ConsoleOutPtr& console_out, ust::filesystem_path file_path ) : ust::box_nullable</IVideoStream/>
 {
-	unsafe( av_log_set_level( AV_LOG_DEBUG ) );
+	if( compiler::options::generate_debug_info | compiler::options::optimization_level == '0' )
+	{
+		unsafe( av_log_set_level( AV_LOG_DEBUG ) );
+	}
 
-	ConsoleOutAddTextLine( console_out, "Try playing a video" );
+	ConsoleOutAddTextLine( console_out, ust::concat( "Opening video file \"", file_path, "\"." ) );
 
 	var ust::string8 mut file_path_nt= ust::concat( file_path, "\0" );
 
@@ -188,38 +192,41 @@ fn OpenVideoStream( ConsoleOutPtr& console_out, ust::filesystem_path file_path )
 	var $(AVFrame) mut frame= zero_init;
 	var $(SwsContext) mut scale_context= zero_init;
 
-	unsafe
+	unsafe // Because of unsafe C calls.
 	{
 		with( ret :
 			avformat_open_input(
 				$<( format_context ),
 				file_path_nt.data(),
-				ust::nullptr</AVInputFormat/>(),
+				ust::nullptr</ AVInputFormat />(),
 				ust::nullptr</ $(AVDictionary) />() ) )
 		{
 			if( ret != 0 )
 			{
-				ConsoleOutAddTextLine(
-					console_out, ust::concat( "Failed to open a video! Error: ", GetFFmpegError( ret ) ) );
+				safe( ConsoleOutAddTextLine(
+					console_out, ust::concat( "Failed to open a video! Error: ", GetFFmpegError( ret ) ) ) );
 				break label cleanup;
 			}
 		}
 
-		ConsoleOutAddTextLine( console_out, "Opened video input" );
+		safe( ConsoleOutAddTextLine( console_out, "Opened video input" ) );
 
 		with( ret : avformat_find_stream_info( format_context, ust::nullptr</ $(AVDictionary) />() ) )
 		{
 			if( ret != 0 )
 			{
-				ConsoleOutAddTextLine(
-					console_out, ust::concat( "Failed to found stream info! Error: ", GetFFmpegError( ret ) ) );
+				safe( ConsoleOutAddTextLine(
+					console_out, ust::concat( "Failed to found stream info! Error: ", GetFFmpegError( ret ) ) ) );
 				break label cleanup;
 			}
 		}
 
-		ConsoleOutAddTextLine(
+		safe( ConsoleOutAddTextLine(
 			console_out,
-			ust::concat( "Found steam info. Has ", ust::to_string8( $>(format_context).nb_streams ), " streams" ) );
+			ust::concat(
+				"Found stream info. Has ",
+				unsafe( ust::to_string8( $>( format_context ).nb_streams ) ),
+				" streams." ) ) );
 
 		var u32 mut video_stream_index= ~0u;
 		for( auto mut stream_index= 0u; stream_index < $>(format_context).nb_streams; ++stream_index )
@@ -233,12 +240,12 @@ fn OpenVideoStream( ConsoleOutPtr& console_out, ust::filesystem_path file_path )
 
 		if( video_stream_index == ~0u )
 		{
-			ConsoleOutAddTextLine( console_out, "Failed to get video stream" );
+			safe( ConsoleOutAddTextLine( console_out, "Failed to get video stream!" ) );
 			break label cleanup;
 		}
 
-		ConsoleOutAddTextLine(
-			console_out, ust::concat( "Video stream index is ", ust::to_string8( video_stream_index ) ) );
+		safe( ConsoleOutAddTextLine(
+			console_out, ust::concat( "Video stream index is ", ust::to_string8( video_stream_index ), "." ) ) );
 
 		var AVStream &mut stream= $>( $>( $>(format_context).streams + video_stream_index ) );
 
@@ -249,8 +256,9 @@ fn OpenVideoStream( ConsoleOutPtr& console_out, ust::filesystem_path file_path )
 			break label cleanup;
 		}
 
-		ConsoleOutAddTextLine(
-			console_out, ust::concat( "Found a decoder. Codec id is ", ust::to_string8( $>(decoder).id  ) ) );
+		safe( ConsoleOutAddTextLine(
+			console_out,
+			ust::concat( "Found a decoder. Codec id is ", unsafe( ust::to_string8( $>(decoder).id  ) ), "." ) ) );
 
 		decoder_context= avcodec_alloc_context3( decoder );
 		if( ust::is_nullptr( decoder_context ) )
@@ -263,9 +271,9 @@ fn OpenVideoStream( ConsoleOutPtr& console_out, ust::filesystem_path file_path )
 		{
 			if( ret != 0 )
 			{
-				ConsoleOutAddTextLine(
+				safe( ConsoleOutAddTextLine(
 					console_out,
-					ust::concat( "avcodec_parameters_to_context failed! Error: ", GetFFmpegError( ret ) ) );
+					ust::concat( "avcodec_parameters_to_context failed! Error: ", GetFFmpegError( ret ) ) ) );
 				break label cleanup;
 			}
 		}
@@ -274,8 +282,8 @@ fn OpenVideoStream( ConsoleOutPtr& console_out, ust::filesystem_path file_path )
 		{
 			if( ret != 0 )
 			{
-				ConsoleOutAddTextLine(
-					console_out, ust::concat( "Failed to open decoder! Error: ", GetFFmpegError( ret ) ) );
+				safe( ConsoleOutAddTextLine(
+					console_out, ust::concat( "Failed to open decoder! Error: ", GetFFmpegError( ret ) ) ) );
 				break label cleanup;
 			}
 		}
@@ -283,14 +291,14 @@ fn OpenVideoStream( ConsoleOutPtr& console_out, ust::filesystem_path file_path )
 		packet= av_packet_alloc();
 		if( ust::is_nullptr( packet ) )
 		{
-			ConsoleOutAddTextLine( console_out, "Failed to alloc packet!" );
+			safe( ConsoleOutAddTextLine( console_out, "Failed to alloc packet!" ) );
 			break label cleanup;
 		}
 
 		frame= av_frame_alloc();
 		if( ust::is_nullptr( frame ) )
 		{
-			ConsoleOutAddTextLine( console_out, "Failed to alloc frame!" );
+			safe( ConsoleOutAddTextLine( console_out, "Failed to alloc frame!" ) );
 			break label cleanup;
 		}
 
@@ -308,13 +316,13 @@ fn OpenVideoStream( ConsoleOutPtr& console_out, ust::filesystem_path file_path )
 				AV_PIX_FMT_RGBA,
 				// Other params.
 				0,
-				ust::nullptr</SwsFilter/>(),
-				ust::nullptr</SwsFilter/>(),
+				ust::nullptr</ SwsFilter />(),
+				ust::nullptr</ SwsFilter />(),
 				ust::nullptr</f64/>() );
 
 		if( ust::is_nullptr( scale_context ) )
 		{
-			ConsoleOutAddTextLine( console_out, "Failed to get scale context!" );
+			safe( ConsoleOutAddTextLine( console_out, "Failed to get scale context!" ) );
 			break label cleanup;
 		}
 
@@ -345,7 +353,7 @@ fn GetFFmpegError( i32 code ) : ust::string8
 
 	unsafe
 	{
-		av_strerror( code, $<(text[0]), size_t( typeinfo</ typeof(text) />.size_of ) );
+		av_strerror( code, $<( text[0] ), size_t( typeinfo</ typeof(text) />.size_of ) );
 
 		var size_type mut length= 0s;
 		while( length < typeinfo</ typeof(text) />.element_count && text[ length ] != '\0' )
@@ -353,7 +361,7 @@ fn GetFFmpegError( i32 code ) : ust::string8
 			++length;
 		}
 
-		return ust::string_view8( $<(text[0]), length );
+		return ust::string_view8( $<(text[0] ), length );
 	}
 }
 
