@@ -78,6 +78,7 @@ fn CreateNewMapGameState(
 		},
 		.broken_quad_bits( map_data.zmap_data.deref().quads.size() ),
 		.map_leave_condition_message= zero_init,
+		.next_map_index= 0u,
 	};
 
 	var EntitiesDescription& entities_description= map_data.entities_description.deref();
@@ -448,12 +449,12 @@ fn ShouldSpawnEntity(
 	return ( ( 1s << ( entity_index % 8s ) ) & preserve_mask ) != 0s;
 }
 
-fn nodiscard ProcessGameLogicStep(
+fn ProcessGameLogicStep(
 	GameGlobalData& global_data,
 	GameMapData& map_data,
 	PlayerInput& player_input,
 	GameState &mut game_state,
-	GlobalNavigationGraphRouteSearcher &mut route_searcher ) : u32
+	GlobalNavigationGraphRouteSearcher &mut route_searcher )
 {
 	// Reset the map leave condition message.
 	foreach( &mut c : game_state.map_leave_condition_message )
@@ -524,11 +525,9 @@ fn nodiscard ProcessGameLogicStep(
 
 	DealPlayerEnvironmentalDamage( global_data.sounds_description.deref(), map_data, game_state );
 
-	var u32 next_map_index= InteractWithTriggerVolumes( global_data, map_data, game_state );
+	InteractWithTriggerVolumes( global_data, map_data, game_state );
 
 	++game_state.step_index;
-
-	return next_map_index;
 }
 
 fn PerformPlayerWeaponLogic( GameMapData& map_data, PlayerInput& player_input, GameState &mut game_state )
@@ -4580,21 +4579,17 @@ fn DealPlayerEnvironmentalDamage(
 	}
 }
 
-// Returns next map index if requires map transition or 0 if requires no one.
-fn InteractWithTriggerVolumes(
-	GameGlobalData& global_data, GameMapData& map_data, GameState &mut game_state ) : u32
+fn InteractWithTriggerVolumes( GameGlobalData& global_data, GameMapData& map_data, GameState &mut game_state )
 {
-	var u32 mut next_map_index= 0u;
-
 	if( game_state.player.energy == 0u )
 	{
 		// Dead player can't interact with triger volumes.
-		return next_map_index;
+		return;
 	}
 
 	if( size_type( game_state.player.collider_index ) >= game_state.colliders.size() )
 	{
-		return next_map_index;
+		return;
 	}
 
 	var BBox3f& player_bbox= game_state.colliders[ size_type( game_state.player.collider_index ) ].bbox;
@@ -4664,7 +4659,7 @@ fn InteractWithTriggerVolumes(
 
 				if( leave_condition_satisfied )
 				{
-					next_map_index= u32( trigger_volume.trigger_param );
+					game_state.next_map_index= u32( trigger_volume.trigger_param );
 				}
 			},
 			ZvoxTriggerVolume::c_trigger_type_secret_area ->
@@ -4691,13 +4686,11 @@ fn InteractWithTriggerVolumes(
 			{
 				// TODO - show game end cinematics.
 				// For now just trigger transition to a non-existing level.
-				next_map_index= 99999u;
+				game_state.next_map_index= 99999u;
 			},
 			default -> {},
 		}
 	}
-
-	return next_map_index;
 }
 
 fn CollideMovedEntityWithProjectiles(
