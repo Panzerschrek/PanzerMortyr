@@ -1,6 +1,7 @@
 import "/enum_string_conversions.iu"
 import "/integer_parsing.iu"
 import "/main_wrapper.iu"
+import "/path_utils.iu"
 import "/stdout.iu"
 
 import "audio_processor.iu"
@@ -95,6 +96,14 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 
 	var VideoPlayer mut video_player( console_out_ptr );
 
+	ConsoleOutAddTextLine( console_out_ptr, "PanzerMortyr initialized!" );
+
+	PlayStartupCinematics(
+		GetGameParams( caching_game_resources_loader_ptr ).deref(),
+		game_filesystem_ptr.lock_imut().deref(),
+		video_player,
+		window );
+
 	if_var( start_map : command_line_options.start_map )
 	{
 		game.TeleportToMap( start_map, command_line_options.skill.deref_or( c_default_skill ), audio_processor );
@@ -113,7 +122,6 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 	var PerformanceCounter mut performance_counter;
 	var PerformanceCounter::TimePoint mut prev_frame_start_time_point= performance_counter.GetCurrentTime();
 
-	ConsoleOutAddTextLine( console_out_ptr, "PanzerMortyr initialized!" );
 
 	loop label main_loop
 	{
@@ -556,6 +564,33 @@ struct MenuCommandProcessor
 	bool quit_requested= false;
 	Game &mut @('a') game;
 	AudioProcessor &mut @('b') audio_processor;
+}
+
+fn PlayStartupCinematics(
+	GameParams& game_params, GameFilesystem& game_filesystem, VideoPlayer &mut video_player, OpenGLWindow &mut window )
+{
+	// Assume all cinematics except the last two to be startup cinematics.
+
+	if( game_params.cinematics.size() < 2s )
+	{
+		return;
+	}
+
+	var size_type num_startup_cinematics= game_params.cinematics.size() - 2s;
+
+	var ust::filesystem_path_view data_directory= game_filesystem.GetDataDirectory();
+
+	// TODO - check if this order is correct.
+	foreach( &cinematic : game_params.cinematics.range().subrange_end( num_startup_cinematics ) )
+	{
+		video_player.PlayVideo( ust::path::join( data_directory, cinematic ), window );
+	}
+}
+
+fn GetGameParams( CachingGameResourcesLoaderPtr& caching_game_resources_loader_ptr ) : GameResourcePtr</GameParams/>
+{
+	auto mut lock= caching_game_resources_loader_ptr.lock_mut();
+	return lock.deref().LoadGameParams();
 }
 
 fn DrawWorldDrawingStats( TextDrawer &mut text_drawer, [ u32, 2 ] viewport_size, WorldDrawingStats& stats )
