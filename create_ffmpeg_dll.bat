@@ -1,1 +1,0 @@
-link libavformat/avformat.lib libavcodec/avcodec.lib libavutil/avutil.lib libswscale/swscale.lib bcrypt.lib Ws2_32.lib /DLL /OUT:panzer_mortyr_ffmpeg.dll /MACHINE:x64 /defaultlib:msvcrt /DEF:ffmpeg.def
