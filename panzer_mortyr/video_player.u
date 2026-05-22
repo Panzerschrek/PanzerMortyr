@@ -1,0 +1,256 @@
+import "/assert.iu"
+import "/string_conversions.iu"
+import "gl_state.iu"
+import "texture.u"
+import "video_player.iu"
+import "video_stream.iu"
+
+namespace PM
+{
+
+fn VideoPlayer::constructor( ConsoleOutPtr mut console_out )
+	(
+		console_out_= move(console_out),
+		shader_( embed</char8/>( "shaders/video.vert.glsl" ), embed</char8/>( "shaders/video.frag.glsl" ) )
+	)
+{}
+
+fn VideoPlayer::PlayVideo( mut this, ust::filesystem_path_view file_path, OpenGLWindow &mut window )
+{
+	// Check if we already need to stop before even loading a video.
+	if( !ProcessSDLEventsInVideoPlayback( console_out_ ) )
+	{
+		return;
+	}
+
+	var ust::box_nullable</IVideoStream/> mut stream_ptr= OpenVideoStream( console_out_, file_path );
+
+	if( stream_ptr.empty() )
+	{
+		return;
+	}
+
+	var IVideoStream &mut stream= stream_ptr.try_deref();
+
+	var [ u32, 2 ] video_size= stream.GetSize();
+	var f32 video_framerate= stream.GetFramerate();
+	var f32 frame_duration_s= 1.0f / video_framerate;
+
+	var f32 video_aspect_ratio= stream.GetAspectRatio();
+
+	var [ u32, 2 ] viewport_size= window.GetViewportSize();
+	var f32 viewport_aspect_ratio= f32( viewport_size[0] ) / f32( viewport_size[1] );
+
+	var Vec2f normalized_scale=
+		( video_aspect_ratio <= viewport_aspect_ratio
+			? Vec2f( 2.0f * video_aspect_ratio / viewport_aspect_ratio, 2.0f )
+			: Vec2f( 2.0f, 2.0f * viewport_aspect_ratio / video_aspect_ratio ) );
+
+	ConsoleOutAddTextLine( console_out_, ust::concat( "Framerate is ", ust::to_string8( u32( video_framerate ) ) ) );
+
+	var Texture mut texture= CreateVideoFrameTexture( video_size );
+
+	if_var( &first_frame : stream.GetNextFrame() )
+	{
+		UpdateVideoFrameTexture( texture, video_size, first_frame );
+	}
+	else
+	{
+		return;
+	}
+
+	// Always have a next frame ready.
+	var ust::optional</ IVideoStream::FrameData /> mut next_frame_data= stream.GetNextFrame();
+
+	var PerformanceCounter::TimePoint start_time= performance_counter_.GetCurrentTime();
+	var f32 mut last_frame_time_s= 0.0f;
+
+	loop
+	{
+		// Process events while playing a video.
+		if( !ProcessSDLEventsInVideoPlayback( console_out_ ) )
+		{
+			break;
+		}
+
+		var f32 current_time_s=
+			performance_counter_.CalculateDurationS( start_time, performance_counter_.GetCurrentTime() );
+
+		if( current_time_s >= last_frame_time_s + frame_duration_s )
+		{
+			// It's time to show a new frame.
+
+			// TODO - handle the case when source framerate is higher than the target one (like 120fps video on 60fps display).
+
+			if_var( &frame_data : next_frame_data )
+			{
+				UpdateVideoFrameTexture( texture, video_size, frame_data );
+			}
+			else
+			{
+				break;
+			}
+
+			next_frame_data.reset();
+
+			last_frame_time_s+= frame_duration_s;
+		}
+
+		DrawVideoFrame( shader_, texture, normalized_scale );
+
+		window.SwapWindow();
+
+		// Try loading next frame after swapping window - to have enough time for doing it.
+		if( next_frame_data.empty() )
+		{
+			next_frame_data= stream.GetNextFrame();
+		}
+	}
+}
+
+fn CreateVideoFrameTexture( [ u32, 2 ] video_size ) : Texture
+{
+	var Texture mut texture= Texture::Create( GLenum( GL_TEXTURE_2D ) );
+	texture.Bind();
+
+	unsafe( glTexImage2D(
+		GLenum( GL_TEXTURE_2D ),
+		0,
+		GLint( GL_RGBA8 ),
+		GLsizei( video_size[0] ),
+		GLsizei( video_size[1] ),
+		0,
+		GLenum( GL_RGBA ),
+		GLenum( GL_UNSIGNED_BYTE ),
+		ust::nullptr</byte8/>() ) );
+
+	// Use linear filter.
+	unsafe( glTexParameteri( GLenum( GL_TEXTURE_2D ), GLenum( GL_TEXTURE_MIN_FILTER ), GLint( GL_LINEAR ) ) );
+	unsafe( glTexParameteri( GLenum( GL_TEXTURE_2D ), GLenum( GL_TEXTURE_MAG_FILTER ), GLint( GL_LINEAR ) ) );
+
+	// Clamp texture coordinates to edge.
+	unsafe( glTexParameteri( GLenum( GL_TEXTURE_2D ), GLenum( GL_TEXTURE_WRAP_S ), GLint( GL_CLAMP_TO_EDGE ) ) );
+	unsafe( glTexParameteri( GLenum( GL_TEXTURE_2D ), GLenum( GL_TEXTURE_WRAP_T ), GLint( GL_CLAMP_TO_EDGE ) ) );
+
+	return texture;
+}
+
+fn UpdateVideoFrameTexture( Texture &mut texture, [ u32, 2 ] video_size, IVideoStream::FrameData& frame_data )
+{
+	assert( frame_data.size() == size_type( video_size[0] * video_size[1] ) );
+
+	texture.Bind();
+
+	unsafe( glTexSubImage2D(
+		GLenum( GL_TEXTURE_2D ),
+		0,
+		0,
+		0,
+		GLsizei( video_size[0] ),
+		GLsizei( video_size[1] ),
+		GLenum( GL_RGBA ),
+		GLenum( GL_UNSIGNED_BYTE ),
+		ust::ptr_cast_to_byte8( frame_data.range().data() ) ) );
+}
+
+// Returns false if should stop playback.
+fn ProcessSDLEventsInVideoPlayback( ConsoleOutPtr& console_out ) : bool
+{
+	var SDL_Event mut event= zero_init;
+	while( unsafe( SDL_PollEvent( $<(event) ) ) != 0 )
+	{
+		switch( SDL_EventType( size_type( event.union_contents[0] ) ) )
+		{
+			SDL_QUIT ->
+			{
+				// If quiting is requested, abort playback and push the quit event back.
+				ConsoleOutAddTextLine( console_out, "Quit is requested - abort video playback" );
+				unsafe( SDL_PushEvent( $<( event ) ) );
+				return false;
+			},
+			SDL_WINDOWEVENT ->
+			{
+				var SDL_WindowEventID event_id( unsafe( cast_ref_unsafe</SDL_WindowEvent/>( event ) ).event );
+				if( event_id == SDL_WINDOWEVENT_CLOSE )
+				{
+					// If closing is requested, abort playback and push the close event back.
+					ConsoleOutAddTextLine( console_out, "Closing is requested - abort video playback" );
+					unsafe( SDL_PushEvent( $<( event ) ) );
+					return false;
+				}
+			},
+			SDL_KEYDOWN ->
+			{
+				// Abort video playback on pressing one of special keys.
+				auto scancode= unsafe( cast_ref_unsafe</SDL_KeyboardEvent/>( event ) ).keysym.scancode;
+				if( scancode == SDL_SCANCODE_ESCAPE ||
+					scancode == SDL_SCANCODE_RETURN ||
+					scancode == SDL_SCANCODE_SPACE )
+				{
+					ConsoleOutAddTextLine( console_out, "A key was pressed - abort video playback" );
+					return false;
+				}
+			},
+			SDL_MOUSEBUTTONDOWN ->
+			{
+				// Abort video playback on mouse button push.
+				ConsoleOutAddTextLine( console_out, "A mouse button was pushed - abort video playback" );
+				return false;
+			},
+			default -> {},
+		}
+	}
+
+	return true;
+}
+
+fn DrawVideoFrame( ShaderProgram &mut shader, Texture& texture, Vec2f& normalized_scale )
+{
+	// Clear color buffer around the video.
+	// We need this if video's aspect ratio isn't equal to viewport's aspect ratio.
+	SetGLState( g_buffer_clear_gl_state );
+	unsafe( glClearColor( GLclampf(0.0), GLclampf(0.0), GLclampf(0.0f), GLclampf(1.0) ) );
+	unsafe( glClear( GLbitfield( GL_COLOR_BUFFER_BIT  ) ) );
+
+	SetGLState( g_video_drawing_gl_state );
+
+	var u32 texture_slot= 0u;
+
+	unsafe( glActiveTexture( GLenum( GL_TEXTURE0 ) + GLenum(texture_slot) ) );
+	texture.Bind();
+
+	shader.Bind();
+	shader.SetUniform( "fu_texture", texture_slot );
+	shader.SetUniform( "v_scale", normalized_scale );
+
+	// Draw 2 triangles. Vertex coordinates and texture coordinates are generated by the shader.
+	unsafe( glDrawArrays( GLenum( GL_TRIANGLES ), GLint(0), GLsizei(6) ) );
+}
+
+var GLState g_buffer_clear_gl_state
+{
+	.color_write_enabled= true,
+	.depth_test_enabled= false,
+	.depth_test_func( GL_INVALID_ENUM ),
+	.depth_write_enabled= true,
+	.cull_face_enabled= false,
+	.cull_face( GL_INVALID_ENUM ),
+	.blending_enabled= false,
+	.blend_source_factor( GL_INVALID_ENUM ),
+	.blend_destination_factor( GL_INVALID_ENUM ),
+};
+
+var GLState g_video_drawing_gl_state
+{
+	.color_write_enabled= true,
+	.depth_test_enabled= false,
+	.depth_test_func( GL_INVALID_ENUM ),
+	.depth_write_enabled= false,
+	.cull_face_enabled= false,
+	.cull_face( GL_INVALID_ENUM ),
+	.blending_enabled= true,
+	.blend_source_factor( GL_SRC_ALPHA ),
+	.blend_destination_factor( GL_ONE_MINUS_SRC_ALPHA ),
+};
+
+} // namespace PM

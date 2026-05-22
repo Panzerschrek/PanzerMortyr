@@ -1,0 +1,24 @@
+#version 330
+
+// This shader draws a hardcoded quad consisting of two triangles.
+// The only proper way of executing is is to call glDrawArrays( GL_TRIANGLES, 0, 6 )
+
+const vec2 vertices[4]= vec2[4](
+	vec2( 0.0, 0.0 ),
+	vec2( 1.0, 0.0 ),
+	vec2( 0.0, 1.0 ),
+	vec2( 1.0, 1.0 ) );
+
+const int indices[6]= int[6]( 0, 1, 2, 1, 2, 3 );
+
+uniform vec2 v_scale;
+
+out vec2 f_texture_coordinates;
+
+void main()
+{
+	vec2 coord= vertices[ indices[ gl_VertexID ] ];
+	// Flip vertically. Videos are stored in top to bottom lines order.
+	gl_Position= vec4( ( coord.x - 0.5 ) * v_scale.x, ( 0.5 - coord.y ) * v_scale.y, 0.0, 1.0 );
+	f_texture_coordinates= coord;
+}

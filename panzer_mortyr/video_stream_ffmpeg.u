@@ -1,0 +1,391 @@
+import "/string_conversions.iu"
+import "/ffmpeg/ffmpeg.iu"
+import "video_stream.iu"
+
+namespace PM
+{
+
+class VideoStreamFFmpeg final : IVideoStream
+{
+public:
+	fn constructor(
+		ConsoleOutPtr mut console_out,
+		$(AVFormatContext) format_context, // Should be valid.
+		u32 video_stream_index, // Should be valid index of a video stream.
+		$(AVCodecContext) decoder_context, // Should be valid and prepared for given format.
+		$(AVPacket) packet, // Should be valid.
+		$(AVFrame) frame, // Should be valid.
+		$(SwsContext) scale_context /* Should be valid context for 1 to 1 scaling to RGBA format */ ) unsafe
+		(
+			console_out_= move(console_out),
+			format_context_= format_context,
+			video_stream_index_= video_stream_index,
+			decoder_context_= decoder_context,
+			packet_= packet,
+			frame_= frame,
+			scale_context_= scale_context,
+		)
+	{}
+
+	fn destructor()
+	{
+		unsafe
+		{
+			sws_freeContext( scale_context_ );
+			av_packet_free( $<( packet_ ) );
+			av_frame_free( $<( frame_ ) );
+			avcodec_free_context( $<( decoder_context_ ) );
+			avformat_close_input( $<( format_context_ ) );
+		}
+	}
+
+public: // IVideoStream
+	fn virtual final GetSize( this ) : [ u32, 2 ]
+	{
+		return unsafe( ust::make_array( u32( $>( decoder_context_ ).width ), u32( $>( decoder_context_ ).height ) ) );
+	}
+
+	fn virtual final GetFramerate( this ) : f32
+	{
+		// Assume we have fixed framerate with each frame needed to be shown equal amount of time.
+
+		// TODO - check if it's correct to use this framerate.
+		var AVRational framerate=
+			unsafe( $>( $>( $>( format_context_ ).streams + video_stream_index_ ) ).r_frame_rate );
+		return f32( framerate.num ) / f32 ( framerate.den );
+	}
+
+	fn virtual final GetAspectRatio( this ) : f32
+	{
+		var AVRational sample_aspect_ratio= unsafe( $>( decoder_context_ ).sample_aspect_ratio );
+
+		var f32 sample_aspect_ratio_f=
+			( sample_aspect_ratio.num == 0 ? 1.0f : f32( sample_aspect_ratio.num ) / f32 ( sample_aspect_ratio.den ) );
+
+		var [ u32, 2 ] size= GetSize();
+
+		return f32( size[0] ) / f32( size[1] ) * sample_aspect_ratio_f;
+	}
+
+	fn virtual final GetNextFrame( mut this ) : ust::optional</ FrameData />
+	{
+		loop
+		{
+			unsafe // Because of external C calls.
+			{
+				var i32 receive_frame_res= avcodec_receive_frame( decoder_context_, frame_ );
+				if( receive_frame_res == 0 )
+				{
+					// Received a frame.
+
+					// Perform here conversion to RGBA from whatever format a video uses.
+					// Scale context should be created for this format.
+
+					var i32 width= $>( decoder_context_ ).width;
+					var i32 height= $>( decoder_context_ ).height;
+
+					var FrameData mut frame_data;
+					frame_data.resize_uninitialized( size_type( u32(width) * u32(height) ) );
+
+					// "sws_scale" uses "uint8_t" for raw bytes.
+					var $(uint8_t) mut dst_ptr=
+						ust::byte_ptr_cast</ uint8_t />( ust::ptr_cast_to_byte8( frame_data.data() ) );
+
+					// We use simple width-based stride.
+					var i32 mut dst_stride= width * i32( typeinfo</ RGBAColor />.size_of );
+
+					sws_scale(
+						scale_context_,
+						// Provide all src pointers and strides.
+						$<( $>( frame_ ).data[0] ),
+						$<( $>( frame_ ).linesize[0] ),
+						0, // Start from line 0.
+						height, // Copy the whole image.
+						// RGBA format has single plane.
+						// It's enough to provide only single pointer for destination and for stride.
+						$<( dst_ptr ),
+						$<( dst_stride ) );
+
+					av_frame_unref( frame_ ); // Free received frame data.
+
+					return frame_data;
+				}
+				else if( receive_frame_res == AVERROR( EAGAIN ) )
+				{
+					// No frame is available now.
+					// Try extracting and sending a new video packet.
+
+					// Use a loop here to be able to ignore packets from streams other than the one used for video.
+					loop
+					{
+						var i32 read_packet_res= av_read_frame( format_context_, packet_ );
+						if( read_packet_res != 0 )
+						{
+							if( read_packet_res == AVERROR_EOF )
+							{
+								safe( ConsoleOutAddTextLine( console_out_, "End of stream reached." ) );
+								return ust::null_optional;
+							}
+
+							safe( ConsoleOutAddTextLine(
+								console_out_,
+								ust::concat(
+									"Failed to read a packet! Error: ", GetFFmpegError( read_packet_res ) ) ) );
+							return ust::null_optional;
+						}
+
+						if( $>( packet_ ).stream_index == i32( video_stream_index_ ) )
+						{
+							var i32 send_packet_res= avcodec_send_packet( decoder_context_, packet_ );
+
+							av_packet_unref( packet_ ); // Free received packet data.
+
+							if( send_packet_res != 0 )
+							{
+								safe( ConsoleOutAddTextLine(
+									console_out_,
+									ust::concat(
+										"Failed to send a packet! Error: ", GetFFmpegError( send_packet_res ) ) ) );
+								return ust::null_optional;
+							}
+							break;
+						}
+
+						av_packet_unref( packet_ ); // Free received packet data.
+					}
+				}
+				else
+				{
+					safe( ConsoleOutAddTextLine(
+						console_out_,
+						ust::concat( "Failed to receive a frame! Error: ", GetFFmpegError( receive_frame_res ) ) ) );
+					return ust::null_optional;
+				}
+			}
+		}
+	}
+
+private:
+	ConsoleOutPtr imut console_out_;
+	$(AVFormatContext) format_context_;
+	u32 video_stream_index_;
+	$(AVCodecContext) decoder_context_;
+	$(AVPacket) packet_;
+	$(AVFrame) frame_;
+	$(SwsContext) scale_context_;
+}
+
+fn OpenVideoStream(
+	ConsoleOutPtr& console_out, ust::filesystem_path_view file_path ) : ust::box_nullable</IVideoStream/>
+{
+	if( compiler::options::generate_debug_info | compiler::options::optimization_level == '0' )
+	{
+		unsafe( av_log_set_level( AV_LOG_DEBUG ) );
+	}
+
+	ConsoleOutAddTextLine( console_out, ust::concat( "Opening video file \"", file_path, "\"." ) );
+
+	var ust::string8 mut file_path_nt= ust::concat( file_path, "\0" );
+
+	var $(AVFormatContext) mut format_context= zero_init;
+	var $(AVCodecContext) mut decoder_context= zero_init;
+	var $(AVPacket) mut packet= zero_init;
+	var $(AVFrame) mut frame= zero_init;
+	var $(SwsContext) mut scale_context= zero_init;
+
+	unsafe // Because of unsafe C calls.
+	{
+		with( ret :
+			avformat_open_input(
+				$<( format_context ),
+				file_path_nt.data(),
+				ust::nullptr</ AVInputFormat />(),
+				ust::nullptr</ $(AVDictionary) />() ) )
+		{
+			if( ret != 0 )
+			{
+				safe( ConsoleOutAddTextLine(
+					console_out, ust::concat( "Failed to open a video! Error: ", GetFFmpegError( ret ) ) ) );
+				break label cleanup;
+			}
+		}
+
+		safe( ConsoleOutAddTextLine( console_out, "Opened video input" ) );
+
+		with( ret : avformat_find_stream_info( format_context, ust::nullptr</ $(AVDictionary) />() ) )
+		{
+			if( ret != 0 )
+			{
+				safe( ConsoleOutAddTextLine(
+					console_out, ust::concat( "Failed to found stream info! Error: ", GetFFmpegError( ret ) ) ) );
+				break label cleanup;
+			}
+		}
+
+		safe( ConsoleOutAddTextLine(
+			console_out,
+			ust::concat(
+				"Found stream info. Has ",
+				unsafe( ust::to_string8( $>( format_context ).nb_streams ) ),
+				" streams." ) ) );
+
+		var u32 mut video_stream_index= ~0u;
+		for( auto mut stream_index= 0u; stream_index < $>(format_context).nb_streams; ++stream_index )
+		{
+			if( $>( $>( $>( $>(format_context).streams + stream_index ) ).codecpar ).codec_type == AVMEDIA_TYPE_VIDEO )
+			{
+				video_stream_index= stream_index;
+				break;
+			}
+		}
+
+		if( video_stream_index == ~0u )
+		{
+			safe( ConsoleOutAddTextLine( console_out, "Failed to get video stream!" ) );
+			break label cleanup;
+		}
+
+		safe( ConsoleOutAddTextLine(
+			console_out, ust::concat( "Video stream index is ", ust::to_string8( video_stream_index ), "." ) ) );
+
+		var AVStream &mut stream= $>( $>( $>(format_context).streams + video_stream_index ) );
+
+		var $(AVCodec) decoder= avcodec_find_decoder( $>( stream.codecpar ).codec_id );
+		if( ust::is_nullptr( decoder ) )
+		{
+			ConsoleOutAddTextLine( console_out, "Failed to find decoder!" );
+			break label cleanup;
+		}
+
+		safe( ConsoleOutAddTextLine(
+			console_out,
+			ust::concat( "Found a decoder. Codec id is ", unsafe( ust::to_string8( $>(decoder).id  ) ), "." ) ) );
+
+		decoder_context= avcodec_alloc_context3( decoder );
+		if( ust::is_nullptr( decoder_context ) )
+		{
+			ConsoleOutAddTextLine( console_out, "Failed to alloc decoder context!" );
+			break label cleanup;
+		}
+
+		with( ret : avcodec_parameters_to_context( decoder_context, stream.codecpar ) )
+		{
+			if( ret != 0 )
+			{
+				safe( ConsoleOutAddTextLine(
+					console_out,
+					ust::concat( "avcodec_parameters_to_context failed! Error: ", GetFFmpegError( ret ) ) ) );
+				break label cleanup;
+			}
+		}
+
+		with( ret : avcodec_open2( decoder_context, decoder, ust::nullptr</ $(AVDictionary) />() ) )
+		{
+			if( ret != 0 )
+			{
+				safe( ConsoleOutAddTextLine(
+					console_out, ust::concat( "Failed to open decoder! Error: ", GetFFmpegError( ret ) ) ) );
+				break label cleanup;
+			}
+		}
+
+		packet= av_packet_alloc();
+		if( ust::is_nullptr( packet ) )
+		{
+			safe( ConsoleOutAddTextLine( console_out, "Failed to alloc packet!" ) );
+			break label cleanup;
+		}
+
+		frame= av_frame_alloc();
+		if( ust::is_nullptr( frame ) )
+		{
+			safe( ConsoleOutAddTextLine( console_out, "Failed to alloc frame!" ) );
+			break label cleanup;
+		}
+
+		// Create scale context for converting to RGBA.
+		// Perform just conversion, without size change.
+		scale_context=
+			sws_getContext(
+				// Src.
+				$>( decoder_context ).width,
+				$>( decoder_context ).height,
+				$>( decoder_context ).pix_fmt,
+				// Dst.
+				$>( decoder_context ).width,
+				$>( decoder_context ).height,
+				AV_PIX_FMT_RGBA,
+				// Other params.
+				0,
+				ust::nullptr</ SwsFilter />(),
+				ust::nullptr</ SwsFilter />(),
+				ust::nullptr</f64/>() );
+
+		if( ust::is_nullptr( scale_context ) )
+		{
+			safe( ConsoleOutAddTextLine( console_out, "Failed to get scale context!" ) );
+			break label cleanup;
+		}
+
+		return ust::make_box(
+			VideoStreamFFmpeg(
+				console_out, format_context, video_stream_index, decoder_context, packet, frame, scale_context ) );
+
+	} label cleanup
+
+	// Use here C-style approach with "goto" to a cleanup block.
+	// It's needed, since there is no proper RAII for FFmpeg objects.
+
+	unsafe
+	{
+		sws_freeContext( scale_context );
+		av_frame_free( $<( frame ) );
+		av_packet_free( $<( packet ) );
+		avcodec_free_context( $<( decoder_context ) );
+		avformat_close_input( $<( format_context ) );
+	}
+
+	return ust::box_nullable</IVideoStream/>();
+}
+
+fn GetFFmpegError( i32 code ) : ust::string8
+{
+	var [ char8, 256 ] mut text= zero_init;
+
+	unsafe
+	{
+		av_strerror( code, $<( text[0] ), size_t( typeinfo</ typeof(text) />.size_of ) );
+
+		var size_type mut length= 0s;
+		while( length < typeinfo</ typeof(text) />.element_count && text[ length ] != '\0' )
+		{
+			++length;
+		}
+
+		return ust::string_view8( $<(text[0] ), length );
+	}
+}
+
+fn constexpr AVERROR( i32 code ) : i32
+{
+	return -code;
+}
+
+auto constexpr AVERROR_EOF = FFERRTAG( 'E','O','F',' ' );
+
+fn constexpr FFERRTAG( char8 a, char8 b, char8 c, char8 d ) : i32
+{
+	return FFERRTAG( u32(a), u32(b), u32(c), u32(d) );
+}
+
+fn constexpr FFERRTAG( u32 a, u32 b, u32 c, u32 d ) : i32
+{
+	return -i32( MKTAG( a, b, c, d ) );
+}
+
+fn constexpr MKTAG( u32 a, u32 b, u32 c,u32 d) : u32
+{
+	return a | ( b << 8 ) | ( c << 16 ) | ( d << 24 );
+}
+
+} // namespace PM
