@@ -46,7 +46,6 @@ PanzerMortyr general:
 * Support loading game data files directly (not only from the game archive). It seems that the original game can do this.
 * Allow changing shot and zoom controls (change mouse buttons and maybe even use key buttons).
 * Allow setting fullscreen mode with possible resolution changing and/or in "desktop fullscreen" mode.
-* Play cinematics at game start (developer/publisher logo), at starting a new game (into) at at finishing it (outro).
 * Consider allowing playing cooperative/multiplayer maps as usual singleplayer ones. Maybe add a main menu item for this.
 * Consider writing some kind of alternative installer - a tool, which depacks game data from the original game ISO or mdf/mds files.
 * Draw loading screen before performing transition to the next level in game code and corresponding game and rendering resource loading.
@@ -170,3 +169,11 @@ PanzerMortyr sound:
 * Consider adding some workaround for cases when a game is loaded, but a restored sound source can't be started due to some other source with the same ID, which removal is still in progress.
 * Consider emitting a sound while entering acid or lava different from the sound played upon water entering.
 * Ensure player damage sounds are played as in the original game.
+
+PanzerMortyr cinimatics:
+
+* Play publisher/developer-related videos upon launching PanzerMortyr.
+* Play the intro video upon starting a new game.
+* Play the outro video upon finishing the game.
+* Play videos with sound (with proper synchronization).
+* Consider reading/decoding video files in a separate thread to avoid blocking the main thread due to disk access.

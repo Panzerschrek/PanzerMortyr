@@ -117,6 +117,7 @@ Changes:
 Improvements:
 
 * GNU/Linux is supported.
+* Cinematics playback doesn't require installation of system-wide codecs.
 
 Fixed bugs:
 
