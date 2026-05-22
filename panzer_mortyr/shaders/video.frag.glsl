@@ -9,5 +9,4 @@ out vec4 color;
 void main()
 {
 	color= texture( fu_texture, f_texture_coordinates );
-
 }

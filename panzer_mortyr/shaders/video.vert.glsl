@@ -1,5 +1,8 @@
 #version 330
 
+// This shader draws a hardcoded quad consisting of two triangles.
+// The only proper way of executing is is to call glDrawArrays( GL_TRIANGLES, 0, 6 )
+
 const vec2 vertices[4]= vec2[4](
 	vec2( 0.0, 0.0 ),
 	vec2( 1.0, 0.0 ),
