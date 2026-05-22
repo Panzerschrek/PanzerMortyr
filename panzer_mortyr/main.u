@@ -98,12 +98,6 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 
 	ConsoleOutAddTextLine( console_out_ptr, "PanzerMortyr initialized!" );
 
-	PlayStartupCinematics(
-		GetGameParams( caching_game_resources_loader_ptr ).deref(),
-		game_filesystem_ptr.lock_imut().deref(),
-		video_player,
-		window );
-
 	if_var( start_map : command_line_options.start_map )
 	{
 		game.TeleportToMap( start_map, command_line_options.skill.deref_or( c_default_skill ), audio_processor );
@@ -112,9 +106,24 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 	}
 	else if( command_line_options.new_game )
 	{
+		PlayIntroCinematic(
+			GetGameParams( caching_game_resources_loader_ptr ).deref(),
+			game_filesystem_ptr.lock_imut().deref(),
+			video_player,
+			window );
+
 		game.StartNewGame( command_line_options.skill.deref_or( c_default_skill ), audio_processor );
 
 		menu.Deactivate(); // Turn-off menu if starting a new game.
+	}
+	else
+	{
+		// Play startup cinematics if has no command-line options starting the game.
+		PlayStartupCinematics(
+			GetGameParams( caching_game_resources_loader_ptr ).deref(),
+			game_filesystem_ptr.lock_imut().deref(),
+			video_player,
+			window );
 	}
 
 	var KeyboardState mut keyboard_state[ false ... ];
@@ -168,7 +177,11 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 								var MenuCommandProcessor mut command_processor
 								{
 									.game= game,
-									.audio_processor= audio_processor
+									.audio_processor= audio_processor,
+									.window= window,
+									.video_player= video_player,
+									.caching_game_resources_loader_ptr= caching_game_resources_loader_ptr,
+									.game_filesystem_ptr= game_filesystem_ptr,
 								};
 
 								command_processor(v);
@@ -196,6 +209,10 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 								.game= game,
 								.console_out_ptr= console_out_ptr,
 								.audio_processor= audio_processor,
+								.window= window,
+								.video_player= video_player,
+								.caching_game_resources_loader_ptr= caching_game_resources_loader_ptr,
+								.game_filesystem_ptr= game_filesystem_ptr,
 							};
 
 							console.ProcessKeyPress( keyboard_event.keysym, command_processor );
@@ -212,7 +229,11 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 								var MenuCommandProcessor mut command_processor
 								{
 									.game= game,
-									.audio_processor= audio_processor
+									.audio_processor= audio_processor,
+									.window= window,
+									.video_player= video_player,
+									.caching_game_resources_loader_ptr= caching_game_resources_loader_ptr,
+									.game_filesystem_ptr= game_filesystem_ptr,
 								};
 
 								command_processor(v);
@@ -414,6 +435,12 @@ struct HostCommandProcessor
 
 	fn process_new_game( mut this, ust::iterator</ WordsIterator /> mut args  )
 	{
+		PlayIntroCinematic(
+			GetGameParams( caching_game_resources_loader_ptr ).deref(),
+			game_filesystem_ptr.lock_imut().deref(),
+			video_player,
+			window );
+
 		var u32 skill= ParseSkillOrGetDefault( args );
 		game.StartNewGame( skill, audio_processor );
 	}
@@ -529,6 +556,10 @@ struct HostCommandProcessor
 	Game &mut @('a') game;
 	ConsoleOutPtr& @('b') console_out_ptr;
 	AudioProcessor &mut @('c') audio_processor;
+	OpenGLWindow &mut @('d') window;
+	VideoPlayer &mut @('e') video_player;
+	CachingGameResourcesLoaderPtr & @('f') caching_game_resources_loader_ptr;
+	GameFilesystemPtr & @('g') game_filesystem_ptr;
 }
 
 struct MenuCommandProcessor
@@ -540,6 +571,12 @@ struct MenuCommandProcessor
 
 	op()( this, Menu::CommandNewGame& c )
 	{
+		PlayIntroCinematic(
+			GetGameParams( caching_game_resources_loader_ptr ).deref(),
+			game_filesystem_ptr.lock_imut().deref(),
+			video_player,
+			window );
+
 		game.StartNewGame( c.skill, audio_processor );
 	}
 
@@ -564,6 +601,10 @@ struct MenuCommandProcessor
 	bool quit_requested= false;
 	Game &mut @('a') game;
 	AudioProcessor &mut @('b') audio_processor;
+	OpenGLWindow &mut @('c') window;
+	VideoPlayer &mut @('d') video_player;
+	CachingGameResourcesLoaderPtr & @('e') caching_game_resources_loader_ptr;
+	GameFilesystemPtr & @('f') game_filesystem_ptr;
 }
 
 fn PlayStartupCinematics(
@@ -585,6 +626,23 @@ fn PlayStartupCinematics(
 	{
 		video_player.PlayVideo( ust::path::join( data_directory, cinematic ), window );
 	}
+}
+
+fn PlayIntroCinematic(
+	GameParams& game_params, GameFilesystem& game_filesystem, VideoPlayer &mut video_player, OpenGLWindow &mut window )
+{
+	// Assume into to be the second last cinematic.
+
+	if( game_params.cinematics.size() < 2s )
+	{
+		return;
+	}
+
+	video_player.PlayVideo(
+		ust::path::join(
+			game_filesystem.GetDataDirectory(),
+			game_params.cinematics[ game_params.cinematics.size() - 2s ] ),
+		window );
 }
 
 fn GetGameParams( CachingGameResourcesLoaderPtr& caching_game_resources_loader_ptr ) : GameResourcePtr</GameParams/>
