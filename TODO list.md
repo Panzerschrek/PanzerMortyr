@@ -172,8 +172,6 @@ PanzerMortyr sound:
 
 PanzerMortyr cinimatics:
 
-* Play publisher/developer-related videos upon launching PanzerMortyr.
-* Play the intro video upon starting a new game.
-* Play the outro video upon finishing the game.
+* Make sure the orider of startup videos is correct.
 * Play videos with sound (with proper synchronization).
 * Consider reading/decoding video files in a separate thread to avoid blocking the main thread due to disk access.
