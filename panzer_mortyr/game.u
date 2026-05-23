@@ -120,7 +120,7 @@ fn Game::Update(
 	KeyboardState& keyboard_state,
 	MouseButtonsState mouse_buttons_state,
 	[ i32, 2 ] mouse_motion,
-	AudioProcessor &mut audio_processor )
+	AudioProcessor &mut audio_processor ) : UpdateOutcome
 {
 	// Rotate camera each frame (unless the player is dead).
 	if( game_state_.empty() || game_state_.try_deref().player.energy > 0u )
@@ -153,6 +153,7 @@ fn Game::Update(
 	{
 		var u32 mut next_map_index= 0u;
 		var u32 mut skill= 0u;
+		var bool mut game_end_triggered= false;
 		var ust::optional</PlayerState/> mut player_state;
 
 		if( !map_data_.empty() && !game_state_.empty() )
@@ -187,10 +188,16 @@ fn Game::Update(
 					global_navigation_graph_route_searcher_ );
 
 				next_map_index= game_state.next_map_index;
+				game_end_triggered= game_state.game_end_triggered;
 
 				if( next_map_index != 0u )
 				{
 					player_state= game_state.player;
+					break;
+				}
+
+				if( game_end_triggered )
+				{
 					break;
 				}
 
@@ -203,6 +210,15 @@ fn Game::Update(
 		{
 			PerformMapTransition( next_map_index, skill, player_state.as_ref(), audio_processor );
 		}
+
+		if( game_end_triggered )
+		{
+			// Game end is reached - reset game state, stop world sounds and tell the caller that game end is reached.
+			map_data_.reset();
+			game_state_.reset();
+			audio_processor.StopAllWorldSounds();
+			return UpdateOutcome::GameEnd;
+		}
 	}
 
 	if( !map_data_.empty() && !game_state_.empty() )
@@ -213,6 +229,8 @@ fn Game::Update(
 			ConstructWorldAudioInfo(
 				global_data_, map_data_.try_deref(), game_state_.try_deref(), camera_controller_ ) );
 	}
+
+	return UpdateOutcome::Continue;
 }
 
 fn Game::GetWorldDrawingInfo( this ) : WorldDrawingInfo
