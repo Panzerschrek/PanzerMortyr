@@ -40,6 +40,7 @@ fn AudioMixer::constructor(
 			} ...
 		],
 		frequency_= 1u, // Set exact value later.
+		audio_stream_read_buffer_= zero_init,
 		underwater_effect_active_= false,
 		new_underwater_effect_active_= false,
 		underwater_effect_accumulator_[ 0.0f ... ],
@@ -154,9 +155,11 @@ fn AudioMixer::Mix( mut this, ust::array_view_mut</SamplePairType/> out_sample_p
 
 	paused_= new_paused_;
 
-	// Output single-shot sounds even if paused and after applying underwater effect (so that they aren't affected by it).
+	// Output single-shot sounds and audio streams even if paused and after applying underwater effect (so that they aren't affected by it).
 
 	MixAndUpdateSingleShotSounds( out_sample_pairs );
+
+	MixAndUpdateAudioStreams( out_sample_pairs );
 }
 
 fn AudioMixer::MixAndUpdateSoundSources( mut this, ust::array_view_mut</SamplePairType/> out_sample_pairs )
@@ -494,6 +497,71 @@ fn AudioMixer::MixAndUpdateSingleShotSounds( mut this, ust::array_view_mut</Samp
 				// If the output queue is full, still assume this single-shot sound to be playing, even if its end was reached.
 				// Assume that we can push a finish message next time.
 				single_shot_sound.volume= ust::make_array( 0.0f, 0.0f );
+			}
+		}
+	}
+}
+
+fn AudioMixer::MixAndUpdateAudioStreams( mut this, ust::array_view_mut</SamplePairType/> out_sample_pairs )
+{
+	foreach( &mut audio_stream_opt : audio_streams_ )
+	{
+		if( !audio_stream_opt.empty() && audio_stream_opt.try_deref().OtherEndIsClosed() )
+		{
+			// If the other end of the stream is already closed, stop playing it without extracting remaining samples.
+			// If one wishes to not discard remaining samples, he should close the stream only when it's emptied.
+
+			// TODO - send a message back containing the stream object.
+			// We need this to prevent destructing it on this thread.
+			audio_stream_opt= ust::null_optional;
+		}
+
+		if_var( &mut audio_stream : audio_stream_opt )
+		{
+			// Read audio stream here.
+			// TODO - perform proper resampling with linear interpolation.
+
+			var size_type mut dst_position= 0s;
+			var size_type mut buffer_position= 0s, mut buffer_size= 0s;
+
+			while( dst_position < out_sample_pairs.size() )
+			{
+				if( buffer_position == buffer_size )
+				{
+					var size_type constexpr max_buffer_elements= typeinfo</ typeof( audio_stream_read_buffer_ ) />.size_of;
+					var size_type num_elements_to_read= ust::min( max_buffer_elements, out_sample_pairs.size() - dst_position );
+
+					buffer_position= 0s;
+
+					buffer_size=
+						audio_stream.ReadSamples(
+							ust::array_view_mut</ AudioStream::SampleType />( audio_stream_read_buffer_ )
+								.subrange_end( num_elements_to_read ) );
+
+					if( buffer_size == 0s )
+					{
+						// There is no samples left in the stream.
+						// It's possible if the stream's end is reached
+						// or if someone isn't fast enough writing samples to the write end of the stream.
+						break;
+					}
+				}
+
+				var f32 constexpr sample_scale= GetScaleForSampleType</ AudioStream::SampleType />();
+				var f32 constexpr sample_offset= GetOffsetForSampleType</ AudioStream::SampleType />();
+
+				var f32 sample_scaled=
+					( f32( audio_stream_read_buffer_[ buffer_position ] ) + sample_offset ) * sample_scale;
+
+				++buffer_position;
+
+				var SamplePairType &mut dst_sample= out_sample_pairs[ dst_position ];
+				foreach( &mut channel : dst_sample )
+				{
+					channel+= sample_scaled;
+				}
+
+				++dst_position;
 			}
 		}
 	}
