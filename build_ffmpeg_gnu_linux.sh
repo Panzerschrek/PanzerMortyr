@@ -8,7 +8,7 @@ mkdir -p $2 &&\
 cd $2 &&\
 
 # Build static libraries of FFmpeg.
-$1/configure --disable-x86asm --enable-static --disable-shared --disable-debug --disable-network --disable-alsa --disable-appkit --disable-avfoundation --disable-coreimage --disable-iconv --disable-libxcb --disable-libxcb-shm --disable-libxcb-xfixes --disable-libxcb-shape --disable-lzma --disable-schannel --disable-sdl2 --disable-securetransport --disable-xlib  --disable-zlib --disable-cuda-llvm --disable-libdrm --disable-v4l2-m2m --disable-programs --disable-doc --disable-everything --disable-avdevice --disable-avfilter --disable-hwaccels --disable-swresample --enable-protocol=file --enable-decoder=cinepak --enable-decoder=indeo3 --enable-decoder=indeo5 --enable-demuxer=avi &&\
+$1/configure --disable-x86asm --enable-static --disable-shared --disable-debug --disable-network --disable-alsa --disable-appkit --disable-avfoundation --disable-coreimage --disable-iconv --disable-libxcb --disable-libxcb-shm --disable-libxcb-xfixes --disable-libxcb-shape --disable-lzma --disable-schannel --disable-sdl2 --disable-securetransport --disable-xlib  --disable-zlib --disable-cuda-llvm --disable-libdrm --disable-v4l2-m2m --disable-programs --disable-doc --disable-everything --disable-avdevice --disable-avfilter --disable-hwaccels --disable-swresample --enable-protocol=file --enable-decoder=cinepak --enable-decoder=indeo3 --enable-decoder=indeo5 --enable-decoder=pcm_s16le --enable-demuxer=avi &&\
 make &&\
 cd .. &&\
 # Combine all needed static libraries into single shared library. Use custom name for it, since it's not a general FFmpeg library, but only a version with stuff we need.
