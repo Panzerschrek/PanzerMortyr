@@ -534,27 +534,31 @@ fn AudioMixer::MixAndUpdateAudioStreams( mut this, ust::array_view_mut</SamplePa
 			var f32 constexpr sample_scale= GetScaleForSampleType</ AudioStream::SampleType />() * stream_volume;
 			var f32 constexpr sample_offset= GetOffsetForSampleType</ AudioStream::SampleType />();
 
+			var u32 mut buffer_size= 0u;
+
 			for( auto mut dst_position= 0s; dst_position < out_sample_pairs.size(); ++dst_position )
 			{
 				// We have enough f32 precision here, since single-shot sounds are pretty short.
 				var f32 src_sample_index_fractional= f32( audio_stream_state.sample_counter ) * resampling_factor;
 				var u32 src_sample_index( src_sample_index_fractional );
 
-				if( size_type( src_sample_index + 1u ) >= audio_stream_state.samples.size() )
+				if( src_sample_index + 1u >= audio_stream_state.extracted_input_sample_counter )
 				{
-					// Read a little bit more data.
-					var size_type extra_size= 128s;
-					var size_type old_size= audio_stream_state.samples.size();
-					audio_stream_state.samples.resize( old_size + extra_size, ust::make_zeroed</ AudioStream::SamplePairType />() );
+					var u32 last_dst_sample_index=
+						audio_stream_state.sample_counter + u32( out_sample_pairs.size() - 1s - dst_position );
 
-					var size_type samples_read=
-						audio_stream_state.stream.ReadSamples(
-							audio_stream_state.samples.range().subrange_start( old_size ) );
+					var u32 last_src_sample_index( f32( last_dst_sample_index ) * resampling_factor );
 
-					audio_stream_state.samples.resize( old_size + samples_read, ust::make_zeroed</ AudioStream::SamplePairType />() );
+					var u32 read_size= ( 1u + last_src_sample_index ) - audio_stream_state.extracted_input_sample_counter;
+
+					buffer_size=
+						u32( audio_stream_state.stream.ReadSamples(
+							ust::array_view_mut</ AudioStream::SamplePairType />( audio_stream_read_buffer_ ).subrange_end( size_type( read_size ) ) ) );
+
+					audio_stream_state.extracted_input_sample_counter+= buffer_size;
 				}
 
-				if( size_type( src_sample_index + 1u ) >= audio_stream_state.samples.size() )
+				if( src_sample_index + 1u >= buffer_size )
 				{
 					// There is no samples left in the stream.
 					// It's possible if the stream's end is reached
@@ -563,9 +567,44 @@ fn AudioMixer::MixAndUpdateAudioStreams( mut this, ust::array_view_mut</SamplePa
 				}
 
 				var f32 mix_fraction= src_sample_index_fractional - f32( src_sample_index );
-				var AudioStream::SamplePairType sample_pair0= audio_stream_state.samples[ size_type( src_sample_index ) ];
-				var AudioStream::SamplePairType sample_pair1= audio_stream_state.samples[ size_type( src_sample_index ) + 1s ];
 
+				var AudioStream::SamplePairType mut sample_pair0= zero_init, mut sample_pair1= zero_init;
+
+				if( src_sample_index + 2u + buffer_size == audio_stream_state.extracted_input_sample_counter )
+				{
+					sample_pair0= audio_stream_state.last_two_samples[0];
+				}
+				else if( src_sample_index + 1u + buffer_size == audio_stream_state.extracted_input_sample_counter )
+				{
+					sample_pair0= audio_stream_state.last_two_samples[1];
+				}
+				else if( src_sample_index + buffer_size >= audio_stream_state.extracted_input_sample_counter &&
+					src_sample_index + buffer_size < audio_stream_state.extracted_input_sample_counter + buffer_size )
+				{
+					sample_pair0= audio_stream_read_buffer_[ src_sample_index + buffer_size - audio_stream_state.extracted_input_sample_counter ];
+				}
+				else
+				{
+					halt;
+				}
+
+				if( ( src_sample_index + 1u ) + 2u + buffer_size == audio_stream_state.extracted_input_sample_counter )
+				{
+					sample_pair1= audio_stream_state.last_two_samples[0];
+				}
+				else if( ( src_sample_index + 1u ) + 1u + buffer_size == audio_stream_state.extracted_input_sample_counter )
+				{
+					sample_pair1= audio_stream_state.last_two_samples[1];
+				}
+				else if( ( src_sample_index + 1u ) + buffer_size >= audio_stream_state.extracted_input_sample_counter &&
+					( src_sample_index + 1u ) + buffer_size < audio_stream_state.extracted_input_sample_counter + buffer_size )
+				{
+					sample_pair1= audio_stream_read_buffer_[ ( src_sample_index + 1u ) + buffer_size - audio_stream_state.extracted_input_sample_counter ];
+				}
+				else
+				{
+					halt;
+				}
 				static_assert( typeinfo</ typeof( sample_pair0 ) />.element_count == c_num_samples );
 
 				var SamplePairType &mut dst_sample= out_sample_pairs[ dst_position ];
@@ -578,6 +617,18 @@ fn AudioMixer::MixAndUpdateAudioStreams( mut this, ust::array_view_mut</SamplePa
 				}
 
 				++audio_stream_state.sample_counter;
+			}
+
+			if( buffer_size >= 2u )
+			{
+				audio_stream_state.last_two_samples[0]= audio_stream_read_buffer_[ buffer_size - 2u ];
+				audio_stream_state.last_two_samples[1]= audio_stream_read_buffer_[ buffer_size - 1u ];
+			}
+			else if( buffer_size >= 1u )
+			{
+				auto last= audio_stream_state.last_two_samples[1];
+				audio_stream_state.last_two_samples[0]= last;
+				audio_stream_state.last_two_samples[1]= audio_stream_read_buffer_[ buffer_size - 1u ];
 			}
 		}
 	}
@@ -822,7 +873,15 @@ fn AudioMixer::AddAudioStream( mut this, InMessageAddAudioStream mut message )
 	{
 		if( slot.empty() )
 		{
-			slot= AudioStreamState{ .stream= move(stream), .sample_counter= 0u };
+			slot=
+				AudioStreamState
+				{
+					.stream= move(stream),
+					.sample_counter= 0u,
+					.last_two_samples= zero_init,
+					.extracted_input_sample_counter= 0u,
+				};
+
 			return;
 		}
 	}
