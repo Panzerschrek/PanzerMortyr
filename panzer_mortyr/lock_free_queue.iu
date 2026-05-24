@@ -92,6 +92,47 @@ public:
 			}
 		}
 
+		// Push a whole batch of elements.
+		// Is more effective than pushing elements one by one.
+		// Returns the number of elements pushed.
+		fn nodiscard enable_if( typeinfo</T/>.is_copy_constructible )
+			PushCopyMany( mut this, ust::array_view_imut</T/> values ) : size_type
+		{
+			unsafe
+			{
+				var SharedStorage &mut storage= $>( storage_ );
+
+				// Can use here non-atomic read, since this is the only thread modifying it.
+				var u32 write_position= storage.write_position;
+				// Require here atomic read, since other thread can modify it.
+				var u32 read_position= ust::atomic_read( storage.read_position );
+
+				debug_assert( storage.read_position <= storage.write_position );
+
+				var u32 num_stored_elements= write_position - read_position;
+				debug_assert( num_stored_elements <= Capacity );
+
+				var size_type num_elements_to_insert=
+					ust::min( size_type( Capacity - num_stored_elements ), values.size() );
+
+				if( num_elements_to_insert > 0s )
+				{
+					for( auto mut i= 0s; i < num_elements_to_insert; ++i )
+					{
+						// Move the given value into a storage slot.
+						ust::move_into_uninitialized(
+							cast_ref_unsafe</T/>( storage.storage[ ( write_position + u32(i) ) % Capacity ] ),
+							values.index_unchecked( i ) /* Take a copy here. */ );
+					}
+
+					// Require atomic operation to increase the write position, since it can be read by the other end.
+					ust::atomic_add( storage.write_position, u32( num_elements_to_insert ) );
+				}
+
+				return num_elements_to_insert;
+			}
+		}
+
 		fn GetTotalNumberOfElementsPushed( this ) : u32
 		{
 			// Can use here non-atomic read, since this is the only thread modifying it.
@@ -171,6 +212,52 @@ public:
 				ust::atomic_inc( storage.read_position );
 
 				return value; // Return value move should be applied here.
+			}
+		}
+
+		// Pop a whole batch of elements.
+		// Is more effective than popping elements one by one.
+		// Returns the number of elements popped.
+		fn nodiscard PopMany( mut this, ust::array_view_mut</T/> out_values ) : size_type
+		{
+			unsafe
+			{
+				var SharedStorage &mut storage= $>( storage_ );
+
+				// Require here atomic read, since other thread can modify it.
+				var u32 write_position= ust::atomic_read( storage.write_position );
+				// Can use here non-atomic read, since this is the only thread modifying it.
+				var u32 read_position= storage.read_position;
+
+				debug_assert( storage.read_position <= storage.write_position );
+
+				var u32 num_stored_elements= write_position - read_position;
+				debug_assert( num_stored_elements <= Capacity );
+
+				var size_type num_elements_to_pop= ust::min( size_type( num_stored_elements ), out_values.size() );
+				if( num_elements_to_pop > 0s )
+				{
+					for( auto mut i= 0s; i < num_elements_to_pop; ++i )
+					{
+						// Extract a value from the queue.
+
+						var T mut value= uninitialized;
+
+						ust::memory_copy_aligned(
+							typeinfo</T/>.align_of,
+							ust::ptr_cast_to_byte8( $<( value ) ),
+							ust::ptr_cast_to_byte8( $<( storage.storage[ ( read_position + u32(i) ) % Capacity ] ) ),
+							typeinfo</T/>.size_of );
+
+						// Move the result value into a destination slot (use move-assignment).
+						out_values.index_unchecked( i ) = move( value );
+					}
+
+					// Require atomic operation to increase the read position, since it can be read by the other end.
+					ust::atomic_add( storage.read_position, u32( num_elements_to_pop ) );
+				}
+
+				return num_elements_to_pop;
 			}
 		}
 
