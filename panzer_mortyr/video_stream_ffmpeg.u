@@ -89,24 +89,6 @@ public: // IVideoStream
 			return ust::null_optional;
 		}
 
-		// For now fill some fake audio data.
-		loop
-		{
-			var [ AudioStream::SampleType, 64 ] mut audio_samples= zero_init;
-			for( auto mut i= 0s; i < typeinfo</ typeof(audio_samples) />.element_count; ++i )
-			{
-				audio_samples[i]=
-					AudioStream::SampleType( ust::sin( f32( audio_stream_position_ + i ) / 48.0f ) * 16000.0f );
-			}
-			var size_type samples_written= audio_stream_write_end_.WriteSamples( audio_samples );
-			audio_stream_position_+= samples_written;
-
-			if( samples_written < typeinfo</ typeof(audio_samples) />.element_count )
-			{
-				break;
-			}
-		}
-
 		loop
 		{
 			unsafe // Because of external C calls.
@@ -210,7 +192,24 @@ public: // IVideoStream
 							{
 								if( avcodec_receive_frame( audio_decoder_context_, audio_frame_ ) == 0 )
 								{
+
 									++num_audio_frames_;
+
+									var i32 num_samples= $>( audio_frame_ ).nb_samples;
+									if( num_samples > 0 )
+									{
+										var AVChannelLayout audio_channel_layout= $>( audio_decoder_context_ ).ch_layout;
+										if( audio_channel_layout.nb_channels == 1 )
+										{
+											var ust::array_view_imut</ AudioStream::SampleType /> samples(
+												ust::byte_ptr_cast</ AudioStream::SampleType/>( ust::ptr_cast_to_byte8( $>( audio_frame_ ).data[0] ) ),
+												size_type( num_samples ) );
+
+											var size_type samples_written= audio_stream_write_end_.WriteSamples( samples );
+											ust::ignore_unused( samples_written );
+										}
+									}
+
 									av_frame_unref( audio_frame_ );
 								}
 								else
@@ -254,7 +253,6 @@ private:
 	$(SwsContext) video_scale_context_;
 
 	AudioStream::WriteEnd audio_stream_write_end_;
-	size_type audio_stream_position_= 0s;
 
 	u32 num_audio_frames_= 0u;
 
