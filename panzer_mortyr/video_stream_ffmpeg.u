@@ -202,12 +202,40 @@ public: // IVideoStream
 							var AVChannelLayout audio_channel_layout= $>( audio_decoder_context_ ).ch_layout;
 							if( audio_channel_layout.nb_channels == 1 )
 							{
-								var ust::array_view_imut</ AudioStream::SampleType /> samples(
-									ust::byte_ptr_cast</ AudioStream::SampleType/>( ust::ptr_cast_to_byte8( $>( audio_frame_ ).data[0] ) ),
+								var ust::array_view_imut</ AudioStream::SampleType /> mono_samples(
+									ust::byte_ptr_cast</ AudioStream::SampleType />( ust::ptr_cast_to_byte8( $>( audio_frame_ ).data[0] ) ),
 									size_type( num_samples ) );
 
-								var size_type samples_written= audio_stream_write_end_.WriteSamples( samples );
-								ust::ignore_unused( samples_written );
+								// Convert mono to stereo.
+								audio_stereo_samples_.resize( mono_samples.size(), ust::make_zeroed</ AudioStream::SamplePairType />() );
+
+								foreach( pair : audio_stereo_samples_.iter().zip( mono_samples.iter() ) )
+								{
+									pair.first[0]= pair.second;
+									pair.first[1]= pair.second;
+								}
+
+								// Push mono samples converted to stered into the audio stream.
+
+								var size_type samples_written= audio_stream_write_end_.WriteSamples( audio_stereo_samples_ );
+								ust::ignore_unused( samples_written ); // TODO - use it?
+
+							}
+							else if( audio_channel_layout.nb_channels == 2 )
+							{
+								var ust::array_view_imut</ AudioStream::SamplePairType /> stereo_samples(
+									ust::byte_ptr_cast</ AudioStream::SamplePairType />( ust::ptr_cast_to_byte8( $>( audio_frame_ ).data[0] ) ),
+									size_type( num_samples ) );
+
+								// Push stereo samples directly to the audio stream.
+
+								var size_type samples_written= audio_stream_write_end_.WriteSamples( stereo_samples );
+								ust::ignore_unused( samples_written ); // TODO - use it?
+							}
+							else
+							{
+								// This should be checked before, that we have only mono or stereo sound.
+								assert( false, "Unexpected number of audio channels!" );
 							}
 						}
 
@@ -284,6 +312,9 @@ private:
 
 	// TODO - use a fixed buffer instead.
 	ust::vector</FrameData/> frames_queue_;
+
+	// A temporary buffer for mono to stereo conversion.
+	ust::vector</AudioStream::SamplePairType/> audio_stereo_samples_;
 }
 
 fn OpenVideoStream( ConsoleOutPtr& console_out, ust::filesystem_path_view file_path )
