@@ -173,6 +173,8 @@ public: // IVideoStream
 						av_frame_unref( video_frame_ ); // Free received frame data.
 
 						frames_queue_.push_back( move( frame_data ) );
+
+						// ConsoleOutAddTextLine( console_out_, ust::concat( "Frame queue size is ", ust::to_string8( frames_queue_.size() ) ) );
 					}
 				}
 				else if( packet_stream_index == i32( audio_stream_index_ ) )
@@ -221,19 +223,33 @@ public: // IVideoStream
 			var AVRational video_framerate=
 				unsafe( $>( $>( $>( format_context_ ).streams + video_stream_index_ ) ).r_frame_rate );
 
-			var u32 video_frame_index(
+			// If audio data for a frame was extracted from the audio stream, it's time to show this frame.
+			// It may seem to be too late, but it's mostly fine,
+			// since there is still some sound buffering left in an audio driver doing actual audio output.
+			var u32 video_frame_index_to_show(
 				u64( u32( video_framerate.num ) * audio_stream_write_end_.GetTotalNumberOfSamplesRead() ) /
 				( u64( audio_stream_write_end_.GetFrequency() ) * u64( video_framerate.den ) ) );
 
-			if( num_frames_returned_ <= video_frame_index && !frames_queue_.empty() )
+			while( num_frames_dequeued_ < video_frame_index_to_show && !frames_queue_.empty() )
 			{
-				++num_frames_returned_;
+				// Drop frames from the queue if we aren't fast enough showing them.
+				++num_frames_dequeued_;
 
 				for( auto mut i= 0s; i < frames_queue_.size() - 1s; ++i )
 				{
 					frames_queue_.swap( i, i + 1s );
 				}
+				frames_queue_.drop_back();
+			}
 
+			if( num_frames_dequeued_ == video_frame_index_to_show && !frames_queue_.empty() )
+			{
+				++num_frames_dequeued_;
+
+				for( auto mut i= 0s; i < frames_queue_.size() - 1s; ++i )
+				{
+					frames_queue_.swap( i, i + 1s );
+				}
 				return frames_queue_.pop_back();
 			}
 
@@ -258,7 +274,7 @@ private:
 	$(AVFrame) audio_frame_;
 	$(SwsContext) video_scale_context_;
 
-	u32 num_frames_returned_= 0u;
+	u32 num_frames_dequeued_= 0u;
 
 	AudioStream::WriteEnd audio_stream_write_end_;
 
