@@ -1,3 +1,4 @@
+import "/math.iu"
 import "/string_conversions.iu"
 import "/ffmpeg/ffmpeg.iu"
 import "video_stream.iu"
@@ -18,7 +19,8 @@ public:
 		$(AVPacket) packet, // Should be valid.
 		$(AVFrame) video_frame, // Should be valid.
 		$(AVFrame) audio_frame, // Should be valid.
-		$(SwsContext) video_scale_context /* Should be valid context for 1 to 1 scaling to RGBA format */ ) unsafe
+		$(SwsContext) video_scale_context /* Should be valid context for 1 to 1 scaling to RGBA format */,
+		AudioStream::WriteEnd mut audio_stream_write_end ) unsafe
 		(
 			console_out_= move(console_out),
 			format_context_= format_context,
@@ -30,6 +32,7 @@ public:
 			video_frame_= video_frame,
 			audio_frame_= audio_frame,
 			video_scale_context_= video_scale_context,
+			audio_stream_write_end_= move( audio_stream_write_end ),
 		)
 	{}
 
@@ -84,6 +87,24 @@ public: // IVideoStream
 		if( end_of_stream_reached_ )
 		{
 			return ust::null_optional;
+		}
+
+		// For now fill some fake audio data.
+		loop
+		{
+			var [ AudioStream::SampleType, 64 ] mut audio_samples= zero_init;
+			for( auto mut i= 0s; i < typeinfo</ typeof(audio_samples) />.element_count; ++i )
+			{
+				audio_samples[i]=
+					AudioStream::SampleType( ust::sin( f32( audio_stream_position_ + i ) / 48.0f ) * 16000.0f );
+			}
+			var size_type samples_written= audio_stream_write_end_.WriteSamples( audio_samples );
+			audio_stream_position_+= samples_written;
+
+			if( samples_written < typeinfo</ typeof(audio_samples) />.element_count )
+			{
+				break;
+			}
 		}
 
 		loop
@@ -232,13 +253,16 @@ private:
 	$(AVFrame) audio_frame_;
 	$(SwsContext) video_scale_context_;
 
+	AudioStream::WriteEnd audio_stream_write_end_;
+	size_type audio_stream_position_= 0s;
+
 	u32 num_audio_frames_= 0u;
 
 	bool end_of_stream_reached_= false;
 }
 
-fn OpenVideoStream(
-	ConsoleOutPtr& console_out, ust::filesystem_path_view file_path ) : ust::box_nullable</IVideoStream/>
+fn OpenVideoStream( ConsoleOutPtr& console_out, ust::filesystem_path_view file_path )
+	: ust::optional</ tup[ ust::box</IVideoStream/>, AudioStream::ReadEnd ] />
 {
 	if( compiler::options::generate_debug_info | compiler::options::optimization_level == '0' )
 	{
@@ -463,18 +487,25 @@ fn OpenVideoStream(
 			break label cleanup;
 		}
 
-		return ust::make_box(
-			VideoStreamFFmpeg(
-				console_out,
-				format_context,
-				video_stream_index,
-				video_decoder_context,
-				audio_stream_index,
-				audio_decoder_context,
-				packet,
-				video_frame,
-				audio_frame,
-				video_scale_context ) );
+		auto [ mut audio_stream_write_end, mut audio_stream_read_end ]= AudioStream::Create( 22050u );
+
+		return
+			ust::make_tuple(
+				ust::box</IVideoStream/>(
+					ust::make_box(
+						VideoStreamFFmpeg(
+							console_out,
+							format_context,
+							video_stream_index,
+							video_decoder_context,
+							audio_stream_index,
+							audio_decoder_context,
+							packet,
+							video_frame,
+							audio_frame,
+							video_scale_context,
+							move( audio_stream_write_end ) ) ) ),
+				move( audio_stream_read_end ) );
 
 	} label cleanup
 
@@ -492,7 +523,7 @@ fn OpenVideoStream(
 		avformat_close_input( $<( format_context ) );
 	}
 
-	return ust::box_nullable</IVideoStream/>();
+	return ust::null_optional;
 }
 
 fn GetFFmpegError( i32 code ) : ust::string8

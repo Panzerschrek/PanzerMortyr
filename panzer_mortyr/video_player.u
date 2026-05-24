@@ -1,5 +1,4 @@
 import "/assert.iu"
-import "/math.iu"
 import "/string_conversions.iu"
 import "gl_state.iu"
 import "texture.u"
@@ -25,14 +24,17 @@ fn VideoPlayer::PlayVideo(
 		return;
 	}
 
-	var ust::box_nullable</IVideoStream/> mut stream_ptr= OpenVideoStream( console_out_, file_path );
-
-	if( stream_ptr.empty() )
+	auto mut stream_opt= OpenVideoStream( console_out_, file_path );
+	if( stream_opt.empty() )
 	{
 		return;
 	}
 
-	var IVideoStream &mut stream= stream_ptr.try_deref();
+	auto [ mut stream_ptr, mut audio_stream_read_end ]= stream_opt.try_take();
+
+	audio_processor.AddAudioStream( move( audio_stream_read_end ) );
+
+	var IVideoStream &mut stream= stream_ptr.deref();
 
 	var [ u32, 2 ] video_size= stream.GetSize();
 	var f32 video_framerate= stream.GetFramerate();
@@ -67,13 +69,6 @@ fn VideoPlayer::PlayVideo(
 	var PerformanceCounter::TimePoint start_time= performance_counter_.GetCurrentTime();
 	var f32 mut last_frame_time_s= 0.0f;
 
-	auto [ mut audio_stream_write_end, mut audio_stream_read_end ]= AudioStream::Create( 44100u );
-
-	audio_processor.AddAudioStream( move( audio_stream_read_end ) );
-
-	var size_type mut audio_stream_position= 0s;
-	var [ AudioStream::SampleType, 256 ] mut audio_samples= zero_init;
-
 	loop
 	{
 		// Process events while playing a video.
@@ -106,22 +101,6 @@ fn VideoPlayer::PlayVideo(
 		}
 
 		audio_processor.Update( /* pause world sounds */ true );
-
-		loop
-		{
-			for( auto mut i= 0s; i < typeinfo</ typeof(audio_samples) />.element_count; ++i )
-			{
-				audio_samples[i]=
-					AudioStream::SampleType( ust::sin( f32( audio_stream_position + i ) / 48.0f ) * 16000.0f );
-			}
-			var size_type samples_written= audio_stream_write_end.WriteSamples( audio_samples );
-			audio_stream_position+= samples_written;
-
-			if( samples_written < typeinfo</ typeof(audio_samples) />.element_count )
-			{
-				break;
-			}
-		}
 
 		DrawVideoFrame( shader_, texture, normalized_scale );
 
