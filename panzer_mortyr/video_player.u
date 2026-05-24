@@ -37,8 +37,6 @@ fn VideoPlayer::PlayVideo(
 	var IVideoStream &mut stream= stream_ptr.deref();
 
 	var [ u32, 2 ] video_size= stream.GetSize();
-	var f32 video_framerate= stream.GetFramerate();
-	var f32 frame_duration_s= 1.0f / video_framerate;
 
 	var f32 video_aspect_ratio= stream.GetAspectRatio();
 
@@ -50,26 +48,9 @@ fn VideoPlayer::PlayVideo(
 			? Vec2f( 2.0f * video_aspect_ratio / viewport_aspect_ratio, 2.0f )
 			: Vec2f( 2.0f, 2.0f * viewport_aspect_ratio / video_aspect_ratio ) );
 
-	ConsoleOutAddTextLine( console_out_, ust::concat( "Framerate is ", ust::to_string8( u32( video_framerate ) ) ) );
-
 	var Texture mut texture= CreateVideoFrameTexture( video_size );
 
-	if_var( &first_frame : stream.GetNextFrame() )
-	{
-		UpdateVideoFrameTexture( texture, video_size, first_frame );
-	}
-	else
-	{
-		return;
-	}
-
-	// Always have a next frame ready.
-	var ust::optional</ IVideoStream::FrameData /> mut next_frame_data= stream.GetNextFrame();
-
-	var PerformanceCounter::TimePoint start_time= performance_counter_.GetCurrentTime();
-	var f32 mut last_frame_time_s= 0.0f;
-
-	loop
+	while( !stream.EndOfStreamReached() )
 	{
 		// Process events while playing a video.
 		if( !ProcessSDLEventsInVideoPlayback( console_out_ ) )
@@ -77,40 +58,18 @@ fn VideoPlayer::PlayVideo(
 			break;
 		}
 
-		var f32 current_time_s=
-			performance_counter_.CalculateDurationS( start_time, performance_counter_.GetCurrentTime() );
-
-		if( current_time_s >= last_frame_time_s + frame_duration_s )
+		if_var( &frame_data : stream.Update() )
 		{
-			// It's time to show a new frame.
-
-			// TODO - handle the case when source framerate is higher than the target one (like 120fps video on 60fps display).
-
-			if_var( &frame_data : next_frame_data )
-			{
-				UpdateVideoFrameTexture( texture, video_size, frame_data );
-			}
-			else
-			{
-				break;
-			}
-
-			next_frame_data.reset();
-
-			last_frame_time_s+= frame_duration_s;
+			UpdateVideoFrameTexture( texture, video_size, frame_data );
 		}
 
 		audio_processor.Update( /* pause world sounds */ true );
 
+		// TODO - avoid showing a frame if no frame was taken yet.
+
 		DrawVideoFrame( shader_, texture, normalized_scale );
 
 		window.SwapWindow();
-
-		// Try loading next frame after swapping window - to have enough time for doing it.
-		if( next_frame_data.empty() && !stream.EndOfStreamReached() )
-		{
-			next_frame_data= stream.GetNextFrame();
-		}
 	}
 }
 
