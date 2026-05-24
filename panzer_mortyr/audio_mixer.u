@@ -74,9 +74,10 @@ fn AudioMixer::Mix( mut this, ust::array_view_mut</SamplePairType/> out_sample_p
 	// Assume that we can process messages faster than the other thread can emit them and thus this loop ends eventually.
 	loop
 	{
-		if_var( &message : in_messages_queue_read_end_.TryPop() )
+		auto mut message_opt= in_messages_queue_read_end_.TryPop();
+		if( !message_opt.empty() )
 		{
-			ProcessMessage( message );
+			ProcessMessage( message_opt.try_take() );
 		}
 		else
 		{
@@ -511,9 +512,11 @@ fn AudioMixer::MixAndUpdateAudioStreams( mut this, ust::array_view_mut</SamplePa
 			// If the other end of the stream is already closed, stop playing it without extracting remaining samples.
 			// If one wishes to not discard remaining samples, he should close the stream only when it's emptied.
 
-			// TODO - send a message back containing the stream object.
-			// We need this to prevent destructing it on this thread.
-			audio_stream_opt= ust::null_optional;
+			var bool pushed=
+				out_messages_queue_write_end_.TryPush(
+					OutMessageAudioStreamFinished{ .stream= audio_stream_opt.try_take() } );
+
+			ust::ignore_unused( pushed ); // Can't handle the case if the queue is full.
 		}
 
 		if_var( &mut audio_stream : audio_stream_opt )
@@ -648,11 +651,17 @@ fn AudioMixer::ApplyUnderwaterEffect( mut this, ust::array_view_mut</SamplePairT
 	underwater_effect_active_= new_underwater_effect_active_;
 }
 
-fn AudioMixer::ProcessMessage( mut this, InMessage& message )
+fn AudioMixer::ProcessMessage( mut this, InMessage mut message )
 {
 	variant_visit( &el : message )
 	{
-		ProcessMessageImpl( el );
+		return ProcessMessageImpl( el );
+	}
+
+	// HACK! We can't move a value in "variant_visit", so, process special cases manually.
+	if( message.has</ InMessageAddAudioStream />() )
+	{
+		return AddAudioStream( move( message ).try_move</ InMessageAddAudioStream />() );
 	}
 }
 
@@ -790,6 +799,25 @@ fn AudioMixer::ProcessMessageImpl( mut this, InMessageAddSingleShotSound& messag
 		out_messages_queue_write_end_.TryPush( OutMessageSingleShotSoundFinished{ .sound_data= message.sound_data } );
 
 	ust::ignore_unused( pushed ); // Can't handle here full queue.
+}
+
+fn AudioMixer::AddAudioStream( mut this, InMessageAddAudioStream mut message )
+{
+	auto { mut stream } = move(message);
+
+	foreach( &mut slot : audio_streams_ )
+	{
+		if( slot.empty() )
+		{
+			slot= move(stream);
+			return;
+		}
+	}
+
+	// If we have no free slots left for a stream - return it back.
+	// This should actually not happen.
+	var bool pushed= out_messages_queue_write_end_.TryPush( OutMessageAudioStreamFinished{ .stream= move(stream) } );
+	ust::ignore_unused( pushed ); // Can't handle this case.
 }
 
 fn AudioMixer::AssignNewSoundSourceToSlot( SoundSource &mut source, u32 frequency, InMessageAddSoundSource& message )
