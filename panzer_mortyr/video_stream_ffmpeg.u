@@ -91,11 +91,18 @@ public: // IVideoStream
 
 		unsafe
 		{
-			var u32 min_samples_in_audio_stream= 8192u;
+			// Make sure we fill the audio buffer for the next 1/10 seconds or so.
+			// It's a reasonable margin assuming this update function is executed 10 times in a second.
+			// Really it should be executed much faster (like with 60 fps).
+			// Increasing this value isn't recommended,
+			// because it means reading more data from the stream and buffering more video frames (each frame takes some space).
+			var u32 min_samples_in_audio_stream= audio_stream_write_end_.GetFrequency() / 10u;
 
 			while(
-				audio_stream_write_end_.GetTotalNumberOfSamplesWritten() - audio_stream_write_end_.GetTotalNumberOfSamplesRead()
-				<= min_samples_in_audio_stream )
+				// Ensure enough samples in the audio stream.
+				audio_stream_write_end_.GetTotalNumberOfSamplesWritten() - audio_stream_write_end_.GetTotalNumberOfSamplesRead() <= min_samples_in_audio_stream ||
+				// Ensure that we always have at least one frame buffered.
+				frames_queue_.empty() )
 			{
 				var i32 read_packet_res= unsafe( av_read_frame( format_context_, packet_ ) );
 				if( read_packet_res != 0 )
@@ -211,28 +218,23 @@ public: // IVideoStream
 				}
 			}
 
-			var u32 audio_stream_read_position= audio_stream_write_end_.GetTotalNumberOfSamplesRead();
-
 			var AVRational video_framerate=
 				unsafe( $>( $>( $>( format_context_ ).streams + video_stream_index_ ) ).r_frame_rate );
 
 			var u32 video_frame_index(
-				u64( u32( video_framerate.num ) * audio_stream_read_position ) /
+				u64( u32( video_framerate.num ) * audio_stream_write_end_.GetTotalNumberOfSamplesRead() ) /
 				( u64( audio_stream_write_end_.GetFrequency() ) * u64( video_framerate.den ) ) );
 
-			if( num_frames_returned_ < video_frame_index )
+			if( num_frames_returned_ <= video_frame_index && !frames_queue_.empty() )
 			{
 				++num_frames_returned_;
 
-				if( !frames_queue_.empty() )
+				for( auto mut i= 0s; i < frames_queue_.size() - 1s; ++i )
 				{
-					for( auto mut i= 0s; i < frames_queue_.size() - 1s; ++i )
-					{
-						frames_queue_.swap( i, i + 1s );
-					}
-
-					return frames_queue_.pop_back();
+					frames_queue_.swap( i, i + 1s );
 				}
+
+				return frames_queue_.pop_back();
 			}
 
 			return ust::null_optional;
@@ -264,6 +266,7 @@ private:
 
 	bool end_of_stream_reached_= false;
 
+	// TODO - use a fixed buffer instead.
 	ust::vector</FrameData/> frames_queue_;
 }
 
