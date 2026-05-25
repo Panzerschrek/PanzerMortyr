@@ -161,7 +161,7 @@ PanzerMortyr sound:
 * Play player's out-of-ammo sounds.
 * Consider playing sounds for pushed enities.
 * Play bird sounds.
-* Play CD music and/or music files ripped from the original CD.
+* Play CD music and/or music files ripped from the original CD. It's not so complex, since FFmpeg is already used in PanzerMortyr.
 * Allow disabling Mortyr's voice (there is a menu option for this).
 * Consider implementing occlusion-based sound volume attenuation (reduce volume of a sound located behind a wall or in some other room).
 * Allow selecting audio device via settings.
@@ -173,5 +173,4 @@ PanzerMortyr sound:
 PanzerMortyr cinimatics:
 
 * Make sure the orider of startup videos is correct.
-* Play videos with sound (with proper synchronization).
 * Consider reading/decoding video files in a separate thread to avoid blocking the main thread due to disk access.
