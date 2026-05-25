@@ -525,20 +525,28 @@ fn AudioMixer::MixAndUpdateAudioStreams( mut this, ust::array_view_mut</SamplePa
 			// Perform here resampling with linear interpolation.
 			// This works well, since output frequency is almost always higher than input stream frequency.
 
-			// TODO - use fixed-point resampling factor, using "f32" isn't enough for long streams.
-			var f32 resampling_factor= f32( stream_state.stream.GetFrequency() ) / f32( frequency_ );
+			// Store resampling factor in 16.16 fixed point format.
+			// We can't use f32 for calculating sample indices for resampling,
+			// since f32 gives not enough precision for long-playing streams.
+			var u32 resampling_factor= ( stream_state.stream.GetFrequency() << 16 ) / frequency_;
 
-			var f32 stream_volume= 0.3f; // TODO - allow setting it.
+			var f32 stream_volume= 1.0f; // TODO - allow setting it.
 
 			var f32 constexpr sample_scale= GetScaleForSampleType</ AudioStream::SampleType />() * stream_volume;
 			var f32 constexpr sample_offset= GetOffsetForSampleType</ AudioStream::SampleType />();
 
 			for( auto mut dst_position= 0s; dst_position < out_sample_pairs.size(); ++dst_position )
 			{
-				// We have enough f32 precision here, since single-shot sounds are pretty short.
-				var f32 src_sample_index_fractional= f32( stream_state.sample_counter ) * resampling_factor;
-				var u32 src_sample_index( src_sample_index_fractional );
+				// Calculate fractional sample index in 48.16 fixed format.
+				// This requires only 32-bit by 32-bit multiplication, which is fast even on 32-bit targets.
+				var u64 src_sample_index_fractional( u64( stream_state.sample_counter ) * u64( resampling_factor ) );
+
+				// Here 64-bit shift is required, which is also pretty fast on 32-bit targets (via "shrdl" instruction).
+				var u32 src_sample_index( src_sample_index_fractional >> 16 );
+
 				var u32 src_sample_index_plus_one= src_sample_index + 1u;
+
+				var f32 mix_fraction= f32( u32( src_sample_index_fractional ) & 65535u ) * ( 1.0f / 65536.0f );
 
 				if( src_sample_index_plus_one >= stream_state.buffer_position + stream_state.buffer_size )
 				{
@@ -569,7 +577,7 @@ fn AudioMixer::MixAndUpdateAudioStreams( mut this, ust::array_view_mut</SamplePa
 					var u32 last_dst_sample_index=
 						stream_state.sample_counter + u32( out_sample_pairs.size() - 1s - dst_position );
 
-					var u32 last_src_sample_index( f32( last_dst_sample_index ) * resampling_factor );
+					var u32 last_src_sample_index( ( u64( last_dst_sample_index ) * u64( resampling_factor ) ) >> 16 );
 
 					var u32 read_size=
 						ust::min(
@@ -592,8 +600,6 @@ fn AudioMixer::MixAndUpdateAudioStreams( mut this, ust::array_view_mut</SamplePa
 						break;
 					}
 				}
-
-				var f32 mix_fraction= src_sample_index_fractional - f32( src_sample_index );
 
 				auto sample_pair0= stream_state.buffer[ src_sample_index      - stream_state.buffer_position ];
 				auto sample_pair1= stream_state.buffer[ src_sample_index + 1u - stream_state.buffer_position ];
