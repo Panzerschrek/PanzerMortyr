@@ -78,23 +78,13 @@ public: // IVideoStream
 		{
 			// Return remaining video frames if the end of the stream is reached and all audio data was already extracted.
 
-			if( video_frame_queue_size_ == 0s )
+			if( video_frame_queue_.IsEmpty() )
 			{
 				return ust::null_optional;
 			}
 
 			++num_video_frames_dequeued_;
-
-			--video_frame_queue_size_;
-			var FrameData result_frame_data= take( video_frame_queue_[0] );
-
-			for( auto mut i= 0s; i < video_frame_queue_size_; ++i )
-			{
-				var FrameData mut frame_data= take( video_frame_queue_[ i + 1s ] );
-				video_frame_queue_[i]= move( frame_data );
-			}
-
-			return result_frame_data;
+			return video_frame_queue_.Pop();
 		}
 
 		unsafe
@@ -111,7 +101,7 @@ public: // IVideoStream
 					// Ensure enough samples in the audio stream.
 					audio_stream_write_end_.GetTotalNumberOfSamplesWritten() - audio_stream_write_end_.GetTotalNumberOfSamplesRead() <= min_samples_in_audio_stream ||
 					// Ensure that we always have at least one frame buffered.
-					video_frame_queue_size_ == 0s ) )
+					video_frame_queue_.IsEmpty() ) )
 			{
 				var i32 read_packet_res= av_read_frame( format_context_, packet_ );
 				if( read_packet_res != 0 )
@@ -184,22 +174,15 @@ public: // IVideoStream
 
 						av_frame_unref( video_frame_ ); // Free received frame data.
 
-						if( video_frame_queue_size_ == c_max_buffered_video_frames )
+						if( video_frame_queue_.IsFull() )
 						{
 							ConsoleOutAddTextLine( console_out_, "Video frames queue is full, dropping a frame." );
 
 							++num_video_frames_dequeued_;
-
-							--video_frame_queue_size_;
-							for( auto mut i= 0s; i < video_frame_queue_size_; ++i )
-							{
-								var FrameData mut frame_data= take( video_frame_queue_[ i + 1s ] );
-								video_frame_queue_[i]= move( frame_data );
-							}
+							video_frame_queue_.Pop();
 						}
 
-						video_frame_queue_[ video_frame_queue_size_ ]= move( frame_data );
-						++video_frame_queue_size_;
+						video_frame_queue_.Push( move( frame_data ) );
 					}
 					else if( receive_frame_res == AVERROR( EAGAIN ) )
 					{
@@ -312,33 +295,17 @@ public: // IVideoStream
 				( u64( video_framerate.num ) * u64( audio_stream_write_end_.GetTotalNumberOfSamplesRead() ) ) /
 				( u64( video_framerate.den ) * u64( audio_stream_write_end_.GetFrequency() ) ) );
 
-			while( num_video_frames_dequeued_ < video_frame_index_to_show && video_frame_queue_size_ > 0s )
+			while( num_video_frames_dequeued_ < video_frame_index_to_show && !video_frame_queue_.IsEmpty() )
 			{
 				// Drop frames from the queue if we aren't fast enough showing them.
 				++num_video_frames_dequeued_;
-
-				--video_frame_queue_size_;
-				for( auto mut i= 0s; i < video_frame_queue_size_; ++i )
-				{
-					var FrameData mut frame_data= take( video_frame_queue_[ i + 1s ] );
-					video_frame_queue_[i]= move( frame_data );
-				}
+				video_frame_queue_.Pop();
 			}
 
-			if( num_video_frames_dequeued_ == video_frame_index_to_show && video_frame_queue_size_ > 0s )
+			if( num_video_frames_dequeued_ == video_frame_index_to_show && !video_frame_queue_.IsEmpty() )
 			{
 				++num_video_frames_dequeued_;
-
-				--video_frame_queue_size_;
-				var FrameData result_frame_data= take( video_frame_queue_[0] );
-
-				for( auto mut i= 0s; i < video_frame_queue_size_; ++i )
-				{
-					var FrameData mut frame_data= take( video_frame_queue_[ i + 1s ] );
-					video_frame_queue_[i]= move( frame_data );
-				}
-
-				return result_frame_data;
+				return video_frame_queue_.Pop();
 			}
 
 			return ust::null_optional;
@@ -350,7 +317,7 @@ public: // IVideoStream
 		return
 			end_of_stream_reached_ &&
 			audio_stream_write_end_.GetTotalNumberOfSamplesRead() == audio_stream_write_end_.GetTotalNumberOfSamplesWritten() &&
-			video_frame_queue_size_ == 0s;
+			video_frame_queue_.IsEmpty();
 	}
 
 private:
@@ -374,10 +341,10 @@ private:
 
 	u32 num_video_frames_dequeued_= 0u;
 
-	// Use a fixed-size queue for video frames. It's enough, since we shouldn't buffer too many video frames.
-	var size_type c_max_buffered_video_frames= 8s;
-	[ FrameData, c_max_buffered_video_frames ] video_frame_queue_;
-	size_type video_frame_queue_size_= 0s;
+	// Use a fixed-size queue for video frames.
+	// It's enough, since we read only a little bit more stream data as necessary to fill the audio stream for the next fraction of a second
+	// and we need to store only few video frames for this fraction.
+	FixedSizeQueue</ FrameData, 10u /> video_frame_queue_;
 }
 
 fn OpenVideoStream( ConsoleOutPtr& console_out, ust::filesystem_path_view file_path )
@@ -671,6 +638,61 @@ fn OpenVideoStream( ConsoleOutPtr& console_out, ust::filesystem_path_view file_p
 	}
 
 	return ust::null_optional;
+}
+
+// Simple fixed-size queue for default-constructible elements.
+// Is good enough for storing a small amount of elements.
+template</type T, u32 Capacity/>
+class FixedSizeQueue
+{
+public:
+	static_assert( typeinfo</T/>.is_default_constructible );
+	static_assert( Capacity <= 32u, "Too much capacity! This container isn't optimized for large capacities!" );
+
+public:
+	fn IsEmpty( this ) : bool
+	{
+		return size_ == 0u;
+	}
+
+	fn IsFull( this ) : bool
+	{
+		return size_ == Capacity;
+	}
+
+	// Fails to push if is full.
+	fn Push( mut this, T mut value )
+	{
+		if( size_ == Capacity )
+		{
+			return;
+		}
+
+		buffer_[ size_ ]= move(value);
+		++size_;
+	}
+
+	// halts if empty.
+	fn Pop( mut this ) : T
+	{
+		halt if( size_ == 0u );
+
+		var T result= take( buffer_[0] );
+
+		--size_;
+		// Shift the whole buffer. It isn't fast, but fast enough for small capacities.
+		for( auto mut i= 0u; i < size_; ++i )
+		{
+			var T mut value= take( buffer_[ i + 1u ] );
+			buffer_[i]= move(value);
+		}
+
+		return result;
+	}
+
+private:
+	[ T, Capacity ] buffer_;
+	u32 size_= 0u;
 }
 
 fn GetFFmpegError( i32 code ) : ust::string8
