@@ -108,20 +108,21 @@ public: // IVideoStream
 					// Ensure that we always have at least one frame buffered.
 					frames_queue_.empty() ) )
 			{
-				var i32 read_packet_res= unsafe( av_read_frame( format_context_, packet_ ) );
+				var i32 read_packet_res= av_read_frame( format_context_, packet_ );
 				if( read_packet_res != 0 )
 				{
 					if( read_packet_res == AVERROR_EOF )
 					{
 						safe( ConsoleOutAddTextLine( console_out_, "End of stream reached." ) );
 						end_of_stream_reached_= true;
+						break;
 					}
 
 					safe( ConsoleOutAddTextLine(
 						console_out_,
-						ust::concat(
-							"Failed to read a packet! Error: ", GetFFmpegError( read_packet_res ) ) ) );
-					return ust::null_optional;
+						ust::concat( "Failed to read a packet! Error: ", GetFFmpegError( read_packet_res ) ) ) );
+					end_of_stream_reached_= true;
+					break;
 				}
 
 				var i32 packet_stream_index= $>( packet_ ).stream_index;
@@ -138,10 +139,13 @@ public: // IVideoStream
 							console_out_,
 							ust::concat(
 								"Failed to send a video packet! Error: ", GetFFmpegError( send_packet_res ) ) ) );
-						return ust::null_optional;
+						end_of_stream_reached_= true;
+						break;
 					}
 
-					if( avcodec_receive_frame( video_decoder_context_, video_frame_ ) == 0 )  // TODO - handle errors here.
+					var i32 receive_frame_res= avcodec_receive_frame( video_decoder_context_, video_frame_ );
+
+					if( receive_frame_res == 0 )
 					{
 						// Received a frame.
 
@@ -177,7 +181,23 @@ public: // IVideoStream
 
 						frames_queue_.push_back( move( frame_data ) );
 
-						// ConsoleOutAddTextLine( console_out_, ust::concat( "Frame queue size is ", ust::to_string8( frames_queue_.size() ) ) );
+						if( frames_queue_.size() > 1s )
+						{
+							ConsoleOutAddTextLine( console_out_, ust::concat( "Frame queue size is ", ust::to_string8( frames_queue_.size() ) ) );
+						}
+					}
+					else if( receive_frame_res == AVERROR( EAGAIN ) )
+					{
+						// No frame is ready yet.
+					}
+					else
+					{
+						safe( ConsoleOutAddTextLine(
+							console_out_,
+							ust::concat(
+								"Failed to receive a video frame! Error: ", GetFFmpegError( receive_frame_res ) ) ) );
+						end_of_stream_reached_= true;
+						break;
 					}
 				}
 				else if( packet_stream_index == i32( audio_stream_index_ ) )
@@ -192,10 +212,13 @@ public: // IVideoStream
 							console_out_,
 							ust::concat(
 								"Failed to send an audio packet! Error: ", GetFFmpegError( send_packet_res ) ) ) );
-						return ust::null_optional;
+						end_of_stream_reached_= true;
+						break;
 					}
 
-					if( avcodec_receive_frame( audio_decoder_context_, audio_frame_ ) == 0 ) // TODO - handle errors here.
+					var i32 receive_frame_res= avcodec_receive_frame( audio_decoder_context_, audio_frame_ );
+
+					if( receive_frame_res == 0 )
 					{
 						++num_audio_frames_;
 
@@ -244,9 +267,23 @@ public: // IVideoStream
 
 						av_frame_unref( audio_frame_ );
 					}
+					else if( receive_frame_res == AVERROR( EAGAIN ) )
+					{
+						// No frame is ready yet.
+					}
+					else
+					{
+						safe( ConsoleOutAddTextLine(
+							console_out_,
+							ust::concat(
+								"Failed to receive an audio frame! Error: ", GetFFmpegError( receive_frame_res ) ) ) );
+						end_of_stream_reached_= true;
+						break;
+					}
 				}
 				else
 				{
+					// Some other stream, not video or audio.
 					av_packet_unref( packet_ ); // Free received packet data.
 				}
 			}
@@ -635,12 +672,10 @@ fn GetFFmpegError( i32 code ) : ust::string8
 	}
 }
 
-/*
 fn constexpr AVERROR( i32 code ) : i32
 {
 	return -code;
 }
-*/
 
 auto constexpr AVERROR_EOF = FFERRTAG( 'E','O','F',' ' );
 
