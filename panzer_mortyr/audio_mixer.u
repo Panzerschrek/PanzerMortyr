@@ -514,8 +514,7 @@ fn AudioMixer::MixAndUpdateAudioStreams( mut this, ust::array_view_mut</SamplePa
 			auto { mut stream }= audio_stream_opt.try_take();
 
 			var bool pushed=
-				out_messages_queue_write_end_.TryPush(
-					OutMessageAudioStreamFinished{ .stream= move( stream ) } );
+				out_messages_queue_write_end_.TryPush( OutMessageAudioStreamFinished{ .stream= move( stream ) } );
 
 			ust::ignore_unused( pushed ); // Can't handle the case if the queue is full.
 
@@ -544,11 +543,9 @@ fn AudioMixer::MixAndUpdateAudioStreams( mut this, ust::array_view_mut</SamplePa
 				// Here 64-bit shift is required, which is also pretty fast on 32-bit targets (via "shrdl" instruction).
 				var u32 src_sample_index( src_sample_index_fractional >> 16 );
 
-				var u32 src_sample_index_plus_one= src_sample_index + 1u;
-
 				var f32 mix_fraction= f32( u32( src_sample_index_fractional ) & 65535u ) * ( 1.0f / 65536.0f );
 
-				if( src_sample_index_plus_one >= stream_state.buffer_position + stream_state.buffer_size )
+				if( src_sample_index + 1u >= stream_state.buffer_position + stream_state.buffer_size )
 				{
 					// End of the prefetched buffer is reached.
 
@@ -570,7 +567,7 @@ fn AudioMixer::MixAndUpdateAudioStreams( mut this, ust::array_view_mut</SamplePa
 						stream_state.buffer_size= new_buffer_size;
 					}
 
-					// Read new samples into the buffer, but only as many as possible.
+					// Read new samples into the buffer, but only as many as necessary.
 					// We shouldn't extract more samples than we can output in this mixing call,
 					// since samples extraction may work as a signal for the other side writing samples into the stream.
 
@@ -592,14 +589,17 @@ fn AudioMixer::MixAndUpdateAudioStreams( mut this, ust::array_view_mut</SamplePa
 
 					stream_state.buffer_size+= u32( samples_read );
 
-					if( src_sample_index_plus_one >= stream_state.buffer_position + stream_state.buffer_size )
+					if( src_sample_index + 1u >= stream_state.buffer_position + stream_state.buffer_size )
 					{
-						// There is no samples left in the stream.
+						// There are no samples left in the stream.
 						// It's possible if the stream's end is reached
-						// or if someone isn't fast enough writing samples to the write end of the stream.
+						// or if a holder of the other end isn't fast enough writing samples to the the stream.
 						break;
 					}
 				}
+
+				debug_assert( src_sample_index >= stream_state.buffer_position );
+				debug_assert( src_sample_index + 1u < stream_state.buffer_position + stream_state.buffer_size );
 
 				auto sample_pair0= stream_state.buffer[ src_sample_index      - stream_state.buffer_position ];
 				auto sample_pair1= stream_state.buffer[ src_sample_index + 1u - stream_state.buffer_position ];
