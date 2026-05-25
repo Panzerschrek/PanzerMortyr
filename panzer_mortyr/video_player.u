@@ -32,8 +32,8 @@ fn VideoPlayer::PlayVideo(
 
 	auto [ mut stream_ptr, mut audio_stream_read_end ]= stream_opt.try_take();
 
-	// Add the audio stream. This may fail. TODO - handle such case and extract samples from the stream in this function.
-	var ust::optional</AudioStream::ReadEnd/> audio_stream_read_end_opt=
+	// Add the audio stream. This may fail, in such case we get the stream back.
+	var ust::optional</AudioStream::ReadEnd/> mut audio_stream_read_end_opt=
 		audio_processor.AddAudioStream( move( audio_stream_read_end ) );
 
 	var IVideoStream &mut stream= stream_ptr.deref();
@@ -54,29 +54,96 @@ fn VideoPlayer::PlayVideo(
 
 	var bool mut has_texture_data= false;
 
-	while( !stream.IsFinished() )
+	if_var( &mut audio_stream_read_end : audio_stream_read_end_opt )
 	{
-		// Process events while playing a video.
-		if( !ProcessSDLEventsInVideoPlayback( console_out_ ) )
+		// A fallback for cases when we don't play sound for a video.
+		// Perform timer-based audio samples extraction to force play the video.
+
+		var PerformanceCounter::TimePoint mut prev_time= performance_counter_.GetCurrentTime();
+
+		var [ AudioStream::SamplePairType, 128 ] mut audio_samples= zero_init;
+
+		while( !stream.IsFinished() )
 		{
-			break;
-		}
+			// Process events while playing a video.
+			if( !ProcessSDLEventsInVideoPlayback( console_out_ ) )
+			{
+				break;
+			}
 
-		if_var( &frame_data : stream.Update() )
+			if_var( &frame_data : stream.Update() )
+			{
+				UpdateVideoFrameTexture( texture, video_size, frame_data );
+				has_texture_data= true;
+			}
+
+			// Extract audio samples based on real time measurements to advance video playback.
+			{
+				var PerformanceCounter::TimePoint cur_time= performance_counter_.GetCurrentTime();
+				var f32 time_delta_s= performance_counter_.CalculateDurationS( prev_time, cur_time );
+				prev_time= cur_time;
+
+				var size_type samples_to_extract( time_delta_s * f32( audio_stream_read_end.GetFrequency() ) );
+
+				var size_type mut samples_extracted= 0s;
+				while( samples_extracted < samples_to_extract )
+				{
+					var size_type read_size=
+						ust::min(
+							samples_to_extract - samples_extracted,
+							typeinfo</ typeof( audio_samples ) />.element_count );
+
+					var size_type samples_read=
+						audio_stream_read_end.ReadSamples(
+							ust::array_view_mut</ AudioStream::SamplePairType />( audio_samples ).subrange_end( read_size ) );
+
+					if( samples_read < read_size )
+					{
+						break; // Can't read more samples - the stream's buffer is empty.
+					}
+					samples_extracted+= samples_read;
+				}
+			}
+
+			audio_processor.Update( /* pause world sounds */ true );
+
+			 // Display a frame only if we received some. It may be not the case if we just started playing.
+			if( has_texture_data )
+			{
+				DrawVideoFrame( shader_, texture, normalized_scale );
+			}
+
+			window.SwapWindow();
+		}
+	}
+	else
+	{
+		// Play the video assuming that the audio processor is resposible for reading audio data from the audio stream and thus advancing video playback.
+
+		while( !stream.IsFinished() )
 		{
-			UpdateVideoFrameTexture( texture, video_size, frame_data );
-			has_texture_data= true;
+			// Process events while playing a video.
+			if( !ProcessSDLEventsInVideoPlayback( console_out_ ) )
+			{
+				break;
+			}
+
+			if_var( &frame_data : stream.Update() )
+			{
+				UpdateVideoFrameTexture( texture, video_size, frame_data );
+				has_texture_data= true;
+			}
+
+			audio_processor.Update( /* pause world sounds */ true );
+
+			 // Display a frame only if we received some. It may be not the case if we just started playing.
+			if( has_texture_data )
+			{
+				DrawVideoFrame( shader_, texture, normalized_scale );
+			}
+
+			window.SwapWindow();
 		}
-
-		audio_processor.Update( /* pause world sounds */ true );
-
-		 // Display a frame only if we received some. It may be not the case if we just started playing.
-		if( has_texture_data )
-		{
-			DrawVideoFrame( shader_, texture, normalized_scale );
-		}
-
-		window.SwapWindow();
 	}
 }
 
