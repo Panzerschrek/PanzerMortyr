@@ -1,5 +1,5 @@
 import "/shared_ptr_mt_final.iu"
-import "lock_free_queue.iu"
+import "audio_stream.iu"
 import "sound_loading.iu"
 import "unique_sound_source_id.iu"
 
@@ -27,7 +27,8 @@ public:
 			InMessageAddAmbientSound,
 			InMessageSetAmbientSoundVolume,
 			InMessageRemoveAmbientSound,
-			InMessageAddSingleShotSound ] />;
+			InMessageAddSingleShotSound,
+			InMessageAddAudioStream ] />;
 
 	struct InMessageSetPaused
 	{
@@ -84,6 +85,13 @@ public:
 		ust::shared_ptr_mt_final</SoundDataAbstract/> sound_data;
 	}
 
+	// This adds an audio stream. It can be removed only by closing its write end.
+	struct InMessageAddAudioStream
+	{
+		AudioStream::ReadEnd stream;
+		f32 volume;
+	}
+
 	// Let's assume audio mixing/outputting is executed 256 times in a second (it should be actually less frequent).
 	// Assume that frame rate is pretty low - only 20 fps.
 	// Assume that we have 32 playing sounds.
@@ -97,7 +105,8 @@ public:
 			OutMessageSoundSourceFinished,
 			OutMessageAmbientSoundProgress,
 			OutMessageAmbientSoundRemoved,
-			OutMessageSingleShotSoundFinished ] />;
+			OutMessageSingleShotSoundFinished,
+			OutMessageAudioStreamFinished ] />;
 
 	struct OutMessageSoundSourceProgress
 	{
@@ -135,6 +144,12 @@ public:
 	{
 		// It's needed here only to prevent freeing the shared data on the mixer thread, if it happens to be the last user.
 		ust::shared_ptr_mt_final_nullable</SoundDataAbstract/> sound_data;
+	}
+
+	struct OutMessageAudioStreamFinished
+	{
+		// It's needed here only to prevent freeing the stream on the mixer thread, if it happens to be the last user.
+		AudioStream::ReadEnd stream;
 	}
 
 	type AmbientSoundSlotIndex= u8;
@@ -216,14 +231,36 @@ private:
 		u32 sample_counter;
 	}
 
+	struct AudioStreamState
+	{
+		AudioStream::ReadEnd stream;
+
+		f32 volume;
+
+		// Counter of output samples, not sound data samples (using output frequency).
+		// 32-bit counter is enough for many hours of playing.
+		u32 sample_counter;
+
+		// A small buffer used for reading samples with linear interpolation.
+		// Don't fill it beyond current needs!
+		[ AudioStream::SamplePairType, 256 ] buffer;
+
+		// Buffer position in input stream samples.
+		u32 buffer_position;
+
+		// Buffer size in input stream samples.
+		u32 buffer_size;
+	}
+
 private:
 	fn MixAndUpdateSoundSources( mut this, ust::array_view_mut</SamplePairType/> out_sample_pairs );
 	fn MixAndUpdateAmbientSounds( mut this, ust::array_view_mut</SamplePairType/> out_sample_pairs );
 	fn MixAndUpdateSingleShotSounds( mut this, ust::array_view_mut</SamplePairType/> out_sample_pairs );
+	fn MixAndUpdateAudioStreams( mut this, ust::array_view_mut</SamplePairType/> out_sample_pairs );
 
 	fn ApplyUnderwaterEffect( mut this, ust::array_view_mut</SamplePairType/> out_sample_pairs );
 
-	fn ProcessMessage( mut this, InMessage& message );
+	fn ProcessMessage( mut this, InMessage mut message );
 	fn ProcessMessageImpl( mut this, InMessageSetPaused& message );
 	fn ProcessMessageImpl( mut this, InMessageSetUnderwater& message );
 	fn ProcessMessageImpl( mut this, InMessageAddSoundSource& message );
@@ -233,6 +270,9 @@ private:
 	fn ProcessMessageImpl( mut this, InMessageSetAmbientSoundVolume& message );
 	fn ProcessMessageImpl( mut this, InMessageRemoveAmbientSound& message );
 	fn ProcessMessageImpl( mut this, InMessageAddSingleShotSound& message );
+	fn ProcessMessageImpl( mut this, InMessageAddAudioStream& message ){} // Just a stub. We can't variant_visit with move.
+
+	fn AddAudioStream( mut this, InMessageAddAudioStream message );
 
 	fn AssignNewSoundSourceToSlot( SoundSource &mut source, u32 frequency, InMessageAddSoundSource& message );
 
@@ -254,6 +294,10 @@ private:
 	[ AmbientSound, c_num_ambient_sound_slots ] ambient_sounds_;
 
 	[ SingleShotSound, 8 ] single_shot_sounds_;
+
+	// We really need no more than a single stream in any given moment (for background music or for a video).
+	// But allow having a couple of extra active streams - for transition cases.
+	[ ust::optional</ AudioStreamState />, 3 ] audio_streams_;
 
 	bool underwater_effect_active_;
 	bool new_underwater_effect_active_;

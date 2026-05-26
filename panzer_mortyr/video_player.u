@@ -15,7 +15,8 @@ fn VideoPlayer::constructor( ConsoleOutPtr mut console_out )
 	)
 {}
 
-fn VideoPlayer::PlayVideo( mut this, ust::filesystem_path_view file_path, OpenGLWindow &mut window )
+fn VideoPlayer::PlayVideo(
+	mut this, ust::filesystem_path_view file_path, OpenGLWindow &mut window, AudioProcessor &mut audio_processor )
 {
 	// Check if we already need to stop before even loading a video.
 	if( !ProcessSDLEventsInVideoPlayback( console_out_ ) )
@@ -23,20 +24,23 @@ fn VideoPlayer::PlayVideo( mut this, ust::filesystem_path_view file_path, OpenGL
 		return;
 	}
 
-	var ust::box_nullable</IVideoStream/> mut stream_ptr= OpenVideoStream( console_out_, file_path );
-
-	if( stream_ptr.empty() )
+	auto mut stream_pair_opt= OpenVideoStream( console_out_, file_path );
+	if( stream_pair_opt.empty() )
 	{
 		return;
 	}
 
-	var IVideoStream &mut stream= stream_ptr.try_deref();
+	auto [ mut video_stream_ptr, mut audio_stream_read_end ]= stream_pair_opt.try_take();
 
-	var [ u32, 2 ] video_size= stream.GetSize();
-	var f32 video_framerate= stream.GetFramerate();
-	var f32 frame_duration_s= 1.0f / video_framerate;
+	// Add the audio stream. This may fail, in such case we get the stream back.
+	var ust::optional</AudioStream::ReadEnd/> mut audio_stream_read_end_opt=
+		audio_processor.AddAudioStream( move( audio_stream_read_end ) );
 
-	var f32 video_aspect_ratio= stream.GetAspectRatio();
+	var IVideoStream &mut video_stream= video_stream_ptr.deref();
+
+	var [ u32, 2 ] video_size= video_stream.GetSize();
+
+	var f32 video_aspect_ratio= video_stream.GetAspectRatio();
 
 	var [ u32, 2 ] viewport_size= window.GetViewportSize();
 	var f32 viewport_aspect_ratio= f32( viewport_size[0] ) / f32( viewport_size[1] );
@@ -46,64 +50,99 @@ fn VideoPlayer::PlayVideo( mut this, ust::filesystem_path_view file_path, OpenGL
 			? Vec2f( 2.0f * video_aspect_ratio / viewport_aspect_ratio, 2.0f )
 			: Vec2f( 2.0f, 2.0f * viewport_aspect_ratio / video_aspect_ratio ) );
 
-	ConsoleOutAddTextLine( console_out_, ust::concat( "Framerate is ", ust::to_string8( u32( video_framerate ) ) ) );
-
 	var Texture mut texture= CreateVideoFrameTexture( video_size );
 
-	if_var( &first_frame : stream.GetNextFrame() )
-	{
-		UpdateVideoFrameTexture( texture, video_size, first_frame );
-	}
-	else
-	{
-		return;
-	}
+	var bool mut has_texture_data= false;
 
-	// Always have a next frame ready.
-	var ust::optional</ IVideoStream::FrameData /> mut next_frame_data= stream.GetNextFrame();
-
-	var PerformanceCounter::TimePoint start_time= performance_counter_.GetCurrentTime();
-	var f32 mut last_frame_time_s= 0.0f;
-
-	loop
+	if_var( &mut audio_stream_read_end : audio_stream_read_end_opt )
 	{
-		// Process events while playing a video.
-		if( !ProcessSDLEventsInVideoPlayback( console_out_ ) )
+		// A fallback for cases when we don't play sound for a video.
+		// Perform timer-based audio samples extraction to force play the video.
+
+		var PerformanceCounter::TimePoint mut prev_time= performance_counter_.GetCurrentTime();
+
+		var [ AudioStream::SamplePairType, 128 ] mut audio_samples= zero_init;
+
+		while( !video_stream.IsFinished() )
 		{
-			break;
-		}
-
-		var f32 current_time_s=
-			performance_counter_.CalculateDurationS( start_time, performance_counter_.GetCurrentTime() );
-
-		if( current_time_s >= last_frame_time_s + frame_duration_s )
-		{
-			// It's time to show a new frame.
-
-			// TODO - handle the case when source framerate is higher than the target one (like 120fps video on 60fps display).
-
-			if_var( &frame_data : next_frame_data )
-			{
-				UpdateVideoFrameTexture( texture, video_size, frame_data );
-			}
-			else
+			// Process events while playing a video.
+			if( !ProcessSDLEventsInVideoPlayback( console_out_ ) )
 			{
 				break;
 			}
 
-			next_frame_data.reset();
+			if_var( &frame_data : video_stream.Update() )
+			{
+				UpdateVideoFrameTexture( texture, video_size, frame_data );
+				has_texture_data= true;
+			}
 
-			last_frame_time_s+= frame_duration_s;
+			// Extract audio samples based on real time measurements to advance video playback.
+			{
+				var PerformanceCounter::TimePoint cur_time= performance_counter_.GetCurrentTime();
+				var f32 time_delta_s= performance_counter_.CalculateDurationS( prev_time, cur_time );
+				prev_time= cur_time;
+
+				var size_type samples_to_extract( time_delta_s * f32( audio_stream_read_end.GetFrequency() ) );
+
+				var size_type mut samples_extracted= 0s;
+				while( samples_extracted < samples_to_extract )
+				{
+					var size_type read_size=
+						ust::min(
+							samples_to_extract - samples_extracted,
+							typeinfo</ typeof( audio_samples ) />.element_count );
+
+					var size_type samples_read=
+						audio_stream_read_end.ReadSamples(
+							ust::array_view_mut</ AudioStream::SamplePairType />( audio_samples ).subrange_end( read_size ) );
+
+					if( samples_read < read_size )
+					{
+						break; // Can't read more samples - the stream's buffer is empty.
+					}
+					samples_extracted+= samples_read;
+				}
+			}
+
+			audio_processor.Update( /* pause world sounds */ true );
+
+			 // Display a frame only if we received some. It may be not the case if we just started playing.
+			if( has_texture_data )
+			{
+				DrawVideoFrame( shader_, texture, normalized_scale );
+			}
+
+			window.SwapWindow();
 		}
+	}
+	else
+	{
+		// Play the video assuming that the audio processor is resposible for reading audio data from the audio stream and thus advancing video playback.
 
-		DrawVideoFrame( shader_, texture, normalized_scale );
-
-		window.SwapWindow();
-
-		// Try loading next frame after swapping window - to have enough time for doing it.
-		if( next_frame_data.empty() )
+		while( !video_stream.IsFinished() )
 		{
-			next_frame_data= stream.GetNextFrame();
+			// Process events while playing a video.
+			if( !ProcessSDLEventsInVideoPlayback( console_out_ ) )
+			{
+				break;
+			}
+
+			if_var( &frame_data : video_stream.Update() )
+			{
+				UpdateVideoFrameTexture( texture, video_size, frame_data );
+				has_texture_data= true;
+			}
+
+			audio_processor.Update( /* pause world sounds */ true );
+
+			 // Display a frame only if we received some. It may be not the case if we just started playing.
+			if( has_texture_data )
+			{
+				DrawVideoFrame( shader_, texture, normalized_scale );
+			}
+
+			window.SwapWindow();
 		}
 	}
 }

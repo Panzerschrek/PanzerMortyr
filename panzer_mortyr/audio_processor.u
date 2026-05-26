@@ -461,6 +461,31 @@ fn AudioProcessor::PlayMenuSound( mut this )
 	}
 }
 
+fn nodiscard AudioProcessor::AddAudioStream(
+	mut this, AudioStream::ReadEnd mut stream ) : ust::optional</AudioStream::ReadEnd/>
+{
+	if( !audio_out_ext_.audio_out.IsActive() )
+	{
+		return stream;
+	}
+
+	// Use master volume for audio streams.
+	var f32 volume= ust::max( 0.0f, ust::min( 1.0f, f32( settings_.lock_imut().deref().snd_volume ) / 100.0f ) );
+
+	auto &mut queue= audio_out_ext_.mixer_in_messages_queue_write_end;
+
+	if( queue.GetRemainingCapacity() == 0u )
+	{
+		return stream; // The output queue is full for some reason. Return the given stream back.
+	}
+
+	// Now we are sure that we can push an element to the queue.
+	var bool pushed= queue.TryPush( AudioMixer::InMessageAddAudioStream{ .stream= move( stream ), .volume= volume } );
+	debug_assert( pushed );
+
+	return ust::null_optional;
+}
+
 fn AudioProcessor::GetState( this ) : AudioProcessorState
 {
 	var size_type mut ambient_sound_index= 0s;
@@ -716,6 +741,12 @@ fn AudioProcessor::ProcessMessageImpl( mut this, AudioMixer::OutMessageAmbientSo
 fn AudioProcessor::ProcessMessageImpl( mut this, AudioMixer::OutMessageSingleShotSoundFinished& message )
 {
 	// Don't care.
+	ust::ignore_unused( message );
+}
+
+fn AudioProcessor::ProcessMessageImpl( mut this, AudioMixer::OutMessageAudioStreamFinished& message )
+{
+	// For now don't care. Audio streams can be added only externally.
 	ust::ignore_unused( message );
 }
 

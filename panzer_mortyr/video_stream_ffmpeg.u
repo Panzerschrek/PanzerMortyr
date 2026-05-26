@@ -12,18 +12,26 @@ public:
 		ConsoleOutPtr mut console_out,
 		$(AVFormatContext) format_context, // Should be valid.
 		u32 video_stream_index, // Should be valid index of a video stream.
-		$(AVCodecContext) decoder_context, // Should be valid and prepared for given format.
+		$(AVCodecContext) video_decoder_context, // Should be valid and prepared for given format.
+		u32 audio_stream_index, // Should be valid index of a video stream.
+		$(AVCodecContext) audio_decoder_context, // Should be valid and prepared for given format.
 		$(AVPacket) packet, // Should be valid.
-		$(AVFrame) frame, // Should be valid.
-		$(SwsContext) scale_context /* Should be valid context for 1 to 1 scaling to RGBA format */ ) unsafe
+		$(AVFrame) video_frame, // Should be valid.
+		$(AVFrame) audio_frame, // Should be valid.
+		$(SwsContext) video_scale_context /* Should be valid context for 1 to 1 scaling to RGBA format */,
+		AudioStream::WriteEnd mut audio_stream_write_end ) unsafe
 		(
 			console_out_= move(console_out),
 			format_context_= format_context,
 			video_stream_index_= video_stream_index,
-			decoder_context_= decoder_context,
+			video_decoder_context_= video_decoder_context,
+			audio_stream_index_= audio_stream_index,
+			audio_decoder_context_= audio_decoder_context,
 			packet_= packet,
-			frame_= frame,
-			scale_context_= scale_context,
+			video_frame_= video_frame,
+			audio_frame_= audio_frame,
+			video_scale_context_= video_scale_context,
+			audio_stream_write_end_= move( audio_stream_write_end ),
 		)
 	{}
 
@@ -31,10 +39,12 @@ public:
 	{
 		unsafe
 		{
-			sws_freeContext( scale_context_ );
+			sws_freeContext( video_scale_context_ );
 			av_packet_free( $<( packet_ ) );
-			av_frame_free( $<( frame_ ) );
-			avcodec_free_context( $<( decoder_context_ ) );
+			av_frame_free( $<( audio_frame_ ) );
+			av_frame_free( $<( video_frame_ ) );
+			avcodec_free_context( $<( audio_decoder_context_ ) );
+			avcodec_free_context( $<( video_decoder_context_ ) );
 			avformat_close_input( $<( format_context_ ) );
 		}
 	}
@@ -42,22 +52,14 @@ public:
 public: // IVideoStream
 	fn virtual final GetSize( this ) : [ u32, 2 ]
 	{
-		return unsafe( ust::make_array( u32( $>( decoder_context_ ).width ), u32( $>( decoder_context_ ).height ) ) );
-	}
-
-	fn virtual final GetFramerate( this ) : f32
-	{
-		// Assume we have fixed framerate with each frame needed to be shown equal amount of time.
-
-		// TODO - check if it's correct to use this framerate.
-		var AVRational framerate=
-			unsafe( $>( $>( $>( format_context_ ).streams + video_stream_index_ ) ).r_frame_rate );
-		return f32( framerate.num ) / f32 ( framerate.den );
+		return
+			unsafe( ust::make_array(
+				u32( $>( video_decoder_context_ ).width ), u32( $>( video_decoder_context_ ).height ) ) );
 	}
 
 	fn virtual final GetAspectRatio( this ) : f32
 	{
-		var AVRational sample_aspect_ratio= unsafe( $>( decoder_context_ ).sample_aspect_ratio );
+		var AVRational sample_aspect_ratio= unsafe( $>( video_decoder_context_ ).sample_aspect_ratio );
 
 		var f32 sample_aspect_ratio_f=
 			( sample_aspect_ratio.num == 0 ? 1.0f : f32( sample_aspect_ratio.num ) / f32 ( sample_aspect_ratio.den ) );
@@ -67,116 +69,285 @@ public: // IVideoStream
 		return f32( size[0] ) / f32( size[1] ) * sample_aspect_ratio_f;
 	}
 
-	fn virtual final GetNextFrame( mut this ) : ust::optional</ FrameData />
+	fn virtual final Update( mut this ) : ust::optional</ FrameData />
 	{
-		loop
+		if(
+			audio_stream_write_end_.OtherEndIsClosed() || (
+				end_of_stream_reached_ &&
+				audio_stream_write_end_.GetTotalNumberOfSamplesWritten() == audio_stream_write_end_.GetTotalNumberOfSamplesRead() ) )
+		{
+			// Return remaining video frames if the end of the stream is reached and all audio data was already extracted.
+
+			if( video_frame_queue_.IsEmpty() )
+			{
+				return ust::null_optional;
+			}
+
+			++num_video_frames_dequeued_;
+			return video_frame_queue_.Pop();
+		}
+
+		// Make sure we fill the audio buffer for the next 1/10 seconds or so.
+		// It's a reasonable margin assuming this update function is executed 10 times in a second.
+		// Really it should be executed much faster (like with 60 fps).
+		// Increasing this value isn't recommended,
+		// because it means reading more data from the stream and buffering more video frames (each frame takes some space).
+		var u32 min_samples_in_audio_stream= audio_stream_write_end_.GetFrequency() / 10u;
+
+		while(
+			!end_of_stream_reached_ &&
+			!audio_stream_write_end_.OtherEndIsClosed() && (
+				// Ensure enough samples in the audio stream.
+				audio_stream_write_end_.GetTotalNumberOfSamplesWritten() - audio_stream_write_end_.GetTotalNumberOfSamplesRead() <= min_samples_in_audio_stream ||
+				// Ensure that we always have at least one frame buffered.
+				video_frame_queue_.IsEmpty() ) )
 		{
 			unsafe // Because of external C calls.
 			{
-				var i32 receive_frame_res= avcodec_receive_frame( decoder_context_, frame_ );
-				if( receive_frame_res == 0 )
+				var i32 read_packet_res= av_read_frame( format_context_, packet_ );
+				if( read_packet_res != 0 )
 				{
-					// Received a frame.
-
-					// Perform here conversion to RGBA from whatever format a video uses.
-					// Scale context should be created for this format.
-
-					var i32 width= $>( decoder_context_ ).width;
-					var i32 height= $>( decoder_context_ ).height;
-
-					var FrameData mut frame_data;
-					frame_data.resize_uninitialized( size_type( u32(width) * u32(height) ) );
-
-					// "sws_scale" uses "uint8_t" for raw bytes.
-					var $(uint8_t) mut dst_ptr=
-						ust::byte_ptr_cast</ uint8_t />( ust::ptr_cast_to_byte8( frame_data.data() ) );
-
-					// We use simple width-based stride.
-					var i32 mut dst_stride= width * i32( typeinfo</ RGBAColor />.size_of );
-
-					sws_scale(
-						scale_context_,
-						// Provide all src pointers and strides.
-						$<( $>( frame_ ).data[0] ),
-						$<( $>( frame_ ).linesize[0] ),
-						0, // Start from line 0.
-						height, // Copy the whole image.
-						// RGBA format has single plane.
-						// It's enough to provide only single pointer for destination and for stride.
-						$<( dst_ptr ),
-						$<( dst_stride ) );
-
-					av_frame_unref( frame_ ); // Free received frame data.
-
-					return frame_data;
-				}
-				else if( receive_frame_res == AVERROR( EAGAIN ) )
-				{
-					// No frame is available now.
-					// Try extracting and sending a new video packet.
-
-					// Use a loop here to be able to ignore packets from streams other than the one used for video.
-					loop
+					if( read_packet_res == AVERROR_EOF )
 					{
-						var i32 read_packet_res= av_read_frame( format_context_, packet_ );
-						if( read_packet_res != 0 )
-						{
-							if( read_packet_res == AVERROR_EOF )
-							{
-								safe( ConsoleOutAddTextLine( console_out_, "End of stream reached." ) );
-								return ust::null_optional;
-							}
+						safe( ConsoleOutAddTextLine( console_out_, "End of stream reached." ) );
+						end_of_stream_reached_= true;
+						break;
+					}
 
-							safe( ConsoleOutAddTextLine(
-								console_out_,
-								ust::concat(
-									"Failed to read a packet! Error: ", GetFFmpegError( read_packet_res ) ) ) );
-							return ust::null_optional;
+					safe( ConsoleOutAddTextLine(
+						console_out_,
+						ust::concat( "Failed to read a packet! Error: ", GetFFmpegError( read_packet_res ) ) ) );
+					end_of_stream_reached_= true;
+					break;
+				}
+
+				var i32 packet_stream_index= $>( packet_ ).stream_index;
+
+				if( packet_stream_index == i32( video_stream_index_ ) )
+				{
+					var i32 send_packet_res= avcodec_send_packet( video_decoder_context_, packet_ );
+
+					av_packet_unref( packet_ ); // Free received packet data.
+
+					if( send_packet_res != 0 )
+					{
+						safe( ConsoleOutAddTextLine(
+							console_out_,
+							ust::concat(
+								"Failed to send a video packet! Error: ", GetFFmpegError( send_packet_res ) ) ) );
+						end_of_stream_reached_= true;
+						break;
+					}
+
+					var i32 receive_frame_res= avcodec_receive_frame( video_decoder_context_, video_frame_ );
+
+					if( receive_frame_res == 0 )
+					{
+						// Received a frame.
+
+						// Perform here conversion to RGBA from whatever format a video uses.
+						// Scale context should be created for this format.
+
+						var i32 width= $>( video_decoder_context_ ).width;
+						var i32 height= $>( video_decoder_context_ ).height;
+
+						var FrameData mut frame_data;
+						frame_data.resize_uninitialized( size_type( u32(width) * u32(height) ) );
+
+						// "sws_scale" uses "uint8_t" for raw bytes.
+						var $(uint8_t) mut dst_ptr=
+							ust::byte_ptr_cast</ uint8_t />( ust::ptr_cast_to_byte8( frame_data.data() ) );
+
+						// We use simple width-based stride.
+						var i32 mut dst_stride= width * i32( typeinfo</ RGBAColor />.size_of );
+
+						sws_scale(
+							video_scale_context_,
+							// Provide all src pointers and strides.
+							$<( $>( video_frame_ ).data[0] ),
+							$<( $>( video_frame_ ).linesize[0] ),
+							0, // Start from line 0.
+							height, // Copy the whole image.
+							// RGBA format has single plane.
+							// It's enough to provide only single pointer for destination and for stride.
+							$<( dst_ptr ),
+							$<( dst_stride ) );
+
+						av_frame_unref( video_frame_ ); // Free received frame data.
+
+						if( video_frame_queue_.IsFull() )
+						{
+							ConsoleOutAddTextLine( console_out_, "Video frames queue is full, dropping a frame." );
+
+							++num_video_frames_dequeued_;
+							video_frame_queue_.Pop();
 						}
 
-						if( $>( packet_ ).stream_index == i32( video_stream_index_ ) )
+						video_frame_queue_.Push( move( frame_data ) );
+					}
+					else if( receive_frame_res == AVERROR( EAGAIN ) )
+					{
+						// No frame is ready yet.
+					}
+					else
+					{
+						safe( ConsoleOutAddTextLine(
+							console_out_,
+							ust::concat(
+								"Failed to receive a video frame! Error: ", GetFFmpegError( receive_frame_res ) ) ) );
+						end_of_stream_reached_= true;
+						break;
+					}
+				}
+				else if( packet_stream_index == i32( audio_stream_index_ ) )
+				{
+					var i32 send_packet_res= avcodec_send_packet( audio_decoder_context_, packet_ );
+
+					av_packet_unref( packet_ ); // Free received packet data.
+
+					if( send_packet_res != 0 )
+					{
+						safe( ConsoleOutAddTextLine(
+							console_out_,
+							ust::concat(
+								"Failed to send an audio packet! Error: ", GetFFmpegError( send_packet_res ) ) ) );
+						end_of_stream_reached_= true;
+						break;
+					}
+
+					var i32 receive_frame_res= avcodec_receive_frame( audio_decoder_context_, audio_frame_ );
+
+					if( receive_frame_res == 0 )
+					{
+						var i32 num_samples= $>( audio_frame_ ).nb_samples;
+						if( num_samples > 0 )
 						{
-							var i32 send_packet_res= avcodec_send_packet( decoder_context_, packet_ );
-
-							av_packet_unref( packet_ ); // Free received packet data.
-
-							if( send_packet_res != 0 )
+							var i32 num_channels= $>( audio_decoder_context_ ).ch_layout.nb_channels;
+							if( num_channels == 1 )
 							{
-								safe( ConsoleOutAddTextLine(
-									console_out_,
-									ust::concat(
-										"Failed to send a packet! Error: ", GetFFmpegError( send_packet_res ) ) ) );
-								return ust::null_optional;
+								var ust::array_view_imut</ AudioStream::SampleType /> mono_samples(
+									ust::byte_ptr_cast</ AudioStream::SampleType />( ust::ptr_cast_to_byte8( $>( audio_frame_ ).data[0] ) ),
+									size_type( num_samples ) );
+
+								// Convert mono to stereo.
+								ConvertMonoSoundToStereo( mono_samples, audio_stereo_samples_ );
+
+								// Push mono samples converted to stereo into the audio stream.
+
+								var size_type samples_written= audio_stream_write_end_.WriteSamples( audio_stereo_samples_ );
+								// Assume that we use only a fraction of the audio stream buffer capacity and thus overflowing it isn't possible.
+								ust::ignore_unused( samples_written );
+
 							}
-							break;
+							else if( num_channels == 2 )
+							{
+								var ust::array_view_imut</ AudioStream::SamplePairType /> stereo_samples(
+									ust::byte_ptr_cast</ AudioStream::SamplePairType />( ust::ptr_cast_to_byte8( $>( audio_frame_ ).data[0] ) ),
+									size_type( num_samples ) );
+
+								// Push stereo samples directly into the audio stream.
+
+								var size_type samples_written= audio_stream_write_end_.WriteSamples( stereo_samples );
+								// Assume that we use only a fraction of the audio stream buffer capacity and thus overflowing it isn't possible.
+								ust::ignore_unused( samples_written );
+							}
+							else
+							{
+								// This should be checked before, that we have only mono or stereo sound.
+								assert( false, "Unexpected number of audio channels!" );
+							}
 						}
 
-						av_packet_unref( packet_ ); // Free received packet data.
+						av_frame_unref( audio_frame_ );  // Free received frame data.
+					}
+					else if( receive_frame_res == AVERROR( EAGAIN ) )
+					{
+						// No frame is ready yet.
+					}
+					else
+					{
+						safe( ConsoleOutAddTextLine(
+							console_out_,
+							ust::concat(
+								"Failed to receive an audio frame! Error: ", GetFFmpegError( receive_frame_res ) ) ) );
+						end_of_stream_reached_= true;
+						break;
 					}
 				}
 				else
 				{
-					safe( ConsoleOutAddTextLine(
-						console_out_,
-						ust::concat( "Failed to receive a frame! Error: ", GetFFmpegError( receive_frame_res ) ) ) );
-					return ust::null_optional;
+					// Some other stream, not video or audio.
+					av_packet_unref( packet_ ); // Free received packet data.
 				}
 			}
 		}
+
+		// Assume we have fixed framerate with each frame needed to be shown equal amount of time.
+		var AVRational video_framerate=
+			unsafe( $>( $>( $>( format_context_ ).streams + video_stream_index_ ) ).r_frame_rate );
+
+		// If audio data for a frame was extracted from the audio stream, it's time to show this frame.
+		// It may seem to be too late, but it's mostly fine,
+		// since there is still some sound buffering left in an audio driver doing actual audio output.
+		var u32 video_frame_index_to_show(
+			( u64( video_framerate.num ) * u64( audio_stream_write_end_.GetTotalNumberOfSamplesRead() ) ) /
+			( u64( video_framerate.den ) * u64( audio_stream_write_end_.GetFrequency() ) ) );
+
+		// Drop frames from the queue if we aren't fast enough showing them, but always preserve one frame.
+		while( num_video_frames_dequeued_ < video_frame_index_to_show && video_frame_queue_.GetSize() > 1u )
+		{
+			++num_video_frames_dequeued_;
+			video_frame_queue_.Pop();
+		}
+
+		if( num_video_frames_dequeued_ <= video_frame_index_to_show && !video_frame_queue_.IsEmpty() )
+		{
+			++num_video_frames_dequeued_;
+			return video_frame_queue_.Pop();
+		}
+
+		return ust::null_optional;
+	}
+
+	fn virtual final IsFinished( this ) : bool
+	{
+		var bool no_audio_data_left=
+			audio_stream_write_end_.OtherEndIsClosed() || (
+				end_of_stream_reached_ &&
+				audio_stream_write_end_.GetTotalNumberOfSamplesRead() == audio_stream_write_end_.GetTotalNumberOfSamplesWritten() );
+
+		return no_audio_data_left && video_frame_queue_.IsEmpty();
 	}
 
 private:
 	ConsoleOutPtr imut console_out_;
 	$(AVFormatContext) format_context_;
-	u32 video_stream_index_;
-	$(AVCodecContext) decoder_context_;
+	u32 imut video_stream_index_;
+	$(AVCodecContext) video_decoder_context_;
+	u32 imut audio_stream_index_;
+	$(AVCodecContext) audio_decoder_context_;
 	$(AVPacket) packet_;
-	$(AVFrame) frame_;
-	$(SwsContext) scale_context_;
+	$(AVFrame) video_frame_;
+	$(AVFrame) audio_frame_;
+	$(SwsContext) video_scale_context_;
+
+	bool end_of_stream_reached_= false;
+
+	AudioStream::WriteEnd audio_stream_write_end_;
+
+	// A temporary buffer for mono to stereo conversion.
+	ust::vector</AudioStream::SamplePairType/> audio_stereo_samples_;
+
+	u32 num_video_frames_dequeued_= 0u;
+
+	// Use a fixed-size queue for video frames.
+	// It's enough, since we read only a little bit more stream data as necessary to fill the audio stream for the next fraction of a second
+	// and we need to store only few video frames for this fraction.
+	FixedSizeQueue</ FrameData, 10u /> video_frame_queue_;
 }
 
-fn OpenVideoStream(
-	ConsoleOutPtr& console_out, ust::filesystem_path_view file_path ) : ust::box_nullable</IVideoStream/>
+fn OpenVideoStream( ConsoleOutPtr& console_out, ust::filesystem_path_view file_path )
+	: ust::optional</ tup[ ust::box</IVideoStream/>, AudioStream::ReadEnd ] />
 {
 	if( compiler::options::generate_debug_info | compiler::options::optimization_level == '0' )
 	{
@@ -188,10 +359,12 @@ fn OpenVideoStream(
 	var ust::string8 mut file_path_nt= ust::concat( file_path, "\0" );
 
 	var $(AVFormatContext) mut format_context= zero_init;
-	var $(AVCodecContext) mut decoder_context= zero_init;
+	var $(AVCodecContext) mut video_decoder_context= zero_init;
+	var $(AVCodecContext) mut audio_decoder_context= zero_init;
 	var $(AVPacket) mut packet= zero_init;
-	var $(AVFrame) mut frame= zero_init;
-	var $(SwsContext) mut scale_context= zero_init;
+	var $(AVFrame) mut video_frame= zero_init;
+	var $(AVFrame) mut audio_frame= zero_init;
+	var $(SwsContext) mut video_scale_context= zero_init;
 
 	unsafe // Because of unsafe C calls.
 	{
@@ -229,13 +402,17 @@ fn OpenVideoStream(
 				unsafe( ust::to_string8( $>( format_context ).nb_streams ) ),
 				" streams." ) ) );
 
-		var u32 mut video_stream_index= ~0u;
+		var u32 mut video_stream_index= ~0u, mut audio_stream_index= ~0u;
 		for( auto mut stream_index= 0u; stream_index < $>(format_context).nb_streams; ++stream_index )
 		{
-			if( $>( $>( $>( $>(format_context).streams + stream_index ) ).codecpar ).codec_type == AVMEDIA_TYPE_VIDEO )
+			auto codec_type= $>( $>( $>( $>(format_context).streams + stream_index ) ).codecpar ).codec_type;
+			if( codec_type == AVMEDIA_TYPE_VIDEO )
 			{
 				video_stream_index= stream_index;
-				break;
+			}
+			if( codec_type == AVMEDIA_TYPE_AUDIO )
+			{
+				audio_stream_index= stream_index;
 			}
 		}
 
@@ -244,47 +421,106 @@ fn OpenVideoStream(
 			safe( ConsoleOutAddTextLine( console_out, "Failed to get video stream!" ) );
 			break label cleanup;
 		}
+		if( audio_stream_index == ~0u )
+		{
+			safe( ConsoleOutAddTextLine( console_out, "Failed to get audio stream!" ) );
+			break label cleanup;
+		}
 
 		safe( ConsoleOutAddTextLine(
 			console_out, ust::concat( "Video stream index is ", ust::to_string8( video_stream_index ), "." ) ) );
 
-		var AVStream &mut stream= $>( $>( $>(format_context).streams + video_stream_index ) );
+		safe( ConsoleOutAddTextLine(
+			console_out, ust::concat( "Audio stream index is ", ust::to_string8( audio_stream_index ), "." ) ) );
 
-		var $(AVCodec) decoder= avcodec_find_decoder( $>( stream.codecpar ).codec_id );
-		if( ust::is_nullptr( decoder ) )
+		var AVStream &mut video_stream= $>( $>( $>(format_context).streams + video_stream_index ) );
+
+		safe( ConsoleOutAddTextLine(
+			console_out, ust::concat( "Num video frames is ", ust::to_string8( video_stream.nb_frames ), "." ) ) );
+
+		var $(AVCodec) video_decoder= avcodec_find_decoder( $>( video_stream.codecpar ).codec_id );
+		if( ust::is_nullptr( video_decoder ) )
 		{
-			ConsoleOutAddTextLine( console_out, "Failed to find decoder!" );
+			ConsoleOutAddTextLine( console_out, "Failed to find video decoder!" );
 			break label cleanup;
 		}
 
 		safe( ConsoleOutAddTextLine(
 			console_out,
-			ust::concat( "Found a decoder. Codec id is ", unsafe( ust::to_string8( $>(decoder).id  ) ), "." ) ) );
+			ust::concat(
+				"Found a video decoder. Codec id is ", unsafe( ust::to_string8( $>(video_decoder).id  ) ), "." ) ) );
 
-		decoder_context= avcodec_alloc_context3( decoder );
-		if( ust::is_nullptr( decoder_context ) )
+		video_decoder_context= avcodec_alloc_context3( video_decoder );
+		if( ust::is_nullptr( video_decoder_context ) )
 		{
-			ConsoleOutAddTextLine( console_out, "Failed to alloc decoder context!" );
+			ConsoleOutAddTextLine( console_out, "Failed to alloc video decoder context!" );
 			break label cleanup;
 		}
 
-		with( ret : avcodec_parameters_to_context( decoder_context, stream.codecpar ) )
+		with( ret : avcodec_parameters_to_context( video_decoder_context, video_stream.codecpar ) )
 		{
 			if( ret != 0 )
 			{
 				safe( ConsoleOutAddTextLine(
 					console_out,
-					ust::concat( "avcodec_parameters_to_context failed! Error: ", GetFFmpegError( ret ) ) ) );
+					ust::concat(
+						"avcodec_parameters_to_context for video stream failed! Error: ", GetFFmpegError( ret ) ) ) );
 				break label cleanup;
 			}
 		}
 
-		with( ret : avcodec_open2( decoder_context, decoder, ust::nullptr</ $(AVDictionary) />() ) )
+		with( ret : avcodec_open2( video_decoder_context, video_decoder, ust::nullptr</ $(AVDictionary) />() ) )
 		{
 			if( ret != 0 )
 			{
 				safe( ConsoleOutAddTextLine(
-					console_out, ust::concat( "Failed to open decoder! Error: ", GetFFmpegError( ret ) ) ) );
+					console_out, ust::concat( "Failed to open video decoder! Error: ", GetFFmpegError( ret ) ) ) );
+				break label cleanup;
+			}
+		}
+
+		var AVStream &mut audio_stream= $>( $>( $>(format_context).streams + audio_stream_index ) );
+
+		safe( ConsoleOutAddTextLine(
+			console_out, ust::concat( "Num audio frames is ", ust::to_string8( audio_stream.nb_frames ), "." ) ) );
+
+		var $(AVCodec) audio_decoder= avcodec_find_decoder( $>( audio_stream.codecpar ).codec_id );
+		if( ust::is_nullptr( audio_decoder ) )
+		{
+			ConsoleOutAddTextLine( console_out, "Failed to find audio decoder!" );
+			break label cleanup;
+		}
+
+		safe( ConsoleOutAddTextLine(
+			console_out,
+			ust::concat(
+				"Found an audio decoder. Codec id is ", unsafe( ust::to_string8( $>(audio_decoder).id  ) ), "." ) ) );
+
+		audio_decoder_context= avcodec_alloc_context3( audio_decoder );
+		if( ust::is_nullptr( audio_decoder_context ) )
+		{
+			ConsoleOutAddTextLine( console_out, "Failed to alloc audio decoder context!" );
+			break label cleanup;
+		}
+
+		with( ret : avcodec_parameters_to_context( audio_decoder_context, audio_stream.codecpar ) )
+		{
+			if( ret != 0 )
+			{
+				safe( ConsoleOutAddTextLine(
+					console_out,
+					ust::concat(
+						"avcodec_parameters_to_context for audio stream failed! Error: ", GetFFmpegError( ret ) ) ) );
+				break label cleanup;
+			}
+		}
+
+		with( ret : avcodec_open2( audio_decoder_context, audio_decoder, ust::nullptr</ $(AVDictionary) />() ) )
+		{
+			if( ret != 0 )
+			{
+				safe( ConsoleOutAddTextLine(
+					console_out, ust::concat( "Failed to open audio decoder! Error: ", GetFFmpegError( ret ) ) ) );
 				break label cleanup;
 			}
 		}
@@ -296,24 +532,31 @@ fn OpenVideoStream(
 			break label cleanup;
 		}
 
-		frame= av_frame_alloc();
-		if( ust::is_nullptr( frame ) )
+		video_frame= av_frame_alloc();
+		if( ust::is_nullptr( video_frame ) )
 		{
-			safe( ConsoleOutAddTextLine( console_out, "Failed to alloc frame!" ) );
+			safe( ConsoleOutAddTextLine( console_out, "Failed to alloc video frame!" ) );
+			break label cleanup;
+		}
+
+		audio_frame= av_frame_alloc();
+		if( ust::is_nullptr( video_frame ) )
+		{
+			safe( ConsoleOutAddTextLine( console_out, "Failed to audio video frame!" ) );
 			break label cleanup;
 		}
 
 		// Create scale context for converting to RGBA.
 		// Perform just conversion, without size change.
-		scale_context=
+		video_scale_context=
 			sws_getContext(
 				// Src.
-				$>( decoder_context ).width,
-				$>( decoder_context ).height,
-				$>( decoder_context ).pix_fmt,
+				$>( video_decoder_context ).width,
+				$>( video_decoder_context ).height,
+				$>( video_decoder_context ).pix_fmt,
 				// Dst.
-				$>( decoder_context ).width,
-				$>( decoder_context ).height,
+				$>( video_decoder_context ).width,
+				$>( video_decoder_context ).height,
 				AV_PIX_FMT_RGBA,
 				// Other params.
 				0,
@@ -321,15 +564,59 @@ fn OpenVideoStream(
 				ust::nullptr</ SwsFilter />(),
 				ust::nullptr</f64/>() );
 
-		if( ust::is_nullptr( scale_context ) )
+		if( ust::is_nullptr( video_scale_context ) )
 		{
-			safe( ConsoleOutAddTextLine( console_out, "Failed to get scale context!" ) );
+			safe( ConsoleOutAddTextLine( console_out, "Failed to get video scale context!" ) );
 			break label cleanup;
 		}
 
-		return ust::make_box(
-			VideoStreamFFmpeg(
-				console_out, format_context, video_stream_index, decoder_context, packet, frame, scale_context ) );
+		var i32 audio_sample_rate= $>( audio_decoder_context ).sample_rate;
+		if( audio_sample_rate <= 0 )
+		{
+			safe( ConsoleOutAddTextLine( console_out, "Invalid audio sample rate!" ) );
+			break label cleanup;
+		}
+
+		// Can only work with 16-bit sound.
+		if( $>( audio_decoder_context ).codec_id != AV_CODEC_ID_PCM_S16LE )
+		{
+			safe( ConsoleOutAddTextLine( console_out, "Unsupported audio codec! Only 16-bit LE PCM is supported." ) );
+			break label cleanup;
+		}
+
+		if( $>( audio_decoder_context ).sample_fmt != AV_SAMPLE_FMT_S16 )
+		{
+			safe( ConsoleOutAddTextLine( console_out, "Unsupported audio sample format! Only S16 is supported." ) );
+			break label cleanup;
+		}
+
+		var AVChannelLayout audio_channel_layout= $>( audio_decoder_context ).ch_layout;
+
+		if( !( audio_channel_layout.nb_channels == 1 | audio_channel_layout.nb_channels == 2 ) )
+		{
+			safe( ConsoleOutAddTextLine( console_out, "Unsupported audio channel layout. Expected mono or stereo!" ) );
+			break label cleanup;
+		}
+
+		auto [ mut audio_stream_write_end, mut audio_stream_read_end ]= AudioStream::Create( u32( audio_sample_rate ) );
+
+		return
+			ust::make_tuple(
+				ust::box</IVideoStream/>(
+					ust::make_box(
+						VideoStreamFFmpeg(
+							console_out,
+							format_context,
+							video_stream_index,
+							video_decoder_context,
+							audio_stream_index,
+							audio_decoder_context,
+							packet,
+							video_frame,
+							audio_frame,
+							video_scale_context,
+							move( audio_stream_write_end ) ) ) ),
+				move( audio_stream_read_end ) );
 
 	} label cleanup
 
@@ -338,14 +625,89 @@ fn OpenVideoStream(
 
 	unsafe
 	{
-		sws_freeContext( scale_context );
-		av_frame_free( $<( frame ) );
+		sws_freeContext( video_scale_context );
+		av_frame_free( $<( audio_frame ) );
+		av_frame_free( $<( video_frame ) );
 		av_packet_free( $<( packet ) );
-		avcodec_free_context( $<( decoder_context ) );
+		avcodec_free_context( $<( audio_decoder_context ) );
+		avcodec_free_context( $<( video_decoder_context ) );
 		avformat_close_input( $<( format_context ) );
 	}
 
-	return ust::box_nullable</IVideoStream/>();
+	return ust::null_optional;
+}
+
+// Simple fixed-size queue for default-constructible elements.
+// Is good enough for storing a small amount of elements.
+template</type T, u32 Capacity/>
+class FixedSizeQueue
+{
+public:
+	static_assert( typeinfo</T/>.is_default_constructible );
+	static_assert( Capacity <= 32u, "Too much capacity! This container isn't optimized for large capacities!" );
+
+public:
+	fn IsEmpty( this ) : bool
+	{
+		return size_ == 0u;
+	}
+
+	fn IsFull( this ) : bool
+	{
+		return size_ == Capacity;
+	}
+
+	fn GetSize( this ) : u32
+	{
+		return size_;
+	}
+
+	// Fails to push if is full.
+	fn Push( mut this, T mut value )
+	{
+		if( size_ == Capacity )
+		{
+			return;
+		}
+
+		buffer_[ size_ ]= move(value);
+		++size_;
+	}
+
+	// halts if empty.
+	fn Pop( mut this ) : T
+	{
+		halt if( size_ == 0u );
+
+		var T result= take( buffer_[0] );
+
+		--size_;
+		// Shift the whole buffer. It isn't fast, but fast enough for small capacities.
+		for( auto mut i= 0u; i < size_; ++i )
+		{
+			var T mut value= take( buffer_[ i + 1u ] );
+			buffer_[i]= move(value);
+		}
+
+		return result;
+	}
+
+private:
+	[ T, Capacity ] buffer_;
+	u32 size_= 0u;
+}
+
+fn ConvertMonoSoundToStereo(
+	ust::array_view_imut</ AudioStream::SampleType /> mono_samples,
+	ust::vector</ AudioStream::SamplePairType /> &mut stereo_samples )
+{
+	stereo_samples.resize( mono_samples.size(), ust::make_zeroed</ AudioStream::SamplePairType />() );
+
+	foreach( pair : stereo_samples.iter().zip( mono_samples.iter() ) )
+	{
+		pair.first[0]= pair.second;
+		pair.first[1]= pair.second;
+	}
 }
 
 fn GetFFmpegError( i32 code ) : ust::string8
