@@ -34,7 +34,6 @@ Gameplay investigation:
 * Investigate misfire behavior.
 * Investigate whether enemies have armor.
 * Investigate where maximum amount of current armor (not inventory armor) is specified.
-* Investigate how the ability for entities to be covered with blood is stored.
 * Investigate whether armor absorbs flame damage.
 * Investigate what kinds of entities are affected by gravity (what in an entity description turns gravity on and off).
 * Investigate what "zarowka" entity property is and whether it's actually used.
@@ -119,7 +118,6 @@ PanzerMortyr rendering:
 * Apply additional tessellation for tessellated polygons in order to perform smoother light values interpolation (naively triangulating them doesn't produce good result always).
 * Use smooth animation for animated models (with two or more frames interpolation).
 * Draw animated water circle decals on map quads with "wet" property enabled in points where a rain particle hits such quad.
-* Draw injured enemies covered with blood.
 * Suport light soruces with conic shape and use such source kind for flashlight.
 * Draw some fullscreen burning effect if the player is burning.
 * Add support for MSAA (with proper support of fullscreen effects like fog).
