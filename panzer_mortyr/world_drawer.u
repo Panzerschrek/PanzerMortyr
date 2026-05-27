@@ -73,6 +73,9 @@ fn WorldDrawer::constructor(
 		model_shader_(
 			embed</char8/>( "shaders/model.vert.glsl" ),
 			embed</char8/>( "shaders/model.frag.glsl" ) ),
+		model_blood_shader_(
+			embed</char8/>( "shaders/model.vert.glsl" ), // Use the same vertex shader as for regular models drawing.
+			embed</char8/>( "shaders/model_blood.frag.glsl" ) ),
 		model_burning_shader_(
 			embed</char8/>( "shaders/model_burning.vert.glsl" ),
 			embed</char8/>( "shaders/model_burning.frag.glsl" ) ),
@@ -829,6 +832,7 @@ fn WorldDrawer::DrawPartial(
 				.matrix= model_full_matrix,
 				.light= light,
 				.burning_strength= model_object.burning_strength,
+				.blood_coverage= model_object.blood_coverage,
 			} );
 	}
 
@@ -855,6 +859,13 @@ fn WorldDrawer::DrawPartial(
 			: ust::optional_ref_imut</Texture/>() ),
 		mirrored,
 		drawing_stats );
+
+	if( drawing_info.fullscreen_effect != WorldDrawingInfo::FullscreenEffect::InfraredVision )
+	{
+		// Draw a blood layer for injured/dead enemies.
+		// But avoid doing this if infrared vision is activated.
+		DrawModelsWithBlood( models_, models_to_draw_, model_blood_shader_, map_data.map_textures_array, mirrored );
+	}
 
 	if( drawing_info.fullscreen_effect != WorldDrawingInfo::FullscreenEffect::InfraredVision )
 	{
@@ -2592,6 +2603,107 @@ fn DrawModels(
 	}
 }
 
+fn DrawModelsWithBlood(
+	ModelsMap& models_map,
+	ust::array_view_imut</ModelToDraw/> models_to_draw,
+	ShaderProgram &mut shader,
+	Texture& texture,
+	bool mirrored )
+{
+	var ResourceString mut prev_model_file_name= zero_init;
+
+	if( mirrored )
+	{
+		SetGLState( GetMirroredGLState( g_models_with_blood_drawing_gl_state ) );
+	}
+	else
+	{
+		SetGLState( g_models_with_blood_drawing_gl_state );
+	}
+
+	var u32 texture_slot= 0u;
+	unsafe( glActiveTexture( GLenum( GL_TEXTURE0 ) + GLenum(texture_slot) ) );
+	texture.Bind();
+
+	var u32 constexpr blood_texture_layer_medium= 134u;
+	var u32 constexpr blood_texture_layer_large= blood_texture_layer_medium + 1u;
+
+	shader.Bind();
+	shader.SetUniform( "fu_texture", texture_slot );
+
+	foreach( &model_to_draw : models_to_draw )
+	{
+		if( model_to_draw.blood_coverage == 0u8 )
+		{
+			continue;
+		}
+
+		var ust::optional_ref_imut</ ust::optional</GPUModel/> /> model_opt_opt=
+			models_map.find( model_to_draw.file_name );
+
+		if( model_opt_opt.empty() )
+		{
+			continue;
+		}
+
+		var ust::optional</GPUModel/>& model_opt= model_opt_opt.try_deref();
+		if( model_opt.empty() )
+		{
+			continue;
+		}
+
+		var GPUModel& model= model_opt.try_deref();
+
+		if( model_to_draw.file_name != prev_model_file_name )
+		{
+			// Rebind vertex arrays only if we have a model different from previously drawn one.
+
+			prev_model_file_name= model_to_draw.file_name;
+
+			model.vertex_array_object.Bind();
+			model.index_buffer.Bind();
+		}
+
+		if( model.num_frames > 1u )
+		{
+			SetGPUModelActiveFrame( model, model_to_draw.frame );
+		}
+
+		shader.SetUniform(
+			"fu_texture_layer",
+			f32( ( model_to_draw.blood_coverage <= 1u8 ? blood_texture_layer_medium : blood_texture_layer_large ) ) );
+
+		shader.SetUniform( "vu_matrix", model_to_draw.matrix );
+
+		shader.SetUniform(
+			"fu_light_spherical_harmonics_r",
+			model_to_draw.light[0].directional_components.x,
+			model_to_draw.light[0].directional_components.y,
+			model_to_draw.light[0].directional_components.z,
+			model_to_draw.light[0].constant_component );
+
+		shader.SetUniform(
+			"fu_light_spherical_harmonics_g",
+			model_to_draw.light[1].directional_components.x,
+			model_to_draw.light[1].directional_components.y,
+			model_to_draw.light[1].directional_components.z,
+			model_to_draw.light[1].constant_component );
+
+		shader.SetUniform(
+			"fu_light_spherical_harmonics_b",
+			model_to_draw.light[2].directional_components.x,
+			model_to_draw.light[2].directional_components.y,
+			model_to_draw.light[2].directional_components.z,
+			model_to_draw.light[2].constant_component );
+
+		unsafe( glDrawElements(
+			GLenum( GL_TRIANGLES ),
+			GLsizei( model.num_triangles * 3u ),
+			GLenum( GL_UNSIGNED_SHORT ),
+			ust::nullptr</byte8/>() ) );
+	}
+}
+
 fn DrawBurningModels(
 	ModelsMap& models_map,
 	ust::array_view_imut</ModelToDraw/> models_to_draw,
@@ -2993,7 +3105,24 @@ fn LoadMapTextures(
 					continue;
 				}
 
-				if( t >= 30s )
+				if( t == 33s )
+				{
+					var size_type half_lines_offset( image_data.size[1] / 2u * image_data.size[0] );
+
+					// Generate alpha based on brightness for lower two tiles (where blood images actually are).
+					foreach( &mut pixel : image_data.pixels.range().subrange_end( half_lines_offset ) )
+					{
+						var u32 brightness= ust::max( u32( pixel[0] ), ust::max( u32( pixel[1] ), u32( pixel[2] ) ) );
+						pixel[3]= u8( ust::min( brightness * 2u, 255u ) );
+					}
+
+					// Set alpha in other two tiles to zero.
+					foreach( &mut pixel : image_data.pixels.range().subrange_start( half_lines_offset ) )
+					{
+						pixel[3]= 0u8;
+					}
+				}
+				else if( t >= 30s )
 				{
 					// Set alpha to zero for special textures.
 					foreach( &mut pixel : image_data.pixels )
@@ -4024,6 +4153,20 @@ var GLState g_models_drawing_gl_state
 	.blending_enabled= false,
 	.blend_source_factor( GL_INVALID_ENUM ),
 	.blend_destination_factor( GL_INVALID_ENUM ),
+};
+
+var GLState g_models_with_blood_drawing_gl_state
+{
+	.color_write_enabled= true,
+	.depth_test_enabled= true,
+	.depth_test_func( GL_EQUAL ), // Use == test to allow drawing only atop of previosly-draw models.
+	.depth_write_enabled= true,
+	.cull_face_enabled= true,
+	.cull_face( GL_FRONT ),
+	// Use premultiplied alpha blending.
+	.blending_enabled= true,
+	.blend_source_factor( GL_ONE ),
+	.blend_destination_factor( GL_ONE_MINUS_SRC_ALPHA ),
 };
 
 var GLState g_burning_models_drawing_gl_state
