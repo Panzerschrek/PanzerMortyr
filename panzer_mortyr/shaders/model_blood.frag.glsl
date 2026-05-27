@@ -29,5 +29,5 @@ void main()
 
 	vec4 texture_color= texture( fu_texture, vec3( f_texture_coordinates, fu_texture_layer ) );
 
-	color= vec4( texture_color.rgb * light, texture_color.a * 0.1 + 0.5 );
+	color= vec4( texture_color.rgb * light, texture_color.a );
 }
