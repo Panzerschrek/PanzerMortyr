@@ -170,5 +170,4 @@ PanzerMortyr sound:
 
 PanzerMortyr cinimatics:
 
-* Make sure the orider of startup videos is correct.
 * Consider reading/decoding video files in a separate thread to avoid blocking the main thread due to disk access.

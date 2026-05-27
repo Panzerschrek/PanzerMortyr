@@ -129,3 +129,4 @@ Changes:
 
 * Console in PanzerMortyr has its own set of commands, supports changing settings, has auto-completion.
 * Executable icon is different. The original one or one looking similar can't be used, since it's likely copyrighted.
+* The intro cinematic is played not on game startup, but on starting a new campaign.
