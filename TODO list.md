@@ -84,7 +84,6 @@ PanzerMortyr game logic:
 * Leave blood makrs on walls.
 * Implement remaining projectile hit effects (blood).
 * Rework code doing first person weapon idle/walking animations. Consider adding states where no animation is played at all.
-* Implement weapon switching in case of out of ammo.
 * Spawn bubble sprites while swimming in water.
 * Spawn bubble sprites for projectiles moving in water.
 * Spawn water splash particles if a projectile hits water surface.
@@ -157,7 +156,6 @@ PanzerMortyr menus and HUD:
 PanzerMortyr sound:
 
 * Play player's out-of-ammo sounds.
-* Consider playing sounds for pushed enities.
 * Play bird sounds.
 * Play CD music and/or music files ripped from the original CD. It's not so complex, since FFmpeg is already used in PanzerMortyr.
 * Allow disabling Mortyr's voice (there is a menu option for this).
