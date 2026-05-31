@@ -4393,6 +4393,8 @@ fn ProcessBloodParticlesLogicStep( GameMapData& map_data, GameState &mut game_st
 	var BitArrayView broken_quad_bits= game_state.broken_quad_bits;
 	var ust::array_view_imut</DynamicClusterCollider/> dynamic_cluster_colliders= game_state.dynamic_cluster_colliders;
 
+	var PseudoRandomGenerator &mut random= game_state.random;
+
 	var BloodStainsContainer &mut blood_stains= game_state.blood_stains;
 
 	game_state.blood_particles.Retain(
@@ -4447,14 +4449,21 @@ fn ProcessBloodParticlesLogicStep( GameMapData& map_data, GameState &mut game_st
 					}
 
 					var Vec3f quad_normal= CalculateQuadNormal( quad );
+					var f32 quad_normal_length= quad_normal.Length();
 
 					// Calculate blood staing angles as average of quad's normal and opposite velocity.
 					// Doing so we allow distorting blood stains slightly.
 
 					var Vec3f average_normal=
-						quad_normal * blood_particle.velocity.Length() - blood_particle.velocity * quad_normal.Length();
+						quad_normal * blood_particle.velocity.Length() - blood_particle.velocity * quad_normal_length;
 
-					var f32 azumuth= ust::atan2( average_normal.x, -average_normal.y );
+					// For stains located on horizontal surfaces select random azimuth.
+					// For other cases calcuate azimuth based on normal.
+					var f32 azimuth= (
+						ust::abs( quad_normal.xy().Length() ) < 0.01f * quad_normal_length
+							? f32( random.Next() ) * ( c_tau / f32( PseudoRandomGenerator::c_max_plus_one ) )
+							: ust::atan2( average_normal.x, -average_normal.y ) );
+
 					var f32 elevation= ust::atan2( average_normal.xy().Length(), average_normal.z );
 
 					blood_stains.slots[
@@ -4462,7 +4471,7 @@ fn ProcessBloodParticlesLogicStep( GameMapData& map_data, GameState &mut game_st
 						BloodStain
 						{
 							.position= position,
-							.azimuth= azumuth,
+							.azimuth= azimuth,
 							.elevation= elevation,
 							.dynamic_cluster_object_index= dynamic_cluster_object_index,
 						};
