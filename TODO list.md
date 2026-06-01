@@ -81,8 +81,6 @@ PanzerMortyr game logic:
 * Implement jetpack tool.
 * Implement invisibility tool (false documents) and enemy properties allowing to uncover the player having invisibility.
 * Implement flame particles emitted by explosive decorations ("wybuch_benzyny"/"plomienie").
-* Leave blood makrs on walls.
-* Implement remaining projectile hit effects (blood).
 * Rework code doing first person weapon idle/walking animations. Consider adding states where no animation is played at all.
 * Spawn bubble sprites while swimming in water.
 * Spawn bubble sprites for projectiles moving in water.
@@ -134,6 +132,8 @@ PanzerMortyr rendering:
 * Consider applying dynamic light to glass quads.
 * Consider optimizing drawing snow/rain - reject snow/rain particles for non-visible clusters and clusters located far away.
 * Allow turning global fog for snow/rain off.
+* Modyfy pixels of alpha-tested textures having zero alpha, so that their color is equal to average color of adjacent pixels with non-zero alpha. This is needed to avoid black borders on alpha-tested billboards and decals.
+* Aboid placing decals on broken map quads.
 
 PanzerMortyr menus and HUD:
 
