@@ -133,7 +133,6 @@ PanzerMortyr rendering:
 * Consider optimizing drawing snow/rain - reject snow/rain particles for non-visible clusters and clusters located far away.
 * Allow turning global fog for snow/rain off.
 * Modyfy pixels of alpha-tested textures having zero alpha, so that their color is equal to average color of adjacent pixels with non-zero alpha. This is needed to avoid black borders on alpha-tested billboards and decals.
-* Aboid placing decals on broken map quads.
 
 PanzerMortyr menus and HUD:
 
