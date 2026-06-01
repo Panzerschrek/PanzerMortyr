@@ -579,6 +579,27 @@ fn ConstructWorldDrawingInfo(
 				}
 			} );
 
+		game_state.blood_particles.Iterate(
+			lambda[&]( BloodParticle& blood_particle )
+			{
+				var u32 phase= blood_particle.age_steps / c_animated_billboards_frequency_divisor;
+
+				drawing_info.billboards.push_back(
+					WorldDrawingInfo::Billboard
+					{
+						.alignment= WorldDrawingInfo::Billboard::Alignment::ToCamera,
+						.billboard_index(
+							BillboardConstants::c_id_first_blood_particle +
+							phase % BillboardConstants::c_num_blood_particles ),
+						.position= blood_particle.position,
+						.scale= 8.0f,
+						// Blood particles are alpha-tested unlike many other particles which use additive blending.
+						// Such particles require lighting, but for now it's not implemented.
+						// So, just reduce brightness, so that they don't look too bright.
+						.brightness= 0.4f,
+					} );
+			} );
+
 		game_state.muzzle_lights.Iterate(
 			lambda[&]( MuzzleLight& muzzle_light )
 			{
@@ -702,6 +723,40 @@ fn ConstructWorldDrawingInfo(
 					.mirrored= !footprint.is_right,
 					.texture_index= footprint_hole_texture_index,
 					.dynamic_cluster_object_index= ~0u,
+				} );
+		}
+
+		// Iterate over all blood stain slots unless whe have the total number of blood stains less than the number of slots.
+		foreach( &blood_stain :
+				ust::array_view_imut</BloodStain/>( game_state.blood_stains.slots ).subrange_end(
+					size_type( game_state.blood_stains.num_blood_stains ) ) )
+		{
+			// Blood stains with equal size look boring.
+			// Add some size variation based on fractional values of positions (which are basically random).
+
+			var f32 pseudo_random_scale_factor=
+				ust::abs( blood_stain.position.x + blood_stain.position.y * 1.3f + blood_stain.position.z * 1.5f ) % 1.0f;
+
+			var f32 blood_stain_half_size= 8.0f + 10.0f * pseudo_random_scale_factor;
+
+			// Apply pseudo-random mirroring.
+			var bool mirrored= pseudo_random_scale_factor % 0.125f < 0.0625f;
+
+			var u8 constexpr blood_stain_texture_index= 1u8;
+
+			drawing_info.decals.push_back(
+				WorldDrawingInfo::Decal
+				{
+					.position=
+						( size_type( blood_stain.dynamic_cluster_object_index ) < game_state.dynamic_cluster_colliders.size()
+							? blood_stain.position + game_state.dynamic_cluster_colliders[ size_type( blood_stain.dynamic_cluster_object_index ) ].bbox.GetCenter()
+							: blood_stain.position ),
+					.half_size= blood_stain_half_size,
+					.azimuth= blood_stain.azimuth,
+					.elevation= blood_stain.elevation,
+					.dynamic_cluster_object_index= blood_stain.dynamic_cluster_object_index,
+					.texture_index= blood_stain_texture_index,
+					.mirrored= mirrored,
 				} );
 		}
 
