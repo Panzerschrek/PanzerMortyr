@@ -862,18 +862,36 @@ fn ConstructWorldDrawingInfo(
 		var ZvoxData& zvox_data= map_data.zvox_data.deref();
 		auto clusters= zvox_data.clusters.range();
 
-		foreach( pair : game_state.dynamic_clusters.iter().zip( game_state.dynamic_cluster_colliders.iter() ) )
+		for( auto mut i= 0s; i < game_state.dynamic_clusters.size(); ++i )
 		{
-			var ZvoxCluster& cluster= clusters[ size_type( pair.second.cluster_index ) ];
+			var DynamicClusterCollider& dynamic_cluster_collider= game_state.dynamic_cluster_colliders[i];
+
+			var Vec3f mut center= dynamic_cluster_collider.bbox.GetCenter();
+
+			if_var( &current_predicted_game_state : current_predicted_game_state_opt )
+			{
+				// Start position mixing from position predicted for current step.
+				// Doing so we can compensate prediction error properly.
+				center= current_predicted_game_state.dynamic_cluster_colliders[i].bbox.GetCenter();
+			}
+
+			if_var( &next_predicted_game_state : next_predicted_game_state_opt )
+			{
+				// Mix position between current game state and next predicted game state.
+				center*= 1.0f - time_steps_fraction;
+				center+= time_steps_fraction * next_predicted_game_state.dynamic_cluster_colliders[i].bbox.GetCenter();
+			}
+
+			var ZvoxCluster& cluster= clusters[ size_type( dynamic_cluster_collider.cluster_index ) ];
 
 			var Vec3f translation=
-				pair.second.bbox.GetCenter() -
+				center -
 				Vec3f( f32( cluster.c.center[0] ), f32( cluster.c.center[1] ), f32( cluster.c.center[2] ) );
 
 			drawing_info.dynamic_cluster_objects.push_back(
 				WorldDrawingInfo::DynamicClusterObject
 				{
-					.cluster_index= pair.second.cluster_index,
+					.cluster_index= dynamic_cluster_collider.cluster_index,
 					.translation= translation,
 				} );
 		}
