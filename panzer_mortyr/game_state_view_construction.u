@@ -313,9 +313,36 @@ fn ConstructWorldDrawingInfo(
 			}
 		}
 
-		game_state.projectiles.Iterate(
-			lambda[&]( Projectile& projectile )
+		game_state.projectiles.IterateWithIndexAndGenerationIndex(
+			lambda[&]( Projectile& projectile, u32 index, u32 generation_index )
 			{
+				var Vec3f mut projectile_position= projectile.position;
+
+				if_var( &previous_game_state : previous_game_state_opt )
+				{
+					if( !previous_game_state.projectiles.GetByIndex( index, generation_index ).empty() )
+					{
+						if_var( &current_predicted_game_state : current_predicted_game_state_opt )
+						{
+							// Start position mixing from position predicted for current step.
+							// Doing so we can compensate prediction error properly.
+							if_var( &current_predicted_projectile : current_predicted_game_state.projectiles.GetByIndex( index, generation_index ) )
+							{
+								projectile_position= current_predicted_projectile.position;
+							}
+						}
+					}
+				}
+
+				if_var( &next_predicted_game_state : next_predicted_game_state_opt )
+				{
+					if_var( &predicted_projectile : next_predicted_game_state.projectiles.GetByIndex( index, generation_index ) )
+					{
+						// Mix position between current game state and next predicted game state.
+						projectile_position= MixPosition( projectile_position, predicted_projectile.position, time_steps_fraction );
+					}
+				}
+
 				var EntitiesDescription::Tool& weapon_tool=
 					entities_description.tools[ size_type( projectile.weapon_tool_index ) ];
 
@@ -347,7 +374,7 @@ fn ConstructWorldDrawingInfo(
 							WorldDrawingInfo::ModelObject
 							{
 								.model_file_name= animation.model_file_name,
-								.position= projectile.position,
+								.position= projectile_position,
 								.azimuth= azimuth,
 								.elevation= elevation,
 								.frame= 0u,
@@ -366,7 +393,7 @@ fn ConstructWorldDrawingInfo(
 						WorldDrawingInfo::Billboard
 						{
 							.alignment= WorldDrawingInfo::Billboard::Alignment::ToCustomAxis,
-							.position= projectile.position,
+							.position= projectile_position,
 							// Make projectiles slighly bigger than unit scale, since otherwise they are barely visible.
 							.scale= 2.0f,
 							.custom_axis= projectile.velocity,
@@ -379,7 +406,7 @@ fn ConstructWorldDrawingInfo(
 					drawing_info.dynamic_light_sources.push_back(
 						WorldDrawingInfo::DynamicLightSource
 						{
-							.position= projectile.position,
+							.position= projectile_position,
 							.power= f32( weapon_tool.projectile_light[1] ) * c_light_power_scale,
 							.color_index= weapon_tool.projectile_light[0],
 						} );
