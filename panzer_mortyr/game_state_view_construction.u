@@ -94,9 +94,9 @@ fn ConstructWorldDrawingInfo(
 
 		var EntitiesDescription& entities_description= map_data.entities_description.deref();
 
-		foreach( pair : game_state.entities.iter().zip( num_entity_damaging_flames.iter() ) )
+		for( auto mut i= 0s; i < game_state.entities.size(); ++i )
 		{
-			auto& entity_opt= pair.first;
+			auto& entity_opt= game_state.entities[i];
 
 			if( entity_opt.empty() )
 			{
@@ -105,7 +105,35 @@ fn ConstructWorldDrawingInfo(
 
 			var EntityState& entity= entity_opt.try_deref();
 
-			var u8 num_damaging_flames= pair.second;
+			var Vec3f mut entity_position= entity.position;
+
+			if_var( &current_predicted_game_state : current_predicted_game_state_opt )
+			{
+				// Start position mixing from position predicted for current step.
+				// Doing so we can compensate prediction error properly.
+				if( i < current_predicted_game_state.entities.size() )
+				{
+					if_var( &current_predicted_entity : current_predicted_game_state.entities[i] )
+					{
+						entity_position= current_predicted_entity.position;
+					}
+				}
+			}
+
+			if_var( &next_predicted_game_state : next_predicted_game_state_opt )
+			{
+				if( i < next_predicted_game_state.entities.size() )
+				{
+					if_var( &predicted_entity : next_predicted_game_state.entities[i] )
+					{
+						// Mix position between current game state and next predicted game state.
+						entity_position*= 1.0f - time_steps_fraction;
+						entity_position+= time_steps_fraction * predicted_entity.position;
+					}
+				}
+			}
+
+			var u8 num_damaging_flames= num_entity_damaging_flames[i];
 
 			var EntitiesDescription::EntityDescription& entity_description= entities_description.entities[ size_type( entity.kind ) ];
 
@@ -127,7 +155,7 @@ fn ConstructWorldDrawingInfo(
 					drawing_info.dynamic_light_sources.push_back(
 						WorldDrawingInfo::DynamicLightSource
 						{
-							.position( entity.position.xy(), entity.position.z + f32( explosion_light.params[4] ) ),
+							.position( entity_position.xy(), entity_position.z + f32( explosion_light.params[4] ) ),
 							.power= light_power * c_light_power_scale,
 							.color_index( explosion_light.params[3] ),
 						} );
@@ -150,7 +178,7 @@ fn ConstructWorldDrawingInfo(
 					drawing_info.dynamic_light_sources.push_back(
 						WorldDrawingInfo::DynamicLightSource
 						{
-							.position= entity.position + offset_transformed,
+							.position= entity_position + offset_transformed,
 							.power= f32(light.power) * fade * c_light_power_scale,
 							.color_index( light.color ),
 						} );
@@ -174,7 +202,7 @@ fn ConstructWorldDrawingInfo(
 					WorldDrawingInfo::DynamicLightSource
 					{
 						.position=
-							entity.position +
+							entity_position +
 							Vec3f(
 								f32( operation.animation.bounding_box_center_x ),
 								f32( operation.animation.bounding_box_center_y ),
@@ -228,7 +256,7 @@ fn ConstructWorldDrawingInfo(
 						WorldDrawingInfo::ModelObject
 						{
 							.model_file_name= animation.model_file_name,
-							.position= entity.position,
+							.position= entity_position,
 							.azimuth= entity.azimuth,
 							.elevation= 0.0f,
 							.frame= entity.animation_frame,
@@ -255,7 +283,7 @@ fn ConstructWorldDrawingInfo(
 						WorldDrawingInfo::ModelObject
 						{
 							.model_file_name= animation.model_file_name,
-							.position= entity.position,
+							.position= entity_position,
 							.azimuth= Convert1024Angle( f32( operation.directional_animation.direction ) ),
 							.elevation= 0.0f,
 							.frame= entity.directional_animation_frame,
