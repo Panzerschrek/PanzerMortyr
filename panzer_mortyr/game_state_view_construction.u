@@ -740,9 +740,39 @@ fn ConstructWorldDrawingInfo(
 					} );
 			} );
 
-		game_state.smoke_trail_particles.Iterate(
-			lambda[&]( SmokeTrailParticle& smoke_trail_particle )
+		game_state.smoke_trail_particles.IterateWithIndexAndGenerationIndex(
+			lambda[&]( SmokeTrailParticle& smoke_trail_particle, u32 index, u32 generation_index )
 			{
+				var Vec3f mut smoke_trail_particle_position= smoke_trail_particle.position;
+
+				if_var( &previous_game_state : previous_game_state_opt )
+				{
+					if( !previous_game_state.smoke_trail_particles.GetByIndex( index, generation_index ).empty() )
+					{
+						if_var( &current_predicted_game_state : current_predicted_game_state_opt )
+						{
+							// Start position mixing from position predicted for current step.
+							// Doing so we can compensate prediction error properly.
+							if_var( &current_predicted_smoke_trail_particle :
+									current_predicted_game_state.smoke_trail_particles.GetByIndex( index, generation_index ) )
+							{
+								smoke_trail_particle_position= current_predicted_smoke_trail_particle.position;
+							}
+						}
+					}
+				}
+
+				if_var( &next_predicted_game_state : next_predicted_game_state_opt )
+				{
+					if_var( &predicted_smoke_trail_particle :
+							next_predicted_game_state.smoke_trail_particles.GetByIndex( index, generation_index ) )
+					{
+						// Mix position between current game state and next predicted game state.
+						smoke_trail_particle_position=
+							MixPosition( smoke_trail_particle_position, predicted_smoke_trail_particle.position, time_steps_fraction );
+					}
+				}
+
 				switch( smoke_trail_particle.kind )
 				{
 					EntitiesDescription::Tool::c_smoke_trail_kind_rocket ->
@@ -760,7 +790,7 @@ fn ConstructWorldDrawingInfo(
 							{
 								.alignment= WorldDrawingInfo::Billboard::Alignment::ToCamera,
 								.billboard_index( billboard ),
-								.position= smoke_trail_particle.position,
+								.position= smoke_trail_particle_position,
 								.scale= ust::exp( relative_age ),
 								.brightness= 1.0f - relative_age,
 							} );
@@ -775,7 +805,7 @@ fn ConstructWorldDrawingInfo(
 								{
 									.alignment= WorldDrawingInfo::Billboard::Alignment::ToCamera,
 									.billboard_index( BillboardConstants::c_id_first_explosion5 + phase ),
-									.position= smoke_trail_particle.position,
+									.position= smoke_trail_particle_position,
 								} );
 						}
 					},
@@ -790,7 +820,7 @@ fn ConstructWorldDrawingInfo(
 							{
 								.alignment= WorldDrawingInfo::Billboard::Alignment::ToCamera,
 								.billboard_index( BillboardConstants::c_id_mind_control_trail ),
-								.position= smoke_trail_particle.position,
+								.position= smoke_trail_particle_position,
 								 // Mind control smoke trail particles are pretty huge.
 								.scale= 2.0f * ust::exp( relative_age ),
 								.brightness= 1.0f - relative_age,
