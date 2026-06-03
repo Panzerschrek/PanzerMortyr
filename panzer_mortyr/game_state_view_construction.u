@@ -832,9 +832,39 @@ fn ConstructWorldDrawingInfo(
 
 		if( settings.g_blood_enabled )
 		{
-			game_state.blood_particles.Iterate(
-				lambda[&]( BloodParticle& blood_particle )
+			game_state.blood_particles.IterateWithIndexAndGenerationIndex(
+				lambda[&]( BloodParticle& blood_particle, u32 index, u32 generation_index )
 				{
+					var Vec3f mut blood_particle_position= blood_particle.position;
+
+					if_var( &previous_game_state : previous_game_state_opt )
+					{
+						if( !previous_game_state.blood_particles.GetByIndex( index, generation_index ).empty() )
+						{
+							if_var( &current_predicted_game_state : current_predicted_game_state_opt )
+							{
+								// Start position mixing from position predicted for current step.
+								// Doing so we can compensate prediction error properly.
+								if_var( &current_predicted_blood_particle :
+										current_predicted_game_state.blood_particles.GetByIndex( index, generation_index ) )
+								{
+									blood_particle_position= current_predicted_blood_particle.position;
+								}
+							}
+						}
+					}
+
+					if_var( &next_predicted_game_state : next_predicted_game_state_opt )
+					{
+						if_var( &predicted_blood_particle :
+								next_predicted_game_state.blood_particles.GetByIndex( index, generation_index ) )
+						{
+							// Mix position between current game state and next predicted game state.
+							blood_particle_position=
+								MixPosition( blood_particle_position, predicted_blood_particle.position, time_steps_fraction );
+						}
+					}
+
 					var u32 phase= blood_particle.age_steps / c_animated_billboards_frequency_divisor;
 
 					drawing_info.billboards.push_back(
@@ -844,7 +874,7 @@ fn ConstructWorldDrawingInfo(
 							.billboard_index(
 								BillboardConstants::c_id_first_blood_particle +
 								phase % BillboardConstants::c_num_blood_particles ),
-							.position= blood_particle.position,
+							.position= blood_particle_position,
 							.scale= 8.0f,
 							// Blood particles are alpha-tested unlike many other particles which use additive blending.
 							// Such particles require lighting, but for now it's not implemented.
@@ -904,6 +934,8 @@ fn ConstructWorldDrawingInfo(
 		game_state.projectile_hit_lights.Iterate(
 			lambda[&]( ProjectileHitLight& projectile_hit_light )
 			{
+				// No position extrapolation is needed for projectile hit lights - they don't move.
+
 				var f32 relative_age=
 					( f32( projectile_hit_light.age_steps ) + time_steps_fraction ) /
 					f32( c_projectile_hit_light_max_age );
