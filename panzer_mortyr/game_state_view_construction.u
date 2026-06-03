@@ -551,7 +551,7 @@ fn ConstructWorldDrawingInfo(
 		game_state.spark_particles.IterateWithIndexAndGenerationIndex(
 			lambda[&]( SparkParticle& spark_particle, u32 index, u32 generation_index  )
 			{
-			var Vec3f mut spark_particle_position= spark_particle.position;
+				var Vec3f mut spark_particle_position= spark_particle.position;
 
 				if_var( &previous_game_state : previous_game_state_opt )
 				{
@@ -600,6 +600,8 @@ fn ConstructWorldDrawingInfo(
 		game_state.explosion_particles.Iterate(
 			lambda[&]( ExplosionParticle& explosion_particle )
 			{
+				// No position extrapolation is needed for explosion particles - they don't move.
+
 				auto [ first_id, count ] =
 					( explosion_particle.large
 						? ust::make_array( BillboardConstants::c_id_first_explosion4, BillboardConstants::c_num_explosions4 )
@@ -618,9 +620,39 @@ fn ConstructWorldDrawingInfo(
 				}
 			} );
 
-		game_state.flame_particles.Iterate(
-			lambda[&]( FlameParticle& flame_particle )
+		game_state.flame_particles.IterateWithIndexAndGenerationIndex(
+			lambda[&]( FlameParticle& flame_particle, u32 index, u32 generation_index )
 			{
+				var Vec3f mut flame_particle_position= flame_particle.position;
+
+				if_var( &previous_game_state : previous_game_state_opt )
+				{
+					if( !previous_game_state.flame_particles.GetByIndex( index, generation_index ).empty() )
+					{
+						if_var( &current_predicted_game_state : current_predicted_game_state_opt )
+						{
+							// Start position mixing from position predicted for current step.
+							// Doing so we can compensate prediction error properly.
+							if_var( &current_predicted_flame_particle :
+									current_predicted_game_state.flame_particles.GetByIndex( index, generation_index ) )
+							{
+								flame_particle_position= current_predicted_flame_particle.position;
+							}
+						}
+					}
+				}
+
+				if_var( &next_predicted_game_state : next_predicted_game_state_opt )
+				{
+					if_var( &predicted_flame_particle :
+							next_predicted_game_state.flame_particles.GetByIndex( index, generation_index ) )
+					{
+						// Mix position between current game state and next predicted game state.
+						flame_particle_position=
+							MixPosition( flame_particle_position, predicted_flame_particle.position, time_steps_fraction );
+					}
+				}
+
 				var u32 phase=
 					flame_particle.age_steps / c_animated_billboards_frequency_divisor % BillboardConstants::c_num_flames;
 
@@ -635,7 +667,7 @@ fn ConstructWorldDrawingInfo(
 						.alignment= WorldDrawingInfo::Billboard::Alignment::ZAxis,
 						.billboard_index( BillboardConstants::c_id_first_flame + phase ),
 						// Slighly move flame billboards up, so that flame center is at billboard bottom.
-						.position( flame_particle.position.xy(), flame_particle.position.z - 24.0f * fade_phase ),
+						.position( flame_particle_position.xy(), flame_particle_position.z - 24.0f * fade_phase ),
 						.brightness= fade_phase,
 						.scale= fade_phase,
 					} );
@@ -645,14 +677,14 @@ fn ConstructWorldDrawingInfo(
 				var f32 constexpr flame_light_power= 1.5f;
 
 				// Calculate phase based on position, so that different flames have different phase.
-				var f32 modulation_phase= total_game_time_steps + flame_particle.position.Dot( Vec3f( 1.0f, 1.3f, 0.87f ) );
+				var f32 modulation_phase= total_game_time_steps + flame_particle_position.Dot( Vec3f( 1.0f, 1.3f, 0.87f ) );
 
 				var f32 light_modulation= CalculatePsedudoRandomFireLightSourceModulation( modulation_phase );
 
 				drawing_info.dynamic_light_sources.push_back(
 					WorldDrawingInfo::DynamicLightSource
 					{
-						.position= flame_particle.position,
+						.position= flame_particle_position,
 						.power= flame_light_power * c_light_power_scale * fade_phase * light_modulation,
 						.color_index= c_flame_color_index,
 					} );
