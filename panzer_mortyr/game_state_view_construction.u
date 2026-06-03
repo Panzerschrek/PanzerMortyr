@@ -418,9 +418,40 @@ fn ConstructWorldDrawingInfo(
 				}
 			} );
 
-		game_state.projectile_hit_smoke_particles.Iterate(
-			lambda[&]( ProjectileHitSmokeParticle& smoke_particle )
+		game_state.projectile_hit_smoke_particles.IterateWithIndexAndGenerationIndex(
+			lambda[&]( ProjectileHitSmokeParticle& smoke_particle, u32 index, u32 generation_index )
 			{
+				var Vec3f mut smoke_particle_position= smoke_particle.position;
+
+				if_var( &previous_game_state : previous_game_state_opt )
+				{
+					if( !previous_game_state.projectile_hit_smoke_particles.GetByIndex( index, generation_index ).empty() )
+					{
+						if_var( &current_predicted_game_state : current_predicted_game_state_opt )
+						{
+							// Start position mixing from position predicted for current step.
+							// Doing so we can compensate prediction error properly.
+							if_var( &current_predicted_smoke_particle :
+									current_predicted_game_state.projectile_hit_smoke_particles.GetByIndex(
+										index, generation_index ) )
+							{
+								smoke_particle_position= current_predicted_smoke_particle.position;
+							}
+						}
+					}
+				}
+
+				if_var( &next_predicted_game_state : next_predicted_game_state_opt )
+				{
+					if_var( &predicted_smoke_particle :
+							next_predicted_game_state.projectile_hit_smoke_particles.GetByIndex( index, generation_index ) )
+					{
+						// Mix position between current game state and next predicted game state.
+						smoke_particle_position=
+							MixPosition( smoke_particle_position, predicted_smoke_particle.position, time_steps_fraction );
+					}
+				}
+
 				var f32 relative_age=
 					( f32( smoke_particle.age_steps ) + time_steps_fraction ) / f32( c_projectile_hit_smoke_particle_max_age );
 
@@ -429,7 +460,7 @@ fn ConstructWorldDrawingInfo(
 					{
 						.alignment= WorldDrawingInfo::Billboard::Alignment::ToCamera,
 						.billboard_index( BillboardConstants::c_id_projectile_hit_smoke ),
-						.position= smoke_particle.position,
+						.position= smoke_particle_position,
 						.brightness= 0.3f * ( 1.0f - relative_age ),
 						.scale= 0.5f * ust::exp( relative_age * 2.0f ),
 					} );
