@@ -19,6 +19,34 @@ fn ConstructWorldDrawingInfo(
 	ust::optional_ref_imut</GameMapData/> map_data_opt,
 	ust::optional_ref_imut</GameStateExtended/> game_state_opt ) : WorldDrawingInfo
 {
+	/*
+		This function builds world drawing info for given extended game state.
+		It also performs extrapolation/mixing for positions and angles of various game objects.
+
+		Game logic update in the original game runs in fixed steps, 30 times in a second or so.
+		PanzerMortyr does this too.
+		But displays usually have refresh rate 60Hz or higher and we need to provide some state in-between for smooth look and feel.
+		So, game state is predicted one step into the future in order to do this.
+		Positions and angles are mixed between the current game state and a predicted next state.
+		But such mixing is not enough, since prediction may be wrong and thus some error-correction is needed.
+		Because of that actual mixing starts not from the current game state, but from a predicted state calculated previously for the current game logic step.
+
+		For camera angles no predicition/mixing is needed, since camera angles are updated independently on game logic.
+
+		For player's position nothing special is required - his predicted state and next predicted state can be used for mixing as is.
+
+		For dynamic clusters mixing is pretty straigtforward too, since no new dynamic cluster objects can be added and old ones can't be deleted.
+
+		For entities it's more complex.
+		Mixing into the predicted state is possible only if this entity still exists in the future.
+		Mixing from the state predictted on previous step for the current step is done only if this entity is present in the predicted state and was present in the previous state.
+		The latter is important to make sure mixing on step N+1 always starts where mixing on step N ended.
+
+		For game objects with limited lifetime we need a way to determine their identity between different states.
+		It's done by using slot index + generation index provided by the game things container.
+		Objects in two states are identical if their index and generation index are identical and if this object is present in their last common state.
+	*/
+
 	// TODO - rename it.
 	var f32 time_steps_fraction= ust::min( time_since_last_step_calculated_steps, 1.0f );
 
@@ -66,14 +94,11 @@ fn ConstructWorldDrawingInfo(
 
 		if_var( &current_predicted_game_state : current_predicted_game_state_opt )
 		{
-			// Start camera position mixing from position predicted for current step.
-			// Doing so we can compensate prediction error properly.
 			camera_position_without_depth_shift= GetCameraPositionForPlayer( current_predicted_game_state.player );
 		}
 
 		if_var( &next_predicted_game_state : next_predicted_game_state_opt )
 		{
-			// Mix camera position between current game state and next predicted game state.
 			camera_position_without_depth_shift=
 				MixPosition(
 					camera_position_without_depth_shift,
@@ -87,20 +112,15 @@ fn ConstructWorldDrawingInfo(
 		auto get_dynamic_cluster_center=
 			lambda[&]( size_type i ) : Vec3f
 			{
-				var DynamicClusterCollider& dynamic_cluster_collider= game_state.dynamic_cluster_colliders[i];
-
-				var Vec3f mut center= dynamic_cluster_collider.bbox.GetCenter();
+				var Vec3f mut center= game_state.dynamic_cluster_colliders[i].bbox.GetCenter();
 
 				if_var( &current_predicted_game_state : current_predicted_game_state_opt )
 				{
-					// Start position mixing from position predicted for current step.
-					// Doing so we can compensate prediction error properly.
 					center= current_predicted_game_state.dynamic_cluster_colliders[i].bbox.GetCenter();
 				}
 
 				if_var( &next_predicted_game_state : next_predicted_game_state_opt )
 				{
-					// Mix position between current game state and next predicted game state.
 					center=
 						MixPosition(
 							center,
@@ -145,8 +165,6 @@ fn ConstructWorldDrawingInfo(
 				{
 					if_var( &current_predicted_game_state : current_predicted_game_state_opt )
 					{
-						// Start position mixing from position predicted for current step.
-						// Doing so we can compensate prediction error properly.
 						if( i < current_predicted_game_state.entities.size() )
 						{
 							if_var( &current_predicted_entity : current_predicted_game_state.entities[i] )
@@ -165,7 +183,6 @@ fn ConstructWorldDrawingInfo(
 				{
 					if_var( &predicted_entity : next_predicted_game_state.entities[i] )
 					{
-						// Mix position between current game state and next predicted game state.
 						entity_position= MixPosition( entity_position, predicted_entity.position, time_steps_fraction );
 						entity_azimuth= MixAngle( entity_azimuth, predicted_entity.azimuth, time_steps_fraction );
 					}
@@ -352,9 +369,8 @@ fn ConstructWorldDrawingInfo(
 					{
 						if_var( &current_predicted_game_state : current_predicted_game_state_opt )
 						{
-							// Start position mixing from position predicted for current step.
-							// Doing so we can compensate prediction error properly.
-							if_var( &current_predicted_projectile : current_predicted_game_state.projectiles.GetByIndex( index, generation_index ) )
+							if_var( &current_predicted_projectile :
+								current_predicted_game_state.projectiles.GetByIndex( index, generation_index ) )
 							{
 								projectile_position= current_predicted_projectile.position;
 								projectile_velocity= current_predicted_projectile.velocity;
@@ -367,7 +383,6 @@ fn ConstructWorldDrawingInfo(
 				{
 					if_var( &predicted_projectile : next_predicted_game_state.projectiles.GetByIndex( index, generation_index ) )
 					{
-						// Mix position between current game state and next predicted game state.
 						projectile_position=
 							MixPosition( projectile_position, predicted_projectile.position, time_steps_fraction );
 						projectile_velocity=
@@ -456,8 +471,6 @@ fn ConstructWorldDrawingInfo(
 					{
 						if_var( &current_predicted_game_state : current_predicted_game_state_opt )
 						{
-							// Start position mixing from position predicted for current step.
-							// Doing so we can compensate prediction error properly.
 							if_var( &current_predicted_smoke_particle :
 									current_predicted_game_state.projectile_hit_smoke_particles.GetByIndex(
 										index, generation_index ) )
@@ -473,7 +486,6 @@ fn ConstructWorldDrawingInfo(
 					if_var( &predicted_smoke_particle :
 							next_predicted_game_state.projectile_hit_smoke_particles.GetByIndex( index, generation_index ) )
 					{
-						// Mix position between current game state and next predicted game state.
 						smoke_particle_position=
 							MixPosition( smoke_particle_position, predicted_smoke_particle.position, time_steps_fraction );
 					}
@@ -586,8 +598,6 @@ fn ConstructWorldDrawingInfo(
 					{
 						if_var( &current_predicted_game_state : current_predicted_game_state_opt )
 						{
-							// Start position mixing from position predicted for current step.
-							// Doing so we can compensate prediction error properly.
 							if_var( &current_predicted_spark_particle :
 									current_predicted_game_state.spark_particles.GetByIndex( index, generation_index ) )
 							{
@@ -602,7 +612,6 @@ fn ConstructWorldDrawingInfo(
 					if_var( &predicted_spark_particle :
 							next_predicted_game_state.spark_particles.GetByIndex( index, generation_index ) )
 					{
-						// Mix position between current game state and next predicted game state.
 						spark_particle_position=
 							MixPosition( spark_particle_position, predicted_spark_particle.position, time_steps_fraction );
 					}
@@ -658,8 +667,6 @@ fn ConstructWorldDrawingInfo(
 					{
 						if_var( &current_predicted_game_state : current_predicted_game_state_opt )
 						{
-							// Start position mixing from position predicted for current step.
-							// Doing so we can compensate prediction error properly.
 							if_var( &current_predicted_flame_particle :
 									current_predicted_game_state.flame_particles.GetByIndex( index, generation_index ) )
 							{
@@ -674,7 +681,6 @@ fn ConstructWorldDrawingInfo(
 					if_var( &predicted_flame_particle :
 							next_predicted_game_state.flame_particles.GetByIndex( index, generation_index ) )
 					{
-						// Mix position between current game state and next predicted game state.
 						flame_particle_position=
 							MixPosition( flame_particle_position, predicted_flame_particle.position, time_steps_fraction );
 					}
@@ -728,8 +734,6 @@ fn ConstructWorldDrawingInfo(
 					{
 						if_var( &current_predicted_game_state : current_predicted_game_state_opt )
 						{
-							// Start position mixing from position predicted for current step.
-							// Doing so we can compensate prediction error properly.
 							if_var( &current_predicted_smoke_particle :
 									current_predicted_game_state.smoke_particles.GetByIndex( index, generation_index ) )
 							{
@@ -744,7 +748,6 @@ fn ConstructWorldDrawingInfo(
 					if_var( &predicted_smoke_particle :
 							next_predicted_game_state.smoke_particles.GetByIndex( index, generation_index ) )
 					{
-						// Mix position between current game state and next predicted game state.
 						smoke_particle_position=
 							MixPosition( smoke_particle_position, predicted_smoke_particle.position, time_steps_fraction );
 					}
@@ -870,8 +873,6 @@ fn ConstructWorldDrawingInfo(
 						{
 							if_var( &current_predicted_game_state : current_predicted_game_state_opt )
 							{
-								// Start position mixing from position predicted for current step.
-								// Doing so we can compensate prediction error properly.
 								if_var( &current_predicted_blood_particle :
 										current_predicted_game_state.blood_particles.GetByIndex( index, generation_index ) )
 								{
@@ -886,7 +887,6 @@ fn ConstructWorldDrawingInfo(
 						if_var( &predicted_blood_particle :
 								next_predicted_game_state.blood_particles.GetByIndex( index, generation_index ) )
 						{
-							// Mix position between current game state and next predicted game state.
 							blood_particle_position=
 								MixPosition( blood_particle_position, predicted_blood_particle.position, time_steps_fraction );
 						}
