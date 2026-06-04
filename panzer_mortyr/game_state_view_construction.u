@@ -84,6 +84,33 @@ fn ConstructWorldDrawingInfo(
 		drawing_info.camera_params.position=
 			camera_position_without_depth_shift + GetCameraDepthShift( camera_controller );
 
+		auto get_dynamic_cluster_center=
+			lambda[&]( size_type i ) : Vec3f
+			{
+				var DynamicClusterCollider& dynamic_cluster_collider= game_state.dynamic_cluster_colliders[i];
+
+				var Vec3f mut center= dynamic_cluster_collider.bbox.GetCenter();
+
+				if_var( &current_predicted_game_state : current_predicted_game_state_opt )
+				{
+					// Start position mixing from position predicted for current step.
+					// Doing so we can compensate prediction error properly.
+					center= current_predicted_game_state.dynamic_cluster_colliders[i].bbox.GetCenter();
+				}
+
+				if_var( &next_predicted_game_state : next_predicted_game_state_opt )
+				{
+					// Mix position between current game state and next predicted game state.
+					center=
+						MixPosition(
+							center,
+							next_predicted_game_state.dynamic_cluster_colliders[i].bbox.GetCenter(),
+							time_steps_fraction );
+				}
+
+				return center;
+			};
+
 		// Count how many damaging flames are attached to each entity.
 		scoped_array u8 mut num_entity_damaging_flames[ game_state.entities.size() ] ( 0u8 );
 		game_state.damaging_flames.Iterate(
@@ -978,7 +1005,7 @@ fn ConstructWorldDrawingInfo(
 				{
 					.position=
 						( size_type( bullet_hole.dynamic_cluster_object_index ) < game_state.dynamic_cluster_colliders.size()
-							? bullet_hole.position + game_state.dynamic_cluster_colliders[ size_type( bullet_hole.dynamic_cluster_object_index ) ].bbox.GetCenter()
+							? bullet_hole.position + get_dynamic_cluster_center( size_type( bullet_hole.dynamic_cluster_object_index ) )
 							: bullet_hole.position ),
 					.half_size= bullet_hole_half_size,
 					.azimuth= bullet_hole.azimuth,
@@ -1037,7 +1064,7 @@ fn ConstructWorldDrawingInfo(
 					{
 						.position=
 							( size_type( blood_stain.dynamic_cluster_object_index ) < game_state.dynamic_cluster_colliders.size()
-								? blood_stain.position + game_state.dynamic_cluster_colliders[ size_type( blood_stain.dynamic_cluster_object_index ) ].bbox.GetCenter()
+								? blood_stain.position + get_dynamic_cluster_center( size_type( blood_stain.dynamic_cluster_object_index ) )
 								: blood_stain.position ),
 						.half_size= blood_stain_half_size,
 						.azimuth= blood_stain.azimuth,
@@ -1121,39 +1148,15 @@ fn ConstructWorldDrawingInfo(
 
 		for( auto mut i= 0s; i < game_state.dynamic_clusters.size(); ++i )
 		{
-			var DynamicClusterCollider& dynamic_cluster_collider= game_state.dynamic_cluster_colliders[i];
-
-			var Vec3f mut center= dynamic_cluster_collider.bbox.GetCenter();
-
-			if_var( &current_predicted_game_state : current_predicted_game_state_opt )
-			{
-				// Start position mixing from position predicted for current step.
-				// Doing so we can compensate prediction error properly.
-				center= current_predicted_game_state.dynamic_cluster_colliders[i].bbox.GetCenter();
-			}
-
-			if_var( &next_predicted_game_state : next_predicted_game_state_opt )
-			{
-				// Mix position between current game state and next predicted game state.
-				center=
-					MixPosition(
-						center,
-						next_predicted_game_state.dynamic_cluster_colliders[i].bbox.GetCenter(),
-						time_steps_fraction );
-			}
-
-			var ZvoxCluster& cluster= clusters[ size_type( dynamic_cluster_collider.cluster_index ) ];
+			var u32 cluster_index= game_state.dynamic_cluster_colliders[i].cluster_index;
+			var ZvoxCluster& cluster= clusters[ size_type( cluster_index ) ];
 
 			var Vec3f translation=
-				center -
+				get_dynamic_cluster_center(i) -
 				Vec3f( f32( cluster.c.center[0] ), f32( cluster.c.center[1] ), f32( cluster.c.center[2] ) );
 
 			drawing_info.dynamic_cluster_objects.push_back(
-				WorldDrawingInfo::DynamicClusterObject
-				{
-					.cluster_index= dynamic_cluster_collider.cluster_index,
-					.translation= translation,
-				} );
+				WorldDrawingInfo::DynamicClusterObject{ .cluster_index= cluster_index, .translation= translation } );
 		}
 
 		// Create billboards for map light sources.
