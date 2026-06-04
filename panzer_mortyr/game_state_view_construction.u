@@ -109,6 +109,53 @@ fn ConstructWorldDrawingInfo(
 		drawing_info.camera_params.position=
 			camera_position_without_depth_shift + GetCameraDepthShift( camera_controller );
 
+		auto get_entity_position_and_azimuth=
+			lambda[&]( size_type i ) : ust::optional</ tup[ Vec3f, f32 ] />
+			{
+				auto& entity_opt= game_state.entities[i];
+				if( entity_opt.empty() )
+				{
+					return ust::null_optional;
+				}
+
+				var EntityState& entity= entity_opt.try_deref();
+
+				var Vec3f mut position= entity.position;
+				var f32 mut azimuth= entity.azimuth;
+
+				if_var( &previous_game_state : previous_game_state_opt )
+				{
+					if( i < previous_game_state.entities.size() && !previous_game_state.entities[i].empty() )
+					{
+						if_var( &current_predicted_game_state : current_predicted_game_state_opt )
+						{
+							if( i < current_predicted_game_state.entities.size() )
+							{
+								if_var( &current_predicted_entity : current_predicted_game_state.entities[i] )
+								{
+									position= current_predicted_entity.position;
+									azimuth= current_predicted_entity.azimuth;
+								}
+							}
+						}
+					}
+				}
+
+				if_var( &next_predicted_game_state : next_predicted_game_state_opt )
+				{
+					if( i < next_predicted_game_state.entities.size() )
+					{
+						if_var( &predicted_entity : next_predicted_game_state.entities[i] )
+						{
+							position= MixPosition( position, predicted_entity.position, time_steps_fraction );
+							azimuth= MixAngle( azimuth, predicted_entity.azimuth, time_steps_fraction );
+						}
+					}
+				}
+
+				return ust::make_tuple( position, azimuth );
+			};
+
 		auto get_dynamic_cluster_center=
 			lambda[&]( size_type i ) : Vec3f
 			{
@@ -156,40 +203,13 @@ fn ConstructWorldDrawingInfo(
 
 			var EntityState& entity= entity_opt.try_deref();
 
-			var Vec3f mut entity_position= entity.position;
-			var f32 mut entity_azimuth= entity.azimuth;
-
-			if_var( &previous_game_state : previous_game_state_opt )
+			auto mut position_azimuth_opt= get_entity_position_and_azimuth(i);
+			if( position_azimuth_opt.empty() )
 			{
-				if( i < previous_game_state.entities.size() && !previous_game_state.entities[i].empty() )
-				{
-					if_var( &current_predicted_game_state : current_predicted_game_state_opt )
-					{
-						if( i < current_predicted_game_state.entities.size() )
-						{
-							if_var( &current_predicted_entity : current_predicted_game_state.entities[i] )
-							{
-								entity_position= current_predicted_entity.position;
-								entity_azimuth= current_predicted_entity.azimuth;
-							}
-						}
-					}
-				}
+				continue;
 			}
 
-			if_var( &next_predicted_game_state : next_predicted_game_state_opt )
-			{
-				if( i < next_predicted_game_state.entities.size() )
-				{
-					if_var( &predicted_entity : next_predicted_game_state.entities[i] )
-					{
-						entity_position= MixPosition( entity_position, predicted_entity.position, time_steps_fraction );
-						entity_azimuth= MixAngle( entity_azimuth, predicted_entity.azimuth, time_steps_fraction );
-					}
-				}
-			}
-
-			var u8 num_damaging_flames= num_entity_damaging_flames[i];
+			auto [ entity_position, entity_azimuth ]= position_azimuth_opt.try_take();
 
 			var EntitiesDescription::EntityDescription& entity_description= entities_description.entities[ size_type( entity.kind ) ];
 
@@ -242,6 +262,8 @@ fn ConstructWorldDrawingInfo(
 			}
 
 			var f32 mut burning_strength= 0.0f;
+
+			var u8 num_damaging_flames= num_entity_damaging_flames[i];
 
 			if( num_damaging_flames > 0u8 )
 			{
@@ -519,7 +541,12 @@ fn ConstructWorldDrawingInfo(
 			} );
 
 		game_state.muzzle_flashes.Iterate(
-			lambda[&]( MuzzleFlash& muzzle_flash )
+			lambda[
+				&game_state,
+				&drawing_info,
+				&camera_position_without_depth_shift,
+				get_entity_position_and_azimuth, // Capture a copy, since it has many references inside.
+				time_steps_fraction ]( MuzzleFlash& muzzle_flash )
 			{
 				var Vec3f mut absolute_position= Vec3f::MakeZero();
 				var Vec3f mut custom_axis= Vec3f::MakeZero();
@@ -547,11 +574,11 @@ fn ConstructWorldDrawingInfo(
 				{
 					if( size_type( muzzle_flash.owner_entity_index ) < game_state.entities.size() )
 					{
-						if_var( &entity : game_state.entities[ size_type( muzzle_flash.owner_entity_index ) ] )
+						if_var( position_azimuth : get_entity_position_and_azimuth( size_type( muzzle_flash.owner_entity_index ) ) )
 						{
-							var Mat4f rotation_matrix= Mat4f::MakeRotationZ( entity.azimuth );
+							var Mat4f rotation_matrix= Mat4f::MakeRotationZ( position_azimuth[1] );
 
-							absolute_position= entity.position + muzzle_flash.relative_position * rotation_matrix;
+							absolute_position= position_azimuth[0] + muzzle_flash.relative_position * rotation_matrix;
 							custom_axis= Vec3f( 0.0f, 1.0f, 0.0f ) * rotation_matrix;
 						}
 						else
@@ -912,7 +939,12 @@ fn ConstructWorldDrawingInfo(
 		}
 
 		game_state.muzzle_lights.Iterate(
-			lambda[&]( MuzzleLight& muzzle_light )
+			lambda[
+				&game_state,
+				&drawing_info,
+				&camera_position_without_depth_shift,
+				get_entity_position_and_azimuth, // Capture a copy, since it has many references inside.
+				time_steps_fraction ]( MuzzleLight& muzzle_light )
 			{
 				var Vec3f mut absolute_position= Vec3f::MakeZero();
 
@@ -930,10 +962,10 @@ fn ConstructWorldDrawingInfo(
 				{
 					if( size_type( muzzle_light.owner_entity_index ) < game_state.entities.size() )
 					{
-						if_var( &entity : game_state.entities[ size_type( muzzle_light.owner_entity_index ) ] )
+						if_var( position_azimuth : get_entity_position_and_azimuth( size_type( muzzle_light.owner_entity_index ) ) )
 						{
-							var Mat4f rotation_matrix= Mat4f::MakeRotationZ( entity.azimuth );
-							absolute_position= entity.position + muzzle_light.relative_position * rotation_matrix;
+							var Mat4f rotation_matrix= Mat4f::MakeRotationZ( position_azimuth[1] );
+							absolute_position= position_azimuth[0] + muzzle_light.relative_position * rotation_matrix;
 						}
 						else
 						{
