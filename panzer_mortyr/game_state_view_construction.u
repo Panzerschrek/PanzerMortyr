@@ -1568,8 +1568,19 @@ fn ConstructHudDrawingInfo( EntitiesDescription& entities_description, GameState
 fn ConstructGameEventNotificationsDrawingInfo(
 	CameraController& camera_controller,
 	GameMapData& map_data,
-	GameState& game_state ) : GameEventNotificationsDrawingInfo
+	GameStateExtended& game_state_extended,
+	f32 time_since_last_step_calculated_steps ) : GameEventNotificationsDrawingInfo
 {
+	// TODO - rename it.
+	var f32 time_steps_fraction= ust::min( time_since_last_step_calculated_steps, 1.0f );
+
+	var GameState& game_state= game_state_extended.current;
+
+	var ust::optional_ref_imut</GameState/> next_predicted_game_state_opt= game_state_extended.next_predicted.as_ref();
+
+	var ust::optional_ref_imut</GameState/> current_predicted_game_state_opt=
+		game_state_extended.current_predicted.as_ref();
+
 	type EN= GameEventNotificationsDrawingInfo::EventNotification;
 
 	var GameEventNotificationsDrawingInfo mut info
@@ -1626,13 +1637,31 @@ fn ConstructGameEventNotificationsDrawingInfo(
 				 ust::cos(azimuth) * elevation_cos,
 				elevation_sin ) * c_note_visible_max_distance;
 
-		var Vec3f ray_start= GetCameraPositionForPlayerWithExtraDepthShift( game_state.player, camera_controller );
+		// Extrapolate/mix camera position using for note volume intersection search.
+
+		var Vec3f mut camera_position=
+			GetCameraPositionForPlayerWithExtraDepthShift( game_state.player, camera_controller );
+
+		if_var( &current_predicted_game_state : current_predicted_game_state_opt )
+		{
+			camera_position=
+				GetCameraPositionForPlayerWithExtraDepthShift( current_predicted_game_state.player, camera_controller );
+		}
+
+		if_var( &next_predicted_game_state : next_predicted_game_state_opt )
+		{
+			camera_position=
+				MixPosition(
+					camera_position,
+					GetCameraPositionForPlayerWithExtraDepthShift( next_predicted_game_state.player, camera_controller ),
+					time_steps_fraction );
+		}
 
 		// Check all note volumes - there is not so many of them.
 		foreach( &note_volume : map_data.note_volumes )
 		{
 			// Find intersection with a box. It gives good enough result.
-			if_var( intersection : FindRayBBoxIntersection( ray_start, direction_vector, note_volume.bbox ) )
+			if_var( intersection : FindRayBBoxIntersection( camera_position, direction_vector, note_volume.bbox ) )
 			{
 				if( intersection.near_point_distance < 1.0f && intersection.far_point_distance > 0.0f )
 				{
