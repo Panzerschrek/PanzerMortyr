@@ -1693,8 +1693,12 @@ fn ConstructGameEventNotificationsDrawingInfo(
 fn ConstructCrosshairDrawingInfo(
 	CameraController& camera_controller,
 	ust::optional_ref_imut</GameMapData/> map_data_opt,
-	ust::optional_ref_imut</GameState/> game_state_opt ) : CrosshairDrawingInfo
+	ust::optional_ref_imut</GameStateExtended/> game_state_opt,
+	f32 time_since_last_step_calculated_steps ) : CrosshairDrawingInfo
 {
+	// TODO - rename it.
+	var f32 time_steps_fraction= ust::min( time_since_last_step_calculated_steps, 1.0f );
+
 	var CrosshairDrawingInfo mut drawing_info
 	{
 		.camera_position= Vec3f::MakeZero(),
@@ -1708,18 +1712,55 @@ fn ConstructCrosshairDrawingInfo(
 	if( !map_data_opt.empty() && !game_state_opt.empty() )
 	{
 		var GameMapData& map_data= map_data_opt.try_deref();
-		var GameState& game_state= game_state_opt.try_deref();
+
+		var GameStateExtended& game_state_extended= game_state_opt.try_deref();
+
+		var GameState& game_state= game_state_extended.current;
+
+		var ust::optional_ref_imut</GameState/> next_predicted_game_state_opt=
+			game_state_extended.next_predicted.as_ref();
+
+		var ust::optional_ref_imut</GameState/> current_predicted_game_state_opt=
+			game_state_extended.current_predicted.as_ref();
 
 		if( game_state.player.energy > 0u ) // Display crosshair only if the player is alive.
 		{
+			var GameState& start_state=
+				( current_predicted_game_state_opt.empty()
+					? game_state
+					: current_predicted_game_state_opt.try_deref() );
+
 			drawing_info.camera_position=
-				GetCameraPositionForPlayerWithExtraDepthShift( game_state.player, camera_controller );
+				GetCameraPositionForPlayerWithExtraDepthShift( start_state.player, camera_controller );
 
 			auto [ position, kind ]=
-				GetCrosshairPositionAndKind( map_data, game_state, drawing_info.camera_azimuth, drawing_info.camera_elevation );
+				GetCrosshairPositionAndKind(
+					map_data, start_state, drawing_info.camera_azimuth, drawing_info.camera_elevation );
 
 			drawing_info.hit_point= position;
 			drawing_info.hit_point_kind= kind;
+
+			// Perform extrapolation/mixing of camera position and hit position.
+
+			if_var( &next_predicted_game_state : next_predicted_game_state_opt )
+			{
+				drawing_info.camera_position=
+					MixPosition(
+						drawing_info.camera_position,
+						GetCameraPositionForPlayerWithExtraDepthShift(
+							next_predicted_game_state.player, camera_controller ),
+						time_steps_fraction );
+
+				drawing_info.hit_point=
+					MixPosition(
+						drawing_info.hit_point,
+						GetCrosshairPositionAndKind(
+							map_data,
+							next_predicted_game_state,
+							drawing_info.camera_azimuth,
+							drawing_info.camera_elevation )[0],
+						time_steps_fraction );
+			}
 		}
 	}
 
