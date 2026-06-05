@@ -13,7 +13,7 @@ fn Menu::constructor( SettingsPtr mut settings, [ u32, 2 ] viewport_size )
 		time_s_= 0.0f,
 		main_menu_current_row_= 0u,
 		new_game_current_row_= 0u,
-		load_save_menu_state_{ .current_row= 0u },
+		load_save_menu_state_{ .current_row= 0u, .input_is_active= false },
 		options_current_row_= 0u,
 		controls_current_row_= 0u,
 		sound_settings_current_row_= 0u,
@@ -51,7 +51,17 @@ fn nodiscard Menu::ProcessKeyPress( mut this, SDL_Keysym& key_sym, AudioProcesso
 				Page::MainMenu -> { current_page_= Page::None; },
 				Page::NewGame -> { current_page_= Page::MainMenu; },
 				Page::LoadGame -> { current_page_= Page::MainMenu; },
-				Page::SaveGame -> { current_page_= Page::MainMenu; },
+				Page::SaveGame ->
+				{
+					if( load_save_menu_state_.input_is_active )
+					{
+						load_save_menu_state_.input_is_active= false;
+					}
+					else
+					{
+						current_page_= Page::MainMenu;
+					}
+				},
 				Page::Options -> { current_page_= Page::MainMenu; },
 				Page::Controls -> { current_page_= Page::Options; },
 				Page::VideoSettings -> { current_page_= Page::Options; },
@@ -106,7 +116,24 @@ fn nodiscard Menu::ProcessKeyPress( mut this, SDL_Keysym& key_sym, AudioProcesso
 				},
 				Page::SaveGame ->
 				{
-					// TODO
+					if( load_save_menu_state_.input_is_active )
+					{
+						load_save_menu_state_.input_is_active= false;
+
+						current_page_= Page::None;
+					}
+					else
+					{
+						load_save_menu_state_.input_is_active= true;
+
+						auto &mut slot_name= load_save_menu_state_.slot_names[ load_save_menu_state_.current_row ];
+						if( slot_name.empty() )
+						{
+							slot_name= ust::string8();
+						}
+					}
+
+					audio_processor.PlayMenuSound();
 				},
 				Page::Options ->
 				{
@@ -172,8 +199,11 @@ fn nodiscard Menu::ProcessKeyPress( mut this, SDL_Keysym& key_sym, AudioProcesso
 				},
 				Page::LoadGame, Page::SaveGame ->
 				{
-					DecrementRow( load_save_menu_state_.current_row, c_num_load_save_slots );
-					audio_processor.PlayMenuSound();
+					if( !load_save_menu_state_.input_is_active )
+					{
+						DecrementRow( load_save_menu_state_.current_row, c_num_load_save_slots );
+						audio_processor.PlayMenuSound();
+					}
 				},
 				Page::Options ->
 				{
@@ -219,8 +249,11 @@ fn nodiscard Menu::ProcessKeyPress( mut this, SDL_Keysym& key_sym, AudioProcesso
 				},
 				Page::LoadGame, Page::SaveGame ->
 				{
-					IncrementRow( load_save_menu_state_.current_row, c_num_load_save_slots );
-					audio_processor.PlayMenuSound();
+					if( !load_save_menu_state_.input_is_active )
+					{
+						IncrementRow( load_save_menu_state_.current_row, c_num_load_save_slots );
+						audio_processor.PlayMenuSound();
+					}
 				},
 				Page::Options ->
 				{
@@ -438,6 +471,15 @@ fn Menu::Draw( mut this, ImageDrawer &mut image_drawer, TextDrawer &mut text_dra
 		.background_color[ 200u8, 120u8, 120u8,   0u8 ],
 	};
 
+	var TextDrawer::Settings edited_text_settings
+	{
+		.scale= text_settings.scale,
+		.monospace= text_settings.monospace,
+		//.foreground_color[  80u8,   0u8,   0u8, 255u8 ],
+		.foreground_color[  255u8,   0u8,   255u8, 255u8 ],
+		.background_color= text_settings.background_color,
+	};
+
 	switch( current_page_ )
 	{
 		Page::None -> {},
@@ -504,13 +546,17 @@ fn Menu::Draw( mut this, ImageDrawer &mut image_drawer, TextDrawer &mut text_dra
 
 			for( auto mut i= 0u; i < c_num_load_save_slots; ++i )
 			{
+				// TODO - draw "_" at the end of the active row.
+
 				auto& slot_name= load_save_menu_state_.slot_names[i];
+
+				var bool is_active_slot= i == load_save_menu_state_.current_row & load_save_menu_state_.input_is_active;
 
 				text_drawer.AddText(
 					offset_x + 208 * i32(scale),
-					offset_y + 58 * i32(scale) + i32( TextDrawer::c_glyph_height * i * scale ),
+					offset_y + 58 * i32(scale) + i32( ( c_num_load_save_slots - 1u - i ) * TextDrawer::c_glyph_height * scale ),
 					( slot_name.empty() ? ust::string_view8( "empty slot..." ) : slot_name.try_deref().range() ),
-					text_settings );
+					( is_active_slot ? edited_text_settings : text_settings ) );
 			}
 		},
 		Page::Options ->
