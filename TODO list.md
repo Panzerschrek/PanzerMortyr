@@ -70,7 +70,6 @@ PanzerMortyr game logic:
 * Implement omni protection (multiplayer-only power-up).
 * Implement CTF flags (multiplayer).
 * Consider storing entities rotation using quaternions.
-* Consider extrapolating game logic one or two steps further, using extrapolated data to make movements and animations smooth (mix position, angle, animation) and correcting possible extrapolation errors.
 * Consider using fixed point arithmetic for game calculations in order to make game logic deterministic (across different machines) and thus allowing multiplayer mode with client-side game logic calculations.
 * Implement birds.
 * Implement rats.
