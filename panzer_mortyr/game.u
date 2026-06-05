@@ -51,20 +51,20 @@ fn Game::Save( this, ust::string_view8 save_name, AudioProcessor& audio_processo
 	}
 
 	var GameMapData& map_data= map_data_.try_deref();
-	var GameState& game_state= game_state_.try_deref();
+	var GameStateExtended& game_state= game_state_.try_deref();
 
-	if( game_state.player.energy <= 0u )
+	if( game_state.current.player.energy <= 0u )
 	{
 		ConsoleOutAddTextLine( console_out_, "Can't save - the player is dead" );
 		return;
 	}
 
 	var bool ok=
-		SaveGameExtendedState(
+		SaveStoredGameState(
 			console_out_,
 			save_name,
 			map_data.map_index,
-			game_state,
+			game_state.current,
 			camera_controller_.GetState(),
 			audio_processor.GetState(),
 			map_data.global_navigation_graph );
@@ -83,14 +83,14 @@ fn Game::Load( mut this, ust::string_view8 save_name, AudioProcessor &mut audio_
 	map_data_.reset();
 	game_state_.reset();
 
-	auto mut game_extended_state_opt= LoadGameExtendedState( console_out_, save_name );
-	if( game_extended_state_opt.empty() )
+	auto mut stored_game_state_opt= LoadStoredGameStae( console_out_, save_name );
+	if( stored_game_state_opt.empty() )
 	{
 		return;
 	}
 
 	auto { map_index, mut game_state, mut camera_controller_state, audio_processor_state, mut global_navigation_graph }=
-		game_extended_state_opt.try_take();
+		stored_game_state_opt.try_take();
 
 	LoadBasicMapData( map_index );
 
@@ -101,7 +101,7 @@ fn Game::Load( mut this, ust::string_view8 save_name, AudioProcessor &mut audio_
 
 	map_data_.try_deref().global_navigation_graph= move(global_navigation_graph);
 
-	game_state_= move(game_state);
+	game_state_= GameStateExtended{ .current= move(game_state) };
 
 	camera_controller_= CameraController( settings_, move(camera_controller_state) );
 
@@ -123,7 +123,7 @@ fn Game::Update(
 	AudioProcessor &mut audio_processor ) : UpdateOutcome
 {
 	// Rotate camera each frame (unless the player is dead).
-	if( game_state_.empty() || game_state_.try_deref().player.energy > 0u )
+	if( game_state_.empty() || game_state_.try_deref().current.player.energy > 0u )
 	{
 		camera_controller_.Update( time_delta_s, keyboard_state, mouse_buttons_state, mouse_motion );
 	}
@@ -136,7 +136,10 @@ fn Game::Update(
 
 	// Process game logic in fixed time steps.
 
-	var f32 cur_time_steps= prev_time_steps_ + time_delta_s * c_steps_per_second;
+	var f32 game_speed= f32( ust::max( 10u, ust::min( settings_.lock_imut().deref().g_game_speed, 1000u ) ) ) / 100.0f;
+	var bool extrapolation_enabled= settings_.lock_imut().deref().g_extrapolation_enabled;
+
+	var f32 cur_time_steps= prev_time_steps_ + time_delta_s * c_steps_per_second * game_speed;
 
 	var u32 prev_step= u32( prev_time_steps_ );
 	var u32 cur_step= u32( cur_time_steps );
@@ -159,9 +162,9 @@ fn Game::Update(
 		if( !map_data_.empty() && !game_state_.empty() )
 		{
 			var GameMapData& map_data= map_data_.try_deref();
-			var GameState &mut game_state= game_state_.try_deref();
+			var GameStateExtended &mut game_state= game_state_.try_deref();
 
-			skill= game_state.skill;
+			skill= game_state.current.skill;
 
 			var PlayerInput mut player_input
 			{
@@ -180,19 +183,28 @@ fn Game::Update(
 
 			for( auto mut i= 0u; i < num_steps_to_process; ++i )
 			{
+				if( extrapolation_enabled )
+				{
+					CopyAssignOrCopyConstructOptional( game_state.previous, game_state.current );
+				}
+				else
+				{
+					game_state.previous.reset();
+				}
+
 				ProcessGameLogicStep(
 					global_data_,
 					map_data,
 					player_input,
-					game_state,
+					game_state.current,
 					global_navigation_graph_route_searcher_ );
 
-				next_map_index= game_state.next_map_index;
-				game_end_triggered= game_state.game_end_triggered;
+				next_map_index= game_state.current.next_map_index;
+				game_end_triggered= game_state.current.game_end_triggered;
 
 				if( next_map_index != 0u )
 				{
-					player_state= game_state.player;
+					player_state= game_state.current.player;
 					break;
 				}
 
@@ -203,6 +215,42 @@ fn Game::Update(
 
 				// Apply inventory input only for single step.
 				player_input.inventory_input= PlayerInventoryInput();
+
+				if( extrapolation_enabled )
+				{
+					// Preserve game state predicted previously for current step.
+					if_var( &next_predicted : game_state.next_predicted )
+					{
+						CopyAssignOrCopyConstructOptional( game_state.current_predicted, next_predicted );
+					}
+					else
+					{
+						game_state.current_predicted.reset();
+					}
+
+					CopyAssignOrCopyConstructOptional( game_state.next_predicted, game_state.current );
+
+					// Predict next game state using the same input as on current step,
+					// but without player movement and without jumping.
+					// This adds a little bit lag (but only a little bit, since player's movement uses acceleration),
+					// but allows minimizing overextrapolation for camera movement.
+					var PlayerInput mut player_input_for_next_step_prediction= player_input;
+					player_input_for_next_step_prediction.jump_requested= false;
+					player_input_for_next_step_prediction.move_wish_vector= Vec3f::MakeZero();
+
+					ProcessGameLogicStep(
+						global_data_,
+						map_data,
+						player_input_for_next_step_prediction,
+						game_state.next_predicted.try_deref(),
+						global_navigation_graph_route_searcher_ );
+				}
+				else
+				{
+					// Reset additional game state instances if no extrapolation is performed.
+					game_state.next_predicted.reset();
+					game_state.current_predicted.reset();
+				}
 			}
 		}
 
@@ -227,7 +275,7 @@ fn Game::Update(
 		// We need this, since camera rotates every frame independent on game logic steps and sound volume depends on camera orientation.
 		audio_processor.UpdateWord(
 			ConstructWorldAudioInfo(
-				global_data_, map_data_.try_deref(), game_state_.try_deref(), camera_controller_ ) );
+				global_data_, map_data_.try_deref(), game_state_.try_deref().current, camera_controller_ ) );
 	}
 
 	return UpdateOutcome::Continue;
@@ -238,7 +286,7 @@ fn Game::GetWorldDrawingInfo( this ) : WorldDrawingInfo
 	var WorldDrawingInfo mut world_drawing_info=
 		ConstructWorldDrawingInfo(
 			settings_.lock_imut().deref(),
-			prev_time_steps_,
+			prev_time_steps_ % 1.0f,
 			camera_controller_,
 			map_data_.as_ref(),
 			game_state_.as_ref() );
@@ -258,7 +306,8 @@ fn Game::GetHudDrawingInfo( this ) : ust::optional</HudDrawingInfo/>
 		return ust::null_optional;
 	}
 
-	return ConstructHudDrawingInfo( map_data_.try_deref().entities_description.deref(), game_state_.try_deref() );
+	return
+		ConstructHudDrawingInfo( map_data_.try_deref().entities_description.deref(), game_state_.try_deref().current );
 }
 
 fn Game::GetGameEventNotificationsDrawingInfo( this ) : ust::optional</GameEventNotificationsDrawingInfo/>
@@ -272,21 +321,26 @@ fn Game::GetGameEventNotificationsDrawingInfo( this ) : ust::optional</GameEvent
 		ConstructGameEventNotificationsDrawingInfo(
 			camera_controller_,
 			map_data_.try_deref(),
-			game_state_.try_deref() );
+			game_state_.try_deref(),
+			prev_time_steps_ % 1.0f );
 }
 
 fn Game::GetCrosshairDrawingInfo( this ) : CrosshairDrawingInfo
 {
-	return ConstructCrosshairDrawingInfo( camera_controller_, map_data_.as_ref(), game_state_.as_ref() );
+	return
+		ConstructCrosshairDrawingInfo(
+			camera_controller_, map_data_.as_ref(), game_state_.as_ref(), prev_time_steps_ % 1.0f );
 }
 
 fn Game::process_noclip( mut this )
 {
 	if_var( &mut game_state : game_state_ )
 	{
-		game_state.player.noclip = !game_state.player.noclip;
+		var bool &mut noclip= game_state.current.player.noclip;
 
-		ConsoleOutAddTextLine( console_out_, ( game_state.player.noclip ? ust::string_view8( "noclip on" ) : ust::string_view8( "noclip off" ) ) );
+		noclip = !noclip;
+
+		ConsoleOutAddTextLine( console_out_, ( noclip ? ust::string_view8( "noclip on" ) : ust::string_view8( "noclip off" ) ) );
 
 		// Player colliders will be added/removed if necessary later - when processing player movement logic.
 	}
@@ -296,8 +350,8 @@ fn Game::process_reset_position( mut this )
 {
 	if_var( &mut game_state : game_state_ )
 	{
-		game_state.player.position= Vec3f::MakeZero();
-		game_state.player.velocity= Vec3f::MakeZero();
+		game_state.current.player.position= Vec3f::MakeZero();
+		game_state.current.player.velocity= Vec3f::MakeZero();
 	}
 	camera_controller_= CameraController( settings_, CameraController::State{ .azimuth= 0.0f } );
 	player_movement_controller_.Reset();
@@ -307,7 +361,7 @@ fn Game::process_give_all( mut this )
 {
 	if( !game_state_.empty() && !map_data_.empty() )
 	{
-		var GameState &mut game_state= game_state_.try_deref();
+		var GameState &mut game_state= game_state_.try_deref().current;
 		var EntitiesDescription& entities_description= map_data_.try_deref().entities_description.deref();
 
 		for( auto mut t= 0s; t < typeinfo</ EntitiesDescription::ToolType />.element_count; ++t )
@@ -327,7 +381,7 @@ fn Game::process_invisibility( mut this )
 {
 	if_var ( &mut game_state : game_state_ )
 	{
-		var bool &mut i= game_state.player.invisibility;
+		var bool &mut i= game_state.current.player.invisibility;
 		i= !i;
 
 		ConsoleOutAddTextLine( console_out_, ( i ? ust::string_view8( "invisibility on" ) : ust::string_view8( "invisibility off" ) ) );
@@ -338,7 +392,7 @@ fn Game::process_invulnerability( mut this )
 {
 	if_var ( &mut game_state : game_state_ )
 	{
-		var bool &mut i= game_state.player.invulnerability;
+		var bool &mut i= game_state.current.player.invulnerability;
 		i= !i;
 
 		ConsoleOutAddTextLine( console_out_, ( i ? ust::string_view8( "invulnerability on" ) : ust::string_view8( "invulnerability off" ) ) );
@@ -355,7 +409,7 @@ fn Game::process_debug_show_nearby_navigation_graph_nodes( mut this )
 	}
 
 	var GameMapData& map_data= map_data_.try_deref();
-	var GameState& game_state= game_state_.try_deref();
+	var GameState& game_state= game_state_.try_deref().current;
 
 	var bool large_entity= false;
 
@@ -450,7 +504,7 @@ fn Game::process_debug_set_navigation_target( mut this )
 {
 	if_var( &game_state : game_state_ )
 	{
-		debug_navigation_target_= game_state.player.position;
+		debug_navigation_target_= game_state.current.player.position;
 	}
 }
 
@@ -464,7 +518,7 @@ fn Game::process_debug_search_route( mut this )
 	}
 
 	var GameMapData& map_data= map_data_.try_deref();
-	var GameState& game_state= game_state_.try_deref();
+	var GameState& game_state= game_state_.try_deref().current;
 
 	if( debug_navigation_target_.empty() )
 	{
@@ -610,11 +664,17 @@ fn Game::PerformMapTransition(
 
 	prev_time_steps_= 0.0f;
 
-	game_state_= CreateNewMapGameState( console_out_, global_data_, map_data_.try_deref(), skill, prev_player_state );
+	game_state_=
+		GameStateExtended
+		{
+			.current=
+				CreateNewMapGameState( console_out_, global_data_, map_data_.try_deref(), skill, prev_player_state )
+		};
 
 	// Reset camera controller state and set its azimuth to player's azimuth (so that he faces the direction of the spawn point).
 	camera_controller_=
-		CameraController( settings_, CameraController::State{ .azimuth= game_state_.try_deref().player.azimuth } );
+		CameraController(
+			settings_, CameraController::State{ .azimuth= game_state_.try_deref().current.player.azimuth } );
 
 	// Reset movement state.
 	player_movement_controller_.Reset();
@@ -844,6 +904,20 @@ fn CreateMapUsedModelsList(
 	used_models.remove_adjacent_duplicates();
 
 	return used_models;
+}
+
+// TODO - add such method into the "optional" container instead.
+template</type T/>
+fn CopyAssignOrCopyConstructOptional( ust::optional</T/> &mut dst, T& src )
+{
+	if( !dst.empty() )
+	{
+		dst.try_deref()= src;
+	}
+	else
+	{
+		dst.reset( src /* copy-constructor is called here */ );
+	}
 }
 
 } // namespace PM

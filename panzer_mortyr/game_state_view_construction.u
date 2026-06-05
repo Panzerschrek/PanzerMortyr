@@ -13,16 +13,42 @@ namespace PM
 
 fn ConstructWorldDrawingInfo(
 	Settings& settings,
-	f32 time_steps,
+	f32 time_steps_fraction,
 	CameraController& camera_controller,
 	ust::optional_ref_imut</GameMapData/> map_data_opt,
-	ust::optional_ref_imut</GameState/> game_state_opt ) : WorldDrawingInfo
+	ust::optional_ref_imut</GameStateExtended/> game_state_opt ) : WorldDrawingInfo
 {
-	var f32 time_steps_fraction= time_steps % 1.0f;
+	/*
+		This function builds aworld drawing info for given extended game state.
+		It also performs extrapolation/mixing for positions and angles of various game objects.
+
+		Game logic update in the original game runs in fixed steps, 30 times in a second or so.
+		PanzerMortyr does this too.
+		But displays usually have refresh rate 60Hz or higher and we need to provide some state in-between for smooth look and feel.
+		So, game state is predicted one step into the future in order to do this.
+		Positions and angles are mixed between the current game state and a predicted next state.
+		But such mixing is not enough, since prediction can be sometimes wrong and thus some error-correction is needed.
+		Because of that actual mixing starts not from the current game state, but from a predicted state calculated previously for the current game logic step.
+
+		For camera angles no predicition/mixing is needed, since camera angles are updated independently on game logic.
+
+		For player's position nothing special is required - his predicted state and next predicted state can be used for mixing as is.
+
+		For dynamic clusters mixing is pretty straigtforward too, since no new dynamic cluster objects can be added and old ones can't be removed.
+
+		For entities it's more complex.
+		Mixing into the predicted state is possible only if this entity still exists in the future.
+		Mixing from the state predictted on previous step for the current step is done only if this entity is present in the predicted state and was present in the previous state.
+		The latter is important to make sure mixing on step N+1 always starts where mixing on step N ended.
+
+		For game objects with limited lifetime we need a way to determine their identity between different states.
+		It's done by using slot index + generation index provided by the game things container.
+		Objects in two states are identical if their index and generation index are identical and if this object is present in their last common state.
+	*/
 
 	var WorldDrawingInfo mut drawing_info
 	{
-		.game_time_s= time_steps / f32( c_steps_per_second ),
+		.game_time_s= 0.0f, // Set later.
 		.map_index= 0u,
 		.camera_params
 		{
@@ -38,21 +64,118 @@ fn ConstructWorldDrawingInfo(
 	if( !map_data_opt.empty() && !game_state_opt.empty() )
 	{
 		var GameMapData& map_data= map_data_opt.try_deref();
-		var GameState& game_state= game_state_opt.try_deref();
+
+		var GameStateExtended& game_state_extended= game_state_opt.try_deref();
+
+		var ust::optional_ref_imut</GameState/> previous_game_state_opt= game_state_extended.previous.as_ref();
+
+		var GameState& game_state= game_state_extended.current;
+
+		var ust::optional_ref_imut</GameState/> next_predicted_game_state_opt=
+			game_state_extended.next_predicted.as_ref();
+
+		var ust::optional_ref_imut</GameState/> current_predicted_game_state_opt=
+			game_state_extended.current_predicted.as_ref();
 
 		// It's not a big deal to copy this list, in the wors case it has maximum 40-50 elements.
 		drawing_info.used_models= map_data.used_models;
 
 		drawing_info.map_index= map_data.map_index;
 
+		var f32 total_game_time_steps= f32( game_state.step_index ) + time_steps_fraction;
+		drawing_info.game_time_s= total_game_time_steps / c_steps_per_second;
+
 		// Copy bit array of broken quads.
 		// It may be a little bit slow, since some maps have a lot of quads.
 		drawing_info.broken_quad_bits= game_state.broken_quad_bits;
 
-		var Vec3f camera_position_without_depth_shift= GetCameraPositionForPlayer( game_state.player );
+		var Vec3f mut camera_position_without_depth_shift= GetCameraPositionForPlayer( game_state.player );
+
+		if_var( &current_predicted_game_state : current_predicted_game_state_opt )
+		{
+			camera_position_without_depth_shift= GetCameraPositionForPlayer( current_predicted_game_state.player );
+		}
+
+		if_var( &next_predicted_game_state : next_predicted_game_state_opt )
+		{
+			camera_position_without_depth_shift=
+				MixPosition(
+					camera_position_without_depth_shift,
+					GetCameraPositionForPlayer( next_predicted_game_state.player ),
+					time_steps_fraction );
+		}
 
 		drawing_info.camera_params.position=
 			camera_position_without_depth_shift + GetCameraDepthShift( camera_controller );
+
+		auto get_entity_position_and_azimuth=
+			lambda[&]( size_type i ) : ust::optional</ tup[ Vec3f, f32 ] />
+			{
+				auto& entity_opt= game_state.entities[i];
+				if( entity_opt.empty() )
+				{
+					return ust::null_optional;
+				}
+
+				var EntityState& entity= entity_opt.try_deref();
+
+				var Vec3f mut position= entity.position;
+				var f32 mut azimuth= entity.azimuth;
+
+				if_var( &previous_game_state : previous_game_state_opt )
+				{
+					if( i < previous_game_state.entities.size() && !previous_game_state.entities[i].empty() )
+					{
+						if_var( &current_predicted_game_state : current_predicted_game_state_opt )
+						{
+							if( i < current_predicted_game_state.entities.size() )
+							{
+								if_var( &current_predicted_entity : current_predicted_game_state.entities[i] )
+								{
+									position= current_predicted_entity.position;
+									azimuth= current_predicted_entity.azimuth;
+								}
+							}
+						}
+					}
+				}
+
+				if_var( &next_predicted_game_state : next_predicted_game_state_opt )
+				{
+					if( i < next_predicted_game_state.entities.size() )
+					{
+						if_var( &predicted_entity : next_predicted_game_state.entities[i] )
+						{
+							position= MixPosition( position, predicted_entity.position, time_steps_fraction );
+							azimuth= MixAngle( azimuth, predicted_entity.azimuth, time_steps_fraction );
+						}
+					}
+				}
+
+				return ust::make_tuple( position, azimuth );
+			};
+
+		auto get_dynamic_cluster_center=
+			lambda[&]( size_type i ) : Vec3f
+			{
+				var Vec3f mut center= game_state.dynamic_cluster_colliders[i].bbox.GetCenter();
+
+				if_var( &current_predicted_game_state : current_predicted_game_state_opt )
+				{
+					center= current_predicted_game_state.dynamic_cluster_colliders[i].bbox.GetCenter();
+				}
+
+				if_var( &next_predicted_game_state : next_predicted_game_state_opt )
+				{
+					center=
+						MixPosition(
+							center,
+							next_predicted_game_state.dynamic_cluster_colliders[i].bbox.GetCenter(),
+							time_steps_fraction );
+				}
+
+				return center;
+			};
 
 		// Count how many damaging flames are attached to each entity.
 		scoped_array u8 mut num_entity_damaging_flames[ game_state.entities.size() ] ( 0u8 );
@@ -68,9 +191,9 @@ fn ConstructWorldDrawingInfo(
 
 		var EntitiesDescription& entities_description= map_data.entities_description.deref();
 
-		foreach( pair : game_state.entities.iter().zip( num_entity_damaging_flames.iter() ) )
+		for( auto mut i= 0s; i < game_state.entities.size(); ++i )
 		{
-			auto& entity_opt= pair.first;
+			auto& entity_opt= game_state.entities[i];
 
 			if( entity_opt.empty() )
 			{
@@ -79,7 +202,13 @@ fn ConstructWorldDrawingInfo(
 
 			var EntityState& entity= entity_opt.try_deref();
 
-			var u8 num_damaging_flames= pair.second;
+			auto mut position_azimuth_opt= get_entity_position_and_azimuth(i);
+			if( position_azimuth_opt.empty() )
+			{
+				continue;
+			}
+
+			auto [ entity_position, entity_azimuth ]= position_azimuth_opt.try_take();
 
 			var EntitiesDescription::EntityDescription& entity_description= entities_description.entities[ size_type( entity.kind ) ];
 
@@ -101,7 +230,7 @@ fn ConstructWorldDrawingInfo(
 					drawing_info.dynamic_light_sources.push_back(
 						WorldDrawingInfo::DynamicLightSource
 						{
-							.position( entity.position.xy(), entity.position.z + f32( explosion_light.params[4] ) ),
+							.position( entity_position.xy(), entity_position.z + f32( explosion_light.params[4] ) ),
 							.power= light_power * c_light_power_scale,
 							.color_index( explosion_light.params[3] ),
 						} );
@@ -119,12 +248,12 @@ fn ConstructWorldDrawingInfo(
 
 					var Vec3f offset_transformed=
 						Vec3f( f32( light.offset_x ), f32( light.offset_y ), f32( light.offset_z ) ) *
-						Mat4f::MakeRotationZ( entity.azimuth );
+						Mat4f::MakeRotationZ( entity_azimuth );
 
 					drawing_info.dynamic_light_sources.push_back(
 						WorldDrawingInfo::DynamicLightSource
 						{
-							.position= entity.position + offset_transformed,
+							.position= entity_position + offset_transformed,
 							.power= f32(light.power) * fade * c_light_power_scale,
 							.color_index( light.color ),
 						} );
@@ -133,6 +262,8 @@ fn ConstructWorldDrawingInfo(
 
 			var f32 mut burning_strength= 0.0f;
 
+			var u8 num_damaging_flames= num_entity_damaging_flames[i];
+
 			if( num_damaging_flames > 0u8 )
 			{
 				// PanzerMortyr addition - add lights for burning entities.
@@ -140,7 +271,7 @@ fn ConstructWorldDrawingInfo(
 
 				// Calculate phase based on navigation info index (which is unique for enemy entities),
 				// so that different burning enemies have different phase.
-				var f32 modulation_phase= time_steps + f32( entity.navigation_info_index & 0xFFu );
+				var f32 modulation_phase= total_game_time_steps + f32( entity.navigation_info_index & 0xFFu );
 
 				var f32 light_modulation= CalculatePsedudoRandomFireLightSourceModulation( modulation_phase );
 
@@ -148,7 +279,7 @@ fn ConstructWorldDrawingInfo(
 					WorldDrawingInfo::DynamicLightSource
 					{
 						.position=
-							entity.position +
+							entity_position +
 							Vec3f(
 								f32( operation.animation.bounding_box_center_x ),
 								f32( operation.animation.bounding_box_center_y ),
@@ -202,8 +333,8 @@ fn ConstructWorldDrawingInfo(
 						WorldDrawingInfo::ModelObject
 						{
 							.model_file_name= animation.model_file_name,
-							.position= entity.position,
-							.azimuth= entity.azimuth,
+							.position= entity_position,
+							.azimuth= entity_azimuth,
 							.elevation= 0.0f,
 							.frame= entity.animation_frame,
 							// If it's a sky decoration - disable culling.
@@ -229,7 +360,7 @@ fn ConstructWorldDrawingInfo(
 						WorldDrawingInfo::ModelObject
 						{
 							.model_file_name= animation.model_file_name,
-							.position= entity.position,
+							.position= entity_position,
 							.azimuth= Convert1024Angle( f32( operation.directional_animation.direction ) ),
 							.elevation= 0.0f,
 							.frame= entity.directional_animation_frame,
@@ -247,9 +378,39 @@ fn ConstructWorldDrawingInfo(
 			}
 		}
 
-		game_state.projectiles.Iterate(
-			lambda[&]( Projectile& projectile )
+		game_state.projectiles.IterateWithIndexAndGenerationIndex(
+			lambda[&]( Projectile& projectile, u32 index, u32 generation_index )
 			{
+				var Vec3f mut projectile_position= projectile.position;
+				var Vec3f mut projectile_velocity= projectile.velocity;
+
+				if_var( &previous_game_state : previous_game_state_opt )
+				{
+					if( !previous_game_state.projectiles.GetByIndex( index, generation_index ).empty() )
+					{
+						if_var( &current_predicted_game_state : current_predicted_game_state_opt )
+						{
+							if_var( &current_predicted_projectile :
+								current_predicted_game_state.projectiles.GetByIndex( index, generation_index ) )
+							{
+								projectile_position= current_predicted_projectile.position;
+								projectile_velocity= current_predicted_projectile.velocity;
+							}
+						}
+					}
+				}
+
+				if_var( &next_predicted_game_state : next_predicted_game_state_opt )
+				{
+					if_var( &predicted_projectile : next_predicted_game_state.projectiles.GetByIndex( index, generation_index ) )
+					{
+						projectile_position=
+							MixPosition( projectile_position, predicted_projectile.position, time_steps_fraction );
+						projectile_velocity=
+							MixVelocity( projectile_velocity, predicted_projectile.velocity, time_steps_fraction );
+					}
+				}
+
 				var EntitiesDescription::Tool& weapon_tool=
 					entities_description.tools[ size_type( projectile.weapon_tool_index ) ];
 
@@ -266,22 +427,22 @@ fn ConstructWorldDrawingInfo(
 						// It isn't ideal, but fine enough.
 						var f32 mut azimuth= 0.0f;
 						var f32 mut elevation= 0.0f;
-						var f32 velocity_xy_square_length= projectile.velocity.xy().SquareLength();
+						var f32 velocity_xy_square_length= projectile_velocity.xy().SquareLength();
 						if( velocity_xy_square_length > 0.0f )
 						{
-							 azimuth= -ust::atan2( projectile.velocity.x, projectile.velocity.y );
-							 elevation= ust::atan2( projectile.velocity.z, ust::sqrt( velocity_xy_square_length ) );
+							 azimuth= -ust::atan2( projectile_velocity.x, projectile_velocity.y );
+							 elevation= ust::atan2( projectile_velocity.z, ust::sqrt( velocity_xy_square_length ) );
 						}
 						else
 						{
-							elevation= ( projectile.velocity.z > 0.0f ? c_tau * 0.25f : -c_tau * 0.25f );
+							elevation= ( projectile_velocity.z > 0.0f ? c_tau * 0.25f : -c_tau * 0.25f );
 						}
 
 						drawing_info.model_objects.push_back(
 							WorldDrawingInfo::ModelObject
 							{
 								.model_file_name= animation.model_file_name,
-								.position= projectile.position,
+								.position= projectile_position,
 								.azimuth= azimuth,
 								.elevation= elevation,
 								.frame= 0u,
@@ -300,10 +461,10 @@ fn ConstructWorldDrawingInfo(
 						WorldDrawingInfo::Billboard
 						{
 							.alignment= WorldDrawingInfo::Billboard::Alignment::ToCustomAxis,
-							.position= projectile.position,
+							.position= projectile_position,
 							// Make projectiles slighly bigger than unit scale, since otherwise they are barely visible.
 							.scale= 2.0f,
-							.custom_axis= projectile.velocity,
+							.custom_axis= projectile_velocity,
 							.billboard_index( BillboardConstants::c_shot_ids[ size_type( weapon_tool.projectile_model ) ] ),
 						} );
 				}
@@ -313,16 +474,44 @@ fn ConstructWorldDrawingInfo(
 					drawing_info.dynamic_light_sources.push_back(
 						WorldDrawingInfo::DynamicLightSource
 						{
-							.position= projectile.position,
+							.position= projectile_position,
 							.power= f32( weapon_tool.projectile_light[1] ) * c_light_power_scale,
 							.color_index= weapon_tool.projectile_light[0],
 						} );
 				}
 			} );
 
-		game_state.projectile_hit_smoke_particles.Iterate(
-			lambda[&]( ProjectileHitSmokeParticle& smoke_particle )
+		game_state.projectile_hit_smoke_particles.IterateWithIndexAndGenerationIndex(
+			lambda[&]( ProjectileHitSmokeParticle& smoke_particle, u32 index, u32 generation_index )
 			{
+				var Vec3f mut smoke_particle_position= smoke_particle.position;
+
+				if_var( &previous_game_state : previous_game_state_opt )
+				{
+					if( !previous_game_state.projectile_hit_smoke_particles.GetByIndex( index, generation_index ).empty() )
+					{
+						if_var( &current_predicted_game_state : current_predicted_game_state_opt )
+						{
+							if_var( &current_predicted_smoke_particle :
+									current_predicted_game_state.projectile_hit_smoke_particles.GetByIndex(
+										index, generation_index ) )
+							{
+								smoke_particle_position= current_predicted_smoke_particle.position;
+							}
+						}
+					}
+				}
+
+				if_var( &next_predicted_game_state : next_predicted_game_state_opt )
+				{
+					if_var( &predicted_smoke_particle :
+							next_predicted_game_state.projectile_hit_smoke_particles.GetByIndex( index, generation_index ) )
+					{
+						smoke_particle_position=
+							MixPosition( smoke_particle_position, predicted_smoke_particle.position, time_steps_fraction );
+					}
+				}
+
 				var f32 relative_age=
 					( f32( smoke_particle.age_steps ) + time_steps_fraction ) / f32( c_projectile_hit_smoke_particle_max_age );
 
@@ -331,7 +520,7 @@ fn ConstructWorldDrawingInfo(
 					{
 						.alignment= WorldDrawingInfo::Billboard::Alignment::ToCamera,
 						.billboard_index( BillboardConstants::c_id_projectile_hit_smoke ),
-						.position= smoke_particle.position,
+						.position= smoke_particle_position,
 						.brightness= 0.3f * ( 1.0f - relative_age ),
 						.scale= 0.5f * ust::exp( relative_age * 2.0f ),
 					} );
@@ -351,7 +540,12 @@ fn ConstructWorldDrawingInfo(
 			} );
 
 		game_state.muzzle_flashes.Iterate(
-			lambda[&]( MuzzleFlash& muzzle_flash )
+			lambda[
+				&game_state,
+				&drawing_info,
+				&camera_position_without_depth_shift,
+				get_entity_position_and_azimuth, // Capture a copy, since it has many references inside.
+				time_steps_fraction ]( MuzzleFlash& muzzle_flash )
 			{
 				var Vec3f mut absolute_position= Vec3f::MakeZero();
 				var Vec3f mut custom_axis= Vec3f::MakeZero();
@@ -379,11 +573,11 @@ fn ConstructWorldDrawingInfo(
 				{
 					if( size_type( muzzle_flash.owner_entity_index ) < game_state.entities.size() )
 					{
-						if_var( &entity : game_state.entities[ size_type( muzzle_flash.owner_entity_index ) ] )
+						if_var( position_azimuth : get_entity_position_and_azimuth( size_type( muzzle_flash.owner_entity_index ) ) )
 						{
-							var Mat4f rotation_matrix= Mat4f::MakeRotationZ( entity.azimuth );
+							var Mat4f rotation_matrix= Mat4f::MakeRotationZ( position_azimuth[1] );
 
-							absolute_position= entity.position + muzzle_flash.relative_position * rotation_matrix;
+							absolute_position= position_azimuth[0] + muzzle_flash.relative_position * rotation_matrix;
 							custom_axis= Vec3f( 0.0f, 1.0f, 0.0f ) * rotation_matrix;
 						}
 						else
@@ -419,9 +613,36 @@ fn ConstructWorldDrawingInfo(
 				}
 			} );
 
-		game_state.spark_particles.Iterate(
-			lambda[&]( SparkParticle& spark_particle )
+		game_state.spark_particles.IterateWithIndexAndGenerationIndex(
+			lambda[&]( SparkParticle& spark_particle, u32 index, u32 generation_index  )
 			{
+				var Vec3f mut spark_particle_position= spark_particle.position;
+
+				if_var( &previous_game_state : previous_game_state_opt )
+				{
+					if( !previous_game_state.spark_particles.GetByIndex( index, generation_index ).empty() )
+					{
+						if_var( &current_predicted_game_state : current_predicted_game_state_opt )
+						{
+							if_var( &current_predicted_spark_particle :
+									current_predicted_game_state.spark_particles.GetByIndex( index, generation_index ) )
+							{
+								spark_particle_position= current_predicted_spark_particle.position;
+							}
+						}
+					}
+				}
+
+				if_var( &next_predicted_game_state : next_predicted_game_state_opt )
+				{
+					if_var( &predicted_spark_particle :
+							next_predicted_game_state.spark_particles.GetByIndex( index, generation_index ) )
+					{
+						spark_particle_position=
+							MixPosition( spark_particle_position, predicted_spark_particle.position, time_steps_fraction );
+					}
+				}
+
 				var f32 relative_age=
 					( f32( spark_particle.age_steps ) + time_steps_fraction ) / f32( c_spark_particle_max_age );
 
@@ -433,7 +654,7 @@ fn ConstructWorldDrawingInfo(
 					{
 						.alignment= WorldDrawingInfo::Billboard::Alignment::ToCamera,
 						.billboard_index( BillboardConstants::c_id_spark ),
-						.position= spark_particle.position,
+						.position= spark_particle_position,
 						.brightness= brightness,
 					} );
 			} );
@@ -441,6 +662,8 @@ fn ConstructWorldDrawingInfo(
 		game_state.explosion_particles.Iterate(
 			lambda[&]( ExplosionParticle& explosion_particle )
 			{
+				// No position extrapolation is needed for explosion particles - they don't move.
+
 				auto [ first_id, count ] =
 					( explosion_particle.large
 						? ust::make_array( BillboardConstants::c_id_first_explosion4, BillboardConstants::c_num_explosions4 )
@@ -459,9 +682,36 @@ fn ConstructWorldDrawingInfo(
 				}
 			} );
 
-		game_state.flame_particles.Iterate(
-			lambda[&]( FlameParticle& flame_particle )
+		game_state.flame_particles.IterateWithIndexAndGenerationIndex(
+			lambda[&]( FlameParticle& flame_particle, u32 index, u32 generation_index )
 			{
+				var Vec3f mut flame_particle_position= flame_particle.position;
+
+				if_var( &previous_game_state : previous_game_state_opt )
+				{
+					if( !previous_game_state.flame_particles.GetByIndex( index, generation_index ).empty() )
+					{
+						if_var( &current_predicted_game_state : current_predicted_game_state_opt )
+						{
+							if_var( &current_predicted_flame_particle :
+									current_predicted_game_state.flame_particles.GetByIndex( index, generation_index ) )
+							{
+								flame_particle_position= current_predicted_flame_particle.position;
+							}
+						}
+					}
+				}
+
+				if_var( &next_predicted_game_state : next_predicted_game_state_opt )
+				{
+					if_var( &predicted_flame_particle :
+							next_predicted_game_state.flame_particles.GetByIndex( index, generation_index ) )
+					{
+						flame_particle_position=
+							MixPosition( flame_particle_position, predicted_flame_particle.position, time_steps_fraction );
+					}
+				}
+
 				var u32 phase=
 					flame_particle.age_steps / c_animated_billboards_frequency_divisor % BillboardConstants::c_num_flames;
 
@@ -476,7 +726,7 @@ fn ConstructWorldDrawingInfo(
 						.alignment= WorldDrawingInfo::Billboard::Alignment::ZAxis,
 						.billboard_index( BillboardConstants::c_id_first_flame + phase ),
 						// Slighly move flame billboards up, so that flame center is at billboard bottom.
-						.position( flame_particle.position.xy(), flame_particle.position.z - 24.0f * fade_phase ),
+						.position( flame_particle_position.xy(), flame_particle_position.z - 24.0f * fade_phase ),
 						.brightness= fade_phase,
 						.scale= fade_phase,
 					} );
@@ -486,22 +736,49 @@ fn ConstructWorldDrawingInfo(
 				var f32 constexpr flame_light_power= 1.5f;
 
 				// Calculate phase based on position, so that different flames have different phase.
-				var f32 modulation_phase= time_steps + flame_particle.position.Dot( Vec3f( 1.0f, 1.3f, 0.87f ) );
+				var f32 modulation_phase= total_game_time_steps + flame_particle_position.Dot( Vec3f( 1.0f, 1.3f, 0.87f ) );
 
 				var f32 light_modulation= CalculatePsedudoRandomFireLightSourceModulation( modulation_phase );
 
 				drawing_info.dynamic_light_sources.push_back(
 					WorldDrawingInfo::DynamicLightSource
 					{
-						.position= flame_particle.position,
+						.position= flame_particle_position,
 						.power= flame_light_power * c_light_power_scale * fade_phase * light_modulation,
 						.color_index= c_flame_color_index,
 					} );
 			} );
 
-		game_state.smoke_particles.Iterate(
-			lambda[&]( SmokeParticle& smoke_particle )
+		game_state.smoke_particles.IterateWithIndexAndGenerationIndex(
+			lambda[&]( SmokeParticle& smoke_particle, u32 index, u32 generation_index )
 			{
+				var Vec3f mut smoke_particle_position= smoke_particle.position;
+
+				if_var( &previous_game_state : previous_game_state_opt )
+				{
+					if( !previous_game_state.smoke_particles.GetByIndex( index, generation_index ).empty() )
+					{
+						if_var( &current_predicted_game_state : current_predicted_game_state_opt )
+						{
+							if_var( &current_predicted_smoke_particle :
+									current_predicted_game_state.smoke_particles.GetByIndex( index, generation_index ) )
+							{
+								smoke_particle_position= current_predicted_smoke_particle.position;
+							}
+						}
+					}
+				}
+
+				if_var( &next_predicted_game_state : next_predicted_game_state_opt )
+				{
+					if_var( &predicted_smoke_particle :
+							next_predicted_game_state.smoke_particles.GetByIndex( index, generation_index ) )
+					{
+						smoke_particle_position=
+							MixPosition( smoke_particle_position, predicted_smoke_particle.position, time_steps_fraction );
+					}
+				}
+
 				var f32 relative_age=
 					( f32( smoke_particle.age_steps ) + time_steps_fraction ) / f32( c_smoke_particle_max_age );
 
@@ -513,15 +790,42 @@ fn ConstructWorldDrawingInfo(
 							( smoke_particle.smoke_model == 1u
 								? BillboardConstants::c_id_smoke_black
 								: BillboardConstants::c_id_smoke_white ) ),
-						.position= smoke_particle.position,
+						.position= smoke_particle_position,
 						.scale= ust::exp( relative_age ),
 						.brightness= 1.0f - relative_age,
 					} );
 			} );
 
-		game_state.smoke_trail_particles.Iterate(
-			lambda[&]( SmokeTrailParticle& smoke_trail_particle )
+		game_state.smoke_trail_particles.IterateWithIndexAndGenerationIndex(
+			lambda[&]( SmokeTrailParticle& smoke_trail_particle, u32 index, u32 generation_index )
 			{
+				var Vec3f mut smoke_trail_particle_position= smoke_trail_particle.position;
+
+				if_var( &previous_game_state : previous_game_state_opt )
+				{
+					if( !previous_game_state.smoke_trail_particles.GetByIndex( index, generation_index ).empty() )
+					{
+						if_var( &current_predicted_game_state : current_predicted_game_state_opt )
+						{
+							if_var( &current_predicted_smoke_trail_particle :
+									current_predicted_game_state.smoke_trail_particles.GetByIndex( index, generation_index ) )
+							{
+								smoke_trail_particle_position= current_predicted_smoke_trail_particle.position;
+							}
+						}
+					}
+				}
+
+				if_var( &next_predicted_game_state : next_predicted_game_state_opt )
+				{
+					if_var( &predicted_smoke_trail_particle :
+							next_predicted_game_state.smoke_trail_particles.GetByIndex( index, generation_index ) )
+					{
+						smoke_trail_particle_position=
+							MixPosition( smoke_trail_particle_position, predicted_smoke_trail_particle.position, time_steps_fraction );
+					}
+				}
+
 				switch( smoke_trail_particle.kind )
 				{
 					EntitiesDescription::Tool::c_smoke_trail_kind_rocket ->
@@ -539,7 +843,7 @@ fn ConstructWorldDrawingInfo(
 							{
 								.alignment= WorldDrawingInfo::Billboard::Alignment::ToCamera,
 								.billboard_index( billboard ),
-								.position= smoke_trail_particle.position,
+								.position= smoke_trail_particle_position,
 								.scale= ust::exp( relative_age ),
 								.brightness= 1.0f - relative_age,
 							} );
@@ -554,7 +858,7 @@ fn ConstructWorldDrawingInfo(
 								{
 									.alignment= WorldDrawingInfo::Billboard::Alignment::ToCamera,
 									.billboard_index( BillboardConstants::c_id_first_explosion5 + phase ),
-									.position= smoke_trail_particle.position,
+									.position= smoke_trail_particle_position,
 								} );
 						}
 					},
@@ -569,7 +873,7 @@ fn ConstructWorldDrawingInfo(
 							{
 								.alignment= WorldDrawingInfo::Billboard::Alignment::ToCamera,
 								.billboard_index( BillboardConstants::c_id_mind_control_trail ),
-								.position= smoke_trail_particle.position,
+								.position= smoke_trail_particle_position,
 								 // Mind control smoke trail particles are pretty huge.
 								.scale= 2.0f * ust::exp( relative_age ),
 								.brightness= 1.0f - relative_age,
@@ -581,9 +885,36 @@ fn ConstructWorldDrawingInfo(
 
 		if( settings.g_blood_enabled )
 		{
-			game_state.blood_particles.Iterate(
-				lambda[&]( BloodParticle& blood_particle )
+			game_state.blood_particles.IterateWithIndexAndGenerationIndex(
+				lambda[&]( BloodParticle& blood_particle, u32 index, u32 generation_index )
 				{
+					var Vec3f mut blood_particle_position= blood_particle.position;
+
+					if_var( &previous_game_state : previous_game_state_opt )
+					{
+						if( !previous_game_state.blood_particles.GetByIndex( index, generation_index ).empty() )
+						{
+							if_var( &current_predicted_game_state : current_predicted_game_state_opt )
+							{
+								if_var( &current_predicted_blood_particle :
+										current_predicted_game_state.blood_particles.GetByIndex( index, generation_index ) )
+								{
+									blood_particle_position= current_predicted_blood_particle.position;
+								}
+							}
+						}
+					}
+
+					if_var( &next_predicted_game_state : next_predicted_game_state_opt )
+					{
+						if_var( &predicted_blood_particle :
+								next_predicted_game_state.blood_particles.GetByIndex( index, generation_index ) )
+						{
+							blood_particle_position=
+								MixPosition( blood_particle_position, predicted_blood_particle.position, time_steps_fraction );
+						}
+					}
+
 					var u32 phase= blood_particle.age_steps / c_animated_billboards_frequency_divisor;
 
 					drawing_info.billboards.push_back(
@@ -593,7 +924,7 @@ fn ConstructWorldDrawingInfo(
 							.billboard_index(
 								BillboardConstants::c_id_first_blood_particle +
 								phase % BillboardConstants::c_num_blood_particles ),
-							.position= blood_particle.position,
+							.position= blood_particle_position,
 							.scale= 8.0f,
 							// Blood particles are alpha-tested unlike many other particles which use additive blending.
 							// Such particles require lighting, but for now it's not implemented.
@@ -604,7 +935,12 @@ fn ConstructWorldDrawingInfo(
 		}
 
 		game_state.muzzle_lights.Iterate(
-			lambda[&]( MuzzleLight& muzzle_light )
+			lambda[
+				&game_state,
+				&drawing_info,
+				&camera_position_without_depth_shift,
+				get_entity_position_and_azimuth, // Capture a copy, since it has many references inside.
+				time_steps_fraction ]( MuzzleLight& muzzle_light )
 			{
 				var Vec3f mut absolute_position= Vec3f::MakeZero();
 
@@ -622,10 +958,10 @@ fn ConstructWorldDrawingInfo(
 				{
 					if( size_type( muzzle_light.owner_entity_index ) < game_state.entities.size() )
 					{
-						if_var( &entity : game_state.entities[ size_type( muzzle_light.owner_entity_index ) ] )
+						if_var( position_azimuth : get_entity_position_and_azimuth( size_type( muzzle_light.owner_entity_index ) ) )
 						{
-							var Mat4f rotation_matrix= Mat4f::MakeRotationZ( entity.azimuth );
-							absolute_position= entity.position + muzzle_light.relative_position * rotation_matrix;
+							var Mat4f rotation_matrix= Mat4f::MakeRotationZ( position_azimuth[1] );
+							absolute_position= position_azimuth[0] + muzzle_light.relative_position * rotation_matrix;
 						}
 						else
 						{
@@ -653,6 +989,8 @@ fn ConstructWorldDrawingInfo(
 		game_state.projectile_hit_lights.Iterate(
 			lambda[&]( ProjectileHitLight& projectile_hit_light )
 			{
+				// No position extrapolation is needed for projectile hit lights - they don't move.
+
 				var f32 relative_age=
 					( f32( projectile_hit_light.age_steps ) + time_steps_fraction ) /
 					f32( c_projectile_hit_light_max_age );
@@ -695,7 +1033,7 @@ fn ConstructWorldDrawingInfo(
 				{
 					.position=
 						( size_type( bullet_hole.dynamic_cluster_object_index ) < game_state.dynamic_cluster_colliders.size()
-							? bullet_hole.position + game_state.dynamic_cluster_colliders[ size_type( bullet_hole.dynamic_cluster_object_index ) ].bbox.GetCenter()
+							? bullet_hole.position + get_dynamic_cluster_center( size_type( bullet_hole.dynamic_cluster_object_index ) )
 							: bullet_hole.position ),
 					.half_size= bullet_hole_half_size,
 					.azimuth= bullet_hole.azimuth,
@@ -754,7 +1092,7 @@ fn ConstructWorldDrawingInfo(
 					{
 						.position=
 							( size_type( blood_stain.dynamic_cluster_object_index ) < game_state.dynamic_cluster_colliders.size()
-								? blood_stain.position + game_state.dynamic_cluster_colliders[ size_type( blood_stain.dynamic_cluster_object_index ) ].bbox.GetCenter()
+								? blood_stain.position + get_dynamic_cluster_center( size_type( blood_stain.dynamic_cluster_object_index ) )
 								: blood_stain.position ),
 						.half_size= blood_stain_half_size,
 						.azimuth= blood_stain.azimuth,
@@ -821,13 +1159,13 @@ fn ConstructWorldDrawingInfo(
 
 		if( game_state.player.tools_state.flashlight_is_active )
 		{
-			// Use some hardcoded flashlight position relative to the player.
-			var Vec3f offset= Vec3f( -10.0f, 20.0f, -40.0f ) * Mat4f::MakeRotationZ( camera_controller.GetAzimuth() );
+			// Use some hardcoded flashlight position relative to the camera position.
+			var Vec3f offset= Vec3f( -10.0f, 20.0f, -13.0f ) * Mat4f::MakeRotationZ( camera_controller.GetAzimuth() );
 
 			drawing_info.dynamic_light_sources.push_back(
 				WorldDrawingInfo::DynamicLightSource
 				{
-					.position= game_state.player.position + offset,
+					.position= camera_position_without_depth_shift + offset,
 					.color_index= c_flashlight_color_index,
 					.power= c_flashlight_power * c_light_power_scale,
 				} );
@@ -836,20 +1174,17 @@ fn ConstructWorldDrawingInfo(
 		var ZvoxData& zvox_data= map_data.zvox_data.deref();
 		auto clusters= zvox_data.clusters.range();
 
-		foreach( pair : game_state.dynamic_clusters.iter().zip( game_state.dynamic_cluster_colliders.iter() ) )
+		for( auto mut i= 0s; i < game_state.dynamic_clusters.size(); ++i )
 		{
-			var ZvoxCluster& cluster= clusters[ size_type( pair.second.cluster_index ) ];
+			var u32 cluster_index= game_state.dynamic_cluster_colliders[i].cluster_index;
+			var ZvoxCluster& cluster= clusters[ size_type( cluster_index ) ];
 
 			var Vec3f translation=
-				pair.second.bbox.GetCenter() -
+				get_dynamic_cluster_center(i) -
 				Vec3f( f32( cluster.c.center[0] ), f32( cluster.c.center[1] ), f32( cluster.c.center[2] ) );
 
 			drawing_info.dynamic_cluster_objects.push_back(
-				WorldDrawingInfo::DynamicClusterObject
-				{
-					.cluster_index= pair.second.cluster_index,
-					.translation= translation,
-				} );
+				WorldDrawingInfo::DynamicClusterObject{ .cluster_index= cluster_index, .translation= translation } );
 		}
 
 		// Create billboards for map light sources.
@@ -906,7 +1241,7 @@ fn ConstructWorldDrawingInfo(
 
 					var u32 billboard_index=
 						first_id +
-						( u32( time_steps * ( 16.0f / c_steps_per_second ) ) + pseudo_random_phase ) % count;
+						( u32( total_game_time_steps * ( 16.0f / c_steps_per_second ) ) + pseudo_random_phase ) % count;
 
 					drawing_info.billboards.push_back(
 						WorldDrawingInfo::Billboard
@@ -1227,8 +1562,11 @@ fn ConstructHudDrawingInfo( EntitiesDescription& entities_description, GameState
 fn ConstructGameEventNotificationsDrawingInfo(
 	CameraController& camera_controller,
 	GameMapData& map_data,
-	GameState& game_state ) : GameEventNotificationsDrawingInfo
+	GameStateExtended& game_state_extended,
+	f32 time_steps_fraction ) : GameEventNotificationsDrawingInfo
 {
+	var GameState& game_state= game_state_extended.current;
+
 	type EN= GameEventNotificationsDrawingInfo::EventNotification;
 
 	var GameEventNotificationsDrawingInfo mut info
@@ -1285,13 +1623,31 @@ fn ConstructGameEventNotificationsDrawingInfo(
 				 ust::cos(azimuth) * elevation_cos,
 				elevation_sin ) * c_note_visible_max_distance;
 
-		var Vec3f ray_start= GetCameraPositionForPlayerWithExtraDepthShift( game_state.player, camera_controller );
+		// Extrapolate/mix camera position used for note volume intersection search.
+
+		var Vec3f mut camera_position=
+			GetCameraPositionForPlayerWithExtraDepthShift( game_state.player, camera_controller );
+
+		if_var( &current_predicted_game_state : game_state_extended.current_predicted )
+		{
+			camera_position=
+				GetCameraPositionForPlayerWithExtraDepthShift( current_predicted_game_state.player, camera_controller );
+		}
+
+		if_var( &next_predicted_game_state : game_state_extended.next_predicted )
+		{
+			camera_position=
+				MixPosition(
+					camera_position,
+					GetCameraPositionForPlayerWithExtraDepthShift( next_predicted_game_state.player, camera_controller ),
+					time_steps_fraction );
+		}
 
 		// Check all note volumes - there is not so many of them.
 		foreach( &note_volume : map_data.note_volumes )
 		{
 			// Find intersection with a box. It gives good enough result.
-			if_var( intersection : FindRayBBoxIntersection( ray_start, direction_vector, note_volume.bbox ) )
+			if_var( intersection : FindRayBBoxIntersection( camera_position, direction_vector, note_volume.bbox ) )
 			{
 				if( intersection.near_point_distance < 1.0f && intersection.far_point_distance > 0.0f )
 				{
@@ -1323,7 +1679,8 @@ fn ConstructGameEventNotificationsDrawingInfo(
 fn ConstructCrosshairDrawingInfo(
 	CameraController& camera_controller,
 	ust::optional_ref_imut</GameMapData/> map_data_opt,
-	ust::optional_ref_imut</GameState/> game_state_opt ) : CrosshairDrawingInfo
+	ust::optional_ref_imut</GameStateExtended/> game_state_opt,
+	f32 time_steps_fraction ) : CrosshairDrawingInfo
 {
 	var CrosshairDrawingInfo mut drawing_info
 	{
@@ -1338,18 +1695,49 @@ fn ConstructCrosshairDrawingInfo(
 	if( !map_data_opt.empty() && !game_state_opt.empty() )
 	{
 		var GameMapData& map_data= map_data_opt.try_deref();
-		var GameState& game_state= game_state_opt.try_deref();
+
+		var GameStateExtended& game_state_extended= game_state_opt.try_deref();
+
+		var GameState& game_state= game_state_extended.current;
 
 		if( game_state.player.energy > 0u ) // Display crosshair only if the player is alive.
 		{
+			var GameState& start_state=
+				( game_state_extended.current_predicted.empty()
+					? game_state
+					: game_state_extended.current_predicted.try_deref() );
+
 			drawing_info.camera_position=
-				GetCameraPositionForPlayerWithExtraDepthShift( game_state.player, camera_controller );
+				GetCameraPositionForPlayerWithExtraDepthShift( start_state.player, camera_controller );
 
 			auto [ position, kind ]=
-				GetCrosshairPositionAndKind( map_data, game_state, drawing_info.camera_azimuth, drawing_info.camera_elevation );
+				GetCrosshairPositionAndKind(
+					map_data, start_state, drawing_info.camera_azimuth, drawing_info.camera_elevation );
 
 			drawing_info.hit_point= position;
 			drawing_info.hit_point_kind= kind;
+
+			// Perform extrapolation/mixing of camera position and hit position.
+
+			if_var( &next_predicted_game_state : game_state_extended.next_predicted )
+			{
+				drawing_info.camera_position=
+					MixPosition(
+						drawing_info.camera_position,
+						GetCameraPositionForPlayerWithExtraDepthShift(
+							next_predicted_game_state.player, camera_controller ),
+						time_steps_fraction );
+
+				drawing_info.hit_point=
+					MixPosition(
+						drawing_info.hit_point,
+						GetCrosshairPositionAndKind(
+							map_data,
+							next_predicted_game_state,
+							drawing_info.camera_azimuth,
+							drawing_info.camera_elevation )[0],
+						time_steps_fraction );
+			}
 		}
 	}
 
@@ -1378,6 +1766,33 @@ fn GetCameraDepthShift( CameraController& camera_controller ) : Vec3f
 fn GetCameraPositionForPlayerWithExtraDepthShift( PlayerState& player_state, CameraController& camera_controller ) : Vec3f
 {
 	return GetCameraPositionForPlayer( player_state ) + GetCameraDepthShift( camera_controller );
+}
+
+fn MixPosition( Vec3f& a, Vec3f& b, f32 mix_factor ) : Vec3f
+{
+	return MixVector( a, b, mix_factor );
+}
+
+fn MixVelocity( Vec3f& a, Vec3f& b, f32 mix_factor ) : Vec3f
+{
+	return MixVector( a, b, mix_factor );
+}
+
+fn MixVector( Vec3f& a, Vec3f& b, f32 mix_factor ) : Vec3f
+{
+	return a * ( 1.0f - mix_factor ) + b * mix_factor;
+}
+
+fn MixAngle( f32 a, f32 b, f32 mix_factor ) : f32
+{
+	var f32 mut angle_delta= ( ( b - a ) % c_tau + c_tau ) % c_tau;
+
+	if( angle_delta >= c_tau * 0.5f )
+	{
+		angle_delta-= c_tau;
+	}
+
+	return a + angle_delta * mix_factor;
 }
 
 fn CalculatePsedudoRandomFireLightSourceModulation( f32 modulation_phase ) : f32

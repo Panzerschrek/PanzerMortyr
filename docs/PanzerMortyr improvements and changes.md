@@ -16,6 +16,7 @@ Improvements:
 * Models are always drawn in full quality.
 * Fog has higher quality - it's calculated per-pixel, not per-vertex. Only for semitransparent polygons it's calculated per-vertex (as in the original game).
 * Dynamic light is calculated per-pixel (for world geometry).
+* Camera position and positions and angles of game objects are calculated with sub-step precision and thus movements and rotations are smooth on high framerates (above 30fps).
 * Decals aren't clipped by map quad borders where such clipping isn't necessary. They can be applied to multiple adjacent map quads.
 
 Fixed bugs:
