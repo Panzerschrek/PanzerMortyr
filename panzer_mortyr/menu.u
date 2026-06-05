@@ -54,10 +54,10 @@ fn nodiscard Menu::ProcessKeyPress( mut this, SDL_Keysym& key_sym, AudioProcesso
 				Page::LoadGame -> { current_page_= Page::MainMenu; },
 				Page::SaveGame ->
 				{
-					if( !load_save_menu_state_.input_slot_name.empty() )
+					if( !load_save_menu_state_.input_slot_comment.empty() )
 					{
 						// Discard edited changes.
-						load_save_menu_state_.input_slot_name.reset();
+						load_save_menu_state_.input_slot_comment.reset();
 					}
 					else
 					{
@@ -120,23 +120,24 @@ fn nodiscard Menu::ProcessKeyPress( mut this, SDL_Keysym& key_sym, AudioProcesso
 				{
 					audio_processor.PlayMenuSound();
 
-					if( load_save_menu_state_.input_slot_name.empty() )
+					if( load_save_menu_state_.input_slot_comment.empty() )
 					{
 						// Start editing.
-						load_save_menu_state_.input_slot_name=
-							load_save_menu_state_.slot_names[ load_save_menu_state_.current_row ].deref_or( ust::string8() );
+						load_save_menu_state_.input_slot_comment=
+							load_save_menu_state_.slot_comments[ load_save_menu_state_.current_row ].deref_or( ust::make_zeroed</SaveComment/>() );
 					}
 					else
 					{
 						// End editing and update slot name.
-						load_save_menu_state_.slot_names[ load_save_menu_state_.current_row ]=
-							load_save_menu_state_.input_slot_name;
 
-						load_save_menu_state_.input_slot_name.reset();
+						var SaveComment save_comment= load_save_menu_state_.input_slot_comment.try_deref();
+						load_save_menu_state_.input_slot_comment.reset();
+
+						load_save_menu_state_.slot_comments[ load_save_menu_state_.current_row ]= save_comment;
 
 						current_page_= Page::None;
 
-						return CommandSaveGame{ .slot_index= load_save_menu_state_.current_row };
+						return CommandSaveGame{ .slot_index= load_save_menu_state_.current_row, .save_comment= save_comment };
 					}
 
 				},
@@ -204,7 +205,7 @@ fn nodiscard Menu::ProcessKeyPress( mut this, SDL_Keysym& key_sym, AudioProcesso
 				},
 				Page::LoadGame, Page::SaveGame ->
 				{
-					if( load_save_menu_state_.input_slot_name.empty() )
+					if( load_save_menu_state_.input_slot_comment.empty() )
 					{
 						DecrementRow( load_save_menu_state_.current_row, c_num_load_save_slots );
 						audio_processor.PlayMenuSound();
@@ -254,7 +255,7 @@ fn nodiscard Menu::ProcessKeyPress( mut this, SDL_Keysym& key_sym, AudioProcesso
 				},
 				Page::LoadGame, Page::SaveGame ->
 				{
-					if( load_save_menu_state_.input_slot_name.empty() )
+					if( load_save_menu_state_.input_slot_comment.empty() )
 					{
 						IncrementRow( load_save_menu_state_.current_row, c_num_load_save_slots );
 						audio_processor.PlayMenuSound();
@@ -407,11 +408,17 @@ fn nodiscard Menu::ProcessKeyPress( mut this, SDL_Keysym& key_sym, AudioProcesso
 		{
 			if( current_page_ == Page::SaveGame )
 			{
-				if_var( &mut slot_name : load_save_menu_state_.input_slot_name )
+				if_var( &mut comment : load_save_menu_state_.input_slot_comment )
 				{
-					if( !slot_name.empty() )
+					var size_type mut comment_size= 0s;
+					while( comment_size < typeinfo</ SaveComment />.element_count && comment[ comment_size ] != '\0' )
 					{
-						slot_name.drop_back();
+						++comment_size;
+					}
+
+					if( comment_size > 0s )
+					{
+						comment[ comment_size - 1s ]= '\0';
 					}
 				}
 			}
@@ -442,8 +449,14 @@ fn Menu::ProcessTextInput( mut this, SDL_TextInputEvent& text_input_event )
 {
 	if( current_page_ == Page::SaveGame)
 	{
-		if_var( &mut slot_name : load_save_menu_state_.input_slot_name )
+		if_var( &mut comment : load_save_menu_state_.input_slot_comment )
 		{
+			var size_type mut comment_size= 0s;
+			while( comment_size < typeinfo</ SaveComment />.element_count && comment[ comment_size ] != '\0' )
+			{
+				++comment_size;
+			}
+
 			foreach( c : text_input_event.text )
 			{
 				if( c == '\0' )
@@ -451,9 +464,7 @@ fn Menu::ProcessTextInput( mut this, SDL_TextInputEvent& text_input_event )
 					break;
 				}
 
-				// Limit name length, since we have only limited space to show it.
-				var size_type constexpr c_max_length= 16s;
-				if( slot_name.size() >= c_max_length )
+				if( comment_size >= typeinfo</ SaveComment />.element_count )
 				{
 					break;
 				}
@@ -462,11 +473,13 @@ fn Menu::ProcessTextInput( mut this, SDL_TextInputEvent& text_input_event )
 				// Convert uppercase letters to lowercase.
 				if( ( c >= 'a' & c <= 'z' ) | ( c >= '0' && c <= '9' ) | c == ' ' )
 				{
-					slot_name.push_back( c );
+					comment[ comment_size ]= c;
+					++comment_size;
 				}
 				else if( c >= 'A' && c <= 'Z' )
 				{
-					slot_name.push_back( char8( u32(c) - u32( 'A' ) + u32( 'a' ) ) );
+					comment[ comment_size ]= char8( u32(c) - u32( 'A' ) + u32( 'a' ) );
+					++comment_size;
 				}
 			}
 		}
@@ -598,20 +611,29 @@ fn Menu::Draw( mut this, ImageDrawer &mut image_drawer, TextDrawer &mut text_dra
 
 			for( auto mut i= 0u; i < c_num_load_save_slots; ++i )
 			{
-				var bool is_active_slot= i == load_save_menu_state_.current_row && !load_save_menu_state_.input_slot_name.empty();
+				var bool is_active_slot= i == load_save_menu_state_.current_row && !load_save_menu_state_.input_slot_comment.empty();
 
-				auto& slot_name_opt= load_save_menu_state_.slot_names[i];
-				var ust::string_view8 slot_name=
+				auto& slot_name_opt= load_save_menu_state_.slot_comments[i];
+				var SaveComment save_comment=
 					( is_active_slot
-						? cast_imut( load_save_menu_state_.input_slot_name.try_deref() ).range()
+						? cast_imut( load_save_menu_state_.input_slot_comment.try_deref() )
 						: ( slot_name_opt.empty()
-							? ust::string_view8( "empty slot..." )
-							: slot_name_opt.try_deref().range() ) );
+							? "empty slot...\0\0\0"
+							: slot_name_opt.try_deref() ) );
+
+				var size_type mut save_comment_size= 0s;
+				while( save_comment_size < typeinfo</ SaveComment />.element_count && save_comment[ save_comment_size ] != '\0' )
+				{
+					++save_comment_size;
+				}
+
+				var ust::string_view8 safe_comment_truncated=
+					ust::string_view8( save_comment ).subrange_end( save_comment_size );
 
 				var ust::string_view8 cursor=
 					( ( is_active_slot && ( u32( time_s_ * 4.0f ) & 1u ) != 0u ) ? "_" : " " );
 
-				scoped_array char8 slot_name_with_cursor[ slot_name.size() + 1s ]( slot_name.iter().chain( cursor.iter() ) );
+				scoped_array char8 slot_name_with_cursor[ safe_comment_truncated.size() + 1s ]( safe_comment_truncated.iter().chain( cursor.iter() ) );
 
 				text_drawer.AddText(
 					offset_x + 208 * i32(scale),

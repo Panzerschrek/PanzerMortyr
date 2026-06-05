@@ -11,6 +11,7 @@ namespace PM
 fn nodiscard SaveStoredGameState(
 	ConsoleOutPtr& console_out,
 	ust::string_view8 save_name,
+	SaveComment& save_comment,
 	u32 map_index,
 	GameState& game_state,
 	CameraController::State& camera_controller_state,
@@ -27,6 +28,9 @@ fn nodiscard SaveStoredGameState(
 				.signature= SaveFileHeader::c_expected_signature,
 				.scheme_hash= c_serialization_scheme_hash
 			} ).to_byte8_range() );
+
+	// Serialize summary after header - to read it from save/load menus.
+	Serialize( serializer, SaveSummary{ .comment= save_comment } );
 
 	// Serialize map index to know which map to load.
 	Serialize( serializer, map_index );
@@ -106,6 +110,14 @@ fn LoadStoredGameState( ConsoleOutPtr& console_out, ust::string_view8 save_name 
 				return ust::null_optional;
 			}
 
+			var ust::optional</SaveSummary/> mut save_summary_opt= Deserialize</SaveSummary/>( deserializer );
+
+			if( save_summary_opt.empty() )
+			{
+				ConsoleOutAddTextLine( console_out, "Failed to deserialize save summary!" );
+				return ust::null_optional;
+			}
+
 			var ust::optional</u32/> mut map_index_opt= Deserialize</u32/>( deserializer );
 
 			if( map_index_opt.empty() )
@@ -157,6 +169,7 @@ fn LoadStoredGameState( ConsoleOutPtr& console_out, ust::string_view8 save_name 
 
 			return StoredGameState
 			{
+				.save_summary= save_summary_opt.try_take(),
 				.map_index= map_index_opt.try_take(),
 				.game_state= game_state_opt.try_take(),
 				.camera_controller_state= camera_controller_state_opt.try_take(),
@@ -260,6 +273,7 @@ type SerializationSchemeHashType= u32;
 
 var SerializationSchemeHashType constexpr c_serialization_scheme_hash=
 	CalculateNonSecureHashSlow(
+		BuildSerializationSchemeFull</SaveSummary/>() +
 		BuildSerializationSchemeFull</GameState/>() +
 		BuildSerializationSchemeFull</CameraController::State/>() +
 		BuildSerializationSchemeFull</AudioProcessorState/>() +
