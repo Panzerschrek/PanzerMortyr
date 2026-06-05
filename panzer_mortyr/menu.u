@@ -14,7 +14,7 @@ fn Menu::constructor( SettingsPtr mut settings, [ u32, 2 ] viewport_size )
 		time_s_= 0.0f,
 		main_menu_current_row_= 0u,
 		new_game_current_row_= 0u,
-		load_save_menu_state_{ .current_row= 0u, .input_is_active= false },
+		load_save_menu_state_{ .current_row= 0u },
 		options_current_row_= 0u,
 		controls_current_row_= 0u,
 		sound_settings_current_row_= 0u,
@@ -54,9 +54,10 @@ fn nodiscard Menu::ProcessKeyPress( mut this, SDL_Keysym& key_sym, AudioProcesso
 				Page::LoadGame -> { current_page_= Page::MainMenu; },
 				Page::SaveGame ->
 				{
-					if( load_save_menu_state_.input_is_active )
+					if( !load_save_menu_state_.input_slot_name.empty() )
 					{
-						load_save_menu_state_.input_is_active= false;
+						// Discard edited changes.
+						load_save_menu_state_.input_slot_name.reset();
 					}
 					else
 					{
@@ -117,21 +118,21 @@ fn nodiscard Menu::ProcessKeyPress( mut this, SDL_Keysym& key_sym, AudioProcesso
 				},
 				Page::SaveGame ->
 				{
-					if( load_save_menu_state_.input_is_active )
+					if( load_save_menu_state_.input_slot_name.empty() )
 					{
-						load_save_menu_state_.input_is_active= false;
-
-						current_page_= Page::None;
+						// Start editing.
+						load_save_menu_state_.input_slot_name=
+							load_save_menu_state_.slot_names[ load_save_menu_state_.current_row ].deref_or( ust::string8() );
 					}
 					else
 					{
-						load_save_menu_state_.input_is_active= true;
+						// End editing and update slot name.
+						load_save_menu_state_.slot_names[ load_save_menu_state_.current_row ]=
+							load_save_menu_state_.input_slot_name;
 
-						auto &mut slot_name= load_save_menu_state_.slot_names[ load_save_menu_state_.current_row ];
-						if( slot_name.empty() )
-						{
-							slot_name= ust::string8();
-						}
+						load_save_menu_state_.input_slot_name.reset();
+
+						current_page_= Page::None;
 					}
 
 					audio_processor.PlayMenuSound();
@@ -200,7 +201,7 @@ fn nodiscard Menu::ProcessKeyPress( mut this, SDL_Keysym& key_sym, AudioProcesso
 				},
 				Page::LoadGame, Page::SaveGame ->
 				{
-					if( !load_save_menu_state_.input_is_active )
+					if( load_save_menu_state_.input_slot_name.empty() )
 					{
 						DecrementRow( load_save_menu_state_.current_row, c_num_load_save_slots );
 						audio_processor.PlayMenuSound();
@@ -250,7 +251,7 @@ fn nodiscard Menu::ProcessKeyPress( mut this, SDL_Keysym& key_sym, AudioProcesso
 				},
 				Page::LoadGame, Page::SaveGame ->
 				{
-					if( !load_save_menu_state_.input_is_active )
+					if( load_save_menu_state_.input_slot_name.empty() )
 					{
 						IncrementRow( load_save_menu_state_.current_row, c_num_load_save_slots );
 						audio_processor.PlayMenuSound();
@@ -401,9 +402,9 @@ fn nodiscard Menu::ProcessKeyPress( mut this, SDL_Keysym& key_sym, AudioProcesso
 		},
 		SDL_SCANCODE_BACKSPACE ->
 		{
-			if( current_page_ == Page::SaveGame & load_save_menu_state_.input_is_active )
+			if( current_page_ == Page::SaveGame )
 			{
-				if_var( &mut slot_name : load_save_menu_state_.slot_names[ load_save_menu_state_.current_row ] )
+				if_var( &mut slot_name : load_save_menu_state_.input_slot_name )
 				{
 					if( !slot_name.empty() )
 					{
@@ -436,39 +437,34 @@ fn nodiscard Menu::ProcessKeyPress( mut this, SDL_Keysym& key_sym, AudioProcesso
 
 fn Menu::ProcessTextInput( mut this, SDL_TextInputEvent& text_input_event )
 {
-	if( current_page_ == Page::SaveGame && load_save_menu_state_.input_is_active )
+	if( current_page_ == Page::SaveGame)
 	{
-		auto &mut slot_name_opt= load_save_menu_state_.slot_names[ load_save_menu_state_.current_row ];
-		if( slot_name_opt.empty() )
+		if_var( &mut slot_name : load_save_menu_state_.input_slot_name )
 		{
-			slot_name_opt= ust::string8();
-		}
-
-		var ust::string8 &mut slot_name= slot_name_opt.try_deref();
-
-		foreach( c : text_input_event.text )
-		{
-			if( c == '\0' )
+			foreach( c : text_input_event.text )
 			{
-				break;
-			}
+				if( c == '\0' )
+				{
+					break;
+				}
 
-			// Limit name length, since we have only limited space to show it.
-			var size_type constexpr c_max_length= 16s;
-			if( slot_name.size() >= c_max_length )
-			{
-				break;
-			}
+				// Limit name length, since we have only limited space to show it.
+				var size_type constexpr c_max_length= 16s;
+				if( slot_name.size() >= c_max_length )
+				{
+					break;
+				}
 
-			// Allow only latin letters, whitespaces, digits for slot names.
-			// Convert uppercase letters to lowercase.
-			if( ( c >= 'a' & c <= 'z' ) | ( c >= '0' && c <= '9' ) | c == ' ' )
-			{
-				slot_name.push_back( c );
-			}
-			else if( c >= 'A' && c <= 'Z' )
-			{
-				slot_name.push_back( char8( u32(c) - u32( 'A' ) + u32( 'a' ) ) );
+				// Allow only latin letters, whitespaces, digits for slot names.
+				// Convert uppercase letters to lowercase.
+				if( ( c >= 'a' & c <= 'z' ) | ( c >= '0' && c <= '9' ) | c == ' ' )
+				{
+					slot_name.push_back( c );
+				}
+				else if( c >= 'A' && c <= 'Z' )
+				{
+					slot_name.push_back( char8( u32(c) - u32( 'A' ) + u32( 'a' ) ) );
+				}
 			}
 		}
 	}
@@ -599,11 +595,15 @@ fn Menu::Draw( mut this, ImageDrawer &mut image_drawer, TextDrawer &mut text_dra
 
 			for( auto mut i= 0u; i < c_num_load_save_slots; ++i )
 			{
+				var bool is_active_slot= i == load_save_menu_state_.current_row && !load_save_menu_state_.input_slot_name.empty();
+
 				auto& slot_name_opt= load_save_menu_state_.slot_names[i];
 				var ust::string_view8 slot_name=
-					( slot_name_opt.empty() ? ust::string_view8( "empty slot..." ) : slot_name_opt.try_deref().range() );
-
-				var bool is_active_slot= i == load_save_menu_state_.current_row & load_save_menu_state_.input_is_active;
+					( is_active_slot
+						? cast_imut( load_save_menu_state_.input_slot_name.try_deref() ).range()
+						: ( slot_name_opt.empty()
+							? ust::string_view8( "empty slot..." )
+							: slot_name_opt.try_deref().range() ) );
 
 				var ust::string_view8 cursor=
 					( ( is_active_slot && ( u32( time_s_ * 4.0f ) & 1u ) != 0u ) ? "_" : " " );
