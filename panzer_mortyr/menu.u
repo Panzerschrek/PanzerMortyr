@@ -129,7 +129,7 @@ fn nodiscard Menu::ProcessKeyPress( mut this, SDL_Keysym& key_sym, AudioProcesso
 				},
 				Page::LoadGame ->
 				{
-					if( !load_save_menu_state_.slot_comments[ load_save_menu_state_.current_row ].empty() )
+					if( !load_save_menu_state_.slots[ load_save_menu_state_.current_row ].empty() )
 					{
 						current_page_= Page::None;
 
@@ -145,17 +145,21 @@ fn nodiscard Menu::ProcessKeyPress( mut this, SDL_Keysym& key_sym, AudioProcesso
 					if( load_save_menu_state_.input_slot_comment.empty() )
 					{
 						// Start editing.
-						load_save_menu_state_.input_slot_comment=
-							load_save_menu_state_.slot_comments[ load_save_menu_state_.current_row ].deref_or( ust::make_zeroed</SaveComment/>() );
+						if_var( &summary : load_save_menu_state_.slots[ load_save_menu_state_.current_row ] )
+						{
+							load_save_menu_state_.input_slot_comment= summary.comment;
+						}
+						else
+						{
+							load_save_menu_state_.input_slot_comment= ust::make_zeroed</SaveComment/>();
+						}
 					}
 					else
 					{
-						// End editing and update slot name.
+						// End editing. Slot name will be updated upon opening save/load pages next time.
 
 						var SaveComment save_comment= load_save_menu_state_.input_slot_comment.try_deref();
 						load_save_menu_state_.input_slot_comment.reset();
-
-						load_save_menu_state_.slot_comments[ load_save_menu_state_.current_row ]= save_comment;
 
 						current_page_= Page::None;
 
@@ -639,13 +643,13 @@ fn Menu::Draw( mut this, ImageDrawer &mut image_drawer, TextDrawer &mut text_dra
 			{
 				var bool is_active_slot= i == load_save_menu_state_.current_row && !load_save_menu_state_.input_slot_comment.empty();
 
-				auto& slot_name_opt= load_save_menu_state_.slot_comments[i];
+				auto& slot_summary_opt= load_save_menu_state_.slots[i];
 				var SaveComment save_comment=
 					( is_active_slot
 						? cast_imut( load_save_menu_state_.input_slot_comment.try_deref() )
-						: ( slot_name_opt.empty()
+						: ( slot_summary_opt.empty()
 							? "empty slot...\0\0\0"
-							: slot_name_opt.try_deref() ) );
+							: slot_summary_opt.try_deref().comment ) );
 
 				var size_type mut save_comment_size= 0s;
 				while( save_comment_size < typeinfo</ SaveComment />.element_count && save_comment[ save_comment_size ] != '\0' )
@@ -666,6 +670,27 @@ fn Menu::Draw( mut this, ImageDrawer &mut image_drawer, TextDrawer &mut text_dra
 					offset_y + 58 * i32(scale) + i32( ( c_num_load_save_slots - 1u - i ) * TextDrawer::c_glyph_height * scale ),
 					slot_name_with_cursor,
 					( is_active_slot ? edited_text_settings : text_settings ) );
+			}
+
+			if_var( &summary : load_save_menu_state_.slots[ load_save_menu_state_.current_row ] )
+			{
+				// TODO - print "select slot for load game..." or "select slot for save game..." or "enter new name...".
+
+				var ust::string_view8 level_str= "level: ";
+				var ust::string_view8 level_name_str= summary.level_name;
+
+				scoped_array char8 level_text[
+					level_str.size() + level_name_str.size() ]( level_str.iter().chain( level_name_str.iter() ) );
+
+				text_drawer.AddText(
+					offset_x + 40 * i32(scale),
+					offset_y + 36 * i32(scale),
+					level_text,
+					text_settings );
+
+				// TODO - display skill.
+
+				// TODO - display kills.
 			}
 		},
 		Page::Options ->
@@ -912,16 +937,7 @@ fn Menu::LoadSaveSummaries( mut this )
 {
 	for( auto mut i= 0u; i < c_num_load_save_slots; ++i )
 	{
-		var ust::optional</SaveComment/> &mut comment= load_save_menu_state_.slot_comments[i];
-
-		if_var( &save_summary : LoadSaveSummary( GetSaveNameForSlot( i ) ) )
-		{
-			comment= save_summary.comment;
-		}
-		else
-		{
-			comment= ust::null_optional;
-		}
+		load_save_menu_state_.slots[i]= LoadSaveSummary( GetSaveNameForSlot( i ) );
 	}
 }
 
