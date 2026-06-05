@@ -185,6 +185,55 @@ fn LoadStoredGameState( ConsoleOutPtr& console_out, ust::string_view8 save_name 
 	}
 }
 
+fn LoadSaveSummary( ust::string_view8 save_name ) : ust::optional</SaveSummary/>
+{
+	var ust::filesystem_path save_file_path= GetSaveFilePath( save_name );
+
+	auto mut file_res= ust::file_readable::open( save_file_path );
+
+	if( file_res.is_error() )
+	{
+		return ust::null_optional;
+	}
+
+	var ust::file_readable &mut file= file_res.try_deref();
+
+	auto file_size_res= file.get_size();
+	if( file_size_res.is_error() )
+	{
+		return ust::null_optional;
+	}
+
+	// Read only first bytes where roughly header and summary are.
+	var size_type buffer_size= ust::min( 128s, size_type( file_size_res.try_deref() ) );
+
+	var ust::vector</byte8/> mut file_contents;
+
+	if( ust::read_file_and_append_to_vector( file, buffer_size, file_contents ).is_error() )
+	{
+		return ust::null_optional;
+	}
+
+	var Deserializer mut deserializer( file_contents );
+
+	var SaveFileHeader mut header= zero_init;
+
+	var Deserializer::BytesView header_bytes= deserializer.ExtractBytes( typeinfo</SaveFileHeader/>.size_of );
+	if( header_bytes.size() != typeinfo</SaveFileHeader/>.size_of )
+	{
+		return ust::null_optional;
+	}
+
+	ust::single_element_array_view( header ).to_byte8_range().copy_from( header_bytes );
+
+	if( header.signature != SaveFileHeader::c_expected_signature || header.scheme_hash != c_serialization_scheme_hash )
+	{
+		return ust::null_optional;
+	}
+
+	return Deserialize</SaveSummary/>( deserializer );
+}
+
 fn GetSaveNameForSlot( u32 slot_index ) : ust::string8
 {
 	var [ char8, 6 ] name
