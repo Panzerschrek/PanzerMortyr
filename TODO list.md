@@ -141,7 +141,6 @@ PanzerMortyr menus and HUD:
 
 * Implement loading screen.
 * Draw a screenshot for each save slot in load/save menus.
-* Load texts displayed in menus from game resources, do not hardcode them.
 * Implement video modes menu.
 * Implement key bindings menu.
 * Allow changing HUD position via settings menu.
