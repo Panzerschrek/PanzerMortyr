@@ -5,9 +5,16 @@ import "menu.iu"
 namespace PM
 {
 
-fn Menu::constructor( SettingsPtr mut settings, [ u32, 2 ] viewport_size )
+fn Menu::constructor(
+	SettingsPtr mut settings, CachingGameResourcesLoaderPtr& caching_game_resources_loader, [ u32, 2 ] viewport_size )
 	(
 		settings_= move(settings),
+		string_table_=
+			lambda[&]() : GameResourcePtr</StringTable/>
+			{
+				auto mut lock= caching_game_resources_loader.lock_mut();
+				return lock.deref().LoadStringTable();
+			} (),
 		viewport_size_= viewport_size,
 		images_preloaded_= false,
 		current_page_= Page::MainMenu,
@@ -535,6 +542,8 @@ fn Menu::Draw( mut this, ImageDrawer &mut image_drawer, TextDrawer &mut text_dra
 		return;
 	}
 
+	var StringTable& string_table= string_table_.deref();
+
 	// Use only integer scale, since we need to draw scaled texts and they look nice only in integer scales.
 	var u32 scale= ust::max( 1u, ust::min( viewport_size_[0] / 400u, viewport_size_[1] / 300u ) );
 
@@ -646,25 +655,22 @@ fn Menu::Draw( mut this, ImageDrawer &mut image_drawer, TextDrawer &mut text_dra
 					i == load_save_menu_state_.current_row && !load_save_menu_state_.input_slot_comment.empty();
 
 				auto& slot_summary_opt= load_save_menu_state_.slots[i];
-				var SaveComment comment=
+				var ust::string_view8 mut comment=
 					( is_active_slot
-						? cast_imut( load_save_menu_state_.input_slot_comment.try_deref() )
+						? ust::string_view8( load_save_menu_state_.input_slot_comment.try_deref() )
 						: ( slot_summary_opt.empty()
-							? "empty slot...\0\0\0" // TODO - load this string from game resources.
-							: slot_summary_opt.try_deref().comment ) );
+							? FetchStringFromTable( string_table, StringTableKey::EmptySlot )
+							: ust::string_view8( slot_summary_opt.try_deref().comment ) ) );
 
-				var size_type mut comment_size= 0s;
-				while( comment_size < typeinfo</ SaveComment />.element_count && comment[ comment_size ] != '\0' )
+				while( !comment.empty() && comment.back() == '\0' )
 				{
-					++comment_size;
+					comment.drop_back();
 				}
-
-				var ust::string_view8 comment_truncated= ust::string_view8( comment ).subrange_end( comment_size );
 
 				var ust::string_view8 cursor=
 					( ( is_active_slot && ( u32( time_s_ * 4.0f ) & 1u ) != 0u ) ? "_" : " " );
 
-				scoped_array char8 comment_with_cursor[ comment_truncated.size() + 1s ]( comment_truncated.iter().chain( cursor.iter() ) );
+				scoped_array char8 comment_with_cursor[ comment.size() + 1s ]( comment.iter().chain( cursor.iter() ) );
 
 				text_drawer.AddText(
 					offset_x + i32( 208u * scale ),
@@ -679,18 +685,17 @@ fn Menu::Draw( mut this, ImageDrawer &mut image_drawer, TextDrawer &mut text_dra
 			text_drawer.AddText(
 				summary_offset_x,
 				summary_offset_y,
-				// TODO - load these strings from game resources.
 				( current_page_ == Page::LoadGame
-					? ust::string_view8( "select slot for load game..." )
+					?  FetchStringFromTable( string_table, StringTableKey::SelectSlotForLoadGame )
 					: ( load_save_menu_state_.input_slot_comment.empty()
-						? ust::string_view8( "select slot for save game..." )
-						: ust::string_view8( "enter new name..." ) ) ),
+						? FetchStringFromTable( string_table, StringTableKey::SelectSlotForSaveGame )
+						: FetchStringFromTable( string_table, StringTableKey::EnterNewName ) ) ),
 				text_settings );
 
 			if_var( &summary : load_save_menu_state_.slots[ load_save_menu_state_.current_row ] )
 			{
 				{
-					var ust::string_view8 level_str= "level: "; // TODO - load this string from game resources.
+					var ust::string_view8 level_str= FetchStringFromTable( string_table, StringTableKey::Level1 );
 					var ust::string_view8 level_name_str= summary.level_name;
 
 					scoped_array char8 level_text[
@@ -706,8 +711,7 @@ fn Menu::Draw( mut this, ImageDrawer &mut image_drawer, TextDrawer &mut text_dra
 					var [ char8, 65 ] mut text= zero_init; // Assume it's enough space for skill and kills.
 					var size_type mut text_size= 0s;
 
-					var ust::string_view8 skill_str= "skill: "; // TODO - load this string from game resources.
-					foreach( c : skill_str )
+					foreach( c : FetchStringFromTable( string_table, StringTableKey::Skill1 ) )
 					{
 						text[ text_size ]= c;
 						++text_size;
@@ -716,13 +720,7 @@ fn Menu::Draw( mut this, ImageDrawer &mut image_drawer, TextDrawer &mut text_dra
 					text[ text_size ]= char8( u32( '0' ) + summary.skill );
 					++text_size;
 
-					text[ text_size + 0s ]= ' ';
-					text[ text_size + 1s ]= ' ';
-					text[ text_size + 2s ]= ' ';
-					text_size+= 3s;
-
-					var ust::string_view8 killed_str= "killed: ";  // TODO - load this string from game resources.
-					foreach( c : killed_str )
+					foreach( c : FetchStringFromTable( string_table, StringTableKey::Killed ) )
 					{
 						text[ text_size ]= c;
 						++text_size;
@@ -733,10 +731,11 @@ fn Menu::Draw( mut this, ImageDrawer &mut image_drawer, TextDrawer &mut text_dra
 					text[ text_size ]= char8( u32('0') + summary.kills[0] % 10u );
 					++text_size;
 
-					text[ text_size + 0s ]= ' ';
-					text[ text_size + 1s ]= '/';
-					text[ text_size + 2s ]= ' ';
-					text_size+= 3s;
+					foreach( c : FetchStringFromTable( string_table, StringTableKey::KilledSlash ) )
+					{
+						text[ text_size ]= c;
+						++text_size;
+					}
 
 					text[ text_size ]= ( summary.kills[1] >= 10u ? char8( u32('0') + summary.kills[1] / 10u ) : ' ' );
 					++text_size;
