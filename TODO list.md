@@ -54,6 +54,10 @@ PanzerMortyr general:
 * Ensure PanzerMortyr works properly on Wayland-based systems.
 * Consider writing console messages into a file - to simplify troubleshooting.
 * Consider optimizing code performing serialization/deserialization (for game saving) - read/write scalars and arrays of scalars as byte arrays.
+* Consider implementing autosaves - create an autosave upon entering a level, upon picking-up a key, etc. Allow loading such saves from the load menu.
+* Consider preventing saving or disabling save menu if no game is active.
+* Prevent user input being used by game logic code if user deactivates a menu page by pressing a key.
+* Allow taking screenshots by pressing some key (like F11 or F12, maybe PrintScreen), so that no external tool is needed for taking screenshots.
 
 PanzerMortyr game logic:
 
@@ -136,7 +140,8 @@ PanzerMortyr rendering:
 PanzerMortyr menus and HUD:
 
 * Implement loading screen.
-* Implement game save and loading menus with named save slots, brief save summary (level name, skill, number of kills) and a small screenshot.
+* Draw a screenshot for each save slot in load/save menus.
+* Load texts displayed in menus from game resources, do not hardcode them.
 * Implement video modes menu.
 * Implement key bindings menu.
 * Allow changing HUD position via settings menu.
