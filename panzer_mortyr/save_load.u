@@ -11,6 +11,7 @@ namespace PM
 fn nodiscard SaveStoredGameState(
 	ConsoleOutPtr& console_out,
 	ust::string_view8 save_name,
+	SaveSummary& save_summary,
 	u32 map_index,
 	GameState& game_state,
 	CameraController::State& camera_controller_state,
@@ -27,6 +28,9 @@ fn nodiscard SaveStoredGameState(
 				.signature= SaveFileHeader::c_expected_signature,
 				.scheme_hash= c_serialization_scheme_hash
 			} ).to_byte8_range() );
+
+	// Serialize summary after header - to read it from save/load menus.
+	Serialize( serializer, save_summary );
 
 	// Serialize map index to know which map to load.
 	Serialize( serializer, map_index );
@@ -64,7 +68,7 @@ fn nodiscard SaveStoredGameState(
 	}
 }
 
-fn LoadStoredGameStae( ConsoleOutPtr& console_out, ust::string_view8 save_name ) : ust::optional</StoredGameState/>
+fn LoadStoredGameState( ConsoleOutPtr& console_out, ust::string_view8 save_name ) : ust::optional</StoredGameState/>
 {
 	var ust::filesystem_path save_file_path= GetSaveFilePath( save_name );
 
@@ -103,6 +107,14 @@ fn LoadStoredGameStae( ConsoleOutPtr& console_out, ust::string_view8 save_name )
 						" got ",
 						ust::to_string8( header.scheme_hash ),
 						"." ) );
+				return ust::null_optional;
+			}
+
+			var ust::optional</SaveSummary/> mut save_summary_opt= Deserialize</SaveSummary/>( deserializer );
+
+			if( save_summary_opt.empty() )
+			{
+				ConsoleOutAddTextLine( console_out, "Failed to deserialize save summary!" );
 				return ust::null_optional;
 			}
 
@@ -157,6 +169,7 @@ fn LoadStoredGameStae( ConsoleOutPtr& console_out, ust::string_view8 save_name )
 
 			return StoredGameState
 			{
+				.save_summary= save_summary_opt.try_take(),
 				.map_index= map_index_opt.try_take(),
 				.game_state= game_state_opt.try_take(),
 				.camera_controller_state= camera_controller_state_opt.try_take(),
@@ -170,6 +183,60 @@ fn LoadStoredGameStae( ConsoleOutPtr& console_out, ust::string_view8 save_name )
 			return ust::null_optional;
 		}
 	}
+}
+
+fn LoadSaveSummary( ust::string_view8 save_name ) : ust::optional</SaveSummary/>
+{
+	auto mut file_res= ust::file_readable::open( GetSaveFilePath( save_name ) );
+
+	if( file_res.is_error() )
+	{
+		return ust::null_optional;
+	}
+
+	var ust::file_readable &mut file= file_res.try_deref();
+
+	auto file_size_res= file.get_size();
+	if( file_size_res.is_error() )
+	{
+		return ust::null_optional;
+	}
+
+	// Read only first bytes where roughly header and summary are.
+	// We don't know how many bytes we require exactly, so, just use a rough estimation.
+	var size_type buffer_size= ust::min( 144s, size_type( file_size_res.try_deref() ) );
+
+	var ust::vector</byte8/> mut file_contents;
+
+	if( ust::read_file_and_append_to_vector( file, buffer_size, file_contents ).is_error() )
+	{
+		return ust::null_optional;
+	}
+
+	var Deserializer mut deserializer( file_contents );
+
+	var SaveFileHeader mut header= zero_init;
+
+	var Deserializer::BytesView header_bytes= deserializer.ExtractBytes( typeinfo</SaveFileHeader/>.size_of );
+	if( header_bytes.size() != typeinfo</SaveFileHeader/>.size_of )
+	{
+		return ust::null_optional;
+	}
+
+	ust::single_element_array_view( header ).to_byte8_range().copy_from( header_bytes );
+
+	if( header.signature != SaveFileHeader::c_expected_signature || header.scheme_hash != c_serialization_scheme_hash )
+	{
+		return ust::null_optional;
+	}
+
+	return Deserialize</SaveSummary/>( deserializer );
+}
+
+fn GetSaveNameForSlot( u32 slot_index ) : SaveSlotName
+{
+	var [ char8, 6 ] name[ 'g', 'a', 'm', 'e', ( u32( '0' ) + slot_index / 10u ), ( u32( '0' ) + slot_index % 10u ) ];
+	return name;
 }
 
 fn GetSaveFilePath( ust::string_view8 save_name ) : ust::filesystem_path
@@ -245,6 +312,7 @@ type SerializationSchemeHashType= u32;
 
 var SerializationSchemeHashType constexpr c_serialization_scheme_hash=
 	CalculateNonSecureHashSlow(
+		BuildSerializationSchemeFull</SaveSummary/>() +
 		BuildSerializationSchemeFull</GameState/>() +
 		BuildSerializationSchemeFull</CameraController::State/>() +
 		BuildSerializationSchemeFull</AudioProcessorState/>() +

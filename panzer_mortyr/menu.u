@@ -1,3 +1,4 @@
+import "/scoped_array.iu"
 import "/common_lib/game_params_file.iu"
 import "menu.iu"
 
@@ -13,7 +14,7 @@ fn Menu::constructor( SettingsPtr mut settings, [ u32, 2 ] viewport_size )
 		time_s_= 0.0f,
 		main_menu_current_row_= 0u,
 		new_game_current_row_= 0u,
-		load_save_game_current_row_= 0u,
+		load_save_menu_state_{ .current_row= 0u },
 		options_current_row_= 0u,
 		controls_current_row_= 0u,
 		sound_settings_current_row_= 0u,
@@ -51,7 +52,18 @@ fn nodiscard Menu::ProcessKeyPress( mut this, SDL_Keysym& key_sym, AudioProcesso
 				Page::MainMenu -> { current_page_= Page::None; },
 				Page::NewGame -> { current_page_= Page::MainMenu; },
 				Page::LoadGame -> { current_page_= Page::MainMenu; },
-				Page::SaveGame -> { current_page_= Page::MainMenu; },
+				Page::SaveGame ->
+				{
+					if( !load_save_menu_state_.input_slot_comment.empty() )
+					{
+						// Discard edited changes.
+						load_save_menu_state_.input_slot_comment.reset();
+					}
+					else
+					{
+						current_page_= Page::MainMenu;
+					}
+				},
 				Page::Options -> { current_page_= Page::MainMenu; },
 				Page::Controls -> { current_page_= Page::Options; },
 				Page::VideoSettings -> { current_page_= Page::Options; },
@@ -70,8 +82,22 @@ fn nodiscard Menu::ProcessKeyPress( mut this, SDL_Keysym& key_sym, AudioProcesso
 					switch( main_menu_current_row_ )
 					{
 						0u -> { current_page_= Page::NewGame; audio_processor.PlayMenuSound(); },
-						1u -> { current_page_= Page::LoadGame; audio_processor.PlayMenuSound(); },
-						2u -> { current_page_= Page::SaveGame; audio_processor.PlayMenuSound(); },
+						1u ->
+						{
+							current_page_= Page::LoadGame;
+							audio_processor.PlayMenuSound();
+
+							// Load save summaries upon entering the load page.
+							LoadSaveSummaries();
+						},
+						2u ->
+						{
+							current_page_= Page::SaveGame;
+							audio_processor.PlayMenuSound();
+
+							// Load save summaries upon entering the save page.
+							LoadSaveSummaries();
+						},
 						3u -> { /* TODO - switch to multiplayer page */ },
 						4u -> { current_page_= Page::Options; audio_processor.PlayMenuSound(); },
 						5u ->
@@ -102,11 +128,47 @@ fn nodiscard Menu::ProcessKeyPress( mut this, SDL_Keysym& key_sym, AudioProcesso
 				},
 				Page::LoadGame ->
 				{
-					// TODO
+					if( !load_save_menu_state_.slots[ load_save_menu_state_.current_row ].empty() )
+					{
+						current_page_= Page::None;
+
+						audio_processor.PlayMenuSound();
+
+						return CommandLoadGame{ .slot_name= GetSaveNameForSlot( load_save_menu_state_.current_row ) };
+					}
 				},
 				Page::SaveGame ->
 				{
-					// TODO
+					audio_processor.PlayMenuSound();
+
+					if( load_save_menu_state_.input_slot_comment.empty() )
+					{
+						// Start editing.
+						if_var( &summary : load_save_menu_state_.slots[ load_save_menu_state_.current_row ] )
+						{
+							load_save_menu_state_.input_slot_comment= summary.comment;
+						}
+						else
+						{
+							load_save_menu_state_.input_slot_comment= ust::make_zeroed</SaveComment/>();
+						}
+					}
+					else
+					{
+						// End editing. Slot name will be updated upon opening save/load pages next time.
+
+						var SaveComment save_comment= load_save_menu_state_.input_slot_comment.try_deref();
+						load_save_menu_state_.input_slot_comment.reset();
+
+						current_page_= Page::None;
+
+						return CommandSaveGame
+						{
+							.slot_name= GetSaveNameForSlot( load_save_menu_state_.current_row ),
+							.save_comment= save_comment
+						};
+					}
+
 				},
 				Page::Options ->
 				{
@@ -172,8 +234,11 @@ fn nodiscard Menu::ProcessKeyPress( mut this, SDL_Keysym& key_sym, AudioProcesso
 				},
 				Page::LoadGame, Page::SaveGame ->
 				{
-					DecrementRow( load_save_game_current_row_, PageNumRows::load_save );
-					audio_processor.PlayMenuSound();
+					if( load_save_menu_state_.input_slot_comment.empty() )
+					{
+						DecrementRow( load_save_menu_state_.current_row, c_num_load_save_slots );
+						audio_processor.PlayMenuSound();
+					}
 				},
 				Page::Options ->
 				{
@@ -219,8 +284,11 @@ fn nodiscard Menu::ProcessKeyPress( mut this, SDL_Keysym& key_sym, AudioProcesso
 				},
 				Page::LoadGame, Page::SaveGame ->
 				{
-					IncrementRow( load_save_game_current_row_, PageNumRows::load_save );
-					audio_processor.PlayMenuSound();
+					if( load_save_menu_state_.input_slot_comment.empty() )
+					{
+						IncrementRow( load_save_menu_state_.current_row, c_num_load_save_slots );
+						audio_processor.PlayMenuSound();
+					}
 				},
 				Page::Options ->
 				{
@@ -365,6 +433,27 @@ fn nodiscard Menu::ProcessKeyPress( mut this, SDL_Keysym& key_sym, AudioProcesso
 				Page::Quit -> {},
 			}
 		},
+		SDL_SCANCODE_BACKSPACE ->
+		{
+			if( current_page_ == Page::SaveGame )
+			{
+				if_var( &mut comment : load_save_menu_state_.input_slot_comment )
+				{
+					// Just remove last char. It's fine, since we allow only ASCII characters in save comments.
+
+					var size_type mut comment_size= 0s;
+					while( comment_size < typeinfo</ SaveComment />.element_count && comment[ comment_size ] != '\0' )
+					{
+						++comment_size;
+					}
+
+					if( comment_size > 0s )
+					{
+						comment[ comment_size - 1s ]= '\0';
+					}
+				}
+			}
+		},
 		SDL_SCANCODE_Y ->
 		{
 			if( current_page_ == Page::Quit )
@@ -385,6 +474,47 @@ fn nodiscard Menu::ProcessKeyPress( mut this, SDL_Keysym& key_sym, AudioProcesso
 	}
 
 	return CommandNone{};
+}
+
+fn Menu::ProcessTextInput( mut this, SDL_TextInputEvent& text_input_event )
+{
+	if( current_page_ == Page::SaveGame )
+	{
+		if_var( &mut comment : load_save_menu_state_.input_slot_comment )
+		{
+			var size_type mut comment_size= 0s;
+			while( comment_size < typeinfo</ SaveComment />.element_count && comment[ comment_size ] != '\0' )
+			{
+				++comment_size;
+			}
+
+			foreach( c : text_input_event.text )
+			{
+				if( c == '\0' )
+				{
+					break;
+				}
+
+				if( comment_size >= typeinfo</ SaveComment />.element_count )
+				{
+					break;
+				}
+
+				// Allow only latin letters, whitespaces, digits for slot names.
+				// Convert uppercase letters to lowercase.
+				if( ( c >= 'a' & c <= 'z' ) | ( c >= '0' && c <= '9' ) | c == ' ' )
+				{
+					comment[ comment_size ]= c;
+					++comment_size;
+				}
+				else if( c >= 'A' && c <= 'Z' )
+				{
+					comment[ comment_size ]= char8( u32(c) - u32( 'A' ) + u32( 'a' ) );
+					++comment_size;
+				}
+			}
+		}
+	}
 }
 
 fn Menu::Update( mut this, f32 time_delta_s )
@@ -417,7 +547,7 @@ fn Menu::Draw( mut this, ImageDrawer &mut image_drawer, TextDrawer &mut text_dra
 	var u32 cursor_tile_x= cursor_frame % 8u;
 	var u32 cursor_tile_y= ( cursor_frame / 8u ) ^ 1u;
 
-	var u32 constexpr cursor_size= 24u;
+	var u32 constexpr cursor_size= 24u, constexpr small_cursor_size= 12u;
 
 	var u32 constexpr
 		control_element_width= 80u,
@@ -436,6 +566,14 @@ fn Menu::Draw( mut this, ImageDrawer &mut image_drawer, TextDrawer &mut text_dra
 		.monospace= false,
 		.foreground_color[  20u8,  20u8,  20u8, 255u8 ],
 		.background_color[ 200u8, 120u8, 120u8,   0u8 ],
+	};
+
+	var TextDrawer::Settings edited_text_settings
+	{
+		.scale= text_settings.scale,
+		.monospace= text_settings.monospace,
+		.foreground_color[  80u8,   0u8,   0u8, 255u8 ],
+		.background_color= text_settings.background_color,
 	};
 
 	switch( current_page_ )
@@ -479,23 +617,139 @@ fn Menu::Draw( mut this, ImageDrawer &mut image_drawer, TextDrawer &mut text_dra
 				cursor_size,
 				cursor_size );
 		},
-		Page::LoadGame ->
+		Page::LoadGame, Page::SaveGame ->
 		{
-			image_drawer.DrawImage( MenuImages::load_game_page_background, offset_x, offset_y, f32( scale ) );
+			image_drawer.DrawImage(
+				( current_page_ == Page::LoadGame
+					? MenuImages::load_game_page_background
+					: MenuImages::save_game_page_background ),
+				offset_x,
+				offset_y,
+				f32( scale ) );
 
-			// TODO - draw cursor
-			// TODO - draw slots
+			var i32 cursor_offset_x= offset_x + i32( 192u * scale );
+			var i32 cursor_offset_y= offset_y + i32(  58u * scale );
 
-			text_drawer.AddText( offset_x + 32 * i32(scale), offset_y + 100 * i32(scale), "Loading is not implemented yet", text_settings );
-		},
-		Page::SaveGame ->
-		{
-			image_drawer.DrawImage( MenuImages::save_game_page_background, offset_x, offset_y, f32( scale ) );
+			image_drawer.DrawImage(
+				MenuImages::small_cursor_frames,
+				cursor_offset_x,
+				cursor_offset_y + i32( TextDrawer::c_glyph_height * scale * ( c_num_load_save_slots - 1u - load_save_menu_state_.current_row ) ),
+				f32( scale ),
+				cursor_tile_x * small_cursor_size,
+				cursor_tile_y * small_cursor_size,
+				small_cursor_size,
+				small_cursor_size );
 
-			// TODO - draw cursor
-			// TODO - draw slots
+			for( auto mut i= 0u; i < c_num_load_save_slots; ++i )
+			{
+				var bool is_active_slot=
+					i == load_save_menu_state_.current_row && !load_save_menu_state_.input_slot_comment.empty();
 
-			text_drawer.AddText( offset_x + 32 * i32(scale), offset_y + 100 * i32(scale), "Saving is not implemented yet", text_settings );
+				auto& slot_summary_opt= load_save_menu_state_.slots[i];
+				var SaveComment comment=
+					( is_active_slot
+						? cast_imut( load_save_menu_state_.input_slot_comment.try_deref() )
+						: ( slot_summary_opt.empty()
+							? "empty slot...\0\0\0" // TODO - load this string from game resources.
+							: slot_summary_opt.try_deref().comment ) );
+
+				var size_type mut comment_size= 0s;
+				while( comment_size < typeinfo</ SaveComment />.element_count && comment[ comment_size ] != '\0' )
+				{
+					++comment_size;
+				}
+
+				var ust::string_view8 comment_truncated= ust::string_view8( comment ).subrange_end( comment_size );
+
+				var ust::string_view8 cursor=
+					( ( is_active_slot && ( u32( time_s_ * 4.0f ) & 1u ) != 0u ) ? "_" : " " );
+
+				scoped_array char8 comment_with_cursor[ comment_truncated.size() + 1s ]( comment_truncated.iter().chain( cursor.iter() ) );
+
+				text_drawer.AddText(
+					offset_x + i32( 208u * scale ),
+					offset_y + i32(  60u * scale ) + i32( ( c_num_load_save_slots - 1u - i ) * TextDrawer::c_glyph_height * scale ),
+					comment_with_cursor,
+					( is_active_slot ? edited_text_settings : text_settings ) );
+			}
+
+			var i32 summary_offset_x= offset_x + i32( 40u * scale );
+			var i32 summary_offset_y= offset_y + i32( 44u * scale );
+
+			text_drawer.AddText(
+				summary_offset_x,
+				summary_offset_y,
+				// TODO - load these strings from game resources.
+				( current_page_ == Page::LoadGame
+					? ust::string_view8( "select slot for load game..." )
+					: ( load_save_menu_state_.input_slot_comment.empty()
+						? ust::string_view8( "select slot for save game..." )
+						: ust::string_view8( "enter new name..." ) ) ),
+				text_settings );
+
+			if_var( &summary : load_save_menu_state_.slots[ load_save_menu_state_.current_row ] )
+			{
+				{
+					var ust::string_view8 level_str= "level: "; // TODO - load this string from game resources.
+					var ust::string_view8 level_name_str= summary.level_name;
+
+					scoped_array char8 level_text[
+						level_str.size() + level_name_str.size() ]( level_str.iter().chain( level_name_str.iter() ) );
+
+					text_drawer.AddText(
+						summary_offset_x,
+						summary_offset_y - i32( TextDrawer::c_glyph_height * 1u * scale ),
+						level_text,
+						text_settings );
+				}
+				{
+					var [ char8, 65 ] mut text= zero_init; // Assume it's enough space for skill and kills.
+					var size_type mut text_size= 0s;
+
+					var ust::string_view8 skill_str= "skill: "; // TODO - load this string from game resources.
+					foreach( c : skill_str )
+					{
+						text[ text_size ]= c;
+						++text_size;
+					}
+
+					text[ text_size ]= char8( u32( '0' ) + summary.skill );
+					++text_size;
+
+					text[ text_size + 0s ]= ' ';
+					text[ text_size + 1s ]= ' ';
+					text[ text_size + 2s ]= ' ';
+					text_size+= 3s;
+
+					var ust::string_view8 killed_str= "killed: ";  // TODO - load this string from game resources.
+					foreach( c : killed_str )
+					{
+						text[ text_size ]= c;
+						++text_size;
+					}
+
+					text[ text_size ]= ( summary.kills[0] >= 10u ? char8( u32('0') + summary.kills[0] / 10u ) : ' ' );
+					++text_size;
+					text[ text_size ]= char8( u32('0') + summary.kills[0] % 10u );
+					++text_size;
+
+					text[ text_size + 0s ]= ' ';
+					text[ text_size + 1s ]= '/';
+					text[ text_size + 2s ]= ' ';
+					text_size+= 3s;
+
+					text[ text_size ]= ( summary.kills[1] >= 10u ? char8( u32('0') + summary.kills[1] / 10u ) : ' ' );
+					++text_size;
+					text[ text_size ]= char8( u32('0') + summary.kills[1] % 10u );
+					++text_size;
+
+					text_drawer.AddText(
+						summary_offset_x,
+						summary_offset_y - i32( TextDrawer::c_glyph_height * 2u * scale ),
+						ust::string_view8( text ).subrange_end( text_size ),
+						text_settings );
+				}
+			}
 		},
 		Page::Options ->
 		{
@@ -737,6 +991,14 @@ fn Menu::Draw( mut this, ImageDrawer &mut image_drawer, TextDrawer &mut text_dra
 	}
 }
 
+fn Menu::LoadSaveSummaries( mut this )
+{
+	for( auto mut i= 0u; i < c_num_load_save_slots; ++i )
+	{
+		load_save_menu_state_.slots[i]= LoadSaveSummary( GetSaveNameForSlot( i ) );
+	}
+}
+
 fn IncrementRow( u32 &mut row, u32 num_rows )
 {
 	row= ( row + 1u ) % num_rows;
@@ -759,6 +1021,7 @@ fn PreloadMenuImages( ImageDrawer &mut image_drawer )
 	image_drawer.PreloadImage( MenuImages::sound_settings_page_background, ust::null_optional_ref );
 	image_drawer.PreloadImage( MenuImages::advanced_options_page_background, ust::null_optional_ref );
 	image_drawer.PreloadImage( MenuImages::cursor_frames, ust::make_array( 0u8, 100u8, 255u8 ) );
+	image_drawer.PreloadImage( MenuImages::small_cursor_frames, ust::make_array( 0u8, 100u8, 255u8 ) );
 	image_drawer.PreloadImage( MenuImages::control_elements, ust::make_array( 255u8, 0u8, 0u8 ) ); // TODO - fix this for the polish version, it uses green transparent color.
 	image_drawer.PreloadImage( MenuImages::quit_texts, ust::make_array( 0u8, 0u8, 0u8 ) );
 }
@@ -841,7 +1104,6 @@ namespace PageNumRows
 var u32
 	main_menu= 6u,
 	new_game= c_num_skill_levels,
-	load_save= 10u,
 	options= 8u,
 	controls= 10u,
 	sound_settings= 7u,
@@ -862,6 +1124,7 @@ var ResourceString
 	& sound_settings_page_background= "SOUND.BMP\0\0\0\0\0\0\0",
 	& advanced_options_page_background= "ADVANC.BMP\0\0\0\0\0\0",
 	& cursor_frames= "MENU_Z.BMP\0\0\0\0\0\0",
+	& small_cursor_frames= "MENU_X.BMP\0\0\0\0\0\0",
 	& control_elements= "OPTION2.BMP\0\0\0\0\0",
 	& quit_texts= "QUIT.BMP\0\0\0\0\0\0\0\0";
 
