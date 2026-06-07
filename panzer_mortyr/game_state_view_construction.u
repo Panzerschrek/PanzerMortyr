@@ -1018,6 +1018,74 @@ fn ConstructWorldDrawingInfo(
 				}
 			} );
 
+		if( size_type( entities_description.bird_animation_index ) < entities_description.animations.size() )
+		{
+			var ResourceString& bird_model_file_name=
+				entities_description.animations[ size_type( entities_description.bird_animation_index ) ].model_file_name;
+
+			game_state.birds.IterateWithIndexAndGenerationIndex(
+				lambda[&]( Bird& bird, u32 index, u32 generation_index )
+				{
+					var Vec3f mut bird_position= bird.position;
+					var f32 mut bird_azimuth= bird.azimuth;
+
+					if_var( &previous_game_state : previous_game_state_opt )
+					{
+						if( !previous_game_state.birds.GetByIndex( index, generation_index ).empty() )
+						{
+							if_var( &current_predicted_game_state : current_predicted_game_state_opt )
+							{
+								if_var( &current_predicted_bird :
+										current_predicted_game_state.birds.GetByIndex( index, generation_index ) )
+								{
+									bird_position= current_predicted_bird.position;
+									bird_azimuth= current_predicted_bird.azimuth;
+								}
+							}
+						}
+					}
+
+					if_var( &next_predicted_game_state : next_predicted_game_state_opt )
+					{
+						if_var( &predicted_bird :
+								next_predicted_game_state.birds.GetByIndex( index, generation_index ) )
+						{
+							bird_position= MixPosition( bird_position, predicted_bird.position, time_steps_fraction );
+							bird_azimuth= MixAngle( bird_azimuth, predicted_bird.azimuth, time_steps_fraction );
+						}
+					}
+
+					// Regular models have 1 frame for 2 game steps.
+					// For birds use 1 frame for 1 steps, otherwise they move their wings way to slow compared to real birds.
+					var u32 constexpr c_step_to_frame_factor= 1u;
+					// For now hardcode the number of bird animation frame.
+					// We can't read model files and extract actual number of frames in game code.
+					var u32 constexpr c_num_flying_frames= 7u;
+
+					var u32 mut frame= 0u; // Frame #0 is idle.
+					if( bird.movement_age > 0u8 )
+					{
+						var u32 age_for_frame_calculation= u32( bird.movement_age ) - 1u;
+						var u32 flying_frame=
+							( age_for_frame_calculation / c_step_to_frame_factor + u32( bird.animation_frame_offset ) );
+						frame= 1u + flying_frame % c_num_flying_frames;
+					}
+
+					drawing_info.model_objects.push_back(
+						WorldDrawingInfo::ModelObject
+						{
+							.model_file_name= bird_model_file_name,
+							.position= bird_position,
+							.azimuth= bird_azimuth,
+							.elevation= 0.0f,
+							.frame= frame,
+							.disable_culling= false,
+							.first_person_weapon= false,
+							.constant_lighting= false,
+						} );
+				} );
+		}
+
 		// Iterate over all bullet hole slots unless whe have the total number of bullet holes less than the number of slots.
 		foreach( &bullet_hole :
 				ust::array_view_imut</BulletHole/>( game_state.bullet_holes.slots ).subrange_end(

@@ -78,6 +78,7 @@ fn CreateNewMapGameState(
 		},
 		.broken_quad_bits( map_data.zmap_data.deref().quads.size() ),
 		.map_leave_condition_message= zero_init,
+		.activated_trigger_volumes_mask= 0u,
 		.next_map_index= 0u,
 		.game_end_triggered= false,
 	};
@@ -402,6 +403,63 @@ fn CreateNewMapGameState(
 			} );
 	}
 
+	// Spawn birds.
+	var ust::array_view_imut</ZvoxTriggerVolume/> trigger_volumes= map_data.zvox_data.deref().trigger_volumes;
+
+	for( auto mut i= 0s; i < trigger_volumes.size(); ++i )
+	{
+		var ZvoxTriggerVolume& trigger= trigger_volumes[i];
+
+		if( trigger.trigger_type == ZvoxTriggerVolume::c_trigger_type_birds )
+		{
+			var Vec3f center( f32( trigger.center[0] ), f32( trigger.center[1] ), f32( trigger.center[2] ) );
+			var Vec3f half_size(
+				f32( trigger.bounding_box_half_size[0] ),
+				f32( trigger.bounding_box_half_size[1] ),
+				f32( trigger.bounding_box_half_size[2] ) );
+
+			var BBox3f bbox{ .min= center - half_size, .max= center + half_size };
+
+			var Vec2f bbox_dimensions= bbox.GetDimensions().xy();
+
+			var f32 constexpr target_spacing= 64.0f;
+			var u32 num_birds_x( ust::min( ust::ceil( bbox_dimensions.x / target_spacing ), 8.0f ) );
+			var u32 num_birds_y( ust::min( ust::ceil( bbox_dimensions.y / target_spacing ), 8.0f ) );
+
+			var f32 spacing_x= bbox_dimensions.x / f32( num_birds_x );
+			var f32 spacing_y= bbox_dimensions.y / f32( num_birds_y );
+
+			// Place birds using a regular grid.
+			for( auto mut y= 0u; y < num_birds_y; ++y )
+			{
+				for( auto mut x= 0u; x < num_birds_x; ++x )
+				{
+					// For each bird add some random offset to make placement pattern slightly irregular.
+					var f32 random_offset_x=
+						0.1f + f32( game_state.random.Next() ) * ( 0.8f / f32( PseudoRandomGenerator::c_max_plus_one ) );
+					var f32 random_offset_y=
+						0.1f + f32( game_state.random.Next() ) * ( 0.8f / f32( PseudoRandomGenerator::c_max_plus_one ) );
+
+					game_state.birds.Insert(
+						Bird
+						{
+							.position(
+								bbox.min.x + spacing_x * ( f32(x) + random_offset_x ),
+								bbox.min.y + spacing_y * ( f32(y) + random_offset_y ),
+								bbox.max.z /* Place birds at the bottom of their trigger volume. */ ),
+							.azimuth= f32( game_state.random.Next() ) * ( c_tau / f32( PseudoRandomGenerator::c_max_plus_one ) ),
+							.trigger_index(i),
+							// Select random movement elevation angle, so that birds fly in different vertical directions.
+							.movement_elevation_angle( 64u + game_state.random.Next() % 128u ),
+							 // Add random offset to animation frames to avoid synchronized animation for all birds.
+							.animation_frame_offset( game_state.random.Next() ),
+							.movement_age(0),
+						} );
+				}
+			}
+		}
+	}
+
 	return game_state;
 }
 
@@ -506,7 +564,7 @@ fn ProcessGameLogicStep(
 		c= '\0';
 	}
 
-	PerformPlayerWeaponLogic( map_data, player_input, game_state );
+	PerformPlayerWeaponLogic( global_data.sounds_description.deref(), map_data, player_input, game_state );
 
 	PerformPlayerInventoryLogic(
 		global_data.sounds_description.deref(),
@@ -567,6 +625,8 @@ fn ProcessGameLogicStep(
 
 	ProcessProjectileHitLightsLogicStep( game_state.projectile_hit_lights );
 
+	ProcessBirdsLogicStep( game_state );
+
 	PickUpItems( global_data.sounds_description.deref(), map_data, game_state );
 
 	DealPlayerEnvironmentalDamage( global_data.sounds_description.deref(), map_data, game_state );
@@ -576,7 +636,8 @@ fn ProcessGameLogicStep(
 	++game_state.step_index;
 }
 
-fn PerformPlayerWeaponLogic( GameMapData& map_data, PlayerInput& player_input, GameState &mut game_state )
+fn PerformPlayerWeaponLogic(
+	SoundsDescription& sounds_description, GameMapData& map_data, PlayerInput& player_input, GameState &mut game_state )
 {
 	var EntitiesDescription& entities_description= map_data.entities_description.deref();
 
@@ -786,6 +847,13 @@ fn PerformPlayerWeaponLogic( GameMapData& map_data, PlayerInput& player_input, G
 							game_state.entities,
 							position,
 							c_player_shot_enemy_alarm_max_distance );
+
+						AlarmAnimalTriggersByNearbyEvent(
+							sounds_description,
+							map_data,
+							game_state.activated_trigger_volumes_mask,
+							game_state.static_sound_sources,
+							position );
 					}
 
 					if( tool.sound >= 0 && tool.sound <= 255 )
@@ -2149,7 +2217,6 @@ fn ProcessEntityLogicStep(
 		return;
 	}
 
-	var GameParams& game_params= game_global_data.game_params.deref();
 	var EntitiesDescription& entities_description= map_data.entities_description.deref();
 
 	// Remove entity from colliders list before processing collisions - to avoid colliding with itself.
@@ -2427,7 +2494,14 @@ fn ProcessEntityLogicStep(
 				{
 					if( entity.num_steps_since_operation_start == u32( item[4] ) )
 					{
-						EntityShoot( game_params, entities_description, game_state, item, entity, u32( entity_index ) );
+						EntityShoot(
+							game_global_data,
+							map_data,
+							entities_description,
+							game_state,
+							item,
+							entity,
+							u32( entity_index ) );
 					}
 				}
 			}
@@ -4168,6 +4242,14 @@ fn ProcessProjectileHitEvent(
 		game_state.entities,
 		projectile_hit_event.position,
 		c_projectile_hit_enemy_alarm_max_distance );
+
+	// Alarm animals too.
+	AlarmAnimalTriggersByNearbyEvent(
+		global_data.sounds_description.deref(),
+		map_data,
+		game_state.activated_trigger_volumes_mask,
+		game_state.static_sound_sources,
+		projectile_hit_event.position );
 }
 
 fn ApplySplashDamage(
@@ -4230,6 +4312,57 @@ fn AlarmEnemiesByNearbyEvent(
 				if_var( &mut entity : entities[ entity_index ] )
 				{
 					entity.alarmed= true;
+				}
+			}
+		}
+	}
+}
+
+fn AlarmAnimalTriggersByNearbyEvent(
+	SoundsDescription& sounds_description,
+	GameMapData& map_data,
+	u32 &mut activated_trigger_volumes_mask,
+	StaticSoundSources &mut static_sound_sources,
+	Vec3f& center )
+{
+	var ust::array_view_imut</ZvoxTriggerVolume/> trigger_volumes= map_data.zvox_data.deref().trigger_volumes;
+
+	for( auto mut i= 0s; i < trigger_volumes.size(); ++i )
+	{
+		var ZvoxTriggerVolume& trigger_volume= trigger_volumes[i];
+
+		if( trigger_volume.trigger_type == ZvoxTriggerVolume::c_trigger_type_birds ||
+			trigger_volume.trigger_type == ZvoxTriggerVolume::c_trigger_type_rats )
+		{
+			// For simplicity perform point to extended bbox test instead of sphere to bbox test.
+
+			var Vec3f trigger_center(
+				f32( trigger_volume.center[0] ), f32( trigger_volume.center[1] ), f32( trigger_volume.center[2] ) );
+
+			var Vec3f trigger_half_size_extended_to_alarm_distance(
+				f32( trigger_volume.bounding_box_half_size[0] ) + c_animal_alarm_distance,
+				f32( trigger_volume.bounding_box_half_size[1] ) + c_animal_alarm_distance,
+				f32( trigger_volume.bounding_box_half_size[2] ) + c_animal_alarm_distance );
+
+			var BBox3f bbox
+			{
+				.min= trigger_center - trigger_half_size_extended_to_alarm_distance,
+				.max= trigger_center + trigger_half_size_extended_to_alarm_distance,
+			};
+
+			if( bbox.PointIsInsideOrOnFace( center ) )
+			{
+				// Assume we have less than 32 trigger volumes.
+				var u32 trigger_mask= 1u << i;
+
+				if( ( activated_trigger_volumes_mask & trigger_mask ) == 0u )
+				{
+					activated_trigger_volumes_mask |= trigger_mask;
+
+					if( trigger_volume.trigger_type == ZvoxTriggerVolume::c_trigger_type_birds )
+					{
+						EmitBirdsSound( static_sound_sources, sounds_description, trigger_center );
+					}
 				}
 			}
 		}
@@ -4584,6 +4717,44 @@ fn ProcessProjectileHitLightsLogicStep( ProjectileHitLightsContainer &mut projec
 		} );
 }
 
+fn ProcessBirdsLogicStep( GameState &mut game_state )
+{
+	// Birds don't collide with the world or other entities.
+	// They also don't interact with projectiles.
+	// Doing so is too costly, since there are a lot of birds in some places.
+	// The original game seems not to bother doing this too.
+	//
+	// So, birds behave almost like particles and other cheap effects.
+
+	game_state.birds.Retain(
+		lambda[ activated_trigger_volumes_mask= game_state.activated_trigger_volumes_mask ]( Bird &mut bird ) : bool
+		{
+			if( ( ( 1u << bird.trigger_index ) & activated_trigger_volumes_mask ) != 0u )
+			{
+				// This bird is triggered - move it and delete eventually.
+
+				// Start movement with acceleration, then reach constant speed.
+				var f32 speed= ust::min( f32( bird.movement_age ) * 1.0f, 12.0f );
+
+				var f32 elevation_angle= f32( bird.movement_elevation_angle ) * ( -c_tau / 4.0f / 255.0f );
+
+				bird.position+=
+					speed * Vec3f(
+						Vec2f( -ust::sin( bird.azimuth ), ust::cos( bird.azimuth ) ) * ust::cos( elevation_angle ),
+						ust::sin( elevation_angle ) );
+
+				++bird.movement_age;
+
+				// Avoid using the same maximum age for each bird. Variate their lifetime randomly instead.
+				var u32 age_variation= u32( bird.animation_frame_offset ) % 32u;
+
+				return u32( bird.movement_age ) + age_variation < c_bird_max_age;
+			}
+
+			return true; // Preserve non-triggered birds.
+		} );
+}
+
 fn PickUpItems( SoundsDescription& sounds_description, GameMapData& map_data, GameState &mut game_state )
 {
 	if( game_state.player.energy == 0u )
@@ -4820,16 +4991,18 @@ fn InteractWithTriggerVolumes( GameGlobalData& global_data, GameMapData& map_dat
 	{
 		var ZvoxTriggerVolume& trigger_volume= trigger_volumes[ trigger_volumen_index ];
 
+		var Vec3f trigger_bbox_center(
+			f32( trigger_volume.center[0] ), f32( trigger_volume.center[1] ), f32( trigger_volume.center[2] ) );
+
+		var Vec3f trigger_bbox_half_size(
+			f32( trigger_volume.bounding_box_half_size[0] ),
+			f32( trigger_volume.bounding_box_half_size[1] ),
+			f32( trigger_volume.bounding_box_half_size[2] ) );
+
 		var BBox3f trigger_bbox
 		{
-			.min(
-				f32( trigger_volume.center[0] - trigger_volume.bounding_box_half_size[0] ),
-				f32( trigger_volume.center[1] - trigger_volume.bounding_box_half_size[1] ),
-				f32( trigger_volume.center[2] - trigger_volume.bounding_box_half_size[2] ) ),
-			.max(
-				f32( trigger_volume.center[0] + trigger_volume.bounding_box_half_size[0] ),
-				f32( trigger_volume.center[1] + trigger_volume.bounding_box_half_size[1] ),
-				f32( trigger_volume.center[2] + trigger_volume.bounding_box_half_size[2] ) ),
+			.min= trigger_bbox_center - trigger_bbox_half_size,
+			.max= trigger_bbox_center + trigger_bbox_half_size,
 		};
 
 		if( !player_bbox.InstersectsOrTouches( trigger_bbox ) )
@@ -4905,6 +5078,26 @@ fn InteractWithTriggerVolumes( GameGlobalData& global_data, GameMapData& map_dat
 			ZvoxTriggerVolume::c_trigger_type_game_end ->
 			{
 				game_state.game_end_triggered= true;
+			},
+			ZvoxTriggerVolume::c_trigger_type_birds, ZvoxTriggerVolume::c_trigger_type_rats ->
+			{
+				// Alarm birds and rats by touching their trigger.
+				// But don't do this if the player has invisibility cheat.
+				if( !game_state.player.invisibility )
+				{
+					if( ( game_state.activated_trigger_volumes_mask & trigger_mask ) == 0u )
+					{
+						game_state.activated_trigger_volumes_mask |= trigger_mask;
+
+						if( trigger_volume.trigger_type == ZvoxTriggerVolume::c_trigger_type_birds )
+						{
+							EmitBirdsSound(
+								game_state.static_sound_sources,
+								global_data.sounds_description.deref(),
+								trigger_bbox_center );
+						}
+					}
+				}
 			},
 			default -> {},
 		}
@@ -6349,7 +6542,8 @@ fn SaveEntityRoute(
 
 
 fn EntityShoot(
-	GameParams& game_params,
+	GameGlobalData& global_data,
+	GameMapData& map_data,
 	EntitiesDescription& entities_description,
 	GameState &mut game_state,
 	[ i32, 5 ]& item,
@@ -6394,7 +6588,8 @@ fn EntityShoot(
 
 	// Accuracy is specified on per-weapon basis.
 	// Additionally there is a skill-based extra bullet spread.
-	var u32 accuracy= weapon_tool.enemy_weapon_accuracy + game_params.bullet_spread[ game_state.skill ];
+	var u32 accuracy=
+		weapon_tool.enemy_weapon_accuracy + global_data.game_params.deref().bullet_spread[ game_state.skill ];
 
 	var Vec3f direction_with_random_spread=
 		RandomOffsetShotVector( vec_to_target, accuracy, game_state.random );
@@ -6448,6 +6643,13 @@ fn EntityShoot(
 	{
 		AlarmEnemiesByNearbyEvent(
 			game_state.colliders, game_state.entities, shot_position, c_enemy_shot_enemy_alarm_max_distance );
+
+		AlarmAnimalTriggersByNearbyEvent(
+			global_data.sounds_description.deref(),
+			map_data,
+			game_state.activated_trigger_volumes_mask,
+			game_state.static_sound_sources,
+			shot_position );
 	}
 }
 

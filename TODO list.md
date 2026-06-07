@@ -75,7 +75,6 @@ PanzerMortyr game logic:
 * Implement CTF flags (multiplayer).
 * Consider storing entities rotation using quaternions.
 * Consider using fixed point arithmetic for game calculations in order to make game logic deterministic (across different machines) and thus allowing multiplayer mode with client-side game logic calculations.
-* Implement birds.
 * Implement rats.
 * Implement remaining entity state transitions (used only by some enemy types).
 * Implement ammo seeking behavior for enemies.
