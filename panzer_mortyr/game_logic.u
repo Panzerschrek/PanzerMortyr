@@ -426,8 +426,8 @@ fn CreateNewMapGameState(
 			var u32 num_birds_x( ust::min( ust::ceil( bbox_dimensions.x / target_spacing ), 8.0f ) );
 			var u32 num_birds_y( ust::min( ust::ceil( bbox_dimensions.y / target_spacing ), 8.0f ) );
 
-			var f32 step_x= bbox_dimensions.x / f32( num_birds_x );
-			var f32 step_y= bbox_dimensions.y / f32( num_birds_y );
+			var f32 spacing_x= bbox_dimensions.x / f32( num_birds_x );
+			var f32 spacing_y= bbox_dimensions.y / f32( num_birds_y );
 
 			// Place birds using a regular grid.
 			for( auto mut y= 0u; y < num_birds_y; ++y )
@@ -444,14 +444,14 @@ fn CreateNewMapGameState(
 						Bird
 						{
 							.position(
-								bbox.min.x + step_x * ( f32(x) + random_offset_x ),
-								bbox.min.y + step_y * ( f32(y) + random_offset_y ),
-								bbox.max.z ),
+								bbox.min.x + spacing_x * ( f32(x) + random_offset_x ),
+								bbox.min.y + spacing_y * ( f32(y) + random_offset_y ),
+								bbox.max.z /* Place birds at the bottom of their trigger volume. */ ),
 							.azimuth= f32( game_state.random.Next() ) * ( c_tau / f32( PseudoRandomGenerator::c_max_plus_one ) ),
 							.trigger_index(i),
-							// Select random movement elevation, so that birds fly in different directions.
+							// Select random movement elevation angle, so that birds fly in different vertical directions.
 							.movement_elevation_angle( 64u + game_state.random.Next() % 128u ),
-							 // Add random offset to avoid synchronized animation for all birds.
+							 // Add random offset to animation frames to avoid synchronized animation for all birds.
 							.animation_frame_offset( game_state.random.Next() ),
 							.movement_age(0),
 						} );
@@ -4243,7 +4243,7 @@ fn ProcessProjectileHitEvent(
 		projectile_hit_event.position,
 		c_projectile_hit_enemy_alarm_max_distance );
 
-	// Alarm enemies too.
+	// Alarm animals too.
 	AlarmAnimalTriggersByNearbyEvent(
 		global_data.sounds_description.deref(),
 		map_data,
@@ -4316,8 +4316,6 @@ fn AlarmEnemiesByNearbyEvent(
 			}
 		}
 	}
-
-
 }
 
 fn AlarmAnimalTriggersByNearbyEvent(
@@ -4721,10 +4719,15 @@ fn ProcessProjectileHitLightsLogicStep( ProjectileHitLightsContainer &mut projec
 
 fn ProcessBirdsLogicStep( GameState &mut game_state )
 {
-	var u32 activated_trigger_volumes_mask= game_state.activated_trigger_volumes_mask;
+	// Birds don't collide with the world or other entities.
+	// They also don't interact with projectiles.
+	// Doing so is too costly, since there are a lot of birds in some places.
+	// The original game seems not to bother doing this too.
+	//
+	// So, birds behave almost like particles and other cheap effects.
 
 	game_state.birds.Retain(
-		lambda[&]( Bird &mut bird ) : bool
+		lambda[ activated_trigger_volumes_mask= game_state.activated_trigger_volumes_mask ]( Bird &mut bird ) : bool
 		{
 			if( ( ( 1u << bird.trigger_index ) & activated_trigger_volumes_mask ) != 0u )
 			{
@@ -5094,7 +5097,6 @@ fn InteractWithTriggerVolumes( GameGlobalData& global_data, GameMapData& map_dat
 								trigger_bbox_center );
 						}
 					}
-
 				}
 			},
 			default -> {},
