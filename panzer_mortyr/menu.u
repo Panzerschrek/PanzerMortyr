@@ -25,7 +25,7 @@ fn Menu::constructor(
 		load_save_menu_state_{ .current_row= 0u },
 		options_current_row_= 0u,
 		controls_current_row_= 0u,
-		video_settings_current_row_= 0u,
+		video_settings_menu_state_{ .current_row= 0u, .current_video_mode_index= 0u },
 		sound_settings_current_row_= 0u,
 		advanced_options_current_row_= 0u,
 		quit_message_index_= 1000u,
@@ -236,14 +236,21 @@ fn nodiscard Menu::ProcessKeyPress( mut this, SDL_Keysym& key_sym, AudioProcesso
 				},
 				Page::VideoSettings ->
 				{
-					switch( video_settings_current_row_ )
+					switch( video_settings_menu_state_.current_row )
 					{
 						0u -> { ChangeFullscreen( settings_ ); audio_processor.PlayMenuSound(); },
 						1u ->
 						{
-							IncreaseDisplayIndex( settings_, u32( per_display_video_modes_.size()  ) );
+							IncreaseDisplayIndex( settings_, u32( per_display_video_modes_.size() ) );
+
+							if( per_display_video_modes_.size() > 1s )
+							{
+								video_settings_menu_state_.current_video_mode_index= 0u;
+							}
+
 							audio_processor.PlayMenuSound();
 						},
+						2u -> { SelectNextVideoMode(); audio_processor.PlayMenuSound(); },
 						default -> {},
 					}
 				},
@@ -306,7 +313,7 @@ fn nodiscard Menu::ProcessKeyPress( mut this, SDL_Keysym& key_sym, AudioProcesso
 				},
 				Page::VideoSettings ->
 				{
-					DecrementRow( video_settings_current_row_, PageNumRows::video_settings );
+					DecrementRow( video_settings_menu_state_.current_row, PageNumRows::video_settings );
 					audio_processor.PlayMenuSound();
 				},
 				Page::SoundSettings ->
@@ -357,7 +364,7 @@ fn nodiscard Menu::ProcessKeyPress( mut this, SDL_Keysym& key_sym, AudioProcesso
 				},
 				Page::VideoSettings ->
 				{
-					IncrementRow( video_settings_current_row_, PageNumRows::video_settings );
+					IncrementRow( video_settings_menu_state_.current_row, PageNumRows::video_settings );
 					audio_processor.PlayMenuSound();
 				},
 				Page::SoundSettings ->
@@ -400,14 +407,21 @@ fn nodiscard Menu::ProcessKeyPress( mut this, SDL_Keysym& key_sym, AudioProcesso
 				Page::Controls -> {},
 				Page::VideoSettings ->
 				{
-					switch( video_settings_current_row_ )
+					switch( video_settings_menu_state_.current_row )
 					{
 						0u -> { ChangeFullscreen( settings_ ); audio_processor.PlayMenuSound(); },
 						1u ->
 						{
-							DecreaseDisplayIndex( settings_, u32( per_display_video_modes_.size()  ) );
+							DecreaseDisplayIndex( settings_, u32( per_display_video_modes_.size() ) );
+
+							if( per_display_video_modes_.size() > 1s )
+							{
+								video_settings_menu_state_.current_video_mode_index= 0u;
+							}
+
 							audio_processor.PlayMenuSound();
 						},
+						2u -> { SelectPreviousVideoMode(); audio_processor.PlayMenuSound(); },
 						default -> {},
 					}
 				},
@@ -470,14 +484,21 @@ fn nodiscard Menu::ProcessKeyPress( mut this, SDL_Keysym& key_sym, AudioProcesso
 				Page::Controls -> {},
 				Page::VideoSettings ->
 				{
-					switch( video_settings_current_row_ )
+					switch( video_settings_menu_state_.current_row )
 					{
 						0u -> { ChangeFullscreen( settings_ ); audio_processor.PlayMenuSound(); },
 						1u ->
 						{
-							IncreaseDisplayIndex( settings_, u32( per_display_video_modes_.size()  ) );
+							IncreaseDisplayIndex( settings_, u32( per_display_video_modes_.size() ) );
+
+							if( per_display_video_modes_.size() > 1s )
+							{
+								video_settings_menu_state_.current_video_mode_index= 0u;
+							}
+
 							audio_processor.PlayMenuSound();
 						},
+						2u -> { SelectNextVideoMode(); audio_processor.PlayMenuSound(); },
 						default -> {},
 					}
 				},
@@ -885,12 +906,12 @@ fn Menu::Draw( mut this, ImageDrawer &mut image_drawer, TextDrawer &mut text_dra
 			var u32 video_settings_rows_spacing= TextDrawer::c_glyph_height * 3u / 2u;
 
 			var i32 cursor_offset_x= offset_x + i32(  24u * scale );
-			var i32 cursor_offset_y= offset_y + i32( 140u * scale );
+			var i32 cursor_offset_y= offset_y + i32( 156u * scale );
 
 			image_drawer.DrawImage(
 				MenuImages::small_cursor_frames,
 				cursor_offset_x,
-				cursor_offset_y + i32( video_settings_rows_spacing * scale * ( PageNumRows::video_settings - 1u - video_settings_current_row_ ) ),
+				cursor_offset_y - i32( video_settings_rows_spacing * scale *  video_settings_menu_state_.current_row ),
 				f32( scale ),
 				cursor_tile_x * small_cursor_size,
 				cursor_tile_y * small_cursor_size,
@@ -899,7 +920,7 @@ fn Menu::Draw( mut this, ImageDrawer &mut image_drawer, TextDrawer &mut text_dra
 
 			// TODO - tune this.
 			var i32 texts_offset_x= cursor_offset_x + i32( 18u * scale );
-			var i32 texts_offset_y= cursor_offset_y + i32( 13u * scale );
+			var i32 texts_offset_y= cursor_offset_y + i32( 1u * scale );
 
 			{
 				var ust::string_view8 fullscreen_str= "fullscreen: "; // TODO - add a polish version.
@@ -913,7 +934,6 @@ fn Menu::Draw( mut this, ImageDrawer &mut image_drawer, TextDrawer &mut text_dra
 
 				text_drawer.AddText( texts_offset_x, texts_offset_y, fullscreen_state_str, text_settings );
 			}
-
 			{
 				var ust::string_view8 display_str= "display: "; // TODO - add a polish version.
 
@@ -927,6 +947,61 @@ fn Menu::Draw( mut this, ImageDrawer &mut image_drawer, TextDrawer &mut text_dra
 					texts_offset_x,
 					texts_offset_y - i32( 1u * video_settings_rows_spacing * scale ),
 					display_state_str,
+					text_settings );
+			}
+			{
+				var [ char8, 64 ] mut str= zero_init;
+				var size_type mut str_size= 0s;
+
+				var ust::string_view8 mode_str= "mode: "; // TODO - add a polish version.
+
+				foreach( c : mode_str )
+				{
+					str[ str_size ]= c;
+					++str_size;
+				}
+
+				var size_type display_index( settings_.lock_imut().deref().r_display_index );
+				if( display_index < per_display_video_modes_.size() )
+				{
+					auto& display_modes= per_display_video_modes_[ display_index ];
+					if( size_type( video_settings_menu_state_.current_video_mode_index ) < display_modes.size() )
+					{
+						auto& mode= display_modes[ size_type( video_settings_menu_state_.current_video_mode_index ) ];
+
+						if( mode[0] >= 1000u )
+						{
+							str[ str_size ]= char8( u32( '0' ) + mode[0] / 1000u % 10u );
+							++str_size;
+						}
+						str[ str_size ]= char8( u32( '0' ) + mode[0] /  100u % 10u );
+						++str_size;
+						str[ str_size ]= char8( u32( '0' ) + mode[0] /   10u % 10u );
+						++str_size;
+						str[ str_size ]= char8( u32( '0' ) + mode[0] /    1u % 10u );
+						++str_size;
+
+						str[ str_size ]= 'x';
+						++str_size;
+
+						if( mode[1] >= 1000u )
+						{
+							str[ str_size ]= char8( u32( '0' ) + mode[1] / 1000u % 10u );
+							++str_size;
+						}
+						str[ str_size ]= char8( u32( '0' ) + mode[1] /  100u % 10u );
+						++str_size;
+						str[ str_size ]= char8( u32( '0' ) + mode[1] /   10u % 10u );
+						++str_size;
+						str[ str_size ]= char8( u32( '0' ) + mode[1] /    1u % 10u );
+						++str_size;
+					}
+				}
+
+				text_drawer.AddText(
+					texts_offset_x,
+					texts_offset_y - i32( 2u * video_settings_rows_spacing * scale ),
+					str,
 					text_settings );
 			}
 
@@ -1117,6 +1192,59 @@ fn Menu::LoadSaveSummaries( mut this )
 	}
 }
 
+fn Menu::SelectNextVideoMode( mut this )
+{
+	auto mut settings_lock= settings_.lock_mut();
+	var Settings &mut settings= settings_lock.deref();
+
+	var size_type display_index( settings.r_display_index );
+	if( display_index < per_display_video_modes_.size() )
+	{
+		auto& video_modes= per_display_video_modes_[ display_index ];
+
+		if( video_modes.size() > 0s )
+		{
+			++video_settings_menu_state_.current_video_mode_index;
+			if( size_type( video_settings_menu_state_.current_video_mode_index ) >= video_modes.size() )
+			{
+				video_settings_menu_state_.current_video_mode_index= 0u;
+			}
+
+			auto& mode= video_modes[ size_type( video_settings_menu_state_.current_video_mode_index ) ];
+			settings.r_screen_width = mode[0];
+			settings.r_screen_height= mode[1];
+		}
+	}
+}
+
+fn Menu::SelectPreviousVideoMode( mut this )
+{
+	auto mut settings_lock= settings_.lock_mut();
+	var Settings &mut settings= settings_lock.deref();
+
+	var size_type display_index( settings.r_display_index );
+	if( display_index < per_display_video_modes_.size() )
+	{
+		auto& video_modes= per_display_video_modes_[ display_index ];
+
+		if( video_modes.size() > 0s )
+		{
+			if( video_settings_menu_state_.current_video_mode_index == 0u )
+			{
+				video_settings_menu_state_.current_video_mode_index= u32( video_modes.size() - 1s );
+			}
+			else
+			{
+				--video_settings_menu_state_.current_video_mode_index;
+			}
+
+			auto& mode= video_modes[ size_type( video_settings_menu_state_.current_video_mode_index ) ];
+			settings.r_screen_width = mode[0];
+			settings.r_screen_height= mode[1];
+		}
+	}
+}
+
 fn IncrementRow( u32 &mut row, u32 num_rows )
 {
 	row= ( row + 1u ) % num_rows;
@@ -1255,7 +1383,7 @@ var u32
 	new_game= c_num_skill_levels,
 	options= 8u,
 	controls= 10u,
-	video_settings= 2u,
+	video_settings= 3u,
 	sound_settings= 7u,
 	advanced_options= 9u;
 } // namespace PageNumRows
