@@ -158,19 +158,7 @@ fn CreateNewMapGameState(
 						f32( navigation_info.spawn_trigger_box_center[2] + navigation_info.spawn_trigger_box_half_size[2] ) ),
 				};
 
-				var ust::array_view_imut</ZvoxCluster/> clusters= map_data.zvox_data.deref().clusters;
-				var bool mut spawn_trigger_is_within_map_bounds= false;
-
-				VisitBoundingBoxesHierarchyForBBox(
-					map_data.room_clusters_hierarchy.deref(),
-					spawn_trigger_bbox,
-					lambda[&]( ClusterIndexInHierarchy cluster_index )
-					{
-						spawn_trigger_is_within_map_bounds|=
-							CreateClusterBBox( clusters[ size_type( cluster_index ) ] ).Instersects( spawn_trigger_bbox );
-					} );
-
-				if( spawn_trigger_is_within_map_bounds )
+				if( IsBBoxWithinMapBounds( map_data, spawn_trigger_bbox )  )
 				{
 					continue;
 				}
@@ -419,6 +407,13 @@ fn CreateNewMapGameState(
 				f32( trigger.bounding_box_half_size[2] ) );
 
 			var BBox3f bbox{ .min= center - half_size, .max= center + half_size };
+
+			// On a couple of levels there are trigger volumes for birds outside map bounds.
+			// Don't bother spawning birds in such case.
+			if( !IsBBoxWithinMapBounds( map_data, bbox ) )
+			{
+				continue;
+			}
 
 			var Vec2f bbox_dimensions= bbox.GetDimensions().xy();
 
@@ -7167,6 +7162,23 @@ fn IsPointInLiquidOrNearby( GameMapData& map_data, Vec3f& point ) : bool
 		} );
 
 	return in_liquid;
+}
+
+fn IsBBoxWithinMapBounds( GameMapData& map_data, BBox3f& bbox ) : bool
+{
+	var bool mut in_map_bounds= false;
+
+	var ust::array_view_imut</ZvoxCluster/> clusters= map_data.zvox_data.deref().clusters;
+
+	VisitBoundingBoxesHierarchyForBBox(
+		map_data.room_clusters_hierarchy.deref(),
+		bbox,
+		lambda[&]( ClusterIndexInHierarchy cluster_index )
+		{
+			in_map_bounds|= CreateClusterBBox( clusters[ size_type( cluster_index ) ] ).Instersects( bbox );
+		} );
+
+	return in_map_bounds;
 }
 
 fn RotateEntityBBox( Vec3f &mut bbox_half_size, f32 azimuth )
