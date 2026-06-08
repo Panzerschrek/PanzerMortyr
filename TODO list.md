@@ -73,7 +73,6 @@ PanzerMortyr game logic:
 * Implement rats.
 * Implement remaining entity state transitions (used only by some enemy types).
 * Implement ammo/health kit/armor seeking behavior for enemies.
-* Prevent friendly-fire - don't let an enemy to shot the player when some other entity is in the way.
 * Break glass quads and quads with breakable materials while applying spash damage.
 * Implement jetpack tool.
 * Implement invisibility tool (false documents) and enemy properties allowing to uncover the player having invisibility.

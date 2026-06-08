@@ -5367,9 +5367,6 @@ fn UpdateEntityPlayerInSightFlag(
 
 	// Check if player is in sight.
 
-	// Don't care about other entities (even decorations).
-	// Assume enemies can see through other entities and only map geometry blocks the view.
-
 	var EntitiesDescription::Operation& operation=
 		entity_description.operations[ size_type( entity.current_operation ) ];
 
@@ -5422,6 +5419,8 @@ fn UpdateEntityPlayerInSightFlag(
 		}
 	}
 
+	// Check for view ray intersection with the world.
+
 	var Vec3f trace_vector= trace_end - trace_start;
 	if_var( &trace_result :
 			LineTrace(
@@ -5431,20 +5430,39 @@ fn UpdateEntityPlayerInSightFlag(
 				trace_start,
 				trace_vector ) )
 	{
-		if( trace_result.distance >= 1.0f )
+		if( trace_result.distance < 1.0f )
 		{
-			entity.player_is_in_sight= true;
+			return; // View ray is blocked.
 		}
 	}
-	else
+
+	// Check for view ray intersection with other entities.
+	// It's necessary to prevent enemies shooting the player if some other enemy or a decoration is blocking the view.
+	// This check is costly, since it requires checking colliders of all other entities.
+	// But it's fine, as long as we don't have too many entities.
+
+	for( auto mut i= 0s; i < game_state.colliders.size(); ++i )
 	{
-		entity.player_is_in_sight= true;
+		var Collider& collider= game_state.colliders[i];
+
+		if( size_type( entity.collider_index ) == i || collider.entity_index == c_player_entity_index )
+		{
+			continue;
+		}
+
+		if_var( &intersection_result : FindRayBBoxIntersection( trace_start, trace_vector, collider.bbox ) )
+		{
+			if( intersection_result.near_point_distance <= 1.0f & intersection_result.far_point_distance >= 0.0f )
+			{
+				return; // View ray is blocked.
+			}
+		}
 	}
 
-	if( entity.player_is_in_sight )
-	{
-		entity.last_seen_player_position= game_state.player.position;
-	}
+	// All visibility checks are passed - set player visibility flag and update the last seen player position.
+
+	entity.player_is_in_sight= true;
+	entity.last_seen_player_position= game_state.player.position;
 }
 
 struct RouteSearchContext
