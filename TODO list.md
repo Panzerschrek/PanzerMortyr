@@ -135,17 +135,18 @@ PanzerMortyr rendering:
 * Consider optimizing drawing snow/rain - reject snow/rain particles for non-visible clusters and clusters located far away.
 * Allow turning global fog for snow/rain off.
 * Modyfy pixels of alpha-tested textures having zero alpha, so that their color is equal to average color of adjacent pixels with non-zero alpha. This is needed to avoid black borders on alpha-tested billboards and decals.
+* Allow switching to a fullscreen mode with refresh rate change.
 
 PanzerMortyr menus and HUD:
 
 * Implement loading screen.
 * Draw a screenshot for each save slot in load/save menus.
-* Implement video modes menu.
 * Implement key bindings menu.
 * Allow changing HUD position via settings menu.
 * Implement some stub page for parental lock menu.
 * Make advanced options menu functinal.
 * Extend existing setting menus/add new ones for extra options specific for PanzerMortyr.
+* Consider allowing specifying custom window resolution in for windowed mode on video settings page.
 * Show low health and armor numbers in HUD using red color.
 * Consider displaying in HUD amounts of tools in inventory, at least important ones - health, ammo.
 * Consider drawing active tools at some edge (left or right) of the screen.
