@@ -13,7 +13,6 @@ Map format investigation:
 
 Models format investigation:
 
-* Find exact framerate of per-vertex model animations. Maybe it's stored somewhere, or is just hardcoded for all models.
 * Investigate how LODs are stored and processed in models in #5 format variant.
 * Investigate why HD textures are stored three times with no noticeable difference.
 
