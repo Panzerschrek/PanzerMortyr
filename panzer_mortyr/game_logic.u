@@ -4823,7 +4823,8 @@ fn ProcessRatsLogicStep( GameMapData& map_data, GameState &mut game_state )
 		{
 			var Vec3f mut movement_end_position= rat.position;
 
-			if( ( ( 1u << rat.trigger_index ) & activated_trigger_volumes_mask ) != 0u )
+			var bool is_alarmed= ( ( 1u << rat.trigger_index ) & activated_trigger_volumes_mask ) != 0u;
+			if( is_alarmed )
 			{
 				// Is in alarmed state - increase alarmed age.
 				++rat.alarmed_age;
@@ -4917,8 +4918,6 @@ fn ProcessRatsLogicStep( GameMapData& map_data, GameState &mut game_state )
 
 			rat.position= collision_trace_clip_result.position_clipped;
 
-			var bool mut has_wall_collision= false;
-
 			for( auto mut i= 0u; i < collision_trace_clip_result.num_collision_events; ++i )
 			{
 				var Vec3f& plane_normal= collision_trace_clip_result.collision_events[i].plane_normal;
@@ -4927,14 +4926,27 @@ fn ProcessRatsLogicStep( GameMapData& map_data, GameState &mut game_state )
 
 				if( !IsGroundSurface( plane_normal ) )
 				{
-					has_wall_collision= true;
-				}
-			}
+					if( is_alarmed )
+					{
+						// If hit a wall - reflect azimuth vector using plane normal (perform instant turn).
 
-			// If hit a wall - reset movement target to select a new target.
-			if( has_wall_collision )
-			{
-				rat.movement_target= rat.position.xy();
+						var Vec2f plane_normal_xy= plane_normal.xy();
+						var f32 plane_normal_xy_square_length= plane_normal_xy.Length();
+
+						var Vec2f mut azimuth_vector( -ust::sin( rat.azimuth ), ust::cos( rat.azimuth ) );
+
+						azimuth_vector-=
+							( 2.0f * azimuth_vector.Dot( plane_normal_xy ) / plane_normal_xy_square_length )
+							* plane_normal_xy;
+
+						rat.azimuth= ust::atan2( -azimuth_vector.x, azimuth_vector.y );
+					}
+					else
+					{
+						// If hit a wall - reset movement target to select a new target.
+						rat.movement_target= rat.position.xy();
+					}
+				}
 			}
 
 			// Unalarmed rats live forever, but have limited lifetime after they were alarmed.
