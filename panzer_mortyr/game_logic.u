@@ -4820,72 +4820,80 @@ fn ProcessRatsLogicStep( GameMapData& map_data, GameState &mut game_state )
 	game_state.rats.Retain(
 		lambda[&]( Rat &mut rat ) : bool
 		{
+			var Vec3f mut movement_end_position= rat.position;
+
 			if( ( ( 1u << rat.trigger_index ) & activated_trigger_volumes_mask ) != 0u )
 			{
 				// Is in alarmed state - increase alarmed age.
 				++rat.alarmed_age;
-			}
 
-			var f32 constexpr movement_speed= 2.0f;
-			var f32 constexpr turn_speed= c_entity_turn_speed;
+				var f32 constexpr movement_speed= 8.0f;
 
-			var Vec2f vec_to_target= rat.movement_target - rat.position.xy();
-			var f32 distance_to_target= vec_to_target.Length();
-
-			var Vec3f mut movement_end_position= rat.position;
-
-			if( distance_to_target <= movement_speed )
-			{
-				movement_end_position.x= rat.movement_target.x;
-				movement_end_position.y= rat.movement_target.y;
-
-				// Reached the target - select randomly a new one.
-				// But do after some random delay, so that rats stay some time at their target position.
-				if( rand.Next() % 48u == 0u )
-				{
-					var ZvoxTriggerVolume& trigger= trigger_volumes[ size_type( rat.trigger_index ) ];
-
-					var Vec3f center( f32( trigger.center[0] ), f32( trigger.center[1] ), f32( trigger.center[2] ) );
-					var Vec3f half_size(
-						f32( trigger.bounding_box_half_size[0] ),
-						f32( trigger.bounding_box_half_size[1] ),
-						f32( trigger.bounding_box_half_size[2] ) );
-
-					var BBox3f bbox{ .min= center - half_size, .max= center + half_size };
-
-					rat.movement_target=
-						Vec2f(
-							bbox.min.x + ( bbox.max.x - bbox.min.x ) * f32( rand.Next() ) / f32( PseudoRandomGenerator::c_max ),
-							bbox.min.y + ( bbox.max.y - bbox.min.y ) * f32( rand.Next() ) / f32( PseudoRandomGenerator::c_max ) );
-				}
+				// In alarmed state just move fast in straigh line.
+				movement_end_position=
+					rat.position + movement_speed * Vec3f( -ust::sin( rat.azimuth ), ust::cos( rat.azimuth ), 0.0f );
 			}
 			else
 			{
-				var f32 mut move_fraction= 1.0f;
+				var f32 constexpr movement_speed= 2.0f;
+				var f32 constexpr turn_speed= c_entity_turn_speed;
 
-				var f32 target_azimuth= ust::atan2( -vec_to_target.x, vec_to_target.y );
+				var Vec2f vec_to_target= rat.movement_target - rat.position.xy();
+				var f32 distance_to_target= vec_to_target.Length();
 
-				var f32 angle_delta= CalculateRotationAngleDelta( rat.azimuth, target_azimuth );
-
-				if( angle_delta < -turn_speed )
+				if( distance_to_target <= movement_speed )
 				{
-					move_fraction= 0.0f; // Don't move if turn.
-					rat.azimuth+= turn_speed;
-				}
-				else if( angle_delta > turn_speed )
-				{
-					move_fraction= 0.0f; // Don't move if turn.
-					rat.azimuth-= turn_speed;
+					movement_end_position.x= rat.movement_target.x;
+					movement_end_position.y= rat.movement_target.y;
+
+					// Reached the target - select randomly a new one.
+					// But do after some random delay, so that rats stay some time at their target position.
+					if( rand.Next() % 48u == 0u )
+					{
+						var ZvoxTriggerVolume& trigger= trigger_volumes[ size_type( rat.trigger_index ) ];
+
+						var Vec3f center( f32( trigger.center[0] ), f32( trigger.center[1] ), f32( trigger.center[2] ) );
+						var Vec3f half_size(
+							f32( trigger.bounding_box_half_size[0] ),
+							f32( trigger.bounding_box_half_size[1] ),
+							f32( trigger.bounding_box_half_size[2] ) );
+
+						var BBox3f bbox{ .min= center - half_size, .max= center + half_size };
+
+						rat.movement_target=
+							Vec2f(
+								bbox.min.x + ( bbox.max.x - bbox.min.x ) * f32( rand.Next() ) / f32( PseudoRandomGenerator::c_max ),
+								bbox.min.y + ( bbox.max.y - bbox.min.y ) * f32( rand.Next() ) / f32( PseudoRandomGenerator::c_max ) );
+					}
 				}
 				else
 				{
-					move_fraction= 1.0f - ust::abs( angle_delta ) / turn_speed;
-					rat.azimuth= target_azimuth;
-				}
+					var f32 mut move_fraction= 1.0f;
 
-				movement_end_position=
-					rat.position +
-					Vec3f( vec_to_target * ( move_fraction * movement_speed / distance_to_target ), 0.0f );
+					var f32 target_azimuth= ust::atan2( -vec_to_target.x, vec_to_target.y );
+
+					var f32 angle_delta= CalculateRotationAngleDelta( rat.azimuth, target_azimuth );
+
+					if( angle_delta < -turn_speed )
+					{
+						move_fraction= 0.0f; // Don't move if turn.
+						rat.azimuth+= turn_speed;
+					}
+					else if( angle_delta > turn_speed )
+					{
+						move_fraction= 0.0f; // Don't move if turn.
+						rat.azimuth-= turn_speed;
+					}
+					else
+					{
+						move_fraction= 1.0f - ust::abs( angle_delta ) / turn_speed;
+						rat.azimuth= target_azimuth;
+					}
+
+					movement_end_position=
+						rat.position +
+						Vec3f( vec_to_target * ( move_fraction * movement_speed / distance_to_target ), 0.0f );
+				}
 			}
 
 			// Perform collision detection for rats.
