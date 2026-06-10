@@ -500,6 +500,7 @@ fn CreateNewMapGameState(
 						.position= position,
 						.azimuth= f32( game_state.random.Next() ) * ( c_tau / f32( PseudoRandomGenerator::c_max_plus_one ) ),
 						.movement_target= position.xy(),
+						.velocity_z= 0.0f,
 						.trigger_index(i),
 						.alarmed_age(0),
 					} );
@@ -4896,6 +4897,10 @@ fn ProcessRatsLogicStep( GameMapData& map_data, GameState &mut game_state )
 				}
 			}
 
+			// Apply gravity.
+			rat.velocity_z+= c_gravity_per_step;
+			movement_end_position.z+= rat.velocity_z;
+
 			// Perform collision detection for rats.
 			// It's important for some cases, since sometimes they are placed on non-flat surfaces.
 			// But don't do step move, rats shouldn't be able climbing steps.
@@ -4912,14 +4917,24 @@ fn ProcessRatsLogicStep( GameMapData& map_data, GameState &mut game_state )
 
 			rat.position= collision_trace_clip_result.position_clipped;
 
-			// Check for collisions with walls. If hit a wall - reset movement target to select a new target.
+			var bool mut has_wall_collision= false;
+
 			for( auto mut i= 0u; i < collision_trace_clip_result.num_collision_events; ++i )
 			{
-				if( !IsGroundSurface( collision_trace_clip_result.collision_events[i].plane_normal ) )
+				var Vec3f& plane_normal= collision_trace_clip_result.collision_events[i].plane_normal;
+
+				ClampVerticalVelocity( rat.velocity_z, plane_normal );
+
+				if( !IsGroundSurface( plane_normal ) )
 				{
-					rat.movement_target= rat.position.xy();
-					break;
+					has_wall_collision= true;
 				}
+			}
+
+			// If hit a wall - reset movement target to select a new target.
+			if( has_wall_collision )
+			{
+				rat.movement_target= rat.position.xy();
 			}
 
 			// Unalarmed rats live forever, but have limited lifetime after they were alarmed.
