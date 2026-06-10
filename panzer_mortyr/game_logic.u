@@ -4809,6 +4809,11 @@ fn ProcessRatsLogicStep( GameMapData& map_data, GameState &mut game_state )
 
 	var PseudoRandomGenerator &mut rand= game_state.random;
 
+	var BitArrayView broken_quad_bits= game_state.broken_quad_bits;
+	var ust::array_view_imut</DynamicClusterCollider/> dynamic_cluster_colliders= game_state.dynamic_cluster_colliders;
+
+	var BBox3f rat_bbox{ .min( -2.0f, -2.0f, -4.0f ), .max( 2.0f, 2.0f, -0.125f ) };
+
 	game_state.rats.Retain(
 		lambda[&]( Rat &mut rat ) : bool
 		{
@@ -4818,16 +4823,17 @@ fn ProcessRatsLogicStep( GameMapData& map_data, GameState &mut game_state )
 			var Vec2f vec_to_target= rat.movement_target - rat.position.xy();
 			var f32 distance_to_target= vec_to_target.Length();
 
+			var Vec3f mut movement_end_position= rat.position;
+
 			if( distance_to_target <= movement_speed )
 			{
-				rat.position.x= rat.movement_target.x;
-				rat.position.y= rat.movement_target.y;
+				movement_end_position.x= rat.movement_target.x;
+				movement_end_position.y= rat.movement_target.y;
 
 				// Reached the target - select randomly a new one.
 				// But do after some random delay, so that rats stay some time at their target position.
 				if( rand.Next() % 48u == 0u )
 				{
-
 					var ZvoxTriggerVolume& trigger= trigger_volumes[ size_type( rat.trigger_index ) ];
 
 					var Vec3f center( f32( trigger.center[0] ), f32( trigger.center[1] ), f32( trigger.center[2] ) );
@@ -4868,8 +4874,26 @@ fn ProcessRatsLogicStep( GameMapData& map_data, GameState &mut game_state )
 					rat.azimuth= target_azimuth;
 				}
 
-				rat.position+= Vec3f( vec_to_target * ( move_fraction * movement_speed / distance_to_target ), 0.0f );
+				movement_end_position=
+					rat.position +
+					Vec3f( vec_to_target * ( move_fraction * movement_speed / distance_to_target ), 0.0f );
 			}
+
+			// Perform collision detection for rats.
+			// It's important for some cases, since sometimes they are placed on non-flat surfaces.
+			// But don't do step move, rats shouldn't be able climbing steps.
+
+			var CollisionTraceClipResult collision_trace_clip_result=
+				CollisionTraceAndClip(
+					map_data,
+					broken_quad_bits,
+					dynamic_cluster_colliders,
+					ust::empty_range, // Don't care colliding with entities. It's too costly for rats.
+					rat_bbox,
+					rat.position,
+					movement_end_position );
+
+			rat.position= collision_trace_clip_result.position_clipped;
 
 			return true;
 		} );
