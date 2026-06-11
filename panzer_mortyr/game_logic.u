@@ -391,32 +391,32 @@ fn CreateNewMapGameState(
 			} );
 	}
 
-	// Spawn birds.
+	// Spawn birds and rats.
 	var ust::array_view_imut</ZvoxTriggerVolume/> trigger_volumes= map_data.zvox_data.deref().trigger_volumes;
 
 	for( auto mut i= 0s; i < trigger_volumes.size(); ++i )
 	{
 		var ZvoxTriggerVolume& trigger= trigger_volumes[i];
 
+		var Vec3f center( f32( trigger.center[0] ), f32( trigger.center[1] ), f32( trigger.center[2] ) );
+		var Vec3f half_size(
+			f32( trigger.bounding_box_half_size[0] ),
+			f32( trigger.bounding_box_half_size[1] ),
+			f32( trigger.bounding_box_half_size[2] ) );
+
+		var BBox3f bbox{ .min= center - half_size, .max= center + half_size };
+
+		// On a couple of levels there are trigger volumes for birds and rats outside map bounds.
+		// Don't bother spawning them in such case.
+		if( !IsBBoxWithinMapBounds( map_data, bbox ) )
+		{
+			continue;
+		}
+
+		var Vec2f bbox_dimensions= bbox.GetDimensions().xy();
+
 		if( trigger.trigger_type == ZvoxTriggerVolume::c_trigger_type_birds )
 		{
-			var Vec3f center( f32( trigger.center[0] ), f32( trigger.center[1] ), f32( trigger.center[2] ) );
-			var Vec3f half_size(
-				f32( trigger.bounding_box_half_size[0] ),
-				f32( trigger.bounding_box_half_size[1] ),
-				f32( trigger.bounding_box_half_size[2] ) );
-
-			var BBox3f bbox{ .min= center - half_size, .max= center + half_size };
-
-			// On a couple of levels there are trigger volumes for birds outside map bounds.
-			// Don't bother spawning birds in such case.
-			if( !IsBBoxWithinMapBounds( map_data, bbox ) )
-			{
-				continue;
-			}
-
-			var Vec2f bbox_dimensions= bbox.GetDimensions().xy();
-
 			var f32 constexpr target_spacing= 64.0f;
 			var u32 num_birds_x( ust::min( ust::ceil( bbox_dimensions.x / target_spacing ), 8.0f ) );
 			var u32 num_birds_y( ust::min( ust::ceil( bbox_dimensions.y / target_spacing ), 8.0f ) );
@@ -451,6 +451,42 @@ fn CreateNewMapGameState(
 							.movement_age(0),
 						} );
 				}
+			}
+		}
+		else if( trigger.trigger_type == ZvoxTriggerVolume::c_trigger_type_rats )
+		{
+			var Vec2f rand_scale= bbox_dimensions / f32( PseudoRandomGenerator::c_max );
+
+			// The number of rats depends on dimensions of the rats bbox.
+			// But avoid creating too many rats.
+			var f32 constexpr target_spacing= 64.0f;
+			var size_type num_rats(
+				ust::max(
+					1.0f,
+					ust::min(
+						ust::ceil( ( bbox_dimensions.x * bbox_dimensions.y ) / ( target_spacing * target_spacing ) ),
+						16.0f ) ) );
+
+			for( auto mut j= 0s; j < num_rats; ++j )
+			{
+				// Place each rat randomly.
+				// Intersection with other rats is possible in this approach, but it's fine.
+				// The original game seems to do exactly the same.
+				var Vec3f position(
+					bbox.min.x + rand_scale.x * f32( game_state.random.Next() ),
+					bbox.min.y + rand_scale.y * f32( game_state.random.Next() ),
+					bbox.max.z /* Place rats at the bottom of their trigger volume. */ );
+
+				game_state.rats.Insert(
+					Rat
+					{
+						.position= position,
+						.azimuth= f32( game_state.random.Next() ) * ( c_tau / f32( PseudoRandomGenerator::c_max_plus_one ) ),
+						.movement_target= position.xy(),
+						.velocity_z= 0.0f,
+						.trigger_index(i),
+						.alarmed_age(0),
+					} );
 			}
 		}
 	}
@@ -621,6 +657,8 @@ fn ProcessGameLogicStep(
 	ProcessProjectileHitLightsLogicStep( game_state.projectile_hit_lights );
 
 	ProcessBirdsLogicStep( game_state );
+
+	ProcessRatsLogicStep( map_data, game_state );
 
 	PickUpItems( global_data.sounds_description.deref(), map_data, game_state );
 
@@ -4358,6 +4396,10 @@ fn AlarmAnimalTriggersByNearbyEvent(
 					{
 						EmitBirdsSound( static_sound_sources, sounds_description, trigger_center );
 					}
+					else
+					{
+						EmitRatsSound( static_sound_sources, sounds_description, trigger_center );
+					}
 				}
 			}
 		}
@@ -4750,6 +4792,162 @@ fn ProcessBirdsLogicStep( GameState &mut game_state )
 		} );
 }
 
+fn ProcessRatsLogicStep( GameMapData& map_data, GameState &mut game_state )
+{
+	var ust::array_view_imut</ZvoxTriggerVolume/> trigger_volumes= map_data.zvox_data.deref().trigger_volumes;
+
+	var u32 activated_trigger_volumes_mask= game_state.activated_trigger_volumes_mask;
+
+	var PseudoRandomGenerator &mut rand= game_state.random;
+
+	var BitArrayView broken_quad_bits= game_state.broken_quad_bits;
+	var ust::array_view_imut</DynamicClusterCollider/> dynamic_cluster_colliders= game_state.dynamic_cluster_colliders;
+
+	// Process rats as non-point objects, but objects having a small bounding box.
+	var BBox3f rat_bbox{ .min( -2.0f, -2.0f, -4.0f ), .max( 2.0f, 2.0f, -0.125f ) };
+
+	game_state.rats.Retain(
+		lambda[&]( Rat &mut rat ) : bool
+		{
+			var Vec3f mut movement_end_position= rat.position;
+
+			var bool is_alarmed= ( ( 1u << rat.trigger_index ) & activated_trigger_volumes_mask ) != 0u;
+			if( is_alarmed )
+			{
+				// Is in alarmed state - increase alarmed age.
+				++rat.alarmed_age;
+
+				var f32 constexpr movement_speed= 8.0f;
+
+				// In alarmed state just move fast in straigh line.
+				movement_end_position=
+					rat.position + movement_speed * Vec3f( -ust::sin( rat.azimuth ), ust::cos( rat.azimuth ), 0.0f );
+			}
+			else
+			{
+				var f32 constexpr movement_speed= 2.0f;
+				var f32 constexpr turn_speed= c_entity_turn_speed;
+
+				var Vec2f vec_to_target= rat.movement_target - rat.position.xy();
+				var f32 distance_to_target= vec_to_target.Length();
+
+				if( distance_to_target <= movement_speed )
+				{
+					movement_end_position.x= rat.movement_target.x;
+					movement_end_position.y= rat.movement_target.y;
+
+					// Reached the target - select randomly a new one.
+					// But do it after some random delay, so that rats stay some time at their target position.
+					if( rand.Next() % 48u == 0u )
+					{
+						var ZvoxTriggerVolume& trigger= trigger_volumes[ size_type( rat.trigger_index ) ];
+
+						var Vec3f center( f32( trigger.center[0] ), f32( trigger.center[1] ), f32( trigger.center[2] ) );
+						var Vec3f half_size(
+							f32( trigger.bounding_box_half_size[0] ),
+							f32( trigger.bounding_box_half_size[1] ),
+							f32( trigger.bounding_box_half_size[2] ) );
+
+						var BBox3f bbox{ .min= center - half_size, .max= center + half_size };
+
+						rat.movement_target=
+							Vec2f(
+								bbox.min.x + ( bbox.max.x - bbox.min.x ) * f32( rand.Next() ) / f32( PseudoRandomGenerator::c_max ),
+								bbox.min.y + ( bbox.max.y - bbox.min.y ) * f32( rand.Next() ) / f32( PseudoRandomGenerator::c_max ) );
+					}
+				}
+				else
+				{
+					var f32 mut move_fraction= 1.0f;
+
+					var f32 target_azimuth= ust::atan2( -vec_to_target.x, vec_to_target.y );
+					var f32 angle_delta= CalculateRotationAngleDelta( rat.azimuth, target_azimuth );
+
+					if( angle_delta < -turn_speed )
+					{
+						move_fraction= 0.0f; // Don't move if turn.
+						rat.azimuth+= turn_speed;
+					}
+					else if( angle_delta > turn_speed )
+					{
+						move_fraction= 0.0f; // Don't move if turn.
+						rat.azimuth-= turn_speed;
+					}
+					else
+					{
+						move_fraction= 1.0f - ust::abs( angle_delta ) / turn_speed;
+						rat.azimuth= target_azimuth;
+					}
+
+					movement_end_position=
+						rat.position +
+						Vec3f( vec_to_target * ( move_fraction * movement_speed / distance_to_target ), 0.0f );
+				}
+			}
+
+			// Apply gravity.
+			rat.velocity_z+= c_gravity_per_step;
+			movement_end_position.z+= rat.velocity_z;
+
+			// Perform collision detection for rats.
+			// It's important for some cases, since sometimes they are placed on non-flat surfaces.
+			// But don't do step move, rats shouldn't be able climbing steps.
+
+			var CollisionTraceClipResult collision_trace_clip_result=
+				CollisionTraceAndClip(
+					map_data,
+					broken_quad_bits,
+					dynamic_cluster_colliders,
+					ust::empty_range, // Don't care colliding with entities. It's too costly for rats.
+					rat_bbox,
+					rat.position,
+					movement_end_position );
+
+			rat.position= collision_trace_clip_result.position_clipped;
+
+			for( auto mut i= 0u; i < collision_trace_clip_result.num_collision_events; ++i )
+			{
+				var Vec3f& plane_normal= collision_trace_clip_result.collision_events[i].plane_normal;
+
+				ClampVerticalVelocity( rat.velocity_z, plane_normal );
+
+				if( !IsGroundSurface( plane_normal ) )
+				{
+					if( is_alarmed )
+					{
+						// If hit a wall - reflect azimuth vector using plane normal (perform instant turn).
+
+						var Vec2f plane_normal_xy= plane_normal.xy();
+						var f32 plane_normal_xy_square_length= plane_normal_xy.Length();
+
+						var Vec2f mut azimuth_vector( -ust::sin( rat.azimuth ), ust::cos( rat.azimuth ) );
+
+						azimuth_vector-=
+							( 2.0f * azimuth_vector.Dot( plane_normal_xy ) / plane_normal_xy_square_length )
+							* plane_normal_xy;
+
+						rat.azimuth= ust::atan2( -azimuth_vector.x, azimuth_vector.y );
+					}
+					else
+					{
+						// If hit a wall - reset movement target to select a new target.
+						rat.movement_target= rat.position.xy();
+					}
+				}
+			}
+
+			// Each step try removing alarmed rats.
+			// Doing so we ensure that rats disappear gradually and not all at once.
+			if( is_alarmed && rand.Next() % 68u == 0u )
+			{
+				return false;
+			}
+
+			// Unalarmed rats live forever, but have limited lifetime after they were alarmed.
+			return u32( rat.alarmed_age ) < c_rat_max_age;
+		} );
+}
+
 fn PickUpItems( SoundsDescription& sounds_description, GameMapData& map_data, GameState &mut game_state )
 {
 	if( game_state.player.energy == 0u )
@@ -5087,6 +5285,13 @@ fn InteractWithTriggerVolumes( GameGlobalData& global_data, GameMapData& map_dat
 						if( trigger_volume.trigger_type == ZvoxTriggerVolume::c_trigger_type_birds )
 						{
 							EmitBirdsSound(
+								game_state.static_sound_sources,
+								global_data.sounds_description.deref(),
+								trigger_bbox_center );
+						}
+						else
+						{
+							EmitRatsSound(
 								game_state.static_sound_sources,
 								global_data.sounds_description.deref(),
 								trigger_bbox_center );

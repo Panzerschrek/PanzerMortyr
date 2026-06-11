@@ -70,7 +70,6 @@ PanzerMortyr game logic:
 * Implement omni protection (multiplayer-only power-up).
 * Implement CTF flags (multiplayer).
 * Consider using fixed point arithmetic for game calculations in order to make game logic deterministic (across different machines) and thus allowing multiplayer mode with client-side game logic calculations.
-* Implement rats.
 * Implement remaining entity state transitions (used only by some enemy types).
 * Implement ammo/health kit/armor seeking behavior for enemies.
 * Break glass quads and quads with breakable materials while applying spash damage.

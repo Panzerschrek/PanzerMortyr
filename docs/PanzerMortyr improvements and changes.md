@@ -80,7 +80,7 @@ Changes:
 * Fall damage for the player slightly differs from the original game, but is roughly the same.
 * It's not possible to push an entity indirectly by pushing some another entity.
 * Blood particles and blood stains work differently. Blood particles start moving in a direction roughly corresponding to the movement direction of it's parent projectile, they collide with map geometry and leave blood stain decals.
-* Birds may be placed and behave slightly differently compared to the original game. Their movement behavior is just guessed. Their numbers may be also different from the original game.
+* Birds and rats may be placed and behave slightly differently compared to the original game. Their movement behavior is just guessed. Their numbers may be also different from the original game.
 
 
 ### HUD and menus
