@@ -23,9 +23,9 @@ fn Menu::constructor(
 		time_s_= 0.0f,
 		main_menu_current_row_= 0u,
 		new_game_current_row_= 0u,
-		load_save_pages_state_{ .current_row= 0u },
 		options_current_row_= 0u,
-		controls_current_row_= 0u,
+		load_save_pages_state_{ .current_row= 0u },
+		controls_page_state_{ .current_row= 0u, .rows_offset= 0u, .editing_active= false },
 		video_settings_page_state_{ .current_row= 0u, .current_video_mode_index= 0u },
 		sound_settings_current_row_= 0u,
 		advanced_options_current_row_= 0u,
@@ -46,6 +46,12 @@ fn Menu::Activate( mut this )
 fn Menu::Deactivate( mut this )
 {
 	current_page_= Page::None;
+
+	// Cancel save slot editing.
+	load_save_pages_state_.input_slot_comment.reset();
+
+	// Cancel key binding editing.
+	controls_page_state_.editing_active= false;
 }
 
 fn nodiscard Menu::ProcessKeyPress( mut this, SDL_Keysym& key_sym, AudioProcessor &mut audio_processor ) : Command
@@ -75,7 +81,18 @@ fn nodiscard Menu::ProcessKeyPress( mut this, SDL_Keysym& key_sym, AudioProcesso
 					}
 				},
 				Page::Options -> { current_page_= Page::MainMenu; },
-				Page::Controls -> { current_page_= Page::Options; },
+				Page::Controls ->
+				{
+					if( controls_page_state_.editing_active )
+					{
+						// Cancel editing.
+						controls_page_state_.editing_active= false;
+					}
+					else
+					{
+						current_page_= Page::Options;
+					}
+				},
 				Page::VideoSettings -> { current_page_= Page::Options; },
 				Page::SoundSettings -> { current_page_= Page::Options; },
 				Page::AdvancedOptions -> { current_page_= Page::Options; },
@@ -202,7 +219,14 @@ fn nodiscard Menu::ProcessKeyPress( mut this, SDL_Keysym& key_sym, AudioProcesso
 				},
 				Page::Controls ->
 				{
-					// TODO
+					if( controls_page_state_.editing_active )
+					{
+						ActualizeCurrentKeyBinding( key_sym.scancode );
+					}
+					else
+					{
+						controls_page_state_.editing_active= true;
+					}
 				},
 				Page::VideoSettings ->
 				{
@@ -274,8 +298,30 @@ fn nodiscard Menu::ProcessKeyPress( mut this, SDL_Keysym& key_sym, AudioProcesso
 				},
 				Page::Controls ->
 				{
-					DecrementRow( controls_current_row_, PageNumRows::controls );
-					audio_processor.PlayMenuSound();
+					if( controls_page_state_.editing_active )
+					{
+						ActualizeCurrentKeyBinding( key_sym.scancode );
+					}
+					else
+					{
+						if( controls_page_state_.current_row == 0u )
+						{
+							controls_page_state_.current_row= PageNumRows::controls - 1u;
+							controls_page_state_.rows_offset= PageNumRows::controls - c_num_visible_key_binding_rows;
+						}
+						else
+						{
+							--controls_page_state_.current_row;
+
+							if( controls_page_state_.rows_offset > 0u &&
+								controls_page_state_.current_row <= controls_page_state_.rows_offset )
+							{
+								--controls_page_state_.rows_offset;
+							}
+						}
+
+						audio_processor.PlayMenuSound();
+					}
 				},
 				Page::VideoSettings ->
 				{
@@ -325,8 +371,30 @@ fn nodiscard Menu::ProcessKeyPress( mut this, SDL_Keysym& key_sym, AudioProcesso
 				},
 				Page::Controls ->
 				{
-					IncrementRow( controls_current_row_, PageNumRows::controls );
-					audio_processor.PlayMenuSound();
+					if( controls_page_state_.editing_active )
+					{
+						ActualizeCurrentKeyBinding( key_sym.scancode );
+					}
+					else
+					{
+						if( controls_page_state_.current_row == PageNumRows::controls - 1u )
+						{
+							controls_page_state_.current_row= 0u;
+							controls_page_state_.rows_offset= 0u;
+						}
+						else
+						{
+							++controls_page_state_.current_row;
+
+							if( controls_page_state_.current_row + 1u >= c_num_visible_key_binding_rows + controls_page_state_.rows_offset &&
+								controls_page_state_.rows_offset + c_num_visible_key_binding_rows < PageNumRows::controls )
+							{
+								++controls_page_state_.rows_offset;
+							}
+						}
+
+						audio_processor.PlayMenuSound();
+					}
 				},
 				Page::VideoSettings ->
 				{
@@ -370,7 +438,13 @@ fn nodiscard Menu::ProcessKeyPress( mut this, SDL_Keysym& key_sym, AudioProcesso
 						default -> {},
 					}
 				},
-				Page::Controls -> {},
+				Page::Controls ->
+				{
+					if( controls_page_state_.editing_active )
+					{
+						ActualizeCurrentKeyBinding( key_sym.scancode );
+					}
+				},
 				Page::VideoSettings ->
 				{
 					switch( video_settings_page_state_.current_row )
@@ -443,7 +517,13 @@ fn nodiscard Menu::ProcessKeyPress( mut this, SDL_Keysym& key_sym, AudioProcesso
 						default -> {},
 					}
 				},
-				Page::Controls -> {},
+				Page::Controls ->
+				{
+					if( controls_page_state_.editing_active )
+					{
+						ActualizeCurrentKeyBinding( key_sym.scancode );
+					}
+				},
 				Page::VideoSettings ->
 				{
 					switch( video_settings_page_state_.current_row )
@@ -513,12 +593,17 @@ fn nodiscard Menu::ProcessKeyPress( mut this, SDL_Keysym& key_sym, AudioProcesso
 				}
 			}
 		},
+		SDL_SCANCODE_GRAVE -> { /* Don't allow binding keys to '~'. */ },
 		SDL_SCANCODE_Y ->
 		{
 			if( current_page_ == Page::Quit )
 			{
 				return CommandQuit{};
 				// Don't play menu sound if quitting.
+			}
+			else
+			{
+				ActualizeCurrentKeyBinding( key_sym.scancode );
 			}
 		},
 		SDL_SCANCODE_N ->
@@ -528,8 +613,15 @@ fn nodiscard Menu::ProcessKeyPress( mut this, SDL_Keysym& key_sym, AudioProcesso
 				current_page_= Page::MainMenu;
 				audio_processor.PlayMenuSound();
 			}
+			else
+			{
+				ActualizeCurrentKeyBinding( key_sym.scancode );
+			}
 		},
-		default -> {},
+		default ->
+		{
+			ActualizeCurrentKeyBinding( key_sym.scancode );
+		},
 	}
 
 	return CommandNone{};
@@ -855,7 +947,82 @@ fn Menu::Draw( mut this, ImageDrawer &mut image_drawer, TextDrawer &mut text_dra
 		{
 			image_drawer.DrawImage( MenuImages::controls_page_background, offset_x, offset_y, f32( scale ) );
 
-			text_drawer.AddText( offset_x + 32 * i32(scale), offset_y + 100 * i32(scale), "Control settings are not implemented yet", text_settings );
+			var i32 cursor_offset_x= offset_x + i32(  20u * scale );
+			var i32 cursor_offset_y= offset_y + i32( 144u * scale );
+
+			var u32 key_bindings_rows_spacing= TextDrawer::c_glyph_height * 3u / 2u;
+
+			var i32 cursor_visible_row=
+				i32( controls_page_state_.current_row ) - i32( controls_page_state_.rows_offset );
+
+			image_drawer.DrawImage(
+				MenuImages::small_cursor_frames,
+				cursor_offset_x,
+				cursor_offset_y - cursor_visible_row * i32( key_bindings_rows_spacing * scale ),
+				f32( scale ),
+				cursor_tile_x * small_cursor_size,
+				cursor_tile_y * small_cursor_size,
+				small_cursor_size,
+				small_cursor_size );
+
+			var i32 texts_offset_x= cursor_offset_x + i32( 18u * scale );
+			var i32 texts_offset_y= cursor_offset_y + i32(  1u * scale );
+
+			var ust::string_view8 scroll_indicator_text= ". . . . . . . . . . . . . . . . . . . . . . . . . . . . .";
+
+			if( controls_page_state_.rows_offset > 0u )
+			{
+				text_drawer.AddText(
+					texts_offset_x,
+					texts_offset_y + i32( key_bindings_rows_spacing * scale ),
+					scroll_indicator_text,
+					text_settings );
+			}
+
+			auto settings_lock= settings_.lock_imut();
+			var Settings& settings= settings_lock.deref();
+
+			var ust::string_view8 blinking_cursor= ( ( ( u32( time_s_ * 4.0f ) & 1u ) != 0u ) ? "___" : "   " );
+
+			var u32 mut row= 0u;
+
+			foreach( &key_bindig : c_key_binding_rows )
+			{
+				var i32 visible_row= i32(row) - i32( controls_page_state_.rows_offset );
+
+				if( visible_row >= 0 && visible_row < i32( c_num_visible_key_binding_rows ) )
+				{
+					var i32 row_y= texts_offset_y - visible_row * i32( key_bindings_rows_spacing * scale );
+
+					var bool is_edited_row= controls_page_state_.editing_active & row == controls_page_state_.current_row;
+
+					var TextDrawer::Settings& key_binding_text_settings=
+						( is_edited_row ? edited_text_settings : text_settings );
+
+					text_drawer.AddText(
+						texts_offset_x,
+						row_y,
+						FetchStringFromExtraTable( key_bindig[1] ),
+						key_binding_text_settings );
+
+					text_drawer.AddText(
+						texts_offset_x + i32( 120u * scale ),
+						row_y,
+						( is_edited_row ? blinking_cursor : mixin( "settings." + key_bindig[0] + ".GetName()" ) ),
+						key_binding_text_settings );
+				}
+
+				++row;
+			}
+
+			if( controls_page_state_.rows_offset + c_num_visible_key_binding_rows < PageNumRows::controls )
+			{
+				text_drawer.AddText(
+					texts_offset_x,
+					texts_offset_y - i32( key_bindings_rows_spacing * scale * c_num_visible_key_binding_rows ),
+					scroll_indicator_text,
+					text_settings );
+			}
 		},
 		Page::VideoSettings ->
 		{
@@ -1176,6 +1343,41 @@ fn Menu::LoadSaveSummaries( mut this )
 	}
 }
 
+fn Menu::ActualizeCurrentKeyBinding( mut this, SDL_Scancode scancode )
+{
+	if( !controls_page_state_.editing_active )
+	{
+		return;
+	}
+
+	auto mut settings_lock= settings_.lock_mut();
+	var Settings &mut settings= settings_lock.deref();
+
+	// Reset other bindings using the same key.
+	foreach( &key_bindig : c_key_binding_rows )
+	{
+		var KeyBinding &mut b= mixin( "settings." + key_bindig[0] );
+		if( b == KeyBinding( scancode ) )
+		{
+			b= KeyBinding( SDL_Scancode(0) );
+		}
+	}
+
+	// Set target key binding.
+	var u32 mut row= 0u;
+	foreach( &key_bindig : c_key_binding_rows )
+	{
+		if( row == controls_page_state_.current_row )
+		{
+			mixin( "settings." + key_bindig[0] + " = KeyBinding( scancode ); " );
+		}
+
+		++row;
+	}
+
+	controls_page_state_.editing_active= false;
+}
+
 fn Menu::ActualizeVideoModeIndex( mut this )
 {
 	video_settings_page_state_.current_video_mode_index= 0u;
@@ -1388,6 +1590,75 @@ var [ u32, 2 ] c_base_menu_size[ 320u, 200u ];
 
 var u32 c_num_quit_messages= 8u;
 
+var u32 c_num_visible_key_binding_rows= 10u;
+
+// This table contains names of the settings structure fields and indices for corrisponding string table entries.
+// It's used for drawing key bindings menu page.
+// If compilation fails somewhere here, someone changed the settings structure and thus this table should be fixed.
+var tup[
+	tup[ [ char8, 19 ], ExtraStringTableKey ],
+	tup[ [ char8, 20 ], ExtraStringTableKey ],
+	tup[ [ char8, 16 ], ExtraStringTableKey ],
+	tup[ [ char8, 17 ], ExtraStringTableKey ],
+	tup[ [ char8, 14 ], ExtraStringTableKey ],
+	tup[ [ char8, 16 ], ExtraStringTableKey ],
+	tup[ [ char8, 16 ], ExtraStringTableKey ],
+	tup[ [ char8, 17 ], ExtraStringTableKey ],
+	tup[ [ char8, 14 ], ExtraStringTableKey ],
+	tup[ [ char8, 16 ], ExtraStringTableKey ],
+	tup[ [ char8, 11 ], ExtraStringTableKey ],
+	tup[ [ char8, 18 ], ExtraStringTableKey ],
+	tup[ [ char8, 15 ], ExtraStringTableKey ],
+	tup[ [ char8, 15 ], ExtraStringTableKey ],
+	tup[ [ char8, 15 ], ExtraStringTableKey ],
+	tup[ [ char8, 15 ], ExtraStringTableKey ],
+	tup[ [ char8, 15 ], ExtraStringTableKey ],
+	tup[ [ char8, 15 ], ExtraStringTableKey ],
+	tup[ [ char8, 15 ], ExtraStringTableKey ],
+	tup[ [ char8, 15 ], ExtraStringTableKey ],
+	tup[ [ char8, 15 ], ExtraStringTableKey ],
+	tup[ [ char8, 15 ], ExtraStringTableKey ],
+	tup[ [ char8, 20 ], ExtraStringTableKey ],
+	tup[ [ char8, 25 ], ExtraStringTableKey ],
+	tup[ [ char8, 21 ], ExtraStringTableKey ],
+	tup[ [ char8, 27 ], ExtraStringTableKey ],
+	tup[ [ char8, 30 ], ExtraStringTableKey ],
+	tup[ [ char8, 33 ], ExtraStringTableKey ],
+	tup[ [ char8, 28 ], ExtraStringTableKey ]
+	]
+c_key_binding_rows
+[
+	[ "in_key_move_forward", ExtraStringTableKey::WalkForward ],
+	[ "in_key_move_backward", ExtraStringTableKey::Backpedal ],
+	[ "in_key_move_left", ExtraStringTableKey::StepLeft ],
+	[ "in_key_move_right", ExtraStringTableKey::StepRight ],
+	[ "in_key_move_up", ExtraStringTableKey::Jump ],
+	[ "in_key_move_down", ExtraStringTableKey::Crouch ],
+	[ "in_key_turn_left", ExtraStringTableKey::TurnLeft ],
+	[ "in_key_turn_right", ExtraStringTableKey::TurnRight ],
+	[ "in_key_turn_up", ExtraStringTableKey::LookUp ],
+	[ "in_key_turn_down", ExtraStringTableKey::LookDown ],
+	[ "in_key_kick", ExtraStringTableKey::Kick ],
+	[ "in_key_weapon_kick", ExtraStringTableKey::Weapon1 ],
+	[ "in_key_weapon_a", ExtraStringTableKey::Weapon2 ],
+	[ "in_key_weapon_b", ExtraStringTableKey::Weapon3 ],
+	[ "in_key_weapon_c", ExtraStringTableKey::Weapon4 ],
+	[ "in_key_weapon_d", ExtraStringTableKey::Weapon5 ],
+	[ "in_key_weapon_e", ExtraStringTableKey::Weapon6 ],
+	[ "in_key_weapon_f", ExtraStringTableKey::Weapon7 ],
+	[ "in_key_weapon_g", ExtraStringTableKey::Weapon8 ],
+	[ "in_key_weapon_h", ExtraStringTableKey::Weapon9 ],
+	[ "in_key_weapon_i", ExtraStringTableKey::Weapon10 ],
+	[ "in_key_weapon_j", ExtraStringTableKey::Weapon11 ],
+	[ "in_key_inventory_use", ExtraStringTableKey::UseItem ],
+	[ "in_key_inventory_previous", ExtraStringTableKey::PrevItem ],
+	[ "in_key_inventory_next", ExtraStringTableKey::NextItem ],
+	[ "in_key_acid_protection_suit", ExtraStringTableKey::AcidProtectionSuit ],
+	[ "in_key_night_vision_activation", ExtraStringTableKey::NightVision ],
+	[ "in_key_infrared_vision_activation", ExtraStringTableKey::InfraredVision ],
+	[ "in_key_flashlight_activation", ExtraStringTableKey::Flashlight ],
+];
+
 namespace PageNumRows
 {
 
@@ -1395,7 +1666,7 @@ var u32
 	main_menu= 6u,
 	new_game= c_num_skill_levels,
 	options= 8u,
-	controls= 10u,
+	controls( typeinfo</ typeof(c_key_binding_rows) />.element_count ),
 	video_settings= 4u,
 	sound_settings= 7u,
 	advanced_options= 9u;

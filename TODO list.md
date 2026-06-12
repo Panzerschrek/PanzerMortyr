@@ -132,8 +132,9 @@ PanzerMortyr menus and HUD:
 
 * Implement loading screen.
 * Draw a screenshot for each save slot in load/save menus.
-* Implement key bindings menu.
 * Allow changing HUD position via settings menu.
+* Allow setting inverted mouse via settings menu.
+* Allow enabling/disabling mouselook via settings menu.
 * Implement some stub page for parental lock menu.
 * Make advanced options menu functinal.
 * Extend existing setting menus/add new ones for extra options specific for PanzerMortyr.
