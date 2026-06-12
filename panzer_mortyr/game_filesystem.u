@@ -35,85 +35,17 @@ fn GameFilesystem::Create(
 			game_archive_search_result.archive_file_directory,
 			"\"." ) );
 
-	auto mut archive_file_res= ust::file_readable::open( game_archive_search_result.archive_file );
-
-	if_var( e : archive_file_res.as_error_ref() )
-	{
-		ConsoleOutAddTextLine( console_out, ust::concat( "Error opening game archive file: ", ust::enum_to_string( e ), "!" ) );
-		return GameFilesystemNullablePtr();
-	}
-
-	var ust::file_readable mut archive_file= move(archive_file_res).try_take();
-
-	var u64 mut archive_file_size(0);
-	result_match( archive_file.get_metatada() )
-	{
-		Ok(m) -> { archive_file_size= m.size; },
-		Err(e) ->
-		{
-			ConsoleOutAddTextLine( console_out, ust::concat( "Error getting archive file size: ", ust::enum_to_string( e ), "!" ) );
-			return GameFilesystemNullablePtr();
-		}
-	}
-
-	ConsoleOutAddTextLine( console_out, ust::concat( "Game archive file has size ", ust::to_string8(archive_file_size), " bytes." ) );
-
-	var ArchiveHeader mut archive_header= zero_init;
-
-	if_var( e : archive_file.read_exact( ust::single_element_array_view( archive_header ).to_byte8_range() ).as_error_ref() )
-	{
-		ConsoleOutAddTextLine( console_out, ust::concat( "Error reading archive header: ", ust::enum_to_string( e ), "!" ) );
-		return GameFilesystemNullablePtr();
-	}
-
-	if( archive_header.id != ArchiveHeader::c_expected_id )
-	{
-		ConsoleOutAddTextLine( console_out, ust::concat( "Unexpected archive file ID, expected ", ust::to_string8(ArchiveHeader::c_expected_id), ",got ", ust::to_string8(archive_header.id), "!" ) );
-		return GameFilesystemNullablePtr();
-	}
-
-	ConsoleOutAddTextLine( console_out, ust::concat( "Game archive has ", ust::to_string8( archive_header.num_files ), " files." ) );
-
-	if( u64( typeinfo</ArchiveHeader/>.size_of ) + u64(archive_header.num_files) * u64( typeinfo</ArchiveFileHeader/>.size_of ) > archive_file_size )
-	{
-		ConsoleOutAddTextLine( console_out, "Entry table size is bigger than archive file size!" );
-		return GameFilesystemNullablePtr();
-	}
-
-	scoped_array ArchiveFileHeader mut file_headers[ size_type(archive_header.num_files) ]( ust::make_zeroed</ArchiveFileHeader/>() );
-
-	if_var( e : archive_file.read_exact( file_headers.to_byte8_range() ).as_error_ref() )
-	{
-		ConsoleOutAddTextLine( console_out, ust::concat( "Error reading archive file headers: ", ust::enum_to_string( e ) ) );
-		return GameFilesystemNullablePtr();
-	}
-
-	var EntriesMap mut archive_entries;
-
-	foreach( &file_header : file_headers )
-	{
-		var ResourceString mut name= ConvertToUppercase( file_header.name );
-
-		if( u64( file_header.offset ) + u64( file_header.size ) > archive_file_size )
-		{
-			ConsoleOutAddTextLine( console_out, ust::concat( "File \"", ConvertResourceStringToStringView( name ), "\" is out of bounds!" ) );
-			continue;
-		}
-
-		archive_entries.insert_new( move(name), FileEntry{ .offset= file_header.offset, .size= file_header.size } );
-	}
-
 	return
 		GameFilesystemPtr(
 			GameFilesystem(
 				game_archive_search_result.archive_file_directory,
-				GameArchiveFilesystem( PrivateConstructorTag(), move( archive_file ), move( archive_entries ) ),
+				GameArchiveFilesystem::Create( game_archive_search_result.archive_file, console_out ),
 				CollectGameDataFiles( console_out, game_archive_search_result.archive_file_directory ) ) );
 }
 
 fn GameFilesystem::constructor(
 	ust::filesystem_path mut data_directory_path,
-	GameArchiveFilesystem mut archive_filesystem,
+	ust::optional</GameArchiveFilesystem/> mut archive_filesystem,
 	GameDataFiles mut extra_data_files )
 	(
 		data_directory_path_= move(data_directory_path),
@@ -164,6 +96,84 @@ fn GameFilesystem::LoadFileToByte8Vector( mut this, ResourceString& file_name ) 
 	}
 
 	return ust::io_error::not_found;
+}
+
+fn GameFilesystem::GameArchiveFilesystem::Create(
+	ust::filesystem_path_view archive_file_path,
+	ConsoleOutPtr& console_out ) : ust::optional</GameArchiveFilesystem/>
+{
+	auto mut archive_file_res= ust::file_readable::open( archive_file_path );
+
+	if_var( e : archive_file_res.as_error_ref() )
+	{
+		ConsoleOutAddTextLine( console_out, ust::concat( "Error opening game archive file: ", ust::enum_to_string( e ), "!" ) );
+		return ust::null_optional;
+	}
+
+	var ust::file_readable mut archive_file= move(archive_file_res).try_take();
+
+	var u64 mut archive_file_size(0);
+	result_match( archive_file.get_metatada() )
+	{
+		Ok(m) -> { archive_file_size= m.size; },
+		Err(e) ->
+		{
+			ConsoleOutAddTextLine( console_out, ust::concat( "Error getting archive file size: ", ust::enum_to_string( e ), "!" ) );
+			return ust::null_optional;
+		}
+	}
+
+	ConsoleOutAddTextLine( console_out, ust::concat( "Game archive file has size ", ust::to_string8(archive_file_size), " bytes." ) );
+
+	var ArchiveHeader mut archive_header= zero_init;
+
+	if_var( e : archive_file.read_exact( ust::single_element_array_view( archive_header ).to_byte8_range() ).as_error_ref() )
+	{
+		ConsoleOutAddTextLine( console_out, ust::concat( "Error reading archive header: ", ust::enum_to_string( e ), "!" ) );
+		return ust::null_optional;
+	}
+
+	if( archive_header.id != ArchiveHeader::c_expected_id )
+	{
+		ConsoleOutAddTextLine( console_out, ust::concat( "Unexpected archive file ID, expected ", ust::to_string8(ArchiveHeader::c_expected_id), ",got ", ust::to_string8(archive_header.id), "!" ) );
+		return ust::null_optional;
+	}
+
+	ConsoleOutAddTextLine( console_out, ust::concat( "Game archive has ", ust::to_string8( archive_header.num_files ), " files." ) );
+
+	if( u64( typeinfo</ArchiveHeader/>.size_of ) + u64(archive_header.num_files) * u64( typeinfo</ArchiveFileHeader/>.size_of ) > archive_file_size )
+	{
+		ConsoleOutAddTextLine( console_out, "Entry table size is bigger than archive file size!" );
+		return ust::null_optional;
+	}
+
+	scoped_array ArchiveFileHeader mut file_headers[ size_type(archive_header.num_files) ]( ust::make_zeroed</ArchiveFileHeader/>() );
+
+	if_var( e : archive_file.read_exact( file_headers.to_byte8_range() ).as_error_ref() )
+	{
+		ConsoleOutAddTextLine( console_out, ust::concat( "Error reading archive file headers: ", ust::enum_to_string( e ) ) );
+		return ust::null_optional;
+	}
+
+	var EntriesMap mut archive_entries;
+
+	foreach( &file_header : file_headers )
+	{
+		var ResourceString mut name= ConvertToUppercase( file_header.name );
+
+		if( u64( file_header.offset ) + u64( file_header.size ) > archive_file_size )
+		{
+			ConsoleOutAddTextLine( console_out, ust::concat( "File \"", ConvertResourceStringToStringView( name ), "\" is out of bounds!" ) );
+			continue;
+		}
+
+		archive_entries.insert_new( move(name), FileEntry{ .offset= file_header.offset, .size= file_header.size } );
+	}
+
+	return GameArchiveFilesystem(
+		PrivateConstructorTag(),
+		move( archive_file ),
+		move( archive_entries ) );
 }
 
 fn GameFilesystem::GameArchiveFilesystem::constructor(
