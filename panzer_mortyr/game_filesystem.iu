@@ -22,10 +22,8 @@ public:
 
 	// Constructor for internal usage.
 	fn constructor(
-		PrivateConstructorTag t,
 		ust::filesystem_path data_directory_path,
-		ust::file_readable archive_file,
-		EntriesMap archive_entries,
+		GameArchiveFilesystem archive_filesystem,
 		GameDataFiles extra_data_files );
 
 	fn GetDataDirectory( this )
@@ -55,22 +53,7 @@ public:
 			}
 		}
 
-		type ResultT= typeof( move(loading_func)( archive_file_ ) );
-
-		auto entry_opt= archive_entries_.find( file_name );
-		if( entry_opt.empty() )
-		{
-			return ResultT( ust::io_error::not_found );
-		}
-
-		var FileEntry& entry= entry_opt.try_deref();
-
-		if_var( e : archive_file_.seek( u64(entry.offset) ).as_error_ref() )
-		{
-			return ResultT(e);
-		}
-
-		return move(loading_func)( archive_file_ );
+		return archive_filesystem_.LoadFile( file_name, move( loading_func ) );
 	}
 
 private:
@@ -87,11 +70,45 @@ private:
 	// It's necessary, since main game archive has more than 2000 files.
 	type EntriesMap= ust::hash_map</ResourceString, FileEntry/>;
 
+	class GameArchiveFilesystem
+	{
+	public:
+		fn constructor( PrivateConstructorTag t, ust::file_readable archive_file, EntriesMap archive_entries );
+
+		fn LoadFileToString( mut this, ResourceString& file_name ) : ust::io_result</ust::string8/>;
+
+		fn LoadFileToByte8Vector( mut this, ResourceString& file_name ) : ust::io_result</ ust::vector</byte8/> />;
+
+		template</type LoadingFunc/>
+		fn LoadFile( mut this, ResourceString& file_name, LoadingFunc mut loading_func ) : auto
+		{
+			type ResultT= typeof( move(loading_func)( archive_file_ ) );
+
+			auto entry_opt= archive_entries_.find( file_name );
+			if( entry_opt.empty() )
+			{
+				return ResultT( ust::io_error::not_found );
+			}
+
+			var FileEntry& entry= entry_opt.try_deref();
+
+			if_var( e : archive_file_.seek( u64(entry.offset) ).as_error_ref() )
+			{
+				return ResultT(e);
+			}
+
+			return move(loading_func)( archive_file_ );
+		}
+
+	private:
+		ust::file_readable archive_file_;
+		EntriesMap imut archive_entries_;
+	}
+
 private:
 	ust::filesystem_path imut data_directory_path_;
-	ust::file_readable archive_file_;
 
-	EntriesMap imut archive_entries_;
+	GameArchiveFilesystem archive_filesystem_;
 
 	// Files outside game archive.
 	GameDataFiles imut extra_data_files_;

@@ -106,28 +106,21 @@ fn GameFilesystem::Create(
 	return
 		GameFilesystemPtr(
 			GameFilesystem(
-				PrivateConstructorTag(),
 				game_archive_search_result.archive_file_directory,
-				move( archive_file ),
-				move( archive_entries),
+				GameArchiveFilesystem( PrivateConstructorTag(), move( archive_file ), move( archive_entries ) ),
 				CollectGameDataFiles( console_out, game_archive_search_result.archive_file_directory ) ) );
 }
 
 fn GameFilesystem::constructor(
-	PrivateConstructorTag t,
 	ust::filesystem_path mut data_directory_path,
-	ust::file_readable mut archive_file,
-	EntriesMap mut archive_entries,
+	GameArchiveFilesystem mut archive_filesystem,
 	GameDataFiles mut extra_data_files )
 	(
 		data_directory_path_= move(data_directory_path),
-		archive_file_= move(archive_file),
-		archive_entries_= move(archive_entries),
+		archive_filesystem_= move(archive_filesystem),
 		extra_data_files_= move( extra_data_files )
 	)
-{
-	ust::ignore_unused(t);
-}
+{}
 
 fn GameFilesystem::GetDataDirectory( this )
 	: ust::filesystem_path_view @( ust::reference_notation::return_inner_references::param0 )
@@ -146,7 +139,37 @@ fn GameFilesystem::LoadFileToString( mut this, ResourceString& file_name ) : ust
 		}
 	}
 
-	auto entry_opt= archive_entries_.find( file_name );
+	return archive_filesystem_.LoadFileToString( file_name );
+}
+
+fn GameFilesystem::LoadFileToByte8Vector( mut this, ResourceString& file_name ) : ust::io_result</ ust::vector</byte8/> />
+{
+	if_var( &path : extra_data_files_.find( file_name ) )
+	{
+		result_match( ust::read_file_to_byte8_vector( path ) )
+		{
+			Ok( contents ) -> { return contents; },
+			Err( e ) -> { ust::ignore_unused(e); }, // Try loading a file from the game archive.
+		}
+	}
+
+	return archive_filesystem_.LoadFileToByte8Vector( file_name );
+}
+
+fn GameFilesystem::GameArchiveFilesystem::constructor(
+	PrivateConstructorTag t, ust::file_readable mut archive_file, EntriesMap mut archive_entries )
+	(
+		archive_file_= move(archive_file),
+		archive_entries_= move(archive_entries),
+	)
+{
+	ust::ignore_unused(t);
+}
+
+fn GameFilesystem::GameArchiveFilesystem::LoadFileToString(
+	mut this, ResourceString& file_name ) : ust::io_result</ust::string8/>
+{
+		auto entry_opt= archive_entries_.find( file_name );
 	if( entry_opt.empty() )
 	{
 		return ust::io_error::not_found;
@@ -169,17 +192,9 @@ fn GameFilesystem::LoadFileToString( mut this, ResourceString& file_name ) : ust
 	return result;
 }
 
-fn GameFilesystem::LoadFileToByte8Vector( mut this, ResourceString& file_name ) : ust::io_result</ ust::vector</byte8/> />
+fn GameFilesystem::GameArchiveFilesystem::LoadFileToByte8Vector(
+	mut this, ResourceString& file_name ) : ust::io_result</ ust::vector</byte8/> />
 {
-	if_var( &path : extra_data_files_.find( file_name ) )
-	{
-		result_match( ust::read_file_to_byte8_vector( path ) )
-		{
-			Ok( contents ) -> { return contents; },
-			Err( e ) -> { ust::ignore_unused(e); }, // Try loading a file from the game archive.
-		}
-	}
-
 	auto entry_opt= archive_entries_.find( file_name );
 	if( entry_opt.empty() )
 	{
