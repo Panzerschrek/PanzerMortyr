@@ -25,7 +25,7 @@ fn Menu::constructor(
 		new_game_current_row_= 0u,
 		options_current_row_= 0u,
 		load_save_pages_state_{ .current_row= 0u },
-		controls_page_state_{ .current_row= 0u, .editing_active= false },
+		controls_page_state_{ .current_row= 0u, .rows_offset= 0u, .editing_active= false },
 		video_settings_page_state_{ .current_row= 0u, .current_video_mode_index= 0u },
 		sound_settings_current_row_= 0u,
 		advanced_options_current_row_= 0u,
@@ -300,7 +300,21 @@ fn nodiscard Menu::ProcessKeyPress( mut this, SDL_Keysym& key_sym, AudioProcesso
 				{
 					if( !controls_page_state_.editing_active )
 					{
-						DecrementRow( controls_page_state_.current_row, PageNumRows::controls );
+						if( controls_page_state_.current_row == 0u )
+						{
+							controls_page_state_.current_row= PageNumRows::controls - 1u;
+							controls_page_state_.rows_offset= PageNumRows::controls - c_num_visible_key_binding_rows;
+						}
+						else
+						{
+							--controls_page_state_.current_row;
+
+							if( controls_page_state_.current_row <= controls_page_state_.rows_offset )
+							{
+								--controls_page_state_.rows_offset;
+							}
+						}
+
 						audio_processor.PlayMenuSound();
 					}
 				},
@@ -354,7 +368,22 @@ fn nodiscard Menu::ProcessKeyPress( mut this, SDL_Keysym& key_sym, AudioProcesso
 				{
 					if( !controls_page_state_.editing_active )
 					{
-						IncrementRow( controls_page_state_.current_row, PageNumRows::controls );
+						if( controls_page_state_.current_row == PageNumRows::controls - 1u )
+						{
+							controls_page_state_.current_row= 0u;
+							controls_page_state_.rows_offset= 0u;
+						}
+						else
+						{
+							++controls_page_state_.current_row;
+
+							if( controls_page_state_.current_row >=
+								c_num_visible_key_binding_rows + controls_page_state_.rows_offset )
+							{
+								++controls_page_state_.rows_offset;
+							}
+						}
+
 						audio_processor.PlayMenuSound();
 					}
 				},
@@ -902,10 +931,13 @@ fn Menu::Draw( mut this, ImageDrawer &mut image_drawer, TextDrawer &mut text_dra
 
 			var u32 key_bindings_rows_spacing= TextDrawer::c_glyph_height * 3u / 2u;
 
+			var i32 cursor_visible_row=
+				i32( controls_page_state_.current_row ) - i32( controls_page_state_.rows_offset );
+
 			image_drawer.DrawImage(
 				MenuImages::small_cursor_frames,
 				cursor_offset_x,
-				cursor_offset_y - i32( key_bindings_rows_spacing * scale * controls_page_state_.current_row ),
+				cursor_offset_y - cursor_visible_row * i32( key_bindings_rows_spacing * scale ),
 				f32( scale ),
 				cursor_tile_x * small_cursor_size,
 				cursor_tile_y * small_cursor_size,
@@ -926,7 +958,9 @@ fn Menu::Draw( mut this, ImageDrawer &mut image_drawer, TextDrawer &mut text_dra
 			{
 				var bool is_edited_row= controls_page_state_.editing_active & row == controls_page_state_.current_row;
 
-				var i32 row_y= texts_offset_y - i32( key_bindings_rows_spacing * row * scale );
+				var i32 visible_row= i32(row) - i32( controls_page_state_.rows_offset );
+
+				var i32 row_y= texts_offset_y - visible_row * i32( key_bindings_rows_spacing * scale );
 
 				var TextDrawer::Settings& key_binding_text_settings=
 					( is_edited_row ? edited_text_settings : text_settings );
@@ -1501,6 +1535,8 @@ fn ConvertPercentsToSliderValue( u32 percents ) : u32
 var [ u32, 2 ] c_base_menu_size[ 320u, 200u ];
 
 var u32 c_num_quit_messages= 8u;
+
+var u32 c_num_visible_key_binding_rows= 10u;
 
 var tup[
 	tup[ [ char8, 19 ], ExtraStringTableKey ],
