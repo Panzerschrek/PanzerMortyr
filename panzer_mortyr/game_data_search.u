@@ -2,15 +2,18 @@ import "/directory_iterator.iu"
 import "/enum_string_conversions.iu"
 import "/path_utils.iu"
 import "/string.iu"
+import "/common_lib/game_params_file.iu"
+import "/common_lib/maps_description_file.iu"
+import "font_files.iu"
 import "game_data_search.iu"
 
 namespace PM
 {
 
-fn SearchForGameArchiveFile(
+fn SearchForGameData(
 	ust::filesystem_path_view executable_path,
 	ust::filesystem_path_view custom_game_installation_directory_path,
-	ConsoleOutPtr& console_out ) : ust::optional</GameArchiveSearchResult/>
+	ConsoleOutPtr& console_out ) : ust::optional</GameDataSearchResult/>
 {
 	var [ ust::filesystem_path_view, 5 ] start_directories
 	[
@@ -35,11 +38,11 @@ fn SearchForGameArchiveFile(
 		ConsoleOutAddTextLine(
 			console_out, ust::concat( "Searching for game data in \"", start_directory, "\"." ) );
 
-		// Search for "Data" directory and "main.hal" file in it.
+		// Search for "Data" directory and specific files in it.
 		if_var( &data_directory : SearchForDataDirectory( console_out, start_directory ) )
 		{
-			var ust::optional</GameArchiveSearchResult/> game_archive_search_result_opt=
-				SearchForGameArchiveFileInDirectory( console_out, data_directory );
+			var ust::optional</GameDataSearchResult/> game_archive_search_result_opt=
+				SearchForGameFilesInDirectory( console_out, data_directory );
 
 			if( !game_archive_search_result_opt.empty() )
 			{
@@ -47,10 +50,10 @@ fn SearchForGameArchiveFile(
 			}
 		}
 
-		// Search for "main.hal" file in current start directory, assuming start directory is called "Data".
+		// Search for specific files in current start directory, assuming start directory is called "Data".
 
-		var ust::optional</GameArchiveSearchResult/> game_archive_search_result_opt=
-			SearchForGameArchiveFileInDirectory( console_out, start_directory );
+		var ust::optional</GameDataSearchResult/> game_archive_search_result_opt=
+			SearchForGameFilesInDirectory( console_out, start_directory );
 
 		if( !game_archive_search_result_opt.empty() )
 		{
@@ -61,20 +64,103 @@ fn SearchForGameArchiveFile(
 	return ust::null_optional;
 }
 
-fn SearchForGameArchiveFileInDirectory(
-	ConsoleOutPtr& console_out, ust::filesystem_path_view d ) : ust::optional</GameArchiveSearchResult/>
+fn SearchForGameFilesInDirectory(
+	ConsoleOutPtr& console_out, ust::filesystem_path_view d ) : ust::optional</GameDataSearchResult/>
 {
 	result_match( ust::open_directory_for_iteration( d ) )
 	{
 		Ok( mut it ) ->
 		{
-			if_var( &res : SearchForGameArchiveFileInDirectory( console_out, move( it ) ) )
+			var bool
+				mut game_params_file_found= false,
+				mut maps_description_file_found= false,
+				mut font_data_file_found= false;
+
+			var ust::string_view8 archive_file_name= "main.hal";
+			var ust::string_view8 game_params_file_name= ConvertResourceStringToStringView( c_game_params_file_name );
+			var ust::string_view8 maps_description_file_name=
+				ConvertResourceStringToStringView( c_maps_description_file_name );
+			var ust::string_view8 font_data_file_name= ConvertResourceStringToStringView( c_font_data_file_name );
+
+			foreach( entry_res : move(it) )
 			{
-				return GameArchiveSearchResult
+				if_var( e : entry_res.as_error_ref() )
 				{
-					.archive_file_directory= d,
-					.archive_file= ust::path::join( d, res ),
-				};
+					ConsoleOutAddTextLine(
+						console_out, ust::concat( "Failed to get directory entry: ", ust::enum_to_string(e) ) );
+					break;
+				}
+
+				if_var( &entry : entry_res.as_ref() )
+				{
+					if( entry.kind == ust::file_kind::file )
+					{
+						if( PathAreCaseInsensitiveEqual( entry.name, archive_file_name ) )
+						{
+							ConsoleOutAddTextLine(
+								console_out,
+								ust::concat(
+									"Found archive file \"",
+									archive_file_name,
+									"\" in directory \"",
+									d,
+									"\"." ) );
+
+							// If we found an archive file - return it without further directory contents enumeration.
+							return GameDataSearchResult
+							{
+								.archive_file= ust::path::join( d, entry.name ),
+								.data_directory= d,
+							};
+						}
+						else if( PathAreCaseInsensitiveEqual( entry.name, game_params_file_name ) )
+						{
+							ConsoleOutAddTextLine(
+								console_out,
+								ust::concat(
+									"Found game params file \"",
+									game_params_file_name,
+									"\" in directory \"",
+									d,
+									"\"." ) );
+
+							game_params_file_found= true;
+						}
+						else if( PathAreCaseInsensitiveEqual( entry.name, maps_description_file_name ) )
+						{
+							ConsoleOutAddTextLine(
+								console_out,
+								ust::concat(
+									"Found maps description file \"",
+									maps_description_file_name,
+									"\" in directory \"",
+									d,
+									"\"." ) );
+
+							maps_description_file_found= true;
+						}
+						else if( PathAreCaseInsensitiveEqual( entry.name, font_data_file_name ) )
+						{
+							ConsoleOutAddTextLine(
+								console_out,
+								ust::concat(
+									"Found font data file \"",
+									font_data_file_name,
+									"\" in directory \"",
+									d,
+									"\"." ) );
+
+							font_data_file_found= true;
+						}
+					}
+				}
+			}
+
+			if( game_params_file_found & maps_description_file_found & font_data_file_found )
+			{
+				// We have no archive file in this directory, but have some specific files.
+				// Assume it's an installation without archive file.
+				return GameDataSearchResult{ .data_directory= d };
 			}
 		},
 		Err( e ) ->
@@ -86,30 +172,6 @@ fn SearchForGameArchiveFileInDirectory(
 	return ust::null_optional;
 }
 
-fn SearchForGameArchiveFileInDirectory(
-	ConsoleOutPtr& console_out,
-	ust::iterator</ust::directory_raw_iterator/> mut directory_iterator ) : ust::optional</ust::filesystem_path/>
-{
-	foreach( entry_res : move(directory_iterator) )
-	{
-		if_var( e : entry_res.as_error_ref() )
-		{
-			ConsoleOutAddTextLine(
-				console_out, ust::concat( "Failed to get directory entry: ", ust::enum_to_string(e) ) );
-			break;
-		}
-
-		if_var( &entry : entry_res.as_ref() )
-		{
-			if( PathAreCaseInsensitiveEqual( entry.name, "main.hal" ) )
-			{
-				return entry.name;
-			}
-		}
-	}
-
-	return ust::null_optional;
-}
 
 fn SearchForDataDirectory(
 	ConsoleOutPtr& console_out, ust::filesystem_path_view d ) : ust::optional</ust::filesystem_path/>
@@ -149,7 +211,7 @@ fn SearchForDataDirectory(
 
 		if_var( &entry : entry_res.as_ref() )
 		{
-			if( PathAreCaseInsensitiveEqual( entry.name, "Data" ) )
+			if( entry.kind == ust::file_kind::directory && PathAreCaseInsensitiveEqual( entry.name, "Data" ) )
 			{
 				return entry.name;
 			}
@@ -157,6 +219,58 @@ fn SearchForDataDirectory(
 	}
 
 	return ust::null_optional;
+}
+
+fn CollectGameDataFiles( ConsoleOutPtr& console_out, ust::filesystem_path_view data_directory ) : GameDataFiles
+{
+	var GameDataFiles mut result;
+	CollectGameDataFiles_r( console_out, data_directory, result );
+	return result;
+}
+
+fn CollectGameDataFiles_r(
+	ConsoleOutPtr& console_out, ust::filesystem_path_view directory_path, GameDataFiles &mut result )
+{
+	result_match( ust::open_directory_for_iteration( directory_path ) )
+	{
+		Ok( mut it ) ->
+		{
+			foreach( entry_res : move( it ) )
+			{
+				if_var( e : entry_res.as_error_ref() )
+				{
+					ConsoleOutAddTextLine(
+						console_out, ust::concat( "Failed to get directory entry: ", ust::enum_to_string(e) ) );
+					break;
+				}
+
+				if_var( &entry : entry_res.as_ref() )
+				{
+					if( entry.kind == ust::file_kind::file )
+					{
+						if( entry.name.size() <= typeinfo</ ResourceString />.element_count )
+						{
+							result.insert_new(
+								// Store only file name.
+								// The original game does exactly the same - it loads just files like "ZMAP01.ANT" from "MAPS" directory.
+								ConvertStringToResourceString( entry.name ),
+								ust::path::join( directory_path, entry.name ) );
+						}
+					}
+					else if( entry.kind == ust::file_kind::directory )
+					{
+						// Collect files in subdirectories.
+						CollectGameDataFiles_r( console_out, ust::path::join( directory_path, entry.name ), result );
+					}
+				}
+			}
+		},
+		Err( e ) ->
+		{
+			ConsoleOutAddTextLine(
+				console_out, ust::concat( "Failed to open directory \"", directory_path, "\" for iteration: ", ust::enum_to_string(e) ) );
+		},
+	}
 }
 
 fn PathAreCaseInsensitiveEqual( ust::filesystem_path_view l, ust::filesystem_path_view r ) : bool

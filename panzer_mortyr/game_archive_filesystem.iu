@@ -1,0 +1,63 @@
+import "/file.iu"
+import "/hash_map.iu"
+import "/vector.iu"
+import "/common_lib/resource_string.iu"
+import "console_out.iu"
+
+namespace PM
+{
+
+class GameArchiveFilesystem
+{
+public:
+	fn Create(
+		ust::filesystem_path_view archive_file_path,
+		ConsoleOutPtr& console_out ) : ust::optional</GameArchiveFilesystem/>;
+
+	fn constructor( PrivateConstructorTag t, ust::file_readable archive_file, EntriesMap archive_entries );
+
+	fn LoadFileToString( mut this, ResourceString& file_name ) : ust::io_result</ust::string8/>;
+
+	fn LoadFileToByte8Vector( mut this, ResourceString& file_name ) : ust::io_result</ ust::vector</byte8/> />;
+
+	template</type LoadingFunc/>
+	fn LoadFile( mut this, ResourceString& file_name, LoadingFunc mut loading_func ) : auto
+	{
+		type ResultT= typeof( move(loading_func)( archive_file_ ) );
+
+		auto entry_opt= archive_entries_.find( file_name );
+		if( entry_opt.empty() )
+		{
+			return ResultT( ust::io_error::not_found );
+		}
+
+		var FileEntry& entry= entry_opt.try_deref();
+
+		if_var( e : archive_file_.seek( u64(entry.offset) ).as_error_ref() )
+		{
+			return ResultT(e);
+		}
+
+		return move(loading_func)( archive_file_ );
+	}
+
+private:
+	struct PrivateConstructorTag{}
+
+	struct FileEntry
+	{
+		// Game archive is small enough to be able to use 32-bit offsets and sizes.
+		u32 offset;
+		u32 size;
+	}
+
+	// Use hash-map to speed-up file entry search.
+	// It's necessary, since main game archive has more than 2000 files.
+	type EntriesMap= ust::hash_map</ResourceString, FileEntry/>;
+
+private:
+	ust::file_readable archive_file_;
+	EntriesMap imut archive_entries_;
+}
+
+} // namespace PM

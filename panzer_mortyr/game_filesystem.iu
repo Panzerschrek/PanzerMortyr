@@ -1,8 +1,5 @@
-import "/file.iu"
-import "/hash_map.iu"
-import "/vector.iu"
-import "/common_lib/resource_string.iu"
-import "console_out.iu"
+import "game_archive_filesystem.iu"
+import "game_data_search.iu"
 
 namespace PM
 {
@@ -21,10 +18,9 @@ public:
 
 	// Constructor for internal usage.
 	fn constructor(
-		PrivateConstructorTag t,
-		 ust::filesystem_path data_directory_path,
-		 ust::file_readable archive_file,
-		 EntriesMap archive_entries );
+		ust::filesystem_path data_directory_path,
+		ust::optional</GameArchiveFilesystem/> archive_filesystem,
+		GameDataFiles extra_data_files );
 
 	fn GetDataDirectory( this )
 		: ust::filesystem_path_view @( ust::reference_notation::return_inner_references::param0 );
@@ -44,43 +40,32 @@ public:
 	template</type LoadingFunc/>
 	fn LoadFile( mut this, ResourceString& file_name, LoadingFunc mut loading_func ) : auto
 	{
-		type ResultT= typeof( move(loading_func)( archive_file_ ) );
-
-		auto entry_opt= archive_entries_.find( file_name );
-		if( entry_opt.empty() )
+		// Individual files have priority over files in the game archive.
+		if_var( &path : extra_data_files_.find( file_name ) )
 		{
-			return ResultT( ust::io_error::not_found );
+			result_match( ust::file_readable::open( path ) )
+			{
+				Ok( mut f ) -> { return move(loading_func)( f ); },
+				Err( e ) -> { ust::ignore_unused(e); }, // Try loading a file from the game archive.
+			}
 		}
 
-		var FileEntry& entry= entry_opt.try_deref();
-
-		if_var( e : archive_file_.seek( u64(entry.offset) ).as_error_ref() )
+		if_var( &mut archive_filesystem : archive_filesystem_ )
 		{
-			return ResultT(e);
+			return archive_filesystem.LoadFile( file_name, move( loading_func ) );
 		}
 
-		return move(loading_func)( archive_file_ );
+		type ResultT= typeof( archive_filesystem_.try_deref().LoadFile( file_name, move( loading_func ) ) );
+		return ResultT( ust::io_error::not_found );
 	}
-
-private:
-	struct PrivateConstructorTag{}
-
-	struct FileEntry
-	{
-		// Game archive is small enough to be able to use 32-bit offsets and sizes.
-		u32 offset;
-		u32 size;
-	}
-
-	// Use hash-map to speed-up file entry search.
-	// It's necessary, since main game archive has more than 2000 files.
-	type EntriesMap= ust::hash_map</ResourceString, FileEntry/>;
 
 private:
 	ust::filesystem_path imut data_directory_path_;
-	ust::file_readable archive_file_;
 
-	EntriesMap archive_entries_;
+	ust::optional</ GameArchiveFilesystem /> archive_filesystem_; // Is empty if has no archive file.
+
+	// Files outside game archive.
+	GameDataFiles imut extra_data_files_;
 }
 
 } // namespace PM
