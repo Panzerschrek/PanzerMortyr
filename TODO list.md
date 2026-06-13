@@ -40,7 +40,6 @@ Gameplay investigation:
 
 PanzerMortyr general:
 
-* Support loading game data files directly (not only from the game archive). It seems that the original game can do this.
 * Allow changing shot and zoom controls (change mouse buttons and maybe even use key buttons).
 * Consider allowing playing cooperative/multiplayer maps as usual singleplayer ones. Maybe add a main menu item for this.
 * Consider writing some kind of alternative installer - a tool, which depacks game data from the original game ISO or mdf/mds files.
@@ -55,6 +54,7 @@ PanzerMortyr general:
 * Consider preventing saving or disabling save menu if no game is active.
 * Prevent user input being used by game logic code if user deactivates a menu page by pressing a key.
 * Allow taking screenshots by pressing some key (like F11 or F12, maybe PrintScreen), so that no external tool is needed for taking screenshots.
+* Make necessary changes to support working with data of the beta version of the original game.
 
 PanzerMortyr game logic:
 
