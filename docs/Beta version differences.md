@@ -1,18 +1,18 @@
 Map differences:
 
 * Map 1 has no initial church/castle-like area.
-* Map 2 is combined with map 28, there are a couple of extra corridors connecting them.
+* Map 2 is combined with map 28, there are a couple of extra corridors connecting them and other areas cut from the release version. It has a couple of robo-enemies.
 * Map 3 layout is mostly the same.
 * Map 4 layout is (almost) the same, but it's way less decorated.
-* Map 5 is combined with map 31.
-* Map 6 layout is mostly the same.
+* Map 5 is combined with map 31. It has WWII-time enemies, not future enemies.
+* Map 6 layout is mostly the same. There are a couple of guys with panzerfaust.
 * Map 7 layout is mostly the same.
 * Map 8 is combined with map 32.
-* Map 9 has exit in other place.
-* Map 10 is combined with map 33, a couple of corridors are different.
+* Map 9 has exit in other place. It has machinegun nest enemies.
+* Map 10 is combined with map 33, a couple of corridors and other map elements are different.
 * Map 11 has almost nothing common with release map 11, it's more like map 34, but with a lot of unique stuff.
 * Map 12 layout is almost like in the release, but with lower walls.
-* Map 13 layout is almost like in the release, with exception of a missing table where Hitler is located in some release versions of the game.
+* Map 13 layout is almost like in the release, with exception of a missing table where Hitler is located in some release versions of the game. It also has nurse and gestapo enemies.
 * Map 14 layout is almost like in the release.
 * Map 15 looks identical to the release version.
 * Map 16 is combined with map 29.
@@ -35,9 +35,11 @@ Map differences:
 * Map 33 can't be opened.
 * Map 34 can't be opened.
 * Map 35 can't be opened.
+* Map 41 isn't there yet.
 
 Other differences:
 
+* The starting map is map 1.
 * Some sounds are missing, like sounds of items pick-up and player's damaging.
 * Some HUD icons (like health) are different.
 * Menu looks different - it's more futuristic (2093-themed), rather then 1944-themed.
