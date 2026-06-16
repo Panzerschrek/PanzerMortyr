@@ -178,7 +178,7 @@ fn CreateNewMapGameState(
 				.navigation_info_index( navigation_info_index ),
 				.alarmed= false,
 				.alarmed_by_seeing_player= false,
-				.player_is_in_sight= false,
+				.attack_target_is_in_sight= false,
 				.lost_energy_in_current_step= false,
 				.animation_frame= 0u, // Set exact frame later.
 				.directional_animation_frame= 0u, // Set exact frame later.
@@ -2209,7 +2209,7 @@ fn TriggerEntitiesSpawn( GameParams& game_params, GameMapData& map_data, GameSta
 				.navigation_info_index( navigation_info_index ),
 				.alarmed= true, // Spawn triggered entities in alarmed state.
 				.alarmed_by_seeing_player= false,
-				.player_is_in_sight= false,
+				.attack_target_is_in_sight= false,
 				.lost_energy_in_current_step= false,
 				.animation_frame= 0u, // Set later.
 				.directional_animation_frame= 0u, // Set later.
@@ -2289,7 +2289,7 @@ fn ProcessEntityLogicStep(
 	// Doing this only each second step isn't that problematic, it means only that enemies react slightly slower.
 	if( ( entity_index & 1s ) == ( size_type( game_state.step_index ) & 1s ) )
 	{
-		UpdateEntityPlayerInSightFlag( map_data, game_state, entity_description, entity );
+		UpdateEntityTargetInSightFlag( map_data, game_state, entity_description, entity );
 	}
 
 	// For now update movement target each step.
@@ -2300,9 +2300,9 @@ fn ProcessEntityLogicStep(
 			map_data, game_state, route_search_context, entity_description, entity, entity_navigation_state );
 	}
 
-	if( entity.player_is_in_sight & !entity.alarmed )
+	if( entity.attack_target_is_in_sight & !entity.alarmed )
 	{
-		// Go to alarmed state if saw the player at least once.
+		// Go to alarmed state if saw an attack target at least once.
 		entity.alarmed= true;
 		entity.alarmed_by_seeing_player= true;
 	}
@@ -2413,18 +2413,18 @@ fn ProcessEntityLogicStep(
 			{
 				if_var( &inside_shooting_zone_a : operation_control.inside_shooting_zone_a )
 				{
-					if( entity.player_is_in_sight && // Attack only if the player is visible.
+					if( entity.attack_target_is_in_sight && // Attack only if the target is visible.
 						entity.ammo > 0u && // Attack only if has ammo.
 						game_state.player.energy > 0u /* Attack only if the player is alive. */ )
 					{
 						var u32 period( inside_shooting_zone_a[0] );
 						if( period != 0u && entity.num_steps_since_operation_start % period == 0u )
 						{
-							if_var( &target_position : entity.last_seen_player_position )
+							if_var( &attack_target_position : entity.last_seen_attack_target_position )
 							{
 								// Perform melee atack if the target is in attack range.
 								var f32 max_distance= f32( entity_description.direct_contact );
-								if( ( target_position - entity.position ).SquareLength() <=
+								if( ( attack_target_position - entity.position ).SquareLength() <=
 									max_distance * max_distance )
 								{
 									next_operation= inside_shooting_zone_a[2];
@@ -2440,7 +2440,7 @@ fn ProcessEntityLogicStep(
 				{
 					// TODO - check what else condition is necessary.
 					// Maybe add some random element?
-					if( entity.player_is_in_sight && // Attack only if the player is visible.
+					if( entity.attack_target_is_in_sight && // Attack only if the target is visible.
 						entity.ammo > 0u && // Attack only if has ammo.
 						game_state.player.energy > 0u /* Attack only if the player is alive. */ )
 					{
@@ -2458,14 +2458,14 @@ fn ProcessEntityLogicStep(
 				{
 					// Assume player should be visible and be in optimal distance to trigger this state transition.
 
-					if( entity.player_is_in_sight && // Attack only if the player is visible.
+					if( entity.attack_target_is_in_sight && // Attack only if the target is visible.
 						entity.ammo > 0u && // Attack only if has ammo.
 						game_state.player.energy > 0u && // Attack only if the player is alive.
 						entity.num_steps_since_operation_start == convenient_position[0] )
 					{
-						if_var( &player_position : entity.last_seen_player_position )
+						if_var( &attack_target_position : entity.last_seen_attack_target_position )
 						{
-							var f32 square_distance= ( player_position - entity.position ).SquareLength();
+							var f32 square_distance= ( attack_target_position - entity.position ).SquareLength();
 							var EntityDistanceRange optimal_range= GetEntityDistanceRanges( entity_description ).optimal;
 
 							if( square_distance >= optimal_range.distance_min * optimal_range.distance_min &&
@@ -2497,7 +2497,7 @@ fn ProcessEntityLogicStep(
 					if( entity.num_steps_since_operation_start == within_sight[0] )
 					{
 						// TODO - perform proper player to entity check, not reverse check as now.
-						var bool player_sees_this_entity= entity.player_is_in_sight;
+						var bool player_sees_this_entity= entity.attack_target_is_in_sight;
 						if( player_sees_this_entity )
 						{
 							next_operation= within_sight[1];
@@ -2585,9 +2585,9 @@ fn ProcessEntityLogicStep(
 
 		if_var( &rotation_for_shot : operation.rotation_for_shot )
 		{
-			if_var( &target_position : entity.last_seen_player_position )
+			if_var( &attack_target_position : entity.last_seen_attack_target_position )
 			{
-				var Vec2f vec_to_movement_target= target_position.xy() - entity.position.xy();
+				var Vec2f vec_to_movement_target= attack_target_position.xy() - entity.position.xy();
 
 				var f32 target_azimuth= ust::atan2( -vec_to_movement_target.x, vec_to_movement_target.y );
 
@@ -2687,7 +2687,7 @@ fn ProcessEntityLogicStep(
 								.navigation_info_index= ~0u,
 								.alarmed= false,
 								.alarmed_by_seeing_player= false,
-								.player_is_in_sight= false,
+								.attack_target_is_in_sight= false,
 								.lost_energy_in_current_step= false,
 								.animation_frame= 0u, // Set exact frame later.
 								.directional_animation_frame= 0u, // Set exact frame later.
@@ -5580,13 +5580,13 @@ fn RemoveEntityCollider(
 	}
 }
 
-fn UpdateEntityPlayerInSightFlag(
+fn UpdateEntityTargetInSightFlag(
 	GameMapData& map_data,
 	GameState& game_state,
 	EntitiesDescription::EntityDescription& entity_description,
 	EntityState &mut entity )
 {
-	entity.player_is_in_sight= false;
+	entity.attack_target_is_in_sight= false;
 
 	if( entity_description.mode != EntitiesDescription::EntityDescription::c_mode_enemy )
 	{
@@ -5617,13 +5617,15 @@ fn UpdateEntityPlayerInSightFlag(
 		return;
 	}
 
+	// TODO - use here bbox of target entity, not only player bbox
 	var Vec3f trace_end= GetEntityPointForPlayerVisibilityTrace( entity.position, operation.animation );
+
 	var Vec3f trace_start=
 		GetPlayerPointForEntityVisibilityTrace( game_state.player.position, game_state.player.crouching_phase );
 
 	if( trace_start == trace_end )
 	{
-		entity.player_is_in_sight= true;
+		entity.attack_target_is_in_sight= true;
 		return;
 	}
 
@@ -5678,7 +5680,7 @@ fn UpdateEntityPlayerInSightFlag(
 	}
 
 	// Check for view ray intersection with other entities.
-	// It's necessary to prevent enemies shooting the player if some other enemy or a decoration is blocking the view.
+	// It's necessary to prevent enemies shooting the attack target if some other enemy or a decoration is blocking the view.
 	// This check is costly, since it requires checking colliders of all other entities.
 	// But it's fine, as long as we don't have too many entities.
 
@@ -5686,7 +5688,7 @@ fn UpdateEntityPlayerInSightFlag(
 	{
 		var Collider& collider= game_state.colliders[i];
 
-		if( size_type( entity.collider_index ) == i || collider.entity_index == c_player_entity_index )
+		if( size_type( entity.collider_index ) == i || collider.entity_index == c_player_entity_index /* TODO - check here for attack target index. */ )
 		{
 			continue;
 		}
@@ -5700,10 +5702,10 @@ fn UpdateEntityPlayerInSightFlag(
 		}
 	}
 
-	// All visibility checks are passed - set player visibility flag and update the last seen player position.
+	// All visibility checks are passed - set target visibility flag and update the last seen player position.
 
-	entity.player_is_in_sight= true;
-	entity.last_seen_player_position= game_state.player.position;
+	entity.attack_target_is_in_sight= true;
+	entity.last_seen_attack_target_position= game_state.player.position;
 }
 
 struct RouteSearchContext
@@ -5788,7 +5790,7 @@ fn UpdateEntityMovementTarget(
 	else
 	{
 		// Re-attach to the navigation graph if is too far away from the current navigation graph node.
-		// It's necessary for non-graph-based movement modes (like movement towards the player).
+		// It's necessary for non-graph-based movement modes (like movement towards the attack target).
 		// It's also needed for rare cases if an enemy has fallen down.
 
 		var Vec3f& node_position=
@@ -5845,9 +5847,9 @@ fn UpdateEntityMovementTarget(
 		navigation_state.target_navigation_graph_node= GlobalNavigationGraph::c_invalid_node_index;
 	}
 
-	if( entity.alarmed && !entity.last_seen_player_position.empty() )
+	if( entity.alarmed && !entity.last_seen_attack_target_position.empty() )
 	{
-		var Vec3f& player_position= entity.last_seen_player_position.try_deref();
+		var Vec3f& attack_target_position= entity.last_seen_attack_target_position.try_deref();
 
 		if( navigation_state.target_navigation_graph_node != GlobalNavigationGraph::c_invalid_node_index &&
 			navigation_state.route[0] == GlobalNavigationGraph::c_invalid_node_index )
@@ -5884,13 +5886,13 @@ fn UpdateEntityMovementTarget(
 
 			if( navigation_state.target_navigation_graph_node != GlobalNavigationGraph::c_invalid_node_index )
 			{
-				// Check if current target is close enough to the player.
+				// Check if current target is close enough to the attack target.
 				// If so - request navigation target recalculation.
 
 				var GlobalNavigationGraph::Node& node=
 					map_data.global_navigation_graph.nodes[ size_type( navigation_state.target_navigation_graph_node ) ];
 
-				var f32 square_distance= ( node.position - player_position ).SquareLength();
+				var f32 square_distance= ( node.position - attack_target_position ).SquareLength();
 
 				if( square_distance < min_square_distance_for_panic_mode )
 				{
@@ -5905,10 +5907,10 @@ fn UpdateEntityMovementTarget(
 			if( navigation_target_needs_update )
 			{
 				// First check nodes connected to current one.
-				// Select a node leading away from the player.
+				// Select a node leading away from the attack target.
 
-				var Vec2f direction_to_player= player_position.xy() - entity.position.xy();
-				var Vec2f direction_to_player_normalized= direction_to_player / ( direction_to_player.Length() + 0.0001f );
+				var Vec2f direction_to_attack_target= attack_target_position.xy() - entity.position.xy();
+				var Vec2f direction_to_attack_target_normalized= direction_to_attack_target / ( direction_to_attack_target.Length() + 0.0001f );
 
 				var GlobalNavigationGraph::Node& current_node=
 					map_data.global_navigation_graph.nodes[ size_type( navigation_state.current_navigation_graph_node ) ];
@@ -5930,9 +5932,9 @@ fn UpdateEntityMovementTarget(
 					}
 
 					var Vec2f direction_to_node= node.position.xy() - entity.position.xy();
-					var f32 dot= direction_to_node.Dot( direction_to_player_normalized );
+					var f32 dot= direction_to_node.Dot( direction_to_attack_target_normalized );
 
-					if( dot < 0.0f ) // Consider only nodes leading away from the player.
+					if( dot < 0.0f ) // Consider only nodes leading away from the attack target.
 					{
 						var f32 angle_cos= dot / direction_to_node.Length();
 						if( angle_cos < smallest_angle_cos )
@@ -5952,7 +5954,7 @@ fn UpdateEntityMovementTarget(
 					game_state.step_index >= navigation_state.last_route_search_step_index + EntityNavigationConstants::min_steps_between_route_searches &&
 					route_search_context.num_nodes_visited < EntityNavigationConstants::max_nodes_to_visit_in_single_game_logic_step )
 				{
-					// A fallback for cases when an enemy is pushed into a corner with no way to move away from the player.
+					// A fallback for cases when an enemy is pushed into a corner with no way to move away from the attack target.
 					// Perform more complex nearby nodes enumeration to find a way from this corner.
 
 					var GlobalNavigationGraph::NodeIndex mut new_navigation_target_node=
@@ -5973,12 +5975,12 @@ fn UpdateEntityMovementTarget(
 								var GlobalNavigationGraph::Node& node=
 									map_data.global_navigation_graph.nodes[ size_type( node_index ) ];
 
-								var f32 square_distance_from_node_to_player=
-									( node.position - player_position ).SquareLength();
+								var f32 square_distance_from_node_to_attack_target=
+									( node.position - attack_target_position ).SquareLength();
 
-								if( square_distance_from_node_to_player >= min_square_distance_for_panic_mode )
+								if( square_distance_from_node_to_attack_target >= min_square_distance_for_panic_mode )
 								{
-									// Found a node which is far enough from the player.
+									// Found a node which is far enough from the attack target.
 									// Select is as target and end the search.
 									new_navigation_target_node= node_index;
 									return false;
@@ -6009,21 +6011,22 @@ fn UpdateEntityMovementTarget(
 				}
 			}
 		}
-		else if( entity.player_is_in_sight )
+		else if( entity.attack_target_is_in_sight )
 		{
+			// TODO - use target entity bbox.
 			var f32 player_crouching_phase= 0.0f; // For line of sight check assume that the player is staying.
 
 			var bool mut navigation_target_needs_update= false;
 
 			if( navigation_state.target_navigation_graph_node != GlobalNavigationGraph::c_invalid_node_index )
 			{
-				// Check if current target node is good enough and if the player is still visible from it.
+				// Check if current target node is good enough and if the attack target is still visible from it.
 				// If it's not the case - request navigation target update.
 
 				var GlobalNavigationGraph::Node& node=
 					map_data.global_navigation_graph.nodes[ size_type( navigation_state.target_navigation_graph_node ) ];
 
-				var f32 square_distance= ( node.position - player_position ).SquareLength();
+				var f32 square_distance= ( node.position - attack_target_position ).SquareLength();
 
 				var bool distance_good_enough=
 					square_distance >= good_enough_square_distance_min &&
@@ -6032,8 +6035,9 @@ fn UpdateEntityMovementTarget(
 				if( distance_good_enough )
 				{
 					var Vec3f trace_start=
-						GetPlayerPointForEntityVisibilityTrace( player_position, player_crouching_phase );
+						GetPlayerPointForEntityVisibilityTrace( attack_target_position, player_crouching_phase );
 
+					// TODO - use attack target bbox.
 					var Vec3f trace_end= GetEntityPointForPlayerVisibilityTrace( node.position, operation.animation );
 
 					if( trace_end != trace_start )
@@ -6049,7 +6053,7 @@ fn UpdateEntityMovementTarget(
 						{
 							if( trace_result.distance < 1.0f )
 							{
-								// Player is no longer visible from this target.
+								// Attack target is no longer visible from this target.
 								navigation_target_needs_update= true;
 							}
 						}
@@ -6071,14 +6075,14 @@ fn UpdateEntityMovementTarget(
 			{
 				// Need a new target and a route to it.
 
-				var f32 square_distance_to_player= ( player_position - entity.position ).SquareLength();
+				var f32 square_distance_to_attack_target= ( attack_target_position - entity.position ).SquareLength();
 
-				if( square_distance_to_player < good_enough_square_distance_min )
+				if( square_distance_to_attack_target < good_enough_square_distance_min )
 				{
-					// Is too close to the player.
-					// Search for the nearest node (in graph distance units), which isn't too close to the player.
+					// Is too close to the attack target.
+					// Search for the nearest node (in graph distance units), which isn't too close to the attack target.
 
-					// In the worst case we need to go to the player and past it. It's roughly 2 minimal distances.
+					// In the worst case we need to go to the attack target and past it. It's roughly 2 minimal distances.
 					var u32 max_graph_distance_to_observe( distance_ranges.good_enough.distance_min * 2.5f );
 
 					var GlobalNavigationGraph::NodeIndex mut new_navigation_target_node=
@@ -6109,15 +6113,15 @@ fn UpdateEntityMovementTarget(
 							var GlobalNavigationGraph::Node& node=
 								map_data.global_navigation_graph.nodes[ size_type( node_index ) ];
 
-							var f32 square_distance_to_player= ( node.position - player_position ).SquareLength();
+							var f32 square_distance_to_attack_target= ( node.position - attack_target_position ).SquareLength();
 
-							if( square_distance_to_player >= good_enough_square_distance_min &&
-								square_distance_to_player <= good_enough_square_distance_max )
+							if( square_distance_to_attack_target >= good_enough_square_distance_min &&
+								square_distance_to_attack_target <= good_enough_square_distance_max )
 							{
-								// Find a node which is far enough from the player.
-								// Check if it's possible to see the player from it.
+								// Find a node which is far enough from the attack target.
+								// Check if it's possible to see the attack target from it.
 								var Vec3f trace_start=
-									GetPlayerPointForEntityVisibilityTrace( player_position, player_crouching_phase );
+									GetPlayerPointForEntityVisibilityTrace( attack_target_position, player_crouching_phase );
 
 								var Vec3f trace_end= GetEntityPointForPlayerVisibilityTrace( node.position, operation.animation );
 
@@ -6162,15 +6166,15 @@ fn UpdateEntityMovementTarget(
 						}
 					}
 				}
-				else if( square_distance_to_player > good_enough_square_distance_max )
+				else if( square_distance_to_attack_target > good_enough_square_distance_max )
 				{
-					// Is too far away from the player. Search a direct route towards him.
+					// Is too far away from the attack target. Search a direct route towards it.
 
-					if_var( player_node_index :
+					if_var( attack_target_node_index :
 						FindNearestNavigationGraphNode(
 							map_data,
 							game_state.broken_quad_bits,
-							player_position,
+							attack_target_position,
 							large_entity ) )
 					{
 						var size_type mut num_nodes_visited= 0s;
@@ -6179,7 +6183,7 @@ fn UpdateEntityMovementTarget(
 							route_search_context.route_searcher.PerformDirectedSearch(
 								map_data.global_navigation_graph,
 								navigation_state.current_navigation_graph_node,
-								player_node_index,
+								attack_target_node_index,
 								large_entity,
 								lambda[&]( GlobalNavigationGraph::NodeIndex node_index ) : bool
 								{
@@ -6195,8 +6199,8 @@ fn UpdateEntityMovementTarget(
 
 						if( !route.empty() )
 						{
-							// Found a route to the player.
-							// Search for nodes in this route which are in optimal and good enough distance to the player.
+							// Found a route to the attack target.
+							// Search for nodes in this route which are in optimal and good enough distance to the attack target.
 
 							var size_type max_route_indices= 16s;
 							var [ [ u16, max_route_indices ], 2 ] mut route_indices[ [ ~0u16 ... ] ... ]; // Optimal and good enough indices.
@@ -6207,10 +6211,10 @@ fn UpdateEntityMovementTarget(
 								var GlobalNavigationGraph::Node& node=
 									map_data.global_navigation_graph.nodes[ size_type( route[i] ) ];
 
-								var f32 node_square_distance_to_player= ( node.position - player_position ).SquareLength();
+								var f32 node_square_distance_to_attack_target= ( node.position - attack_target_position ).SquareLength();
 
-								if( node_square_distance_to_player >= optimal_square_distance_min &&
-									node_square_distance_to_player <= optimal_square_distance_max )
+								if( node_square_distance_to_attack_target >= optimal_square_distance_min &&
+									node_square_distance_to_attack_target <= optimal_square_distance_max )
 								{
 									if( num_indices[0] < max_route_indices )
 									{
@@ -6218,8 +6222,8 @@ fn UpdateEntityMovementTarget(
 										++num_indices[0];
 									}
 								}
-								else if( node_square_distance_to_player >= good_enough_square_distance_min &&
-									node_square_distance_to_player >= good_enough_square_distance_max )
+								else if( node_square_distance_to_attack_target >= good_enough_square_distance_min &&
+									node_square_distance_to_attack_target >= good_enough_square_distance_max )
 								{
 									if( num_indices[1] < max_route_indices )
 									{
@@ -6232,7 +6236,7 @@ fn UpdateEntityMovementTarget(
 							var size_type mut end_index= route.size() - 1s;
 
 							// Check optimal nodes in the route, then good enough ones.
-							// If the player can be seen from the position of this node - select it as target.
+							// If the attack target can be seen from the position of this node - select it as target.
 							for( auto mut range_index= 0s; range_index < 2s; ++range_index ) label select_movement_target_loop
 							{
 								auto& range_route_indices= route_indices[ range_index ];
@@ -6240,14 +6244,14 @@ fn UpdateEntityMovementTarget(
 
 								for( auto mut i= 0s; i < range_num_indices; ++i )
 								{
-									// Check if the player is visible from the position of this node.
+									// Check if the attack target is visible from the position of this node.
 
 									var size_type index( range_route_indices[i] );
 									var GlobalNavigationGraph::Node& node=
 										map_data.global_navigation_graph.nodes[ size_type( route[index] ) ];
 
 									var Vec3f trace_start=
-										GetPlayerPointForEntityVisibilityTrace( player_position, player_crouching_phase );
+										GetPlayerPointForEntityVisibilityTrace( attack_target_position, player_crouching_phase );
 
 									var Vec3f trace_end= GetEntityPointForPlayerVisibilityTrace( node.position, operation.animation );
 
@@ -6276,11 +6280,11 @@ fn UpdateEntityMovementTarget(
 						}
 						else
 						{
-							// Can't find a route towards the player.
+							// Can't find a route towards the attack target.
 							// It's actually not so rare case,
-							// since many enemies are placed in areas without straight connection to the player's location.
+							// since many enemies are placed in areas without straight connection to the attack target's location.
 
-							// Just select a nearby node which is the closest to the player.
+							// Just select a nearby node which is the closest to the attack target.
 
 							var GlobalNavigationGraph::Node& current_node=
 								map_data.global_navigation_graph.nodes[ size_type( navigation_state.current_navigation_graph_node ) ];
@@ -6301,11 +6305,11 @@ fn UpdateEntityMovementTarget(
 									continue;
 								}
 
-								var f32 square_distance_to_player= ( node.position - player_position ).SquareLength();
+								var f32 square_distance_to_attack_target= ( node.position - attack_target_position ).SquareLength();
 
-								if( square_distance_to_player < smallest_square_distance )
+								if( square_distance_to_attack_target < smallest_square_distance )
 								{
-									smallest_square_distance= square_distance_to_player;
+									smallest_square_distance= square_distance_to_attack_target;
 									best_node_index= edge.dst_node_index;
 								}
 							}
@@ -6320,7 +6324,7 @@ fn UpdateEntityMovementTarget(
 				}
 				else
 				{
-					// Is in good enough distance to the player.
+					// Is in good enough distance to the attack target.
 					// Enumerate nearby nodes.
 					// Collect nodes in optimal distance and in good enough distance.
 
@@ -6351,22 +6355,22 @@ fn UpdateEntityMovementTarget(
 							var GlobalNavigationGraph::Node& node=
 									map_data.global_navigation_graph.nodes[ size_type( node_index ) ];
 
-							var f32 node_square_distance_to_player= ( player_position - node.position ).SquareLength();
+							var f32 node_square_distance_to_attack_target= ( attack_target_position - node.position ).SquareLength();
 
-							if( node_square_distance_to_player >= good_enough_square_distance_min &&
-								node_square_distance_to_player <= good_enough_square_distance_max )
+							if( node_square_distance_to_attack_target >= good_enough_square_distance_min &&
+								node_square_distance_to_attack_target <= good_enough_square_distance_max )
 							{
-								// Check if moving from current position to this node in a straight line doesn't cause to walk to the player too close.
+								// Check if moving from current position to this node in a straight line doesn't cause to walk to the attack target too close.
 
 								var Vec3f vec_from_entity_to_node= node.position - entity.position;
-								var Vec3f vec_from_node_to_player= player_position - node.position;
-								var Vec3f vec_from_entity_to_player= player_position - entity.position;
+								var Vec3f vec_from_node_to_attack_target= attack_target_position - node.position;
+								var Vec3f vec_from_entity_to_attack_target= attack_target_position - entity.position;
 
 								var bool mut too_close= false;
 
 								var bool projection_is_within_line=
-									vec_from_entity_to_node.Dot( vec_from_node_to_player ) <= 0.0f &&
-									vec_from_entity_to_node.Dot( vec_from_entity_to_player ) >= 0.0f;
+									vec_from_entity_to_node.Dot( vec_from_node_to_attack_target ) <= 0.0f &&
+									vec_from_entity_to_node.Dot( vec_from_entity_to_attack_target ) >= 0.0f;
 
 								if( projection_is_within_line )
 								{
@@ -6374,7 +6378,7 @@ fn UpdateEntityMovementTarget(
 									if( square_distance_from_entity_to_node > 0.0f )
 									{
 										var f32 closest_square_distance=
-											vec_from_node_to_player.Cross( vec_from_entity_to_player ).SquareLength() /
+											vec_from_node_to_attack_target.Cross( vec_from_entity_to_attack_target ).SquareLength() /
 											square_distance_from_entity_to_node;
 
 										too_close= closest_square_distance < good_enough_square_distance_min;
@@ -6383,8 +6387,8 @@ fn UpdateEntityMovementTarget(
 
 								if( !too_close )
 								{
-									if( node_square_distance_to_player >= optimal_square_distance_min &&
-										node_square_distance_to_player <= optimal_square_distance_max )
+									if( node_square_distance_to_attack_target >= optimal_square_distance_min &&
+										node_square_distance_to_attack_target <= optimal_square_distance_max )
 									{
 										if( num_nodes_collected[0] < max_nodes_collected )
 										{
@@ -6413,7 +6417,7 @@ fn UpdateEntityMovementTarget(
 
 					// Proccess first optimal nodes, then good enough.
 					// On each step select a random node from the list.
-					// Check if this node if the player is visible from the position of this node.
+					// Check if this node if the attack target is visible from the position of this node.
 
 					var GlobalNavigationGraph::NodeIndex mut new_navigation_target_node=
 						GlobalNavigationGraph::c_invalid_node_index;
@@ -6439,7 +6443,7 @@ fn UpdateEntityMovementTarget(
 								map_data.global_navigation_graph.nodes[ size_type( node_index ) ];
 
 							var Vec3f trace_start=
-								GetPlayerPointForEntityVisibilityTrace( player_position, player_crouching_phase );
+								GetPlayerPointForEntityVisibilityTrace( attack_target_position, player_crouching_phase );
 
 							var Vec3f trace_end=
 								GetEntityPointForPlayerVisibilityTrace( node.position, operation.animation );
@@ -6481,19 +6485,19 @@ fn UpdateEntityMovementTarget(
 		}
 		else
 		{
-			// If the player isn't visible, just go to the last position where he was seen.
+			// If the attack target isn't visible, just go to the last position where he was seen.
 
 			if( game_state.step_index >= navigation_state.last_route_search_step_index + EntityNavigationConstants::min_steps_between_route_searches &&
 				route_search_context.num_nodes_visited < EntityNavigationConstants::max_nodes_to_visit_in_single_game_logic_step )
 			{
-				if_var( player_node_index :
+				if_var( attack_target_node_index :
 					FindNearestNavigationGraphNode(
 						map_data,
 						game_state.broken_quad_bits,
-						player_position,
+						attack_target_position,
 						large_entity ) )
 				{
-					if( navigation_state.target_navigation_graph_node != player_node_index ||
+					if( navigation_state.target_navigation_graph_node != attack_target_node_index ||
 						navigation_state.route[0] == GlobalNavigationGraph::c_invalid_node_index )
 					{
 						var size_type mut num_nodes_visited= 0s;
@@ -6502,7 +6506,7 @@ fn UpdateEntityMovementTarget(
 							route_search_context.route_searcher.PerformDirectedSearch(
 								map_data.global_navigation_graph,
 								navigation_state.current_navigation_graph_node,
-								player_node_index,
+								attack_target_node_index,
 								large_entity,
 								lambda[&]( GlobalNavigationGraph::NodeIndex node_index ) : bool
 								{
@@ -6532,7 +6536,7 @@ fn UpdateEntityMovementTarget(
 	}
 	else
 	{
-		// Perform movement between patrolling points if is not alarmed or is alarmed, but has not seen the player yet.
+		// Perform movement between patrolling points if is not alarmed or is alarmed, but has not seen the attack target yet.
 		// It's necessary to do so for enemies with trigger-based spawn.
 
 		var bool mut need_to_recalculate_route= false;
@@ -6818,14 +6822,14 @@ fn EntityShoot(
 
 	var EntitiesDescription::Tool& weapon_tool= entities_description.tools[ size_type( weapon_tool_index ) ];
 
-	if( !entity.player_is_in_sight || entity.last_seen_player_position.empty() )
+	if( !entity.attack_target_is_in_sight || entity.last_seen_attack_target_position.empty() )
 	{
-		// Can't see the player anymore, avoid shooting.
+		// Can't see the attack target anymore, avoid shooting.
 		return;
 	}
 
 	var Vec3f target_position=
-		entity.last_seen_player_position.try_deref() +
+		entity.last_seen_attack_target_position.try_deref() +
 		GetPlayerColliderBBox( entities_description, game_state.player.crouching_phase ).GetCenter();
 
 	var Mat4f rotation_matrix= Mat4f::MakeRotationZ( entity.azimuth );
@@ -7182,9 +7186,9 @@ fn PerformEntityOperationControlBasedMovement(
 	}
 	else if( operation_control.functioning_mode == EntitiesDescription::OperationControl::c_functioning_mode_move_towards_player )
 	{
-		if_var( &player_position : entity.last_seen_player_position )
+		if_var( &attack_target_position : entity.last_seen_attack_target_position )
 		{
-			movement_target_opt= player_position.xy();
+			movement_target_opt= attack_target_position.xy();
 		}
 	}
 	else if( operation_control.functioning_mode == EntitiesDescription::OperationControl::c_functioning_mode_sky_decoration )
@@ -7332,12 +7336,12 @@ fn PerformEntityTargetRotation( EntityState &mut entity, EntitiesDescription::Ta
 
 fn PerformEntityRotationForShot( EntityState &mut entity, EntitiesDescription::RotationForShot& rotation_for_shot )
 {
-	if( entity.last_seen_player_position.empty() )
+	if( entity.last_seen_attack_target_position.empty() )
 	{
 		return;
 	}
 
-	var Vec2f vec_to_movement_target= entity.last_seen_player_position.try_deref().xy() - entity.position.xy();
+	var Vec2f vec_to_movement_target= entity.last_seen_attack_target_position.try_deref().xy() - entity.position.xy();
 
 	var f32 target_azimuth= ust::atan2( -vec_to_movement_target.x, vec_to_movement_target.y );
 
