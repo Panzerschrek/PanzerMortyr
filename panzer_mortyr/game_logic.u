@@ -185,6 +185,7 @@ fn CreateNewMapGameState(
 				.num_mind_control_steps_left= 0u,
 				.velocity_z= 0.0f,
 				.collider_index= ~0u,
+				.attack_target_entity_index= ~0u,
 			};
 
 		with( &mut entity : out_entity.try_deref() )
@@ -2216,6 +2217,7 @@ fn TriggerEntitiesSpawn( GameParams& game_params, GameMapData& map_data, GameSta
 				.num_mind_control_steps_left= 0u,
 				.velocity_z= 0.0f,
 				.collider_index= ~0u,
+				.attack_target_entity_index= ~0u,
 			};
 
 		with( &mut entity : game_state.entities[entity_index].try_deref() )
@@ -2289,6 +2291,7 @@ fn ProcessEntityLogicStep(
 	// Doing this only each second step isn't that problematic, it means only that enemies react slightly slower.
 	if( ( entity_index & 1s ) == ( size_type( game_state.step_index ) & 1s ) )
 	{
+		UpdateEntityAttackTarget( map_data, game_state, entity );
 		UpdateEntityTargetInSightFlag( map_data, game_state, entity_description, entity );
 	}
 
@@ -2694,6 +2697,7 @@ fn ProcessEntityLogicStep(
 								.num_mind_control_steps_left= 0u,
 								.velocity_z= 0.0f,
 								.collider_index= ~0u,
+								.attack_target_entity_index= ~0u,
 							} );
 					}
 				}
@@ -5580,6 +5584,15 @@ fn RemoveEntityCollider(
 	}
 }
 
+fn UpdateEntityAttackTarget( GameMapData& map_data, GameState& game_state, 	EntityState &mut entity )
+{
+	ust::ignore_unused( map_data );
+	ust::ignore_unused( game_state );
+
+	// TODO - select other target if is mind-controlled.
+	entity.attack_target_entity_index= c_player_entity_index;
+}
+
 fn UpdateEntityTargetInSightFlag(
 	GameMapData& map_data,
 	GameState& game_state,
@@ -5600,13 +5613,38 @@ fn UpdateEntityTargetInSightFlag(
 		return;
 	}
 
-	if( game_state.player.invisibility )
+	var ust::optional</Vec3f/> mut attack_target_position_opt;
+
+	if( entity.attack_target_entity_index == ~0u )
 	{
-		// Entities can't see invisible player.
+		return;
+	}
+	if( entity.attack_target_entity_index == c_player_entity_index )
+	{
+		if( game_state.player.invisibility )
+		{
+			// Entities can't see invisible player.
+			return;
+		}
+
+		attack_target_position_opt= game_state.player.position;
+	}
+	else if( size_type( entity.attack_target_entity_index ) < game_state.entities.size() )
+	{
+		if_var( &attack_target_entity : game_state.entities[ size_type( entity.attack_target_entity_index ) ] )
+		{
+			attack_target_position_opt= attack_target_entity.position;
+		}
+	}
+
+	if( attack_target_position_opt.empty() )
+	{
 		return;
 	}
 
-	// Check if player is in sight.
+	var Vec3f& attack_target_position= attack_target_position_opt.try_deref();
+
+	// Check if the target is in sight.
 
 	var EntitiesDescription::Operation& operation=
 		entity_description.operations[ size_type( entity.current_operation ) ];
@@ -5621,7 +5659,7 @@ fn UpdateEntityTargetInSightFlag(
 	var Vec3f trace_end= GetEntityPointForPlayerVisibilityTrace( entity.position, operation.animation );
 
 	var Vec3f trace_start=
-		GetPlayerPointForEntityVisibilityTrace( game_state.player.position, game_state.player.crouching_phase );
+		GetPlayerPointForEntityVisibilityTrace( attack_target_position, game_state.player.crouching_phase );
 
 	if( trace_start == trace_end )
 	{
@@ -5631,23 +5669,23 @@ fn UpdateEntityTargetInSightFlag(
 
 	if( entity.alarmed )
 	{
-		// Assume that alarmed enemies can turn their heads in any direction near instantly to see the player.
+		// Assume that alarmed enemies can turn their heads in any direction near instantly to see the attack target.
 	}
 	else
 	{
-		// Check if player is in field of view for non-alarmed enemies.
+		// Check if attack target is in field of view for non-alarmed enemies.
 		// This check shoud be performing before performing expensive line tracing.
 
-		var Vec2f vector_to_player_xy= trace_start.xy() - trace_end.xy();
-		var f32 vector_to_player_xy_length= vector_to_player_xy.Length();
-		if( vector_to_player_xy_length > 0.0f )
+		var Vec2f vector_to_attack_target_xy= trace_start.xy() - trace_end.xy();
+		var f32 vector_to_attack_target_xy_length= vector_to_attack_target_xy.Length();
+		if( vector_to_attack_target_xy_length > 0.0f )
 		{
 			var Vec2f entity_direction_vector_xy= GetEntityDirectionNormalizedVector( entity );
 
 			var f32 horizontal_angle_cos=
-				entity_direction_vector_xy.Dot( vector_to_player_xy ) / vector_to_player_xy_length;
+				entity_direction_vector_xy.Dot( vector_to_attack_target_xy ) / vector_to_attack_target_xy_length;
 
-			var f32 vertical_angle_tan= ( trace_start.z - trace_end.z ) / vector_to_player_xy_length;
+			var f32 vertical_angle_tan= ( trace_start.z - trace_end.z ) / vector_to_attack_target_xy_length;
 
 			var bool is_in_field_of_view=
 				// Has horizontal field of view equal to 120 degrees.
@@ -5688,7 +5726,7 @@ fn UpdateEntityTargetInSightFlag(
 	{
 		var Collider& collider= game_state.colliders[i];
 
-		if( size_type( entity.collider_index ) == i || collider.entity_index == c_player_entity_index /* TODO - check here for attack target index. */ )
+		if( size_type( entity.collider_index ) == i || collider.entity_index == entity.attack_target_entity_index )
 		{
 			continue;
 		}
@@ -5702,10 +5740,10 @@ fn UpdateEntityTargetInSightFlag(
 		}
 	}
 
-	// All visibility checks are passed - set target visibility flag and update the last seen player position.
+	// All visibility checks are passed - set target visibility flag and update the last seen attack target position.
 
 	entity.attack_target_is_in_sight= true;
-	entity.last_seen_attack_target_position= game_state.player.position;
+	entity.last_seen_attack_target_position= attack_target_position;
 }
 
 struct RouteSearchContext
