@@ -2291,7 +2291,7 @@ fn ProcessEntityLogicStep(
 	// Doing this only each second step isn't that problematic, it means only that enemies react slightly slower.
 	if( ( entity_index & 1s ) == ( size_type( game_state.step_index ) & 1s ) )
 	{
-		UpdateEntityAttackTarget( map_data, game_state, entity );
+		UpdateEntityAttackTarget( map_data, game_state, entity_description, entity );
 		UpdateEntityTargetInSightFlag( map_data, game_state, entity_description, entity );
 	}
 
@@ -5584,13 +5584,147 @@ fn RemoveEntityCollider(
 	}
 }
 
-fn UpdateEntityAttackTarget( GameMapData& map_data, GameState& game_state, 	EntityState &mut entity )
+fn UpdateEntityAttackTarget(
+	GameMapData& map_data,
+	GameState& game_state,
+	EntitiesDescription::EntityDescription& entity_description,
+	EntityState &mut entity )
 {
-	ust::ignore_unused( map_data );
-	ust::ignore_unused( game_state );
+	var EntitiesDescription& entities_description= map_data.entities_description.deref();
 
-	// TODO - select other target if is mind-controlled.
-	entity.attack_target_entity_index= c_player_entity_index;
+	if( entity.num_mind_control_steps_left > 0u )
+	{
+		// Attack target selection logic for mind-controlled enemies.
+
+		if( entity.attack_target_entity_index != ~0u )
+		{
+			// Already has an attack target. Check if it remains valid.
+			if( entity.attack_target_entity_index == c_player_entity_index )
+			{
+				entity.attack_target_entity_index= ~0u;
+				entity.last_seen_attack_target_position.reset();
+			}
+			else if( size_type( entity.attack_target_entity_index ) < game_state.entities.size() )
+			{
+				if_var( &current_attack_target_entity : game_state.entities[ size_type( entity.attack_target_entity_index ) ] )
+				{
+					if(
+						// Reset attack target if it's already dead.
+						current_attack_target_entity.energy == 0u ||
+						// Reset attack target if it's mind-controlled too.
+						current_attack_target_entity.num_mind_control_steps_left > 0u )
+					{
+						entity.attack_target_entity_index= ~0u;
+						entity.last_seen_attack_target_position.reset();
+					}
+				}
+				else
+				{
+					entity.attack_target_entity_index= ~0u;
+					entity.last_seen_attack_target_position.reset();
+				}
+			}
+			else
+			{
+				entity.attack_target_entity_index= ~0u;
+				entity.last_seen_attack_target_position.reset();
+			}
+		}
+
+		if( entity.attack_target_entity_index == ~0u )
+		{
+			// Need to select an attack target.
+			// Check for other enemies in sight nearby and select the nearest alive enemy in sight.
+			// This check is pretty costly.
+
+			var EntitiesDescription::Operation& operation=
+				entity_description.operations[ size_type( entity.current_operation ) ];
+
+			if( operation.animation_kind != EntitiesDescription::Operation::AnimationKind::Forward )
+			{
+				// No regular animation means no bbox.
+				return;
+			}
+
+			var f32 c_max_distance_to_attack= 2048.0f; // Don't try selecting targets too far away. TODO - tune this.
+
+			var f32 mut min_target_square_distance= c_max_distance_to_attack * c_max_distance_to_attack;
+
+			var Vec3f trace_end= GetEntityPointForPlayerVisibilityTrace( entity.position, operation.animation );
+
+			for( auto mut i= 0s; i < game_state.colliders.size(); ++i )
+			{
+				var Collider& collider= game_state.colliders[i];
+
+				if(
+					size_type( entity.collider_index ) == i ||
+					collider.entity_index == c_player_entity_index ||
+					size_type( collider.entity_index ) >= game_state.entities.size() )
+				{
+					continue;
+				}
+
+				var Vec3f bbox_center= collider.bbox.GetCenter();
+
+				var f32 square_distance= ( entity.position - bbox_center ).SquareLength();
+				if( square_distance >= min_target_square_distance )
+				{
+					continue;
+				}
+
+				auto& target_entity_opt= game_state.entities[ size_type( collider.entity_index ) ];
+				if( target_entity_opt.empty() )
+				{
+					continue;
+				}
+
+				var EntityState& target_entity= target_entity_opt.try_deref();
+
+				if( target_entity.energy == 0u )
+				{
+					continue; // Don't bother attacking dead entities.
+				}
+
+				if( entities_description.entities[ size_type( target_entity.kind ) ].mode !=
+					EntitiesDescription::EntityDescription::c_mode_enemy )
+				{
+					continue; // Attack only other enemies but not platers, pick-ups, decorations.
+				}
+
+				// Check if no obstacle is in the way.
+				var bool mut is_visible= true;
+
+				var Vec3f& trace_start= bbox_center;
+
+				var Vec3f trace_vector= trace_end - trace_start;
+				if_var( &trace_result :
+						LineTrace(
+							map_data,
+							game_state.broken_quad_bits,
+							game_state.dynamic_cluster_colliders,
+							trace_start,
+							trace_vector ) )
+				{
+					if( trace_result.distance < 1.0f )
+					{
+						is_visible= false;
+					}
+				}
+
+				if( is_visible )
+				{
+					min_target_square_distance= square_distance;
+					entity.attack_target_entity_index= collider.entity_index;
+				}
+			}
+		}
+	}
+	else
+	{
+		// TODO - allow non-mind-controlled enemies fight back if hit by a mind-controlled enemy.
+
+		entity.attack_target_entity_index= c_player_entity_index;
+	}
 }
 
 fn UpdateEntityTargetInSightFlag(
