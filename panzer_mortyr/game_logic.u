@@ -5768,9 +5768,12 @@ fn UpdateEntityTargetInSightFlag(
 
 	var Vec3f trace_end= GetEntityPointForPlayerVisibilityTrace( entity, entity_description );
 
-	// TODO - use here bbox of target entity, not only player bbox
 	var Vec3f trace_start=
-		GetPlayerPointForEntityVisibilityTrace( attack_target_position, game_state.player.crouching_phase );
+		GetAttackTargetPointForVisibilityTrace(
+			attack_target_position,
+			entity.attack_target_entity_index,
+			map_data.entities_description.deref(),
+			game_state );
 
 	if( trace_start == trace_end )
 	{
@@ -6000,6 +6003,13 @@ fn UpdateEntityMovementTarget(
 	{
 		var Vec3f& attack_target_position= entity.last_seen_attack_target_position.try_deref();
 
+		var Vec3f attack_target_position_for_visibility_trace=
+			GetAttackTargetPointForVisibilityTrace(
+				attack_target_position,
+				entity.attack_target_entity_index,
+				map_data.entities_description.deref(),
+				game_state );
+
 		if( navigation_state.target_navigation_graph_node != GlobalNavigationGraph::c_invalid_node_index &&
 			navigation_state.route[0] == GlobalNavigationGraph::c_invalid_node_index )
 		{
@@ -6162,9 +6172,6 @@ fn UpdateEntityMovementTarget(
 		}
 		else if( entity.attack_target_is_in_sight )
 		{
-			// TODO - use target entity bbox.
-			var f32 player_crouching_phase= 0.0f; // For line of sight check assume that the player is staying.
-
 			var bool mut navigation_target_needs_update= false;
 
 			if( navigation_state.target_navigation_graph_node != GlobalNavigationGraph::c_invalid_node_index )
@@ -6183,8 +6190,7 @@ fn UpdateEntityMovementTarget(
 
 				if( distance_good_enough )
 				{
-					var Vec3f trace_start=
-						GetPlayerPointForEntityVisibilityTrace( attack_target_position, player_crouching_phase );
+					var Vec3f& trace_start= attack_target_position_for_visibility_trace;
 
 					// TODO - use attack target bbox.
 					var Vec3f trace_end= GetEntityPointForVisibilityTrace( node.position, entity, entity_description );
@@ -6269,8 +6275,7 @@ fn UpdateEntityMovementTarget(
 							{
 								// Find a node which is far enough from the attack target.
 								// Check if it's possible to see the attack target from it.
-								var Vec3f trace_start=
-									GetPlayerPointForEntityVisibilityTrace( attack_target_position, player_crouching_phase );
+								var Vec3f& trace_start= attack_target_position_for_visibility_trace;
 
 								var Vec3f trace_end= GetEntityPointForVisibilityTrace( node.position, entity, entity_description );
 
@@ -6399,8 +6404,7 @@ fn UpdateEntityMovementTarget(
 									var GlobalNavigationGraph::Node& node=
 										map_data.global_navigation_graph.nodes[ size_type( route[index] ) ];
 
-									var Vec3f trace_start=
-										GetPlayerPointForEntityVisibilityTrace( attack_target_position, player_crouching_phase );
+									var Vec3f& trace_start= attack_target_position_for_visibility_trace;
 
 									var Vec3f trace_end= GetEntityPointForVisibilityTrace( node.position, entity, entity_description );
 
@@ -6591,8 +6595,7 @@ fn UpdateEntityMovementTarget(
 							var GlobalNavigationGraph::Node& node=
 								map_data.global_navigation_graph.nodes[ size_type( node_index ) ];
 
-							var Vec3f trace_start=
-								GetPlayerPointForEntityVisibilityTrace( attack_target_position, player_crouching_phase );
+							var Vec3f& trace_start= attack_target_position_for_visibility_trace;
 
 							var Vec3f trace_end=
 								GetEntityPointForVisibilityTrace( node.position, entity, entity_description );
@@ -6836,10 +6839,28 @@ fn UpdateEntityMovementTarget(
 	}
 }
 
-fn GetPlayerPointForEntityVisibilityTrace( Vec3f& player_position, f32 crouching_phase ) : Vec3f
+fn GetAttackTargetPointForVisibilityTrace(
+	Vec3f& position,
+	u32 attack_target_index,
+	EntitiesDescription& entities_description,
+	GameState& game_state ) : Vec3f
 {
-	// Trace from player's head. Assume enemies can't see player's feet.
-	return player_position + Vec3f( 0.0f, 0.0f, c_camera_z_offset + crouching_phase * c_crouching_height_delta );
+	if( attack_target_index == c_player_entity_index )
+	{
+		return
+			position +
+			Vec3f( 0.0f, 0.0f, c_camera_z_offset + game_state.player.crouching_phase * c_crouching_height_delta );
+	}
+
+	if( size_type( attack_target_index ) < game_state.entities.size() )
+	{
+		if_var( &entity : game_state.entities[ size_type( attack_target_index ) ] )
+		{
+			return GetEntityPointForVisibilityTrace( entity, entities_description );
+		}
+	}
+
+	return position;
 }
 
 fn GetEntityPointForVisibilityTrace( EntityState& entity, EntitiesDescription& entities_description ) : Vec3f
