@@ -2291,7 +2291,7 @@ fn ProcessEntityLogicStep(
 	// Doing this only each second step isn't that problematic, it means only that enemies react slightly slower.
 	if( ( entity_index & 1s ) == ( size_type( game_state.step_index ) & 1s ) )
 	{
-		UpdateEntityAttackTarget( map_data, game_state, entity_description, entity );
+		UpdateEntityAttackTarget( map_data, game_state, entity );
 		UpdateEntityTargetInSightFlag( map_data, game_state, entity_description, entity );
 	}
 
@@ -5587,7 +5587,6 @@ fn RemoveEntityCollider(
 fn UpdateEntityAttackTarget(
 	GameMapData& map_data,
 	GameState& game_state,
-	EntitiesDescription::EntityDescription& entity_description,
 	EntityState &mut entity )
 {
 	var EntitiesDescription& entities_description= map_data.entities_description.deref();
@@ -5637,42 +5636,16 @@ fn UpdateEntityAttackTarget(
 			// Check for other enemies in sight nearby and select the nearest alive enemy in sight.
 			// This check is pretty costly.
 
-			var EntitiesDescription::Operation& operation=
-				entity_description.operations[ size_type( entity.current_operation ) ];
-
-			if( operation.animation_kind != EntitiesDescription::Operation::AnimationKind::Forward )
-			{
-				// No regular animation means no bbox.
-				return;
-			}
 
 			var f32 c_max_distance_to_attack= 2048.0f; // Don't try selecting targets too far away. TODO - tune this.
 
 			var f32 mut min_target_square_distance= c_max_distance_to_attack * c_max_distance_to_attack;
 
-			var Vec3f trace_end= GetEntityPointForPlayerVisibilityTrace( entity.position, operation.animation );
+			var Vec3f trace_end= GetEntityPointForVisibilityTrace( entity, entities_description );
 
-			for( auto mut i= 0s; i < game_state.colliders.size(); ++i )
+			for( auto mut i= 0s; i < game_state.entities.size(); ++i )
 			{
-				var Collider& collider= game_state.colliders[i];
-
-				if(
-					size_type( entity.collider_index ) == i ||
-					collider.entity_index == c_player_entity_index ||
-					size_type( collider.entity_index ) >= game_state.entities.size() )
-				{
-					continue;
-				}
-
-				var Vec3f bbox_center= collider.bbox.GetCenter();
-
-				var f32 square_distance= ( entity.position - bbox_center ).SquareLength();
-				if( square_distance >= min_target_square_distance )
-				{
-					continue;
-				}
-
-				auto& target_entity_opt= game_state.entities[ size_type( collider.entity_index ) ];
+				auto& target_entity_opt= game_state.entities[ size_type( i ) ];
 				if( target_entity_opt.empty() )
 				{
 					continue;
@@ -5691,10 +5664,19 @@ fn UpdateEntityAttackTarget(
 					continue; // Attack only other enemies but not platers, pick-ups, decorations.
 				}
 
+				var Vec3f target_entity_position=
+					GetEntityPointForVisibilityTrace( target_entity, entities_description );
+
+				var f32 square_distance= ( entity.position - target_entity_position ).SquareLength();
+				if( square_distance >= min_target_square_distance )
+				{
+					continue;
+				}
+
 				// Check if no obstacle is in the way.
 				var bool mut is_visible= true;
 
-				var Vec3f& trace_start= bbox_center;
+				var Vec3f& trace_start= target_entity_position;
 
 				var Vec3f trace_vector= trace_end - trace_start;
 				if_var( &trace_result :
@@ -5714,7 +5696,7 @@ fn UpdateEntityAttackTarget(
 				if( is_visible )
 				{
 					min_target_square_distance= square_distance;
-					entity.attack_target_entity_index= collider.entity_index;
+					entity.attack_target_entity_index= u32(i);
 				}
 			}
 		}
@@ -5784,18 +5766,9 @@ fn UpdateEntityTargetInSightFlag(
 
 	// Check if the target is in sight.
 
-	var EntitiesDescription::Operation& operation=
-		entity_description.operations[ size_type( entity.current_operation ) ];
-
-	if( operation.animation_kind != EntitiesDescription::Operation::AnimationKind::Forward )
-	{
-		// No regular animation means no bbox.
-		return;
-	}
+	var Vec3f trace_end= GetEntityPointForPlayerVisibilityTrace( entity, entity_description );
 
 	// TODO - use here bbox of target entity, not only player bbox
-	var Vec3f trace_end= GetEntityPointForPlayerVisibilityTrace( entity.position, operation.animation );
-
 	var Vec3f trace_start=
 		GetPlayerPointForEntityVisibilityTrace( attack_target_position, game_state.player.crouching_phase );
 
@@ -6214,7 +6187,7 @@ fn UpdateEntityMovementTarget(
 						GetPlayerPointForEntityVisibilityTrace( attack_target_position, player_crouching_phase );
 
 					// TODO - use attack target bbox.
-					var Vec3f trace_end= GetEntityPointForPlayerVisibilityTrace( node.position, operation.animation );
+					var Vec3f trace_end= GetEntityPointForVisibilityTrace( node.position, entity, entity_description );
 
 					if( trace_end != trace_start )
 					{
@@ -6299,7 +6272,7 @@ fn UpdateEntityMovementTarget(
 								var Vec3f trace_start=
 									GetPlayerPointForEntityVisibilityTrace( attack_target_position, player_crouching_phase );
 
-								var Vec3f trace_end= GetEntityPointForPlayerVisibilityTrace( node.position, operation.animation );
+								var Vec3f trace_end= GetEntityPointForVisibilityTrace( node.position, entity, entity_description );
 
 								if( trace_end != trace_start )
 								{
@@ -6429,7 +6402,7 @@ fn UpdateEntityMovementTarget(
 									var Vec3f trace_start=
 										GetPlayerPointForEntityVisibilityTrace( attack_target_position, player_crouching_phase );
 
-									var Vec3f trace_end= GetEntityPointForPlayerVisibilityTrace( node.position, operation.animation );
+									var Vec3f trace_end= GetEntityPointForVisibilityTrace( node.position, entity, entity_description );
 
 									if( trace_end != trace_start )
 									{
@@ -6622,7 +6595,7 @@ fn UpdateEntityMovementTarget(
 								GetPlayerPointForEntityVisibilityTrace( attack_target_position, player_crouching_phase );
 
 							var Vec3f trace_end=
-								GetEntityPointForPlayerVisibilityTrace( node.position, operation.animation );
+								GetEntityPointForVisibilityTrace( node.position, entity, entity_description );
 
 							if( trace_end != trace_start )
 							{
@@ -6869,11 +6842,33 @@ fn GetPlayerPointForEntityVisibilityTrace( Vec3f& player_position, f32 crouching
 	return player_position + Vec3f( 0.0f, 0.0f, c_camera_z_offset + crouching_phase * c_crouching_height_delta );
 }
 
-fn GetEntityPointForPlayerVisibilityTrace(
-	Vec3f& position,
-	EntitiesDescription::OperationAnimationDescription& animation ) : Vec3f
+fn GetEntityPointForVisibilityTrace( EntityState& entity, EntitiesDescription& entities_description ) : Vec3f
 {
-	// Trace roughly from enemy head.
+	if( size_type( entity.kind ) >= entities_description.entities.size() )
+	{
+		return entity.position;
+	}
+	return GetEntityPointForPlayerVisibilityTrace( entity, entities_description.entities[ size_type( entity.kind ) ] );
+}
+
+fn GetEntityPointForPlayerVisibilityTrace(
+	EntityState& entity, EntitiesDescription::EntityDescription& entity_description ) : Vec3f
+{
+	return GetEntityPointForVisibilityTrace( entity.position, entity, entity_description );
+}
+
+fn GetEntityPointForVisibilityTrace(
+	Vec3f& position, EntityState& entity, EntitiesDescription::EntityDescription& entity_description ) : Vec3f
+{
+	if( size_type( entity.current_operation ) >= entity_description.operations.size() )
+	{
+		return position;
+	}
+
+	var EntitiesDescription::OperationAnimationDescription& animation=
+		entity_description.operations[ size_type( entity.current_operation ) ].animation;
+
+	// Trace roughly from entity head.
 	return
 		position +
 		Vec3f(
