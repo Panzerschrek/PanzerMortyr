@@ -3415,6 +3415,7 @@ fn PushMoveDynamicCluster(
 								.hit_cluster_index= intersection_result.cluster_index,
 								.hit_quad_index= intersection_result.quad_index,
 								.hit_entity_index= ~0u,
+								.owner_entity_index= projectile.owner_entity_index,
 							} );
 
 						return false; // Destroy.
@@ -3723,6 +3724,7 @@ fn ProcessProjectilesLogicStep( GameGlobalData& global_data, GameMapData& map_da
 							.hit_cluster_index= hit_cluster_index,
 							.hit_quad_index= hit_quad_index,
 							.hit_entity_index= hit_entity_index,
+							.owner_entity_index= projectile.owner_entity_index,
 						} );
 
 					return false; // Remove.
@@ -3770,6 +3772,7 @@ fn ProcessProjectilesLogicStep( GameGlobalData& global_data, GameMapData& map_da
 						.hit_cluster_index= ~0u,
 						.hit_quad_index= ~0u,
 						.hit_entity_index= ~0u,
+						.owner_entity_index= projectile.owner_entity_index,
 					} );
 
 				return false; // Remove.
@@ -3970,6 +3973,11 @@ fn ProcessProjectileHitEvent(
 				game_state.player,
 				projectile_hit_event.hit_entity_index,
 				weapon_tool.damage );
+
+			HandleEntityBeingAttacked(
+				game_state.entities,
+				projectile_hit_event.owner_entity_index,
+				projectile_hit_event.hit_entity_index );
 		}
 
 		collision_kind_index= 1s;
@@ -5387,6 +5395,7 @@ fn CollideMovedEntityWithProjectiles(
 								.hit_cluster_index= ~0u,
 								.hit_quad_index= ~0u,
 								.hit_entity_index= entity_index,
+								.owner_entity_index= projectile.owner_entity_index,
 							} );
 
 						return false; // Remove.
@@ -5584,6 +5593,62 @@ fn RemoveEntityCollider(
 	}
 }
 
+fn HandleEntityBeingAttacked(
+	ust::array_view_mut</ ust::optional</ EntityState /> /> entities,
+	u32 attacker_entity_index,
+	u32 attacked_entity_index )
+{
+	var bool mut attacker_is_alive= false;
+	var bool mut attacker_is_mind_controlled= false;
+
+	if( attacker_entity_index != c_player_entity_index && size_type( attacker_entity_index ) < entities.size() )
+	{
+		if_var( &attacker_entity : entities[ size_type( attacker_entity_index ) ] )
+		{
+			attacker_is_alive= attacker_entity.energy > 0u;
+			attacker_is_mind_controlled= attacker_entity.num_mind_control_steps_left > 0u;
+		}
+	}
+
+	if( attacked_entity_index != c_player_entity_index && size_type( attacked_entity_index ) < entities.size() )
+	{
+		if_var( &mut attacked_entity : entities[ size_type( attacked_entity_index ) ] )
+		{
+			if( attacked_entity.num_mind_control_steps_left > 0u )
+			{
+				// A mind-controlled entity.
+
+				if( attacker_is_alive && !attacker_is_mind_controlled )
+				{
+					// Change attack target if is attacked by a non-mind-controlled entity.
+					if( attacked_entity.attack_target_entity_index != attacker_entity_index )
+					{
+						attacked_entity.attack_target_entity_index= attacker_entity_index;
+						attacked_entity.last_seen_attack_target_position.reset();
+					}
+				}
+			}
+			else
+			{
+				// Regular entity.
+
+				if(
+					// Respond to fire of mind-controlled entities.
+					( attacker_is_alive && attacker_is_mind_controlled ) ||
+					// If is attacked by the player - switch to attacking him.
+					attacker_entity_index == c_player_entity_index )
+				{
+					if( attacked_entity.attack_target_entity_index != attacker_entity_index )
+					{
+						attacked_entity.attack_target_entity_index= attacker_entity_index;
+						attacked_entity.last_seen_attack_target_position.reset();
+					}
+				}
+			}
+		}
+	}
+}
+
 fn UpdateEntityAttackTarget(
 	GameMapData& map_data,
 	GameState& game_state,
@@ -5725,9 +5790,26 @@ fn UpdateEntityAttackTarget(
 	}
 	else
 	{
-		// TODO - allow non-mind-controlled enemies fight back if hit by a mind-controlled enemy.
+		// Generally non-mind controlled entities attack only the player.
+		// But they can respond to fire of mind-controlled entitiye.
+		var bool mut need_to_reset_attack_target_to_player= true;
 
 		if( entity.attack_target_entity_index != c_player_entity_index )
+		{
+			if( size_type( entity.attack_target_entity_index ) < game_state.entities.size() )
+			{
+				if_var( &attack_target_entity : game_state.entities[ size_type( entity.attack_target_entity_index ) ] )
+				{
+					if( attack_target_entity.energy > 0u && attack_target_entity.num_mind_control_steps_left > 0u )
+					{
+						// Continue targeting a mind controlled entity.
+						need_to_reset_attack_target_to_player= false;
+					}
+				}
+			}
+		}
+
+		if( need_to_reset_attack_target_to_player )
 		{
 			entity.attack_target_entity_index= c_player_entity_index;
 			entity.last_seen_attack_target_position.reset();
