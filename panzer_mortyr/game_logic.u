@@ -3968,8 +3968,8 @@ fn ProcessProjectileHitEvent(
 					// Experiments have shown, that "damage" for mind-control weapon is actually duration.
 					var u32 mind_control_duration= weapon_tool.damage;
 
-					// If isn't mind-controlled - make mind-controlled.
-					// If is already mind-controller, reset mind-control times.
+					// If isn't mind-controlled yet - make mind-controlled.
+					// If is already mind-controlled, reset the mind-control timer.
 					ust::max_assign( entity.num_mind_control_steps_left, mind_control_duration );
 
 					// Alarm mind-controlled entities.
@@ -5648,7 +5648,7 @@ fn HandleEntityBeingAttacked(
 				if(
 					// Respond to fire of mind-controlled entities.
 					( attacker_is_alive && attacker_is_mind_controlled ) ||
-					// If is attacked by the player - switch to attacking him.
+					// If has been attacked by the player - switch to attacking him.
 					attacker_entity_index == c_player_entity_index )
 				{
 					if( attacked_entity.attack_target_entity_index != attacker_entity_index )
@@ -5677,8 +5677,10 @@ fn UpdateEntityAttackTarget(
 		if( entity.attack_target_entity_index != ~0u )
 		{
 			// Already has an attack target. Check if it remains valid.
+
 			if( entity.attack_target_entity_index == c_player_entity_index )
 			{
+				// Attacking the player isn't a valid option for mind-controlled enemies.
 				entity.attack_target_entity_index= ~0u;
 				entity.last_seen_attack_target_position.reset();
 			}
@@ -5727,9 +5729,9 @@ fn UpdateEntityAttackTarget(
 		{
 			// Need to select an attack target.
 			// Check for other enemies in sight nearby and select the nearest alive enemy in sight.
-			// This check is pretty costly.
+			// This check is pretty costly, but hopefully isn't performed often.
 
-			var f32 c_max_distance_to_attack= 2048.0f; // Don't try selecting targets too far away. TODO - tune this.
+			var f32 c_max_distance_to_attack= 2048.0f; // Don't try selecting targets too far away.
 
 			var f32 mut min_target_square_distance= c_max_distance_to_attack * c_max_distance_to_attack;
 
@@ -5768,7 +5770,7 @@ fn UpdateEntityAttackTarget(
 				if( entities_description.entities[ size_type( target_entity.kind ) ].mode !=
 					EntitiesDescription::EntityDescription::c_mode_enemy )
 				{
-					continue; // Attack only other enemies but not platers, pick-ups, decorations.
+					continue; // Attack only other enemies but not players, pick-ups, decorations.
 				}
 
 				var Vec3f trace_start= GetEntityPointForVisibilityTrace( target_entity, entities_description );
@@ -5782,8 +5784,6 @@ fn UpdateEntityAttackTarget(
 				}
 
 				// Check if no obstacle is in the way.
-				var bool mut is_visible= true;
-
 				if_var( &trace_result :
 						LineTrace(
 							map_data,
@@ -5794,22 +5794,19 @@ fn UpdateEntityAttackTarget(
 				{
 					if( trace_result.distance < 1.0f )
 					{
-						is_visible= false;
+						continue;
 					}
 				}
 
-				if( is_visible )
-				{
-					min_target_square_distance= square_distance;
-					entity.attack_target_entity_index= u32(i);
-				}
+				min_target_square_distance= square_distance;
+				entity.attack_target_entity_index= u32(i);
 			}
 		}
 	}
 	else
 	{
 		// Generally non-mind controlled entities attack only the player.
-		// But they can respond to fire of mind-controlled entitiye.
+		// But they can respond to fire of mind-controlled entities.
 		var bool mut need_to_reset_attack_target_to_player= entity.attack_target_entity_index != c_player_entity_index;
 
 		if( entity.attack_target_entity_index != c_player_entity_index )
@@ -6326,7 +6323,6 @@ fn UpdateEntityMovementTarget(
 				{
 					var Vec3f& trace_start= attack_target_position_for_visibility_trace;
 
-					// TODO - use attack target bbox.
 					var Vec3f trace_end= GetEntityPointForVisibilityTrace( node.position, entity, entity_description );
 
 					if( trace_end != trace_start )
@@ -6407,7 +6403,7 @@ fn UpdateEntityMovementTarget(
 							if( square_distance_to_attack_target >= good_enough_square_distance_min &&
 								square_distance_to_attack_target <= good_enough_square_distance_max )
 							{
-								// Find a node which is far enough from the attack target.
+								// Found a node which is far enough from the attack target.
 								// Check if it's possible to see the attack target from it.
 								var Vec3f& trace_start= attack_target_position_for_visibility_trace;
 
@@ -7176,7 +7172,7 @@ fn EntityShoot(
 					var EntitiesDescription::OperationAnimationDescription& animation=
 						attack_target_entity_description.operations[ size_type( attack_target_entity.current_operation ) ].animation;
 
-					// If shooting some other entity -  target the center of its bounding box.
+					// If shooting some other entity - target the center of its bounding box.
 
 					target_position+=
 						Vec3f(
