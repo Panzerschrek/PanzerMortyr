@@ -49,7 +49,7 @@ Changes:
 * Bullet hit spark effects (MG-42, laser pistol) look a little bit different and use different from the original billboard.
 * Clusters with notes are highlighted (their lighting is blinking), so that it's harder to miss a note.
 * Entities with damaging flames attached are drawn with burning effect covering the entire body. In the original game this effect is different - it just uses flame billboards attached to a model.
-* Blood covering entities is slightly darker compared to the original game.
+* Blood covering entities are slightly darker compared to the original game.
 
 
 ### Gameplay
@@ -81,6 +81,7 @@ Changes:
 * It's not possible to push an entity indirectly by pushing some another entity.
 * Blood particles and blood stains work differently. Blood particles start moving in a direction roughly corresponding to the movement direction of it's parent projectile, they collide with map geometry and leave blood stain decals.
 * Birds and rats may be placed and behave slightly differently compared to the original game. Their movement behavior is just guessed. Their numbers may be also different from the original game.
+* Enemies affected by the mind-control weapon may behave slightly differently compared to the original game.
 
 
 ### HUD and menus

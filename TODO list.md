@@ -89,7 +89,6 @@ PanzerMortyr game logic:
 * Adjust rotation angles for grenade projectiles, so that they look nicely.
 * Tune granades exposion delay.
 * Tune projectiles maximum age.
-* Implement behavior specific for the mind control weapon - with enemies attacking their allies.
 * Consider performing proper player to entity visibility check while doing entity state transition based on "w_zasiegu_widocznosci" property.
 * Make sure muzzle flashes are drawn as close to the original game as possible (their position is correct).
 * Consider disabling all or at least some weapons of the player if weapon shot start position is in water or other liquid. The original game allow shooting in water, but PanzerMortyr probably shouldn't allow this.
