@@ -134,6 +134,7 @@ PanzerMortyr menus and HUD:
 * Allow changing HUD position via settings menu.
 * Allow setting inverted mouse via settings menu.
 * Allow enabling/disabling mouselook via settings menu.
+* Allow turning "always run" on and off via settings menu.
 * Implement some stub page for parental lock menu.
 * Make advanced options menu functinal.
 * Extend existing setting menus/add new ones for extra options specific for PanzerMortyr.
