@@ -1,7 +1,6 @@
 #version 330
 
 uniform sampler3D fu_texture;
-uniform vec3 fu_light_add;
 uniform vec3 fu_light_scale;
 uniform float fu_texture_offset_y;
 uniform float fu_texture_layer;
@@ -62,5 +61,5 @@ void main()
 				step( edge2, fire_power ) ),
 			step( edge1, fire_power ) );
 
-	color= vec4( light_color * fu_light_scale + fu_light_add, 1.0 );
+	color= vec4( light_color * fu_light_scale, 1.0 );
 }
