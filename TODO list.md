@@ -132,13 +132,10 @@ PanzerMortyr menus and HUD:
 * Implement loading screen.
 * Draw a screenshot for each save slot in load/save menus.
 * Allow changing HUD position via settings menu.
-* Allow setting inverted mouse via settings menu.
-* Allow enabling/disabling mouselook via settings menu.
-* Allow turning "always run" on and off via settings menu.
 * Implement some stub page for parental lock menu.
 * Make advanced options menu functinal.
 * Extend existing setting menus/add new ones for extra options specific for PanzerMortyr.
-* Consider allowing specifying custom window resolution in for windowed mode on video settings page.
+* Consider allowing specifying custom window resolution for windowed mode on video settings page.
 * Show low health and armor numbers in HUD using red color.
 * Consider displaying in HUD amounts of tools in inventory, at least important ones - health, ammo.
 * Consider drawing active tools at some edge (left or right) of the screen.

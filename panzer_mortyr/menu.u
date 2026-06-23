@@ -25,7 +25,8 @@ fn Menu::constructor(
 		new_game_current_row_= 0u,
 		options_current_row_= 0u,
 		load_save_pages_state_{ .current_row= 0u },
-		controls_page_state_{ .current_row= 0u, .rows_offset= 0u, .editing_active= false },
+		controls_current_row_= 0u,
+		key_bindings_page_state_{ .current_row= 0u, .rows_offset= 0u, .editing_active= false },
 		video_settings_page_state_{ .current_row= 0u, .current_video_mode_index= 0u },
 		sound_settings_current_row_= 0u,
 		advanced_options_current_row_= 0u,
@@ -51,7 +52,7 @@ fn Menu::Deactivate( mut this )
 	load_save_pages_state_.input_slot_comment.reset();
 
 	// Cancel key binding editing.
-	controls_page_state_.editing_active= false;
+	key_bindings_page_state_.editing_active= false;
 }
 
 fn nodiscard Menu::ProcessKeyPress( mut this, SDL_Keysym& key_sym, AudioProcessor &mut audio_processor ) : Command
@@ -81,16 +82,17 @@ fn nodiscard Menu::ProcessKeyPress( mut this, SDL_Keysym& key_sym, AudioProcesso
 					}
 				},
 				Page::Options -> { current_page_= Page::MainMenu; },
-				Page::Controls ->
+				Page::Controls -> { current_page_= Page::Options; },
+				Page::KeyBindings ->
 				{
-					if( controls_page_state_.editing_active )
+					if( key_bindings_page_state_.editing_active )
 					{
 						// Cancel editing.
-						controls_page_state_.editing_active= false;
+						key_bindings_page_state_.editing_active= false;
 					}
 					else
 					{
-						current_page_= Page::Options;
+						current_page_= Page::Controls;
 					}
 				},
 				Page::VideoSettings -> { current_page_= Page::Options; },
@@ -219,13 +221,24 @@ fn nodiscard Menu::ProcessKeyPress( mut this, SDL_Keysym& key_sym, AudioProcesso
 				},
 				Page::Controls ->
 				{
-					if( controls_page_state_.editing_active )
+					switch( controls_current_row_ )
+					{
+						0u -> { current_page_= Page::KeyBindings; audio_processor.PlayMenuSound(); },
+						1u -> { ChangeMouseEnabled( settings_ ); audio_processor.PlayMenuSound(); },
+						2u -> { ChangeInvertMouseYAxis( settings_ ); audio_processor.PlayMenuSound(); },
+						3u -> { ChangeAlwaysRun( settings_ ); audio_processor.PlayMenuSound(); },
+						default -> {},
+					}
+				},
+				Page::KeyBindings ->
+				{
+					if( key_bindings_page_state_.editing_active )
 					{
 						ActualizeCurrentKeyBinding( key_sym.scancode );
 					}
 					else
 					{
-						controls_page_state_.editing_active= true;
+						key_bindings_page_state_.editing_active= true;
 					}
 				},
 				Page::VideoSettings ->
@@ -298,25 +311,30 @@ fn nodiscard Menu::ProcessKeyPress( mut this, SDL_Keysym& key_sym, AudioProcesso
 				},
 				Page::Controls ->
 				{
-					if( controls_page_state_.editing_active )
+					DecrementRow( controls_current_row_, PageNumRows::controls );
+					audio_processor.PlayMenuSound();
+				},
+				Page::KeyBindings ->
+				{
+					if( key_bindings_page_state_.editing_active )
 					{
 						ActualizeCurrentKeyBinding( key_sym.scancode );
 					}
 					else
 					{
-						if( controls_page_state_.current_row == 0u )
+						if( key_bindings_page_state_.current_row == 0u )
 						{
-							controls_page_state_.current_row= PageNumRows::controls - 1u;
-							controls_page_state_.rows_offset= PageNumRows::controls - c_num_visible_key_binding_rows;
+							key_bindings_page_state_.current_row= PageNumRows::key_bindings - 1u;
+							key_bindings_page_state_.rows_offset= PageNumRows::key_bindings - c_num_visible_key_binding_rows;
 						}
 						else
 						{
-							--controls_page_state_.current_row;
+							--key_bindings_page_state_.current_row;
 
-							if( controls_page_state_.rows_offset > 0u &&
-								controls_page_state_.current_row <= controls_page_state_.rows_offset )
+							if( key_bindings_page_state_.rows_offset > 0u &&
+								key_bindings_page_state_.current_row <= key_bindings_page_state_.rows_offset )
 							{
-								--controls_page_state_.rows_offset;
+								--key_bindings_page_state_.rows_offset;
 							}
 						}
 
@@ -371,25 +389,30 @@ fn nodiscard Menu::ProcessKeyPress( mut this, SDL_Keysym& key_sym, AudioProcesso
 				},
 				Page::Controls ->
 				{
-					if( controls_page_state_.editing_active )
+					IncrementRow( controls_current_row_, PageNumRows::controls );
+					audio_processor.PlayMenuSound();
+				},
+				Page::KeyBindings ->
+				{
+					if( key_bindings_page_state_.editing_active )
 					{
 						ActualizeCurrentKeyBinding( key_sym.scancode );
 					}
 					else
 					{
-						if( controls_page_state_.current_row == PageNumRows::controls - 1u )
+						if( key_bindings_page_state_.current_row == PageNumRows::key_bindings - 1u )
 						{
-							controls_page_state_.current_row= 0u;
-							controls_page_state_.rows_offset= 0u;
+							key_bindings_page_state_.current_row= 0u;
+							key_bindings_page_state_.rows_offset= 0u;
 						}
 						else
 						{
-							++controls_page_state_.current_row;
+							++key_bindings_page_state_.current_row;
 
-							if( controls_page_state_.current_row + 1u >= c_num_visible_key_binding_rows + controls_page_state_.rows_offset &&
-								controls_page_state_.rows_offset + c_num_visible_key_binding_rows < PageNumRows::controls )
+							if( key_bindings_page_state_.current_row + 1u >= c_num_visible_key_binding_rows + key_bindings_page_state_.rows_offset &&
+								key_bindings_page_state_.rows_offset + c_num_visible_key_binding_rows < PageNumRows::key_bindings )
 							{
-								++controls_page_state_.rows_offset;
+								++key_bindings_page_state_.rows_offset;
 							}
 						}
 
@@ -440,7 +463,18 @@ fn nodiscard Menu::ProcessKeyPress( mut this, SDL_Keysym& key_sym, AudioProcesso
 				},
 				Page::Controls ->
 				{
-					if( controls_page_state_.editing_active )
+					switch( controls_current_row_ )
+					{
+						0u -> {},
+						1u -> { ChangeMouseEnabled( settings_ ); audio_processor.PlayMenuSound(); },
+						2u -> { ChangeInvertMouseYAxis( settings_ ); audio_processor.PlayMenuSound(); },
+						3u -> { ChangeAlwaysRun( settings_ ); audio_processor.PlayMenuSound(); },
+						default -> {},
+					}
+				},
+				Page::KeyBindings ->
+				{
+					if( key_bindings_page_state_.editing_active )
 					{
 						ActualizeCurrentKeyBinding( key_sym.scancode );
 					}
@@ -519,7 +553,18 @@ fn nodiscard Menu::ProcessKeyPress( mut this, SDL_Keysym& key_sym, AudioProcesso
 				},
 				Page::Controls ->
 				{
-					if( controls_page_state_.editing_active )
+					switch( controls_current_row_ )
+					{
+						0u -> {},
+						1u -> { ChangeMouseEnabled( settings_ ); audio_processor.PlayMenuSound(); },
+						2u -> { ChangeInvertMouseYAxis( settings_ ); audio_processor.PlayMenuSound(); },
+						3u -> { ChangeAlwaysRun( settings_ ); audio_processor.PlayMenuSound(); },
+						default -> {},
+					}
+				},
+				Page::KeyBindings ->
+				{
+					if( key_bindings_page_state_.editing_active )
 					{
 						ActualizeCurrentKeyBinding( key_sym.scancode );
 					}
@@ -945,7 +990,87 @@ fn Menu::Draw( mut this, ImageDrawer &mut image_drawer, TextDrawer &mut text_dra
 		},
 		Page::Controls ->
 		{
-			image_drawer.DrawImage( MenuImages::controls_page_background, offset_x, offset_y, f32( scale ) );
+			image_drawer.DrawImage( MenuImages::key_bindings_page_background, offset_x, offset_y, f32( scale ) );
+
+			var i32 cursor_offset_x= offset_x + i32(  20u * scale );
+			var i32 cursor_offset_y= offset_y + i32( 144u * scale );
+
+			var u32 controls_rows_spacing= TextDrawer::c_glyph_height * 3u / 2u;
+
+			image_drawer.DrawImage(
+				MenuImages::small_cursor_frames,
+				cursor_offset_x,
+				cursor_offset_y - i32( controls_current_row_ * controls_rows_spacing * scale ),
+				f32( scale ),
+				cursor_tile_x * small_cursor_size,
+				cursor_tile_y * small_cursor_size,
+				small_cursor_size,
+				small_cursor_size );
+
+			var i32 texts_offset_x= cursor_offset_x + i32( 18u * scale );
+			var i32 texts_offset_y= cursor_offset_y + i32(  1u * scale );
+
+			text_drawer.AddText(
+				texts_offset_x,
+				texts_offset_y - i32( 0u * controls_rows_spacing * scale ),
+				FetchStringFromExtraTable( ExtraStringTableKey::KeyBindings ),
+				text_settings );
+
+			{
+				var ust::string_view8 mouse_look_str= FetchStringFromTable( string_table, StringTableKey::MouseLook );
+
+				var ust::string_view8 state_str=
+					FetchStringFromTable(
+						string_table,
+						( settings_.lock_imut().deref().in_mouse_enabled ? StringTableKey::On : StringTableKey::Off ) );
+
+				scoped_array char8 mouse_look_state_str[ mouse_look_str.size() + state_str.size() ](
+					mouse_look_str.iter().chain( state_str.iter() ) );
+
+				text_drawer.AddText(
+					texts_offset_x,
+					texts_offset_y - i32( 1u * controls_rows_spacing * scale ),
+					mouse_look_state_str,
+					text_settings );
+			}
+			{
+				var ust::string_view8 invert_mouse_str= FetchStringFromTable( string_table, StringTableKey::InvertMouse );
+
+				var ust::string_view8 state_str=
+					FetchStringFromTable(
+						string_table,
+						( settings_.lock_imut().deref().in_invert_mouse_y_axis ? StringTableKey::On : StringTableKey::Off ) );
+
+				scoped_array char8 invert_mouse_state_str[ invert_mouse_str.size() + state_str.size() ](
+					invert_mouse_str.iter().chain( state_str.iter() ) );
+
+				text_drawer.AddText(
+					texts_offset_x,
+					texts_offset_y - i32( 2u * controls_rows_spacing * scale ),
+					invert_mouse_state_str,
+					text_settings );
+			}
+			{
+				var ust::string_view8 always_run_str= FetchStringFromTable( string_table, StringTableKey::AlwaysRun );
+
+				var ust::string_view8 state_str=
+					FetchStringFromTable(
+						string_table,
+						( settings_.lock_imut().deref().in_always_run ? StringTableKey::On : StringTableKey::Off ) );
+
+				scoped_array char8 always_run_state_str[ always_run_str.size() + state_str.size() ](
+					always_run_str.iter().chain( state_str.iter() ) );
+
+				text_drawer.AddText(
+					texts_offset_x,
+					texts_offset_y - i32( 3u * controls_rows_spacing * scale ),
+					always_run_state_str,
+					text_settings );
+			}
+		},
+		Page::KeyBindings ->
+		{
+			image_drawer.DrawImage( MenuImages::key_bindings_page_background, offset_x, offset_y, f32( scale ) );
 
 			var i32 cursor_offset_x= offset_x + i32(  20u * scale );
 			var i32 cursor_offset_y= offset_y + i32( 144u * scale );
@@ -953,7 +1078,7 @@ fn Menu::Draw( mut this, ImageDrawer &mut image_drawer, TextDrawer &mut text_dra
 			var u32 key_bindings_rows_spacing= TextDrawer::c_glyph_height * 3u / 2u;
 
 			var i32 cursor_visible_row=
-				i32( controls_page_state_.current_row ) - i32( controls_page_state_.rows_offset );
+				i32( key_bindings_page_state_.current_row ) - i32( key_bindings_page_state_.rows_offset );
 
 			image_drawer.DrawImage(
 				MenuImages::small_cursor_frames,
@@ -970,7 +1095,7 @@ fn Menu::Draw( mut this, ImageDrawer &mut image_drawer, TextDrawer &mut text_dra
 
 			var ust::string_view8 scroll_indicator_text= ". . . . . . . . . . . . . . . . . . . . . . . . . . . . .";
 
-			if( controls_page_state_.rows_offset > 0u )
+			if( key_bindings_page_state_.rows_offset > 0u )
 			{
 				text_drawer.AddText(
 					texts_offset_x,
@@ -988,13 +1113,13 @@ fn Menu::Draw( mut this, ImageDrawer &mut image_drawer, TextDrawer &mut text_dra
 
 			foreach( &key_bindig : c_key_binding_rows )
 			{
-				var i32 visible_row= i32(row) - i32( controls_page_state_.rows_offset );
+				var i32 visible_row= i32(row) - i32( key_bindings_page_state_.rows_offset );
 
 				if( visible_row >= 0 && visible_row < i32( c_num_visible_key_binding_rows ) )
 				{
 					var i32 row_y= texts_offset_y - visible_row * i32( key_bindings_rows_spacing * scale );
 
-					var bool is_edited_row= controls_page_state_.editing_active & row == controls_page_state_.current_row;
+					var bool is_edited_row= key_bindings_page_state_.editing_active & row == key_bindings_page_state_.current_row;
 
 					var TextDrawer::Settings& key_binding_text_settings=
 						( is_edited_row ? edited_text_settings : text_settings );
@@ -1015,7 +1140,7 @@ fn Menu::Draw( mut this, ImageDrawer &mut image_drawer, TextDrawer &mut text_dra
 				++row;
 			}
 
-			if( controls_page_state_.rows_offset + c_num_visible_key_binding_rows < PageNumRows::controls )
+			if( key_bindings_page_state_.rows_offset + c_num_visible_key_binding_rows < PageNumRows::key_bindings )
 			{
 				text_drawer.AddText(
 					texts_offset_x,
@@ -1345,7 +1470,7 @@ fn Menu::LoadSaveSummaries( mut this )
 
 fn Menu::ActualizeCurrentKeyBinding( mut this, SDL_Scancode scancode )
 {
-	if( !controls_page_state_.editing_active )
+	if( !key_bindings_page_state_.editing_active )
 	{
 		return;
 	}
@@ -1367,7 +1492,7 @@ fn Menu::ActualizeCurrentKeyBinding( mut this, SDL_Scancode scancode )
 	var u32 mut row= 0u;
 	foreach( &key_bindig : c_key_binding_rows )
 	{
-		if( row == controls_page_state_.current_row )
+		if( row == key_bindings_page_state_.current_row )
 		{
 			mixin( "settings." + key_bindig[0] + " = KeyBinding( scancode ); " );
 		}
@@ -1375,7 +1500,7 @@ fn Menu::ActualizeCurrentKeyBinding( mut this, SDL_Scancode scancode )
 		++row;
 	}
 
-	controls_page_state_.editing_active= false;
+	key_bindings_page_state_.editing_active= false;
 }
 
 fn Menu::ActualizeVideoModeIndex( mut this )
@@ -1471,7 +1596,7 @@ fn PreloadMenuImages( ImageDrawer &mut image_drawer )
 	image_drawer.PreloadImage( MenuImages::load_game_page_background, ust::null_optional_ref );
 	image_drawer.PreloadImage( MenuImages::save_game_page_background, ust::null_optional_ref );
 	image_drawer.PreloadImage( MenuImages::options_page_background, ust::null_optional_ref );
-	image_drawer.PreloadImage( MenuImages::controls_page_background, ust::null_optional_ref );
+	image_drawer.PreloadImage( MenuImages::key_bindings_page_background, ust::null_optional_ref );
 	image_drawer.PreloadImage( MenuImages::video_settings_page_background, ust::null_optional_ref );
 	image_drawer.PreloadImage( MenuImages::sound_settings_page_background, ust::null_optional_ref );
 	image_drawer.PreloadImage( MenuImages::advanced_options_page_background, ust::null_optional_ref );
@@ -1479,6 +1604,24 @@ fn PreloadMenuImages( ImageDrawer &mut image_drawer )
 	image_drawer.PreloadImage( MenuImages::small_cursor_frames, ust::make_array( 0u8, 100u8, 255u8 ) );
 	image_drawer.PreloadImage( MenuImages::control_elements, ust::make_array( 255u8, 0u8, 0u8 ) ); // TODO - fix this for the polish version, it uses green transparent color.
 	image_drawer.PreloadImage( MenuImages::quit_texts, ust::make_array( 0u8, 0u8, 0u8 ) );
+}
+
+fn ChangeMouseEnabled( SettingsPtr& settings )
+{
+	auto mut lock= settings.lock_mut();
+	ChangeBooleanSettingsFlag( lock.deref().in_mouse_enabled );
+}
+
+fn ChangeInvertMouseYAxis( SettingsPtr& settings )
+{
+	auto mut lock= settings.lock_mut();
+	ChangeBooleanSettingsFlag( lock.deref().in_invert_mouse_y_axis );
+}
+
+fn ChangeAlwaysRun( SettingsPtr& settings )
+{
+	auto mut lock= settings.lock_mut();
+	ChangeBooleanSettingsFlag( lock.deref().in_always_run );
 }
 
 fn ChangeFullscreen( SettingsPtr& settings )
@@ -1668,7 +1811,8 @@ var u32
 	main_menu= 6u,
 	new_game= c_num_skill_levels,
 	options= 8u,
-	controls( typeinfo</ typeof(c_key_binding_rows) />.element_count ),
+	controls= 4u,
+	key_bindings( typeinfo</ typeof(c_key_binding_rows) />.element_count ),
 	video_settings= 4u,
 	sound_settings= 7u,
 	advanced_options= 9u;
@@ -1683,7 +1827,7 @@ var ResourceString
 	& load_game_page_background= "LOADG.BMP\0\0\0\0\0\0\0",
 	& save_game_page_background= "SAVEG.BMP\0\0\0\0\0\0\0",
 	& options_page_background= "OPTION.BMP\0\0\0\0\0\0",
-	& controls_page_background= "KLAWISZ.BMP\0\0\0\0\0",
+	& key_bindings_page_background= "KLAWISZ.BMP\0\0\0\0\0",
 	& video_settings_page_background= "MODES.BMP\0\0\0\0\0\0\0",
 	& sound_settings_page_background= "SOUND.BMP\0\0\0\0\0\0\0",
 	& advanced_options_page_background= "ADVANC.BMP\0\0\0\0\0\0",
