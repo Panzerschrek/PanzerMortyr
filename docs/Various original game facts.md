@@ -84,3 +84,4 @@ This documents describes various interesting facts about the original game.
 * Dynamic map clusters (doors, elevators) move without considering blocking, so that it's possible to stay under an elevator and it will pas through.
 * In future maps icons for key items are incorrect. There are golden/silver/blue keycard icons present in PANEL.BMP, but instead golden/silver swastic keys and golden keycard (instead of blue one) are used.
 * The original game has some hard limit for the number of sounds playing simultaneously. This limit is reached on some future maps due to Robo Ed enemies emitting idle sounds, so that some other sounds disappear.
+* Projectiles have very limited lifetime (2 seconds or so), so that panzerfaust shots may disappear before hitting something.

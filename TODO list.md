@@ -87,7 +87,6 @@ PanzerMortyr game logic:
 * Implement misfire - sometimes enemies don't shoot, even if shooting animation is playing.
 * Consider storing a bounding box of the current attack target of an entity in the entity struture.
 * Adjust rotation angles for grenade projectiles, so that they look nicely.
-* Tune projectiles maximum age.
 * Consider performing proper player to entity visibility check while doing entity state transition based on "w_zasiegu_widocznosci" property.
 * Make sure muzzle flashes are drawn as close to the original game as possible (their position is correct).
 * Consider disabling all or at least some weapons of the player if weapon shot start position is in water or other liquid. The original game allow shooting in water, but PanzerMortyr probably shouldn't allow this.
