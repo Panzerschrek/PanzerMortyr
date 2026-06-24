@@ -51,15 +51,17 @@ fn CreateNewMapGameState(
 				.weapon_state
 				{
 					.extra_lowering= 0.0f,
-					.current_animation= PlayerWeaponState::WeaponAnimation::None,
-					.current_animation_step= 0u,
+					.animation_state= PlayerWeaponState::AnimationState::Steady,
+					.steps_since_last_animation_state_transition= 0u,
+					.animation_step= 0u,
 				},
 			},
 			.kick_weapon_state
 			{
 				.extra_lowering= 0.0f,
-				.current_animation= PlayerWeaponState::WeaponAnimation::None,
-				.current_animation_step= 0u,
+				.animation_state= PlayerWeaponState::AnimationState::Steady,
+				.steps_since_last_animation_state_transition= 0u,
+				.animation_step= 0u,
 			},
 			.tools_state
 			{
@@ -266,15 +268,17 @@ fn CreateNewMapGameState(
 						.weapon_state
 						{
 							.extra_lowering= 0.0f,
-							.current_animation= PlayerWeaponState::WeaponAnimation::None,
-							.current_animation_step= 0u,
+							.animation_state= PlayerWeaponState::AnimationState::Steady,
+							.steps_since_last_animation_state_transition= 0u,
+							.animation_step= 0u,
 						},
 					},
 					.kick_weapon_state
 					{
 						.extra_lowering= 0.0f,
-						.current_animation= PlayerWeaponState::WeaponAnimation::None,
-						.current_animation_step= 0u,
+						.animation_state= PlayerWeaponState::AnimationState::Steady,
+						.steps_since_last_animation_state_transition= 0u,
+						.animation_step= 0u,
 					},
 					.tools_state
 					{
@@ -956,8 +960,8 @@ fn PerformPlayerWeaponLogic(
 		{
 			// Finish shooting.
 			weapon_state.num_active_shooting_steps.reset();
-			weapon_state.current_animation= PlayerWeaponState::WeaponAnimation::None;
-			weapon_state.current_animation_step= 0u;
+			weapon_state.animation_state= PlayerWeaponState::AnimationState::Steady;
+			weapon_state.steps_since_last_animation_state_transition= 0u;
 			weapon_state.extra_lowering= 0.0f;
 		}
 	}
@@ -995,6 +999,9 @@ fn PerformPlayerWeaponLogic(
 			{
 				player_state.primary_weapon_state.current_weapon= player_state.primary_weapon_state.requested_weapon;
 				++player_state.primary_weapon_state.weapon_switching_fraction;
+
+				player_state.primary_weapon_state.weapon_state.animation_state= PlayerWeaponState::AnimationState::PostSwitch;
+				player_state.primary_weapon_state.weapon_state.steps_since_last_animation_state_transition= 0u;
 			}
 			else
 			{
@@ -1016,12 +1023,14 @@ fn PerformPlayerWeaponLogic(
 
 	PerformFirstPersonWeaponAnimation(
 		entities_description,
+		game_state.random,
 		player_state.primary_weapon_state.current_weapon,
 		walking,
 		player_state.primary_weapon_state.weapon_state );
 
 	PerformFirstPersonWeaponAnimation(
 		entities_description,
+		game_state.random,
 		EntitiesDescription::ToolType::Kick,
 		walking,
 		player_state.kick_weapon_state );
@@ -1057,8 +1066,8 @@ fn TryStartPlayerShooting(
 		if( has_enough_ammo )
 		{
 			weapon_state.num_active_shooting_steps= 0u;
-			weapon_state.current_animation= PlayerWeaponState::WeaponAnimation::Shooting;
-			weapon_state.current_animation_step= u32( tool.weapon_data[6] );
+			weapon_state.animation_state= PlayerWeaponState::AnimationState::Shooting;
+			weapon_state.steps_since_last_animation_state_transition= 0u;
 		}
 	}
 }
@@ -1093,6 +1102,7 @@ fn HasWeaponAndAmmoForIt(
 
 fn PerformFirstPersonWeaponAnimation(
 	EntitiesDescription& entities_description,
+	PseudoRandomGenerator &mut rand,
 	EntitiesDescription::ToolType weapon_tool_type,
 	bool walking,
 	PlayerWeaponState &mut weapon_state )
@@ -1106,76 +1116,149 @@ fn PerformFirstPersonWeaponAnimation(
 
 	var EntitiesDescription::Tool& tool= entities_description.tools[ weapon_tool_index ];
 
-	// Some stupid (and probably wrong) state machine.
-	// If walking - play walking animation. Otherwise play Idle0 and Idle1.
-	switch( weapon_state.current_animation )
+	// Calculate animation frame based on current state.
+
+	switch( weapon_state.animation_state )
 	{
-		PlayerWeaponState::WeaponAnimation::None ->
+		PlayerWeaponState::AnimationState::Steady ->
+		{
+			weapon_state.animation_step= u32( tool.weapon_data[0] );
+		},
+		PlayerWeaponState::AnimationState::PostSwitch ->
+		{
+			weapon_state.animation_step= u32( tool.weapon_data[0] );
+		},
+		PlayerWeaponState::AnimationState::Walking ->
+		{
+			var u32 animation_loop_duration= ust::max( u32( tool.weapon_data[1] ), 1u );
+
+			weapon_state.animation_step=
+				u32( tool.weapon_data[0] ) +
+				weapon_state.steps_since_last_animation_state_transition % animation_loop_duration;
+		},
+		PlayerWeaponState::AnimationState::Idle0 ->
+		{
+			weapon_state.animation_step=
+				u32( tool.weapon_data[2] ) +
+				ust::min( weapon_state.steps_since_last_animation_state_transition, u32( tool.weapon_data[3] ) );
+		},
+		PlayerWeaponState::AnimationState::Idle1 ->
+		{
+			weapon_state.animation_step=
+				u32( tool.weapon_data[4] ) +
+				ust::min( weapon_state.steps_since_last_animation_state_transition, u32( tool.weapon_data[5] ) );
+		},
+		PlayerWeaponState::AnimationState::Shooting ->
+		{
+			weapon_state.animation_step=
+				u32( tool.weapon_data[6] ) + weapon_state.steps_since_last_animation_state_transition;
+		},
+	}
+
+	// Perform state transition if necessary.
+	// Select here idle animations randomly.
+	// The original game uses idle0 and idle1 one after another, but we add more variability by selection one of them randomly.
+
+	++weapon_state.steps_since_last_animation_state_transition;
+
+	switch( weapon_state.animation_state )
+	{
+		PlayerWeaponState::AnimationState::Steady ->
 		{
 			if( walking )
 			{
-				weapon_state.current_animation= PlayerWeaponState::WeaponAnimation::Walking;
-				weapon_state.current_animation_step= u32( tool.weapon_data[0] );
+				// Start walking.
+				weapon_state.animation_state= PlayerWeaponState::AnimationState::Walking;
+				weapon_state.steps_since_last_animation_state_transition= 0u;
 			}
-			else
+			else if( weapon_state.steps_since_last_animation_state_transition >= u32( tool.weapon_data[7] ) )
 			{
-				weapon_state.current_animation= PlayerWeaponState::WeaponAnimation::Idle0;
-				weapon_state.current_animation_step= u32( tool.weapon_data[2] );
+				// Switch to idle state after some delay.
+				weapon_state.animation_state=
+					( rand.Next() % 2u == 0u
+						? PlayerWeaponState::AnimationState::Idle0
+						: PlayerWeaponState::AnimationState::Idle1 );
+				weapon_state.steps_since_last_animation_state_transition= 0u;
 			}
 		},
-		PlayerWeaponState::WeaponAnimation::Walking ->
+		PlayerWeaponState::AnimationState::PostSwitch ->
 		{
-			++weapon_state.current_animation_step;
-			if( weapon_state.current_animation_step >= u32( tool.weapon_data[0] + tool.weapon_data[1] ) )
+			if( walking )
 			{
-				if( walking )
-				{
-					weapon_state.current_animation_step= u32( tool.weapon_data[0] );
-				}
-				else
-				{
-					weapon_state.current_animation= PlayerWeaponState::WeaponAnimation::Idle0;
-					weapon_state.current_animation_step= u32( tool.weapon_data[2] );
-				}
+				// Start walking.
+				weapon_state.animation_state= PlayerWeaponState::AnimationState::Walking;
+				weapon_state.steps_since_last_animation_state_transition= 0u;
+			}
+			else if(
+				weapon_state.steps_since_last_animation_state_transition >=
+				c_weapon_idle_animation_delay_after_weapon_switching )
+			{
+				// Switch to idle state after some short delay.
+				// The original game always plays idle animation after switching to a weapon (unless the player is walking).
+				weapon_state.animation_state=
+					( rand.Next() % 2u == 0u
+						? PlayerWeaponState::AnimationState::Idle0
+						: PlayerWeaponState::AnimationState::Idle1 );
+				weapon_state.steps_since_last_animation_state_transition= 0u;
 			}
 		},
-		PlayerWeaponState::WeaponAnimation::Idle0 ->
+		PlayerWeaponState::AnimationState::Walking ->
 		{
-			++weapon_state.current_animation_step;
-			if( weapon_state.current_animation_step >= u32( tool.weapon_data[2] + tool.weapon_data[3] ) )
-			{
-				if( walking )
-				{
-					weapon_state.current_animation= PlayerWeaponState::WeaponAnimation::Walking;
-					weapon_state.current_animation_step= u32( tool.weapon_data[0] );
-				}
-				else
-				{
-					weapon_state.current_animation= PlayerWeaponState::WeaponAnimation::Idle1;
-					weapon_state.current_animation_step= u32( tool.weapon_data[4] );
-				}
-			}
-		},
-		PlayerWeaponState::WeaponAnimation::Idle1 ->
-		{
-			++weapon_state.current_animation_step;
-			if( weapon_state.current_animation_step >= u32( tool.weapon_data[4] + tool.weapon_data[5] ) )
+			var u32 animation_loop_duration= ust::max( u32( tool.weapon_data[1] ), 1u );
+
+			if( weapon_state.steps_since_last_animation_state_transition % animation_loop_duration == 0u )
 			{
 				if( walking )
 				{
-					weapon_state.current_animation= PlayerWeaponState::WeaponAnimation::Walking;
-					weapon_state.current_animation_step= u32( tool.weapon_data[0] );
+					var u32 num_animation_loops=
+						weapon_state.steps_since_last_animation_state_transition / animation_loop_duration;
+
+					if( num_animation_loops >= 4u )
+					{
+						// The original game switches from time to time to idle animation while walking.
+						// It happens rougly each 4 loops of walking animation.
+						weapon_state.animation_state=
+							( rand.Next() % 2u == 0u
+								? PlayerWeaponState::AnimationState::Idle0
+								: PlayerWeaponState::AnimationState::Idle1 );
+						weapon_state.steps_since_last_animation_state_transition= 0u;
+					}
 				}
 				else
 				{
-					weapon_state.current_animation= PlayerWeaponState::WeaponAnimation::Idle0;
-					weapon_state.current_animation_step= u32( tool.weapon_data[2] );
+					// Stop walking.
+					weapon_state.animation_state= PlayerWeaponState::AnimationState::Steady;
+					weapon_state.steps_since_last_animation_state_transition= 0u;
 				}
 			}
 		},
-		PlayerWeaponState::WeaponAnimation::Shooting ->
+		PlayerWeaponState::AnimationState::Idle0 ->
 		{
-			++weapon_state.current_animation_step;
+			if( weapon_state.steps_since_last_animation_state_transition >= u32( tool.weapon_data[3] ) )
+			{
+				// Finish idle animation - go to walking or steady state.
+				weapon_state.animation_state=
+					( walking
+						? PlayerWeaponState::AnimationState::Walking
+						: PlayerWeaponState::AnimationState::Steady );
+				weapon_state.steps_since_last_animation_state_transition= 0u;
+			}
+		},
+		PlayerWeaponState::AnimationState::Idle1 ->
+		{
+			if( weapon_state.steps_since_last_animation_state_transition >= u32( tool.weapon_data[5] ) )
+			{
+				// Finish idle animation - go to walking or steady state.
+				weapon_state.animation_state=
+					( walking
+						? PlayerWeaponState::AnimationState::Walking
+						: PlayerWeaponState::AnimationState::Steady );
+				weapon_state.steps_since_last_animation_state_transition= 0u;
+			}
+		},
+		PlayerWeaponState::AnimationState::Shooting ->
+		{
+			// Shooting state is terminated in other place.
 		},
 	}
 }
