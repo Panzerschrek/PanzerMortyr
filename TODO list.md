@@ -57,7 +57,6 @@ PanzerMortyr general:
 
 PanzerMortyr game logic:
 
-* Consider enabled step movement on collisions with slightly-inclined walls, which should fix movement in some tricky places on some maps.
 * Implement rare animation types used for some entities (barrel roll, flies).
 * Implement logic elements specific for dog enemies.
 * Implement remaining entity state transitions (used only by some enemy types).
@@ -87,6 +86,7 @@ PanzerMortyr game logic:
 * Consider optimizing global navigation graph calculation even more - to reduce map loading time.
 * Consider not creating edges in global navigation graph requiring jumping down too deep (to avoid fall damage).
 * Avoid creating global navigation graph nodes located in liquids, but allow them in shallow water (but not acid or lava).
+* Consider implementing some physics or data hack to allow leading a shallow pit with inclined walls on map 19.
 
 PanzerMortyr multiplayer game logic:
 
