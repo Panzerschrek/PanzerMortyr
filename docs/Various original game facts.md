@@ -30,6 +30,8 @@ This documents describes various interesting facts about the original game.
 * Some maps can't be left until some condition is satisfied - necessary items (Quantum Receptor piece) are collected or a boss (the Tank) is killed.
 * The jetpack item is present only at one place in the whole game - on the last level just before boss battle.
 * Enemies can pass through each other (with no collision), at least while patrolling.
+* Idle animations for first-person weapons are the same as walk animations on multiplayer maps.
+* Having two different idle animations for first-person weapons is supported, but no weapon actually uses it.
 
 ### Technical aspects
 

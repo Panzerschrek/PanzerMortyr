@@ -72,11 +72,10 @@ PanzerMortyr game logic:
 * Consider using fixed point arithmetic for game calculations in order to make game logic deterministic (across different machines) and thus allowing multiplayer mode with client-side game logic calculations.
 * Implement remaining entity state transitions (used only by some enemy types).
 * Implement ammo/health kit/armor seeking behavior for enemies.
-* Break glass quads and quads with breakable materials while applying spash damage.
+* Break glass quads and quads with breakable materials while applying spash damage. The original game doesn't do this and it doesn't look right.
 * Implement jetpack tool.
 * Implement invisibility tool (false documents) and enemy properties allowing to uncover the player having invisibility.
 * Implement flame particles emitted by explosive decorations ("wybuch_benzyny"/"plomienie").
-* Rework code doing first person weapon idle/walking animations. Consider adding states where no animation is played at all.
 * Spawn bubble sprites while swimming in water.
 * Spawn bubble sprites for projectiles moving in water.
 * Spawn water splash particles if a projectile hits water surface.
