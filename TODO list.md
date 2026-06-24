@@ -85,7 +85,6 @@ PanzerMortyr game logic:
 * Perform alarm-based enemy state transition with a delay, where it makes sense.
 * Consider creating patches for ZINF-files for fixing some errors in them.
 * Implement misfire - sometimes enemies don't shoot, even if shooting animation is playing.
-* Consider storing a bounding box of the current attack target of an entity in the entity struture.
 * Adjust rotation angles for grenade projectiles, so that they look nicely.
 * Consider performing proper player to entity visibility check while doing entity state transition based on "w_zasiegu_widocznosci" property.
 * Make sure muzzle flashes are drawn as close to the original game as possible (their position is correct).
