@@ -1023,12 +1023,14 @@ fn PerformPlayerWeaponLogic(
 
 	PerformFirstPersonWeaponAnimation(
 		entities_description,
+		game_state.random,
 		player_state.primary_weapon_state.current_weapon,
 		walking,
 		player_state.primary_weapon_state.weapon_state );
 
 	PerformFirstPersonWeaponAnimation(
 		entities_description,
+		game_state.random,
 		EntitiesDescription::ToolType::Kick,
 		walking,
 		player_state.kick_weapon_state );
@@ -1100,6 +1102,7 @@ fn HasWeaponAndAmmoForIt(
 
 fn PerformFirstPersonWeaponAnimation(
 	EntitiesDescription& entities_description,
+	PseudoRandomGenerator &mut rand,
 	EntitiesDescription::ToolType weapon_tool_type,
 	bool walking,
 	PlayerWeaponState &mut weapon_state )
@@ -1133,11 +1136,18 @@ fn PerformFirstPersonWeaponAnimation(
 				u32( tool.weapon_data[0] ) +
 				weapon_state.steps_since_last_animation_state_transition % animation_loop_duration;
 		},
-		PlayerWeaponState::AnimationState::Idle ->
+		PlayerWeaponState::AnimationState::Idle0 ->
 		{
 			weapon_state.animation_step=
 				u32( tool.weapon_data[2] ) +
 				ust::min( weapon_state.steps_since_last_animation_state_transition, u32( tool.weapon_data[3] ) );
+
+		},
+		PlayerWeaponState::AnimationState::Idle1 ->
+		{
+			weapon_state.animation_step=
+				u32( tool.weapon_data[4] ) +
+				ust::min( weapon_state.steps_since_last_animation_state_transition, u32( tool.weapon_data[5] ) );
 
 		},
 		PlayerWeaponState::AnimationState::Shooting ->
@@ -1148,6 +1158,9 @@ fn PerformFirstPersonWeaponAnimation(
 	}
 
 	// Perform state transition if necessary.
+	// Select here idle animations randomly.
+	// The original game uses idle0 and idle1 one after another, but we add more variability by selection one of them randomly.
+
 	++weapon_state.steps_since_last_animation_state_transition;
 
 	switch( weapon_state.animation_state )
@@ -1163,7 +1176,10 @@ fn PerformFirstPersonWeaponAnimation(
 			else if( weapon_state.steps_since_last_animation_state_transition >= u32( tool.weapon_data[7] ) )
 			{
 				// Switch to idle state after some delay.
-				weapon_state.animation_state= PlayerWeaponState::AnimationState::Idle;
+				weapon_state.animation_state=
+					( rand.Next() % 2u == 0u
+						? PlayerWeaponState::AnimationState::Idle0
+						: PlayerWeaponState::AnimationState::Idle1 );
 				weapon_state.steps_since_last_animation_state_transition= 0u;
 			}
 		},
@@ -1181,7 +1197,10 @@ fn PerformFirstPersonWeaponAnimation(
 			{
 				// Switch to idle state after some short delay.
 				// The original game always plays idle animation after switching to a weapon (unless the player is walking).
-				weapon_state.animation_state= PlayerWeaponState::AnimationState::Idle;
+				weapon_state.animation_state=
+					( rand.Next() % 2u == 0u
+						? PlayerWeaponState::AnimationState::Idle0
+						: PlayerWeaponState::AnimationState::Idle1 );
 				weapon_state.steps_since_last_animation_state_transition= 0u;
 			}
 		},
@@ -1201,7 +1220,10 @@ fn PerformFirstPersonWeaponAnimation(
 						// The original game switches from time to time to idle animation while walking.
 						// It happens rougly each 4 loops of walking animation.
 						// TODO - make this delay a little bit random.
-						weapon_state.animation_state= PlayerWeaponState::AnimationState::Idle;
+						weapon_state.animation_state=
+							( rand.Next() % 2u == 0u
+								? PlayerWeaponState::AnimationState::Idle0
+								: PlayerWeaponState::AnimationState::Idle1 );
 						weapon_state.steps_since_last_animation_state_transition= 0u;
 					}
 				}
@@ -1213,9 +1235,27 @@ fn PerformFirstPersonWeaponAnimation(
 				}
 			}
 		},
-		PlayerWeaponState::AnimationState::Idle ->
+		PlayerWeaponState::AnimationState::Idle0 ->
 		{
 			if( weapon_state.steps_since_last_animation_state_transition >= u32( tool.weapon_data[3] ) )
+			{
+				if( walking )
+				{
+					// Finished idle animation - start walking.
+					weapon_state.animation_state= PlayerWeaponState::AnimationState::Walking;
+					weapon_state.steps_since_last_animation_state_transition= 0u;
+				}
+				else
+				{
+					// Finishing an idle animation - do nothing.
+					weapon_state.animation_state= PlayerWeaponState::AnimationState::Steady;
+					weapon_state.steps_since_last_animation_state_transition= 0u;
+				}
+			}
+		},
+		PlayerWeaponState::AnimationState::Idle1 ->
+		{
+			if( weapon_state.steps_since_last_animation_state_transition >= u32( tool.weapon_data[5] ) )
 			{
 				if( walking )
 				{
