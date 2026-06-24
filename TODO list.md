@@ -41,7 +41,6 @@ Gameplay investigation:
 PanzerMortyr general:
 
 * Allow changing shot and zoom controls (change mouse buttons and maybe even use key buttons).
-* Consider allowing playing cooperative/multiplayer maps as usual singleplayer ones. Maybe add a main menu item for this.
 * Consider writing some kind of alternative installer - a tool, which depacks game data from the original game ISO or mdf/mds files.
 * Draw loading screen before performing transition to the next level in game code and corresponding game and rendering resource loading.
 * Consider embedding git revision into the game executable and showing it somewhere in the game.
@@ -58,18 +57,9 @@ PanzerMortyr general:
 
 PanzerMortyr game logic:
 
-* Implement multiplayer game logic with client/server.
-* Implement multiplayer-specific game modes.
-* Make singleplayer mode tweaks for cooperative mode support.
 * Consider enabled step movement on collisions with slightly-inclined walls, which should fix movement in some tricky places on some maps.
 * Implement rare animation types used for some entities (barrel roll, flies).
 * Implement logic elements specific for dog enemies.
-* Implement logic elements specific for gestapo enemies.
-* Implement logic specific for multiplayer entities.
-* Implement weapon amplifier (multiplayer-only power-up).
-* Implement omni protection (multiplayer-only power-up).
-* Implement CTF flags (multiplayer).
-* Consider using fixed point arithmetic for game calculations in order to make game logic deterministic (across different machines) and thus allowing multiplayer mode with client-side game logic calculations.
 * Implement remaining entity state transitions (used only by some enemy types).
 * Implement ammo/health kit/armor seeking behavior for enemies.
 * Break glass quads and quads with breakable materials while applying spash damage. The original game doesn't do this and it doesn't look right.
@@ -97,6 +87,19 @@ PanzerMortyr game logic:
 * Consider optimizing global navigation graph calculation even more - to reduce map loading time.
 * Consider not creating edges in global navigation graph requiring jumping down too deep (to avoid fall damage).
 * Avoid creating global navigation graph nodes located in liquids, but allow them in shallow water (but not acid or lava).
+
+PanzerMortyr multiplayer game logic:
+
+* Consider allowing playing cooperative/multiplayer maps as usual singleplayer ones. Maybe add a main menu item for this.
+* Implement multiplayer game logic with client/server.
+* Implement multiplayer-specific game modes.
+* Make singleplayer mode tweaks for cooperative mode support.
+* Implement logic elements specific for gestapo enemies (they are used only on single cooperative map 36).
+* Implement logic specific for multiplayer entities.
+* Implement weapon amplifier (multiplayer-only power-up).
+* Implement omni protection (multiplayer-only power-up).
+* Implement CTF flags (multiplayer).
+* Consider using fixed point arithmetic for game calculations in order to make game logic deterministic (across different machines) and thus allowing multiplayer mode with client-side game logic calculations.
 
 PanzerMortyr rendering:
 
