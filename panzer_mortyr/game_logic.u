@@ -3467,61 +3467,66 @@ fn PushMoveDynamicCluster(
 					if( weapon_tool.projectile_kind == EntitiesDescription::Tool::c_projectile_kind_ricocheting_bullet |
 						weapon_tool.projectile_kind == EntitiesDescription::Tool::c_projectile_kind_grenade )
 					{
-						// Bounce a this projectile.
+						// Try bouncing this projectile.
 
 						auto& quads= map_data.zmap_data.deref().quads;
 
 						if( size_type( intersection_result.quad_index ) < quads.size() )
 						{
-							var Vec3f normal= CalculateQuadNormal( quads[ size_type( intersection_result.quad_index ) ] );
+							var ZmapQuad& quad= quads[ size_type( intersection_result.quad_index ) ];
 
-							var f32 normal_square_length= normal.SquareLength();
-							if( normal_square_length > 0.0f )
+							if( !IsMapQuadBreakable( global_data, map_data, quad ) )
 							{
-								// Move position slightly away from the collider plane.
-								projectile.position+= ( ( 1.0f / 32.0f ) / ust::sqrt( normal_square_length ) ) * normal;
+								var Vec3f normal= CalculateQuadNormal( quad );
 
-								var Vec3f mut velocity_in_dynamic_cluster_reference_system=
-									projectile.velocity - movement_vector_elongated;
+								var f32 normal_square_length= normal.SquareLength();
+								if( normal_square_length > 0.0f )
+								{
+									// Move position slightly away from the collider plane.
+									projectile.position+= ( ( 1.0f / 32.0f ) / ust::sqrt( normal_square_length ) ) * normal;
 
-								// Reflect velocity.
-								velocity_in_dynamic_cluster_reference_system-=
-									( 2.0f * velocity_in_dynamic_cluster_reference_system.Dot( normal ) / normal_square_length ) * normal;
+									var Vec3f mut velocity_in_dynamic_cluster_reference_system=
+										projectile.velocity - movement_vector_elongated;
 
-								SlowDownProjectileAfterBouncing(
-									velocity_in_dynamic_cluster_reference_system, weapon_tool );
+									// Reflect velocity.
+									velocity_in_dynamic_cluster_reference_system-=
+										( 2.0f * velocity_in_dynamic_cluster_reference_system.Dot( normal ) / normal_square_length ) * normal;
 
-								projectile.velocity=
-									velocity_in_dynamic_cluster_reference_system + movement_vector_elongated;
+									SlowDownProjectileAfterBouncing(
+										velocity_in_dynamic_cluster_reference_system, weapon_tool );
 
-								EmitProjectileBounceSound(
-									static_sound_sources,
-									weapon_tool,
-									GetMaterialPropertiesForMapQuad(
-										global_data, map_data, intersection_result.quad_index ),
-									projectile.position,
-									projectile.velocity );
+									projectile.velocity=
+										velocity_in_dynamic_cluster_reference_system + movement_vector_elongated;
+
+									EmitProjectileBounceSound(
+										static_sound_sources,
+										weapon_tool,
+										GetMaterialPropertiesForMapQuad(
+											global_data, map_data, intersection_result.quad_index ),
+										projectile.position,
+										projectile.velocity );
+
+									return true; // Bounce and preserve this projectile.
+								}
 							}
 						}
 					}
-					else
-					{
-						// Non-bouncing projectile - just destroy it.
 
-						projectile_hit_events.push_back(
-							ProjectileHitEvent
-							{
-								.weapon_tool_index= projectile.weapon_tool_index,
-								.position= projectile.position,
-								.velocity= projectile.velocity,
-								.hit_cluster_index= intersection_result.cluster_index,
-								.hit_quad_index= intersection_result.quad_index,
-								.hit_entity_index= ~0u,
-								.owner_entity_index= projectile.owner_entity_index,
-							} );
+					// Non-bouncing projectile - just destroy it.
 
-						return false; // Destroy.
-					}
+					projectile_hit_events.push_back(
+						ProjectileHitEvent
+						{
+							.weapon_tool_index= projectile.weapon_tool_index,
+							.position= projectile.position,
+							.velocity= projectile.velocity,
+							.hit_cluster_index= intersection_result.cluster_index,
+							.hit_quad_index= intersection_result.quad_index,
+							.hit_entity_index= ~0u,
+							.owner_entity_index= projectile.owner_entity_index,
+						} );
+
+					return false; // Destroy.
 				}
 			}
 
@@ -3786,32 +3791,37 @@ fn ProcessProjectilesLogicStep( GameGlobalData& global_data, GameMapData& map_da
 
 							if( size_type( hit_quad_index ) < quads.size() )
 							{
-								var Vec3f normal= CalculateQuadNormal( quads[ size_type( hit_quad_index ) ] );
+								var ZmapQuad& quad= quads[ size_type( hit_quad_index ) ];
 
-								var f32 normal_square_length= normal.SquareLength();
-								if( normal_square_length > 0.0f )
+								if( !IsMapQuadBreakable( global_data, map_data, quad ) )
 								{
-									projectile.position= hit_position;
+									var Vec3f normal= CalculateQuadNormal( quad );
 
-									// Move position slightly away from the collider plane.
-									projectile.position+= ( ( 1.0f / 32.0f ) / ust::sqrt( normal_square_length ) ) * normal;
+									var f32 normal_square_length= normal.SquareLength();
+									if( normal_square_length > 0.0f )
+									{
+										projectile.position= hit_position;
 
-									remaining_movement_fraction *= 1.0f - smallest_travelled_distance;
+										// Move position slightly away from the collider plane.
+										projectile.position+= ( ( 1.0f / 32.0f ) / ust::sqrt( normal_square_length ) ) * normal;
 
-									// Reflect velocity.
-									projectile.velocity-=
-										( 2.0f * projectile.velocity.Dot( normal ) / normal_square_length ) * normal;
+										remaining_movement_fraction *= 1.0f - smallest_travelled_distance;
 
-									SlowDownProjectileAfterBouncing( projectile.velocity, weapon_tool );
+										// Reflect velocity.
+										projectile.velocity-=
+											( 2.0f * projectile.velocity.Dot( normal ) / normal_square_length ) * normal;
 
-									EmitProjectileBounceSound(
-										static_sound_sources,
-										weapon_tool,
-										GetMaterialPropertiesForMapQuad( global_data, map_data, hit_quad_index ),
-										projectile.position,
-										projectile.velocity );
+										SlowDownProjectileAfterBouncing( projectile.velocity, weapon_tool );
 
-									continue label bounces_loop;
+										EmitProjectileBounceSound(
+											static_sound_sources,
+											weapon_tool,
+											GetMaterialPropertiesForMapQuad( global_data, map_data, hit_quad_index ),
+											projectile.position,
+											projectile.velocity );
+
+										continue label bounces_loop;
+									}
 								}
 							}
 						}
