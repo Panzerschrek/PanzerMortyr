@@ -76,7 +76,6 @@ PanzerMortyr game logic:
 * Make sure muzzle flashes are drawn as close to the original game as possible (their position is correct).
 * Consider disabling all or at least some weapons of the player if weapon shot start position is in water or other liquid. The original game allow shooting in water, but PanzerMortyr probably shouldn't allow this.
 * Consider extinguishing damaging flames on entities located inside liquids.
-* Consider despawning flamethrower projectiles in liquids.
 * Consider reducing brightness of Volkssturm smoking lights - they are way to bright.
 * Perform camera rotation upon player's death as the original game does. It seems to be a full circle azimuth rotation and a rotation to some fixed elevation.
 * Consider disabling burning effect for non-enemy entities. It doesn't look well for things made of iron or other non-burnable materials.
