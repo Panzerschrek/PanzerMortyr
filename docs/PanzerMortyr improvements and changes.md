@@ -82,6 +82,7 @@ Changes:
 * Blood particles and blood stains work differently. Blood particles start moving in a direction roughly corresponding to the movement direction of it's parent projectile, they collide with map geometry and leave blood stain decals.
 * Birds and rats may be placed and behave slightly differently compared to the original game. Their movement behavior is just guessed. Their numbers may be also different from the original game.
 * Enemies affected by the mind-control weapon may behave slightly differently compared to the original game.
+* Bubbles in water may behave and look slightly differently compared to the original game.
 
 
 ### HUD and menus
