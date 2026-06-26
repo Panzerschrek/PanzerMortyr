@@ -35,7 +35,6 @@ Gameplay investigation:
 * Investigate whether armor absorbs flame damage.
 * Investigate what kinds of entities are affected by gravity (what in an entity description turns gravity on and off).
 * Investigate what "zarowka" entity property is and whether it's actually used.
-* Investigate whether it's possible for the player to drown in water by spending too much time in it.
 * Investigate whether bullet holes may be disabled by material properties.
 
 PanzerMortyr general:
@@ -65,8 +64,7 @@ PanzerMortyr game logic:
 * Implement jetpack tool.
 * Implement invisibility tool (false documents) and enemy properties allowing to uncover the player having invisibility.
 * Implement flame particles emitted by explosive decorations ("wybuch_benzyny"/"plomienie").
-* Spawn bubble sprites while swimming in water.
-* Spawn bubble sprites for projectiles moving in water.
+* Damage and eventually kill the player spending too much time in water without swimming up for breathing.
 * Spawn water splash particles if a projectile hits water surface.
 * Spawn water circles if a projectile hits water surface.
 * Do something with unconditional entity state transition "w_zasiegu_strzalu_b" - try making it somewhat random.
