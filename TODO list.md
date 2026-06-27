@@ -25,7 +25,7 @@ Other investigation:
 
 Gameplay investigation:
 
-* Investigate ammo/health kit/armor search behavior of enemies.
+* Investigate ammo/health kit/armor search behavior of enemies (regulated via "szukaj_apteczek" and "szukaj_amunicji" properties).
 * Investigate how enemies spot the player - their field of view, view distance, spot chance, etc.
 * Investigate what some unknown fileds of entity description format mean, especially ones which affect state transitions.
 * Investigate how different entity parameters affect their behavior.
@@ -36,6 +36,12 @@ Gameplay investigation:
 * Investigate what kinds of entities are affected by gravity (what in an entity description turns gravity on and off).
 * Investigate what "zarowka" entity property is and whether it's actually used.
 * Investigate whether bullet holes may be disabled by material properties.
+* Investigate what "celnosc" entity property means and how it affects enemies.
+* Investigate what "ponowny_atak" entity property means, how it affects enemies and what is its default value.
+* Investigate what "dobry_wzrok" entity property means and how it affects enemies.
+* Investigate what  "automatyczny_alarm" entity property means and how it affects enemies.
+* Investigate how much time the player can swim without breathing before suffocation damage is applied.
+* Investigate how invisibility tool (false documents) works - how enemies react to the player having invisibility enabled, what happens if he shoots or attacks, what kind of whether some enemies can deactivate it and how, etc.
 
 PanzerMortyr general:
 
@@ -58,6 +64,8 @@ PanzerMortyr game logic:
 
 * Implement rare animation types used for some entities (barrel roll, flies).
 * Implement logic elements specific for dog enemies.
+* Ensure sniper enemies function properly and aren't too weak (don't hit at all) or too strong (hit on each shot) compared to the original game.
+* Ensure end bosses (robotic spiders) function properly and their accurasy is comparable to the original game.
 * Implement remaining entity state transitions (used only by some enemy types).
 * Implement ammo/health kit/armor seeking behavior for enemies.
 * Break glass quads and quads with breakable materials while applying spash damage. The original game doesn't do this and it doesn't look right.
@@ -83,7 +91,7 @@ PanzerMortyr game logic:
 * Consider optimizing global navigation graph calculation even more - to reduce map loading time.
 * Consider not creating edges in global navigation graph requiring jumping down too deep (to avoid fall damage).
 * Avoid creating global navigation graph nodes located in liquids, but allow them in shallow water (but not acid or lava).
-* Consider implementing some physics or data hack to allow leading a shallow pit with inclined walls on map 19.
+* Consider implementing some physics or data hack to allow leaving a shallow pit with inclined walls on map 19.
 
 PanzerMortyr multiplayer game logic:
 
@@ -122,6 +130,7 @@ PanzerMortyr rendering:
 * Allow turning global fog for snow/rain off.
 * Modyfy pixels of alpha-tested textures having zero alpha, so that their color is equal to average color of adjacent pixels with non-zero alpha. This is needed to avoid black borders on alpha-tested billboards and decals.
 * Allow switching to a fullscreen mode with refresh rate change.
+* Implement visual effect specific for omni protection item (multiplayer-only power-up).
 
 PanzerMortyr menus and HUD:
 
