@@ -79,7 +79,6 @@ PanzerMortyr game logic:
 * Consider reducing brightness of Volkssturm smoking lights - they are way to bright.
 * Perform camera rotation upon player's death as the original game does. It seems to be a full circle azimuth rotation and a rotation to some fixed elevation.
 * Consider disabling burning effect for non-enemy entities. It doesn't look well for things made of iron or other non-burnable materials.
-* Implement some sort of collision avoidance for enemies - to fix cases where enemies block each other in their movement. Maybe use global navigation graph for this and mark occupied edges or nodes.
 * Consider optimizing global navigation graph calculation even more - to reduce map loading time.
 * Consider not creating edges in global navigation graph requiring jumping down too deep (to avoid fall damage).
 * Avoid creating global navigation graph nodes located in liquids, but allow them in shallow water (but not acid or lava).
