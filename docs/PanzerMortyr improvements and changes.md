@@ -83,6 +83,7 @@ Changes:
 * Birds and rats may be placed and behave slightly differently compared to the original game. Their movement behavior is just guessed. Their numbers may be also different from the original game.
 * Enemies affected by the mind-control weapon may behave slightly differently compared to the original game.
 * Bubbles in water may behave and look slightly differently compared to the original game.
+* In the original game enemies don't collide with each other (can pass through), in PanzerMortyr they do collide with each other and can sometimes even give each other way if they are going into opposite directions.
 
 
 ### HUD and menus
