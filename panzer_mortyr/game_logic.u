@@ -7662,6 +7662,58 @@ fn MoveEntity(
 
 	entity.position= move_result.trace_clip_result.position_clipped;
 
+	{
+		var size_type mut extra_collider_index= ~0s;
+		for( auto mut i= 0u; i < move_result.trace_clip_result.num_collision_events; ++i )
+		{
+			var u16 c= move_result.trace_clip_result.collision_events[i].collision_extra_collider_index;
+			if( size_type( c ) < game_state.colliders.size() )
+			{
+				extra_collider_index= size_type( c );
+			}
+		}
+
+		if( extra_collider_index < game_state.colliders.size() )
+		{
+			// Collided with some collider.
+			// Try performing a collision avoidance move.
+
+			var Vec2f vec_to_collider_center=
+				game_state.colliders[ extra_collider_index ].bbox.GetCenter().xy() - entity.position.xy();
+
+			var f32 distance_to_collider_center= vec_to_collider_center.Length();
+			if( distance_to_collider_center > 0.0f )
+			{
+				var f32 scale= 4.0f / distance_to_collider_center;
+
+				var Vec3f move_vec(
+					vec_to_collider_center.y * scale,
+					-vec_to_collider_center.x * scale,
+					0.0f );
+
+				var CollisionStepMoveResult collision_avoidance_move_result=
+					CollisionStepMove(
+						map_data,
+						game_state.broken_quad_bits,
+						game_state.dynamic_cluster_colliders,
+						game_state.colliders,
+						collider_bbox,
+						entity.position,
+						entity.position + move_vec );
+
+				// Clamp vertical velocity if necessary.
+				for( auto mut i= 0u; i < collision_avoidance_move_result.trace_clip_result.num_collision_events; ++i )
+				{
+					ClampVerticalVelocity(
+						entity.velocity_z,
+						collision_avoidance_move_result.trace_clip_result.collision_events[i].plane_normal );
+				}
+
+				entity.position= collision_avoidance_move_result.trace_clip_result.position_clipped;
+			}
+		}
+	}
+
 	// Calculate collisions with projectiles.
 	// It's necessary to avoid missing collisions in some cases, especially for slow-moving projectiles.
 	if( entity.position != old_position &&
