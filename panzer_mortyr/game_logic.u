@@ -7662,81 +7662,86 @@ fn MoveEntity(
 
 	entity.position= move_result.trace_clip_result.position_clipped;
 
+	var size_type mut other_collider_index= ~0s;
+	for( auto mut i= 0u; i < move_result.trace_clip_result.num_collision_events; ++i )
 	{
-		var size_type mut extra_collider_index= ~0s;
-		for( auto mut i= 0u; i < move_result.trace_clip_result.num_collision_events; ++i )
+		var u16 c= move_result.trace_clip_result.collision_events[i].collision_extra_collider_index;
+		if( size_type( c ) < game_state.colliders.size() )
 		{
-			var u16 c= move_result.trace_clip_result.collision_events[i].collision_extra_collider_index;
-			if( size_type( c ) < game_state.colliders.size() )
-			{
-				extra_collider_index= size_type( c );
-			}
+			other_collider_index= size_type( c );
 		}
+	}
 
-		if( extra_collider_index < game_state.colliders.size() )
+	if( other_collider_index < game_state.colliders.size() )
+	{
+		// Collided with some collider.
+		// Try performing a collision avoidance move.
+		// It's pretty straighforward - we move to the right relative to the direction to the collider with which we have a collision.
+		// Such strategy works well for two entities going in oposite directions - they both give each other space to move further.
+		// This doesn't work well if right movement is blocked (there is a wall, for example).
+		// This also doesn't work at all if two or more entities try to reach the same node in the navigation graph.
+		// In such cases they perform some kind of waltz dance, possible forever.
+		// But hopefully it's not noticeable, since in presence of the player they change their behavior and move towards him.
+
+		var Vec2f vec_to_collider_center=
+			game_state.colliders[ other_collider_index ].bbox.GetCenter().xy() - entity.position.xy();
+
+		var f32 distance_to_collider_center= vec_to_collider_center.Length();
+		if( distance_to_collider_center > 0.0f )
 		{
-			// Collided with some collider.
-			// Try performing a collision avoidance move.
+			// Make collision avoidance move length proportional to regular move length.
+			// Use 1.5 scale, since it's near to sqrt(2)/2 and this value allows resolving collisions even in tricky cases.
+			var f32 scale= 1.5f * ( old_position.xy() - new_position.xy() ).Length() / distance_to_collider_center;
 
-			var Vec2f vec_to_collider_center=
-				game_state.colliders[ extra_collider_index ].bbox.GetCenter().xy() - entity.position.xy();
+			var Vec3f move_vec(
+				// Perform 90 degree turn relative to the direction towards the collider.
+				vec_to_collider_center.y * scale,
+				-vec_to_collider_center.x * scale,
+				// Add some gravity.
+				( affected_by_gravity ? 0.5f * c_gravity_per_step : 0.0f ) );
 
-			var f32 distance_to_collider_center= vec_to_collider_center.Length();
-			if( distance_to_collider_center > 0.0f )
-			{
-				// Make collision avoidance move length proportional to regular move length.
-				// Use 1.5 scale, since it's near to sqrt(2)/2 and this value allows resolving collisions even in tricky cases.
-				var f32 scale= 1.5f * ( old_position.xy() - new_position.xy() ).Length() / distance_to_collider_center;
+			var CollisionStepMoveResult collision_avoidance_move_result=
+				CollisionStepMove(
+					map_data,
+					game_state.broken_quad_bits,
+					game_state.dynamic_cluster_colliders,
+					game_state.colliders,
+					collider_bbox,
+					entity.position,
+					entity.position + move_vec );
 
-				var Vec3f move_vec(
-					vec_to_collider_center.y * scale,
-					-vec_to_collider_center.x * scale,
-					// Add some gravity.
-					( affected_by_gravity ? 0.5f * c_gravity_per_step : 0.0f ) );
+			var Vec3f position_after_collision_avoidance=
+				collision_avoidance_move_result.trace_clip_result.position_clipped;
 
-				var CollisionStepMoveResult collision_avoidance_move_result=
-					CollisionStepMove(
+			// Check if we have ground below feet.
+			// It's necessary to avoid doing collision avoidance moves resulting into falling from a ledge.
+
+			var Vec3f down_trace_start= position_after_collision_avoidance + collider_bbox.GetCenter();
+			var f32 c_down_extra_trace_dinstace= 4.0f;
+			var f32 down_trace_distance=
+				( collider_bbox.max.z - collider_bbox.min.z ) * 0.5f + c_down_extra_trace_dinstace;
+
+			if_var( &trace_result :
+					LineTrace(
 						map_data,
 						game_state.broken_quad_bits,
 						game_state.dynamic_cluster_colliders,
-						game_state.colliders,
-						collider_bbox,
-						entity.position,
-						entity.position + move_vec );
-
-				var Vec3f position_after_collision_avoidance=
-					collision_avoidance_move_result.trace_clip_result.position_clipped;
-
-				// Check if we have ground below feet.
-				// It's necessary to avoid doing collision avoidance moves resulting into falling from a ledge.
-
-				var Vec3f down_trace_start= position_after_collision_avoidance + collider_bbox.GetCenter();
-				var f32 c_down_extra_trace_dinstace= 4.0f;
-				var f32 down_trace_distance=
-					( collider_bbox.max.z - collider_bbox.min.z ) * 0.5f + c_down_extra_trace_dinstace;
-
-				if_var( &trace_result :
-						LineTrace(
-							map_data,
-							game_state.broken_quad_bits,
-							game_state.dynamic_cluster_colliders,
-							down_trace_start,
-							Vec3f( 0.0f, 0.0f, down_trace_distance ) ) )
+						down_trace_start,
+						Vec3f( 0.0f, 0.0f, down_trace_distance ) ) )
+			{
+				if( trace_result.distance < 1.0f )
 				{
-					if( trace_result.distance < 1.0f )
+					// We have done a successfull collision avoidance move. Apply it.
+
+					// Clamp vertical velocity if necessary.
+					for( auto mut i= 0u; i < collision_avoidance_move_result.trace_clip_result.num_collision_events; ++i )
 					{
-						// We have done a successfull collision avoidance move. Apply it.
-
-						// Clamp vertical velocity if necessary.
-						for( auto mut i= 0u; i < collision_avoidance_move_result.trace_clip_result.num_collision_events; ++i )
-						{
-							ClampVerticalVelocity(
-								entity.velocity_z,
-								collision_avoidance_move_result.trace_clip_result.collision_events[i].plane_normal );
-						}
-
-						entity.position= position_after_collision_avoidance;
+						ClampVerticalVelocity(
+							entity.velocity_z,
+							collision_avoidance_move_result.trace_clip_result.collision_events[i].plane_normal );
 					}
+
+					entity.position= position_after_collision_avoidance;
 				}
 			}
 		}
