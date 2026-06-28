@@ -25,7 +25,7 @@ Other investigation:
 
 Gameplay investigation:
 
-* Investigate ammo/health kit/armor search behavior of enemies (regulated via "szukaj_apteczek" and "szukaj_amunicji" properties).
+* Investigate health kit/armor search behavior of enemies (regulated via "szukaj_apteczek" property).
 * Investigate how enemies spot the player - their field of view, view distance, spot chance, etc.
 * Investigate what some unknown fileds of entity description format mean, especially ones which affect state transitions.
 * Investigate how different entity parameters affect their behavior.
