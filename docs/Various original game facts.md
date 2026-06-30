@@ -32,6 +32,7 @@ This documents describes various interesting facts about the original game.
 * Enemies can pass through each other (with no collision), at least while patrolling.
 * Idle animations for first-person weapons are the same as walk animations on multiplayer maps.
 * Having two different idle animations for first-person weapons is supported, but no weapon actually uses it.
+* Snipers and mechanical spiders (end bosses) shoot with practically no spread even on the easiest difficulty. The only way to avoid taking damage from them is to take cover or to strafe, which works because projectiles have finite speed and enemies aren't able to take player movement into account while shooting him. Such behavior may be unintentional, but a bug instead.
 
 ### Technical aspects
 
@@ -69,7 +70,7 @@ This documents describes various interesting facts about the original game.
 
 * It's possible to shoot through walls via some weapons by staying too close to a wall.
 * The movable shuttle model on map 29 has missing glass quads. They are there, but they are not displayed properly.
-* The tower decormation on map 29 is missing if skill is 1. It's treated as an enemy and enemy count reduction for it isn't disabled.
+* The tower decoration on map 29 is missing if skill is 1. It's treated as an enemy and enemy count reduction for it isn't disabled.
 * On map 23 at the final room there is a glass box miss-placed right at top of the spinning eagle logo.
 * Pre-recorded player inputs in a played demo (at game start) are applied shortly after starting a new game.
 * Bullet hole decals are cut by borders of a quad with hole center, even if it's not necessary (with an adjacent quad lying in the same plane).

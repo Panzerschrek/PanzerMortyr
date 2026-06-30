@@ -62,8 +62,6 @@ PanzerMortyr game logic:
 
 * Implement rare animation types used for some entities (barrel roll, flies).
 * Implement logic elements specific for dog enemies.
-* Ensure sniper enemies function properly and aren't too weak (don't hit at all) or too strong (hit on each shot) compared to the original game.
-* Ensure end bosses (robotic spiders) function properly and their accurasy is comparable to the original game.
 * Implement remaining entity state transitions (used only by some enemy types).
 * Implement ammo/health kit/armor seeking behavior for enemies.
 * Break glass quads and quads with breakable materials while applying spash damage. The original game doesn't do this and it doesn't look right.
