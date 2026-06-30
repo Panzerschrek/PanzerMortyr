@@ -31,7 +31,6 @@ Gameplay investigation:
 * Investigate misfire behavior.
 * Investigate how many armor points enemies have, how their armor protects them and how many armor points they can pick-up.
 * Investigate where maximum amount of current armor (not inventory armor) is specified.
-* Investigate whether armor absorbs flame damage.
 * Investigate what kinds of entities are affected by gravity (what in an entity description turns gravity on and off).
 * Investigate what "zarowka" entity property is and whether it's actually used.
 * Investigate whether bullet holes may be disabled by material properties.
