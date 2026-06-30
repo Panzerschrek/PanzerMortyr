@@ -84,6 +84,7 @@ Changes:
 * Enemies affected by the mind-control weapon may behave slightly differently compared to the original game.
 * Bubbles in water may behave and look slightly differently compared to the original game.
 * In the original game enemies don't collide with each other (can pass through), in PanzerMortyr they do collide with each other and can sometimes even give each other way if they are going into opposite directions.
+* It's just guessed how weapon spread for both player and entities is calculated. Thus the player and enemies may shoot more or less accurately compared to the original game.
 
 
 ### HUD and menus
