@@ -106,7 +106,6 @@ PanzerMortyr rendering:
 * Use smooth animation for animated models (with two or more frames interpolation).
 * Draw animated water circle decals on map quads with "wet" property enabled in points where a rain particle hits such quad.
 * Suport light soruces with conic shape and use such source kind of source for flashlight.
-* Draw some fullscreen burning effect if the player is burning.
 * Add support for MSAA (with proper support of fullscreen effects like fog).
 * Somehow distort/colorize the whole image while swimming in water. Maybe even add or alter global fog if camera is in water volume.
 * Consider optimizing calculating light from point light sources for models - avoid enumerating all lights.
