@@ -76,6 +76,7 @@ fn CreateNewMapGameState(
 			.last_key_request_step= 0u,
 			.activated_triggers_mask= 0u,
 			.last_opened_secret_area_step= 0u,
+			.num_steps_spent_underwater= 0u,
 			.horizontal_distance_walked= 0.0f,
 		},
 		.broken_quad_bits( map_data.zmap_data.deref().quads.size() ),
@@ -293,6 +294,7 @@ fn CreateNewMapGameState(
 					.last_key_request_step= 0u,
 					.activated_triggers_mask= 0u,
 					.last_opened_secret_area_step= 0u,
+					.num_steps_spent_underwater= 0u,
 					.horizontal_distance_walked= 0.0f,
 				};
 
@@ -672,7 +674,7 @@ fn ProcessGameLogicStep(
 
 	DealPlayerEnvironmentalDamage( global_data.sounds_description.deref(), map_data, game_state );
 
-	EmitPlayerBubbles( map_data, game_state );
+	ProcessPlayerUnderwaterEffectsAndDamage( global_data.sounds_description.deref(), map_data, game_state );
 
 	InteractWithTriggerVolumes( global_data, map_data, game_state );
 
@@ -5368,22 +5370,25 @@ fn DealPlayerEnvironmentalDamage(
 	}
 }
 
-fn EmitPlayerBubbles( GameMapData& map_data, GameState &mut game_state )
+fn ProcessPlayerUnderwaterEffectsAndDamage(
+	SoundsDescription& sounds_description, GameMapData& map_data, GameState &mut game_state )
 {
-	var u32 breathing_period( c_steps_per_second * 1.2f );
-	var u32 breathing_step_index= 7u;
+	var PlayerState &mut player_state= game_state.player;
 
-	var PlayerState& player_state= game_state.player;
+	var Vec3f head_position(
+		player_state.position.xy(),
+		player_state.position.z + c_camera_z_offset + player_state.crouching_phase * c_crouching_height_delta );
 
-	if( game_state.step_index % breathing_period == breathing_step_index &&
-		player_state.energy > 0u &&
-		!player_state.tools_state.acid_protection_suit_is_active )
+	if( IsPointInLiquid( map_data, head_position ) )
 	{
-		var Vec3f head_position(
-			game_state.player.position.xy(),
-			player_state.position.z + c_camera_z_offset + player_state.crouching_phase * c_crouching_height_delta );
+		// Emit bubbles.
 
-		if( IsPointInLiquid( map_data, head_position ) )
+		var u32 constexpr breathing_period( c_steps_per_second * 1.2f );
+		var u32 constexpr breathing_step_index= 7u;
+
+		if( game_state.step_index % breathing_period == breathing_step_index &&
+			player_state.energy > 0u &&
+			!player_state.tools_state.acid_protection_suit_is_active )
 		{
 			var u32 num_bubbles= 6u + game_state.random.Next() % 4u;
 			for( auto mut i= 0u; i < num_bubbles; ++i )
@@ -5398,6 +5403,56 @@ fn EmitPlayerBubbles( GameMapData& map_data, GameState &mut game_state )
 				game_state.bubbles.Insert( Bubble{ .position= head_position + Vec3f( offset ), .age_steps= 0u } );
 			}
 		}
+
+		// Damage if necessary.
+
+		if( player_state.tools_state.acid_protection_suit_is_active )
+		{
+			// Assume acid protection suit provides some oxygen.
+			// The original game doesn't do this, but does this for BUTLA_TLENU item.
+			// But this item can't be obtained without cheats anyway, so, allow acid protection suit to serve as some sort of replacement for it.
+			player_state.num_steps_spent_underwater= 0u;
+		}
+		else
+		{
+			++player_state.num_steps_spent_underwater;
+		}
+
+		if( player_state.num_steps_spent_underwater >= c_max_time_underwater_before_taking_suffocation_damage )
+		{
+			var u32 num_suffocation_steps= player_state.num_steps_spent_underwater - c_max_time_underwater_before_taking_suffocation_damage;
+
+			var u32 constexpr damage_period( c_steps_per_second );
+			var u32 constexpr damage_step_index= 18u;
+
+			if( num_suffocation_steps % damage_period == damage_step_index )
+			{
+				// This damage calculation is experimentally observed.
+				// Player health drops in sequence 100, 98, 94, 86, 70, 50, 30, 10.
+				var u32 mut damage= 0u;
+				switch( num_suffocation_steps / damage_period )
+				{
+					0u -> { damage=  2u; },
+					1u -> { damage=  4u; },
+					2u -> { damage=  8u; },
+					3u -> { damage= 16u; },
+					default -> { damage= 20u; },
+				}
+
+				if( player_state.energy > 0u )
+				{
+					EmitPlayerSuffocationSound( sounds_description, player_state.sound_source_slots );
+				}
+
+				// Armor can't absorb suffocation damage.
+				DamagePlayerIgnoringArmor( sounds_description, player_state, damage );
+			}
+		}
+	}
+	else
+	{
+		// Has a breath of fresh air.
+		player_state.num_steps_spent_underwater= 0u;
 	}
 }
 

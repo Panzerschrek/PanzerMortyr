@@ -38,7 +38,6 @@ Gameplay investigation:
 * Investigate what "ponowny_atak" entity property means, how it affects enemies and what is its default value.
 * Investigate what "dobry_wzrok" entity property means and how it affects enemies.
 * Investigate what  "automatyczny_alarm" entity property means and how it affects enemies.
-* Investigate how much time the player can swim without breathing before suffocation damage is applied.
 * Investigate how invisibility tool (false documents) works - how enemies react to the player having invisibility enabled, what happens if he shoots or attacks, what kind of whether some enemies can deactivate it and how, etc.
 
 PanzerMortyr general:
@@ -108,6 +107,7 @@ PanzerMortyr rendering:
 * Draw animated water circle decals on map quads with "wet" property enabled in points where a rain particle hits such quad.
 * Suport light soruces with conic shape and use such source kind of source for flashlight.
 * Draw some fullscreen burning effect if the player is burning.
+* Make the screen red upon taking damage.
 * Add support for MSAA (with proper support of fullscreen effects like fog).
 * Somehow distort/colorize the whole image while swimming in water. Maybe even add or alter global fog if camera is in water volume.
 * Consider optimizing calculating light from point light sources for models - avoid enumerating all lights.
