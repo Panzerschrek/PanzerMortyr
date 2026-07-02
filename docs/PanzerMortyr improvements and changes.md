@@ -50,6 +50,7 @@ Changes:
 * Clusters with notes are highlighted (their lighting is blinking), so that it's harder to miss a note.
 * Entities with damaging flames attached are drawn with burning effect covering the entire body. In the original game this effect is different - it just uses flame billboards attached to a model.
 * Blood covering entities are slightly darker compared to the original game.
+* Upon damage the screen is tinted red, but with less alpha towards the screen's center (with gradient). The original game uses uniform tinting in such case.
 
 
 ### Gameplay
