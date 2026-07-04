@@ -2395,13 +2395,15 @@ fn ProcessEntityLogicStep(
 		--entity.num_mind_control_steps_left;
 	}
 
-	// Check for player visibility only on even steps for even entities and on odd steps for odd entities.
+	// Check for player visibility and perform other target calculations only on even steps for even entities and on odd steps for odd entities.
 	// Such sparse update is needed, since this calculation are costly.
 	// Doing this only each second step isn't that problematic, it means only that enemies react slightly slower.
 	if( ( entity_index & 1s ) == ( size_type( game_state.step_index ) & 1s ) )
 	{
 		UpdateEntityAttackTarget( map_data, game_state, entity, entity_navigation_state_opt.as_ref() );
 		UpdateEntityAttackTargetInSightFlag( map_data, game_state, entity_description, entity );
+		UpdateEntityPickupTarget(
+			map_data, game_state, entity_description, entity, entity_navigation_state_opt.as_ref() );
 	}
 
 	// For now update movement target each step.
@@ -6240,6 +6242,101 @@ fn UpdateEntityAttackTargetInSightFlag(
 
 	entity.attack_target_is_in_sight= true;
 	entity.last_seen_attack_target_position= attack_target_position;
+}
+
+fn UpdateEntityPickupTarget(
+	GameMapData& map_data,
+	GameState& game_state,
+	EntitiesDescription::EntityDescription& entity_description,
+	EntityState &mut entity,
+	ust::optional_ref_mut</EntityNavigationState/> entity_navigation_state_opt )
+{
+	// TODO - select non-empty pickup target only if need some ammo or health.
+
+	if( entity_description.mode != EntitiesDescription::EntityDescription::c_mode_enemy )
+	{
+		entity.pickup_target_entity_index= ~0u;
+		return;
+	}
+
+	var EntitiesDescription& entities_description= map_data.entities_description.deref();
+
+	if( entity.pickup_target_entity_index != ~0u )
+	{
+		var bool mut need_to_reset_pickup_target= false;
+
+		// Check if target is stil lactual.
+		if( size_type( entity.pickup_target_entity_index ) < game_state.entities.size() )
+		{
+			if_var( &other_entity : game_state.entities[ size_type( entity.pickup_target_entity_index ) ] )
+			{
+				var EntitiesDescription::EntityDescription& other_entity_description=
+					entities_description.entities[ size_type( other_entity.kind ) ];
+				if( other_entity_description.mode != EntitiesDescription::EntityDescription::c_mode_pickup )
+				{
+					entity.pickup_target_entity_index= ~0u;
+					need_to_reset_pickup_target= true;
+				}
+			}
+			else
+			{
+				need_to_reset_pickup_target= true;
+			}
+		}
+		else
+		{
+			need_to_reset_pickup_target= true;
+		}
+
+		if( need_to_reset_pickup_target )
+		{
+			entity.pickup_target_entity_index= ~0u;
+
+			if( !entity_navigation_state_opt.empty() )
+			{
+				// Reset navigation target and route to it.
+
+				var EntityNavigationState &mut entity_naviagation_state= entity_navigation_state_opt.try_deref();
+
+				entity_naviagation_state.target_navigation_graph_node= GlobalNavigationGraph::c_invalid_node_index;
+				foreach( &mut node : entity_naviagation_state.route )
+				{
+					node= GlobalNavigationGraph::c_invalid_node_index;
+				}
+			}
+		}
+	}
+
+	if( entity.pickup_target_entity_index != ~0u )
+	{
+		return;
+	}
+
+	// Need to select new pickup target.
+	// TODO - avoid doing this on each step, since it may trigger costly route recalculation.
+
+	var f32 max_distance= 1024.0f; // TODO - tune it.
+
+	for( auto mut entity_index= 0s; entity_index < game_state.entities.size(); ++entity_index )
+	{
+		if_var( &other_entity : game_state.entities[ entity_index ] )
+		{
+			var EntitiesDescription::EntityDescription& other_entity_description=
+					entities_description.entities[ size_type( other_entity.kind ) ];
+			if( other_entity_description.mode == EntitiesDescription::EntityDescription::c_mode_pickup )
+			{
+				// TODO - check if this pickup gives ammo of required kind.
+
+				var f32 square_distance= ( other_entity.position - entity.position ).SquareLength();
+				if( square_distance <= max_distance * max_distance )
+				{
+					// TODO - build a list of passing entities and choose one randomly.
+					entity.pickup_target_entity_index= u32( entity_index );
+					break;
+				}
+			}
+		}
+	}
 }
 
 struct RouteSearchContext
