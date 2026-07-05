@@ -6352,7 +6352,7 @@ fn UpdateEntityMovementTarget(
 	GameState &mut game_state,
 	RouteSearchContext &mut route_search_context,
 	EntitiesDescription::EntityDescription& entity_description,
-	EntityState& entity,
+	EntityState &mut entity,
 	EntityNavigationState &mut navigation_state )
 {
 	if( entity.energy == 0u )
@@ -6478,7 +6478,65 @@ fn UpdateEntityMovementTarget(
 		navigation_state.target_navigation_graph_node= GlobalNavigationGraph::c_invalid_node_index;
 	}
 
-	if( entity.alarmed && !entity.last_seen_attack_target_position.empty() )
+	if( entity.pickup_target_entity_index != ~0u &&
+		size_type( entity.pickup_target_entity_index ) < game_state.entities.size() )
+	{
+		var ust::optional</Vec3f/> mut pickup_target_position_opt;
+
+		if_var( &pickup_target_entity : game_state.entities[ size_type( entity.pickup_target_entity_index ) ] )
+		{
+			pickup_target_position_opt= pickup_target_entity.position;
+		}
+
+		if( navigation_state.target_navigation_graph_node == GlobalNavigationGraph::c_invalid_node_index &&
+			!pickup_target_position_opt.empty() &&
+			route_search_context.num_nodes_visited < EntityNavigationConstants::max_nodes_to_visit_in_single_game_logic_step )
+		{
+			// Search for a route to pickup target.
+
+			if_var( pickup_target_node_index :
+					FindNearestNavigationGraphNode(
+						map_data,
+						game_state.broken_quad_bits,
+						pickup_target_position_opt.try_deref(),
+						large_entity ) )
+			{
+				var size_type mut num_nodes_visited= 0s;
+
+				var ust::array_view_imut</GlobalNavigationGraph::NodeIndex/> route=
+					route_search_context.route_searcher.PerformDirectedSearch(
+						map_data.global_navigation_graph,
+						navigation_state.current_navigation_graph_node,
+						pickup_target_node_index,
+						large_entity,
+						lambda[&]( GlobalNavigationGraph::NodeIndex node_index ) : bool
+						{
+							ust::ignore_unused( node_index );
+							++num_nodes_visited;
+							return num_nodes_visited < EntityNavigationConstants::max_nodes_to_visit_for_direct_route_search;
+						} );
+
+				// Remember time point at which a route search/nodes enumeration for this entity was executed.
+				navigation_state.last_route_search_step_index= game_state.step_index;
+
+				route_search_context.num_nodes_visited+= num_nodes_visited;
+
+				if( !route.empty() )
+				{
+					navigation_state.target_navigation_graph_node= pickup_target_node_index;
+					SaveEntityRoute( route, navigation_state );
+				}
+				else
+				{
+					// Can't find a route to pickup target.
+					// Reset it.
+					navigation_state.target_navigation_graph_node= GlobalNavigationGraph::c_invalid_node_index;
+					entity.pickup_target_entity_index= ~0u;
+				}
+			}
+		}
+	}
+	else if( entity.alarmed && !entity.last_seen_attack_target_position.empty() )
 	{
 		var Vec3f& attack_target_position= entity.last_seen_attack_target_position.try_deref();
 
@@ -6723,6 +6781,8 @@ fn UpdateEntityMovementTarget(
 
 					var size_type mut num_nodes_visited= 0s;
 
+					var EntityState& entity_ref= entity;
+
 					route_search_context.route_searcher.EnumerateOutputNodes(
 						map_data.global_navigation_graph,
 						navigation_state.current_navigation_graph_node,
@@ -6755,7 +6815,7 @@ fn UpdateEntityMovementTarget(
 								// Check if it's possible to see the attack target from it.
 								var Vec3f& trace_start= attack_target_position_for_visibility_trace;
 
-								var Vec3f trace_end= GetEntityPointForVisibilityTrace( node.position, entity, entity_description );
+								var Vec3f trace_end= GetEntityPointForVisibilityTrace( node.position, entity_ref, entity_description );
 
 								if( trace_end != trace_start )
 								{
@@ -6968,6 +7028,8 @@ fn UpdateEntityMovementTarget(
 
 					var size_type mut num_nodes_visited= 0s;
 
+					var Vec3f& entity_position= entity.position;
+
 					route_search_context.route_searcher.EnumerateOutputNodes(
 						map_data.global_navigation_graph,
 						navigation_state.current_navigation_graph_node,
@@ -6993,9 +7055,9 @@ fn UpdateEntityMovementTarget(
 							{
 								// Check if moving from current position to this node in a straight line doesn't cause to walk to the attack target too close.
 
-								var Vec3f vec_from_entity_to_node= node.position - entity.position;
+								var Vec3f vec_from_entity_to_node= node.position - entity_position;
 								var Vec3f vec_from_node_to_attack_target= attack_target_position - node.position;
-								var Vec3f vec_from_entity_to_attack_target= attack_target_position - entity.position;
+								var Vec3f vec_from_entity_to_attack_target= attack_target_position - entity_position;
 
 								var bool mut too_close= false;
 
