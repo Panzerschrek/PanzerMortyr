@@ -2414,6 +2414,8 @@ fn ProcessEntityLogicStep(
 			map_data, game_state, route_search_context, entity_description, entity, entity_navigation_state );
 	}
 
+	EntityPickupItems( entities_description, entity, game_state );
+
 	if( entity.attack_target_is_in_sight & !entity.alarmed )
 	{
 		// Go to alarmed state if saw an attack target at least once.
@@ -7618,6 +7620,83 @@ fn SaveEntityRoute(
 	}
 }
 
+fn EntityPickupItems( EntitiesDescription& entities_description, EntityState &mut entity, GameState &mut game_state )
+{
+	if( entity.pickup_target_entity_index == ~0u ||
+		size_type( entity.pickup_target_entity_index ) >= game_state.entities.size() )
+	{
+		return; // No pickup target.
+	}
+
+	if( entity.energy <= 0u )
+	{
+		return; // Dead enemies can't pick-up items.
+	}
+
+	var ust::optional</EntityState/>& mut pickup_entity_opt= game_state.entities[
+		size_type( entity.pickup_target_entity_index ) ];
+
+	if( pickup_entity_opt.empty() )
+	{
+		 // Someone else picked it up.
+		entity.pickup_target_entity_index= ~0u;
+		return;
+	}
+
+	var bool mut picked_up_target_entity= false;
+
+	{
+		var EntityState& pickup_entity= pickup_entity_opt.try_deref();
+
+		var EntitiesDescription::EntityDescription& pickup_entity_description=
+			entities_description.entities[ size_type( pickup_entity.kind ) ];
+
+		if( size_type( pickup_entity.current_operation ) >= pickup_entity_description.operations.size() )
+		{
+			return;
+		}
+
+		var EntitiesDescription::Operation& pickup_entity_operation=
+			pickup_entity_description.operations[ size_type( pickup_entity.current_operation ) ];
+
+		if( pickup_entity_operation.box_contents.empty() )
+		{
+			return;
+		}
+
+		var EntitiesDescription::BoxContents& box_contents= pickup_entity_operation.box_contents.try_deref();
+
+		// TODO - perform proper bbox test instead of simple distance test.
+		if( ( pickup_entity.position - entity.position ).Length() <= 64.0f )
+		{
+			if( box_contents.tool_type >= EntitiesDescription::ToolType::ProjectileA &&
+				box_contents.tool_type <= EntitiesDescription::ToolType::ProjectileH )
+			{
+				// If it's an ammo item - add ammo.
+				// It should be checked while selecting a pickup target if it's a correct ammo type.
+				entity.ammo+= box_contents.amount;
+			}
+			else if( box_contents.tool_type == EntitiesDescription::ToolType::HealthPack )
+			{
+				// If it's a health pack - add energy.
+				// TODO - limit it?
+				entity.energy+= box_contents.amount;
+			}
+
+			// If extra ammo is specified - add it too.
+			// It is used for weapon pickups giving not only a weapon, but also some ammo for it.
+			entity.ammo+= box_contents.ammo;
+
+			picked_up_target_entity= true;
+		}
+	}
+
+	if( picked_up_target_entity )
+	{
+		pickup_entity_opt.reset();
+		entity.pickup_target_entity_index= ~0u;
+	}
+}
 
 fn EntityShoot(
 	GameGlobalData& global_data,
