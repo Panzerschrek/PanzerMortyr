@@ -6269,22 +6269,31 @@ fn UpdateEntityPickupTarget(
 		return;
 	}
 
-	var EntitiesDescription& entities_description= map_data.entities_description.deref();
-
-	if( entity.pickup_target_entity_index != ~0u )
+	if( entity.ammo <= 0u )
 	{
-		var bool mut need_to_reset_pickup_target= false;
+		// No ammo is left - need to pick-up an item giving ammo.
 
-		// Check if target is stil lactual.
-		if( size_type( entity.pickup_target_entity_index ) < game_state.entities.size() )
+		var EntitiesDescription& entities_description= map_data.entities_description.deref();
+
+		if( entity.pickup_target_entity_index != ~0u )
 		{
-			if_var( &other_entity : game_state.entities[ size_type( entity.pickup_target_entity_index ) ] )
+			// Already has a pick-up target. Check if it's still actual.
+
+			var bool mut need_to_reset_pickup_target= false;
+
+			if( size_type( entity.pickup_target_entity_index ) < game_state.entities.size() )
 			{
-				var EntitiesDescription::EntityDescription& other_entity_description=
-					entities_description.entities[ size_type( other_entity.kind ) ];
-				if( other_entity_description.mode != EntitiesDescription::EntityDescription::c_mode_pickup )
+				if_var( &other_entity : game_state.entities[ size_type( entity.pickup_target_entity_index ) ] )
 				{
-					entity.pickup_target_entity_index= ~0u;
+					var EntitiesDescription::EntityDescription& other_entity_description=
+						entities_description.entities[ size_type( other_entity.kind ) ];
+					if( other_entity_description.mode != EntitiesDescription::EntityDescription::c_mode_pickup )
+					{
+						need_to_reset_pickup_target= true;
+					}
+				}
+				else
+				{
 					need_to_reset_pickup_target= true;
 				}
 			}
@@ -6292,140 +6301,142 @@ fn UpdateEntityPickupTarget(
 			{
 				need_to_reset_pickup_target= true;
 			}
-		}
-		else
-		{
-			need_to_reset_pickup_target= true;
-		}
 
-		if( need_to_reset_pickup_target )
-		{
-			entity.pickup_target_entity_index= ~0u;
-
-			if( !entity_navigation_state_opt.empty() )
+			if( need_to_reset_pickup_target )
 			{
-				// Reset navigation target and route to it.
+				entity.pickup_target_entity_index= ~0u;
 
-				var EntityNavigationState &mut entity_naviagation_state= entity_navigation_state_opt.try_deref();
-
-				entity_naviagation_state.target_navigation_graph_node= GlobalNavigationGraph::c_invalid_node_index;
-				foreach( &mut node : entity_naviagation_state.route )
+				if( !entity_navigation_state_opt.empty() )
 				{
-					node= GlobalNavigationGraph::c_invalid_node_index;
-				}
-			}
-		}
-	}
+					// Reset navigation target and route to it.
+					var EntityNavigationState &mut entity_naviagation_state= entity_navigation_state_opt.try_deref();
 
-	if( entity.pickup_target_entity_index != ~0u )
-	{
-		return;
-	}
-
-	// Need to select new pickup target.
-	// TODO - avoid doing this on each step, since it may trigger costly route recalculation.
-
-	// Determine what kind of ammo this entity requires.
-
-	var size_type mut ammo_tool_index= ~0s;
-
-	foreach( &operation : entity_description.operations )
-	{
-		if_var( &operation_control : operation.operation_control )
-		{
-			if_var( &operation_control_item : operation_control.item )
-			{
-				var i32 weapon_tool_index= operation_control_item[0];
-				if( weapon_tool_index >= 0 && size_type( weapon_tool_index ) < entities_description.tools.size() )
-				{
-					var EntitiesDescription::Tool& weapon_tool=
-						entities_description.tools[ size_type( weapon_tool_index ) ];
-					if( weapon_tool.ammo_item >= 0 &&
-						size_type( weapon_tool.ammo_item ) < entities_description.tools.size() )
+					entity_naviagation_state.target_navigation_graph_node= GlobalNavigationGraph::c_invalid_node_index;
+					foreach( &mut node : entity_naviagation_state.route )
 					{
-						ammo_tool_index= size_type( weapon_tool.ammo_item );
+						node= GlobalNavigationGraph::c_invalid_node_index;
 					}
 				}
 			}
 		}
-	}
 
-	if( ammo_tool_index == ~0s || ammo_tool_index >= entities_description.tools.size() )
-	{
-		return; // No ammo is required. This entity has no attacks or has only meelee attacks.
-	}
-
-	var EntitiesDescription::Tool& ammo_tool= entities_description.tools[ ammo_tool_index ];
-
-	var f32 max_distance= 2048.0f; // TODO - tune it.
-
-	// Build a short list of possible targets nearby.
-
-	var size_type c_max_targets= 8s;
-	var [ u32, c_max_targets ] mut candidate_targets[ ~0u ... ];
-	var size_type mut num_candidate_targets= 0s;
-
-	for( auto mut entity_index= 0s; entity_index < game_state.entities.size(); ++entity_index )
-	{
-		if_var( &other_entity : game_state.entities[ entity_index ] )
+		if( entity.pickup_target_entity_index != ~0u )
 		{
+			return;
+		}
+
+		// Need to select new pickup target.
+		// TODO - avoid doing this on each step, since it may trigger costly route recalculation.
+
+		// Determine what kind of ammo this entity requires.
+
+		var size_type mut ammo_tool_index= ~0s;
+
+		foreach( &operation : entity_description.operations )
+		{
+			if_var( &operation_control : operation.operation_control )
+			{
+				if_var( &operation_control_item : operation_control.item )
+				{
+					var i32 weapon_tool_index= operation_control_item[0];
+					if( weapon_tool_index >= 0 && size_type( weapon_tool_index ) < entities_description.tools.size() )
+					{
+						var EntitiesDescription::Tool& weapon_tool=
+							entities_description.tools[ size_type( weapon_tool_index ) ];
+						if( weapon_tool.ammo_item >= 0 &&
+							size_type( weapon_tool.ammo_item ) < entities_description.tools.size() )
+						{
+							ammo_tool_index= size_type( weapon_tool.ammo_item );
+						}
+					}
+				}
+			}
+		}
+
+		if( ammo_tool_index == ~0s || ammo_tool_index >= entities_description.tools.size() )
+		{
+			return; // No ammo is required. This entity has no attacks or has only meelee attacks.
+		}
+
+		var EntitiesDescription::Tool& ammo_tool= entities_description.tools[ ammo_tool_index ];
+
+		var f32 max_distance= 2048.0f; // TODO - tune it.
+
+		// Build a short list of possible targets nearby.
+
+		var size_type c_max_targets= 8s;
+		var [ u32, c_max_targets ] mut candidate_targets[ ~0u ... ];
+		var size_type mut num_candidate_targets= 0s;
+
+		for( auto mut entity_index= 0s; entity_index < game_state.entities.size(); ++entity_index )
+		{
+			auto& other_entity_opt= game_state.entities[ entity_index ];
+			if( other_entity_opt.empty() )
+			{
+				continue;
+			}
+
+			var EntityState& other_entity= other_entity_opt.try_deref();
+
 			var EntitiesDescription::EntityDescription& other_entity_description=
 					entities_description.entities[ size_type( other_entity.kind ) ];
-			if( other_entity_description.mode == EntitiesDescription::EntityDescription::c_mode_pickup )
+
+			if( other_entity_description.mode != EntitiesDescription::EntityDescription::c_mode_pickup )
 			{
-				var bool mut gives_required_ammo= false;
+				continue;
+			}
 
-				foreach( &operation : other_entity_description.operations )
+			var bool mut gives_required_ammo= false;
+
+			foreach( &operation : other_entity_description.operations )
+			{
+				if_var( &box_contents : operation.box_contents )
 				{
-					if_var( &box_contents : operation.box_contents )
+					gives_required_ammo|= box_contents.tool_type == ammo_tool.tool_type;
+
+					if( box_contents.ammo > 0u )
 					{
-						gives_required_ammo|= box_contents.tool_type == ammo_tool.tool_type;
-
-						if( box_contents.ammo > 0u )
+						var size_type pickup_tool_index(
+							entities_description.tool_type_to_index_map[ size_type( box_contents.tool_type ) ] );
+						if( pickup_tool_index < entities_description.tools.size() )
 						{
-							var size_type pickup_tool_index(
-								entities_description.tool_type_to_index_map[ size_type( box_contents.tool_type ) ] );
-							if( pickup_tool_index < entities_description.tools.size() )
+							var EntitiesDescription::Tool& pickup_tool= entities_description.tools[ pickup_tool_index ];
+							if( pickup_tool.ammo_item >= 0 &&
+								size_type( pickup_tool.ammo_item ) < entities_description.tools.size() )
 							{
-								var EntitiesDescription::Tool& pickup_tool=
-									entities_description.tools[ pickup_tool_index ];
-								if( pickup_tool.ammo_item >= 0 &&
-									size_type( pickup_tool.ammo_item ) < entities_description.tools.size() )
-								{
-									var EntitiesDescription::Tool& pickup_ammo_tool=
-										entities_description.tools[ size_type( pickup_tool.ammo_item ) ];
+								var EntitiesDescription::Tool& pickup_ammo_tool=
+									entities_description.tools[ size_type( pickup_tool.ammo_item ) ];
 
-									gives_required_ammo|= pickup_ammo_tool.tool_type == ammo_tool.tool_type;
-								}
+								gives_required_ammo|= pickup_ammo_tool.tool_type == ammo_tool.tool_type;
 							}
 						}
 					}
 				}
+			}
 
-				if( !gives_required_ammo )
-				{
-					continue;
-				}
+			if( !gives_required_ammo )
+			{
+				continue;
+			}
 
-				var f32 square_distance= ( other_entity.position - entity.position ).SquareLength();
-				if( square_distance <= max_distance * max_distance )
+			var f32 square_distance= ( other_entity.position - entity.position ).SquareLength();
+			if( square_distance <= max_distance * max_distance )
+			{
+				candidate_targets[ num_candidate_targets ]= u32( entity_index );
+				++num_candidate_targets;
+				if( num_candidate_targets >= c_max_targets )
 				{
-					candidate_targets[ num_candidate_targets ]= u32( entity_index );
-					++num_candidate_targets;
-					if( num_candidate_targets >= c_max_targets )
-					{
-						break;
-					}
+					break;
 				}
 			}
 		}
-	}
 
-	// Select one of possible targets randomly.
+		// Select one of possible targets randomly.
 
-	if( num_candidate_targets > 0s )
-	{
-		entity.pickup_target_entity_index= candidate_targets[ game_state.random.Next() % u32( num_candidate_targets ) ];
+		if( num_candidate_targets > 0s )
+		{
+			entity.pickup_target_entity_index= candidate_targets[ game_state.random.Next() % u32( num_candidate_targets ) ];
+		}
 	}
 }
 
