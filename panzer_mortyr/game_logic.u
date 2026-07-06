@@ -6584,9 +6584,32 @@ fn UpdateEntityMovementTarget(
 	{
 		var ust::optional</Vec3f/> mut pickup_target_position_opt;
 
+		var f32 constexpr max_distance_to_pickup_target_entity= 128.0f;
+
 		if_var( &pickup_target_entity : game_state.entities[ size_type( entity.pickup_target_entity_index ) ] )
 		{
 			pickup_target_position_opt= pickup_target_entity.position;
+
+			if( navigation_state.target_navigation_graph_node != GlobalNavigationGraph::c_invalid_node_index )
+			{
+				var GlobalNavigationGraph::Node& target_node=
+					map_data.global_navigation_graph.nodes[ size_type( navigation_state.target_navigation_graph_node ) ];
+
+				var f32 square_distance= ( target_node.position - pickup_target_entity.position ).SquareLength();
+				if(square_distance > max_distance_to_pickup_target_entity * max_distance_to_pickup_target_entity )
+				{
+					// Reset target navigation graph node if it's too far away from actual location of the pickup target.
+					navigation_state.target_navigation_graph_node= GlobalNavigationGraph::c_invalid_node_index;
+				}
+			}
+		}
+
+		if( navigation_state.target_navigation_graph_node != GlobalNavigationGraph::c_invalid_node_index &&
+			navigation_state.route[0] == GlobalNavigationGraph::c_invalid_node_index )
+		{
+			// No intermediate points are left.
+			// Just reset the target in such case to force recalculate route to it.
+			navigation_state.target_navigation_graph_node= GlobalNavigationGraph::c_invalid_node_index;
 		}
 
 		if( navigation_state.target_navigation_graph_node == GlobalNavigationGraph::c_invalid_node_index &&
@@ -7672,10 +7695,13 @@ fn EntityPickupItems( EntitiesDescription& entities_description, EntityState &mu
 			f32( operation.animation.bounding_box_center_y ),
 			f32( operation.animation.bounding_box_center_z ) );
 
+	// Increase bbox size a bit, so that enemies have no troubles picking-up items located somewhere inbetween nodes of the global navigation graph.
+	var f32 constexpr extra_half_size_add= 16.0f;
+
 	var Vec3f bbox_half_size(
-		f32( operation.animation.bounding_box_half_size_x ),
-		f32( operation.animation.bounding_box_half_size_y ),
-		f32( operation.animation.bounding_box_half_size_z ) );
+		f32( operation.animation.bounding_box_half_size_x ) + extra_half_size_add,
+		f32( operation.animation.bounding_box_half_size_y ) + extra_half_size_add,
+		f32( operation.animation.bounding_box_half_size_z ) + extra_half_size_add );
 
 	var BBox3f entity_bbox
 	{
