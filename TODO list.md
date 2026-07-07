@@ -44,7 +44,6 @@ PanzerMortyr general:
 
 * Allow changing shot and zoom controls (change mouse buttons and maybe even use key buttons).
 * Consider writing some kind of alternative installer - a tool, which depacks game data from the original game ISO or mdf/mds files.
-* Draw loading screen before performing transition to the next level in game code and corresponding game and rendering resource loading.
 * Consider embedding git revision into the game executable and showing it somewhere in the game.
 * Allow turning off some costly effects via settings - breaking glass, fog, dynamic lighting, etc.
 * Consider performing even more advanced game data search - with more hardcoded paths, Windows registry fetches, etc.
@@ -56,6 +55,7 @@ PanzerMortyr general:
 * Prevent user input being used by game logic code if user deactivates a menu page by pressing a key.
 * Allow taking screenshots by pressing some key (like F11 or F12, maybe PrintScreen), so that no external tool is needed for taking screenshots.
 * Make necessary changes to support working with data of the beta version of the original game.
+* Draw loading screen when transitioning to the next level and when loading audio data and world drawing data for it.
 
 PanzerMortyr game logic:
 

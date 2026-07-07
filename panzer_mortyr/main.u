@@ -9,6 +9,7 @@ import "console.iu"
 import "crosshair_drawer.iu"
 import "game.iu"
 import "game_event_notification_drawer.iu"
+import "gl_functions.iu"
 import "hud_drawer.iu"
 import "menu.iu"
 import "message_box.iu"
@@ -69,6 +70,14 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 
 	// Create classes requiring OpenGL context after OpenGL window creation.
 
+	var ImageDrawer mut image_drawer( window.GetViewportSize(), game_filesystem_ptr, settings_ptr );
+
+	// Draw loading screen as soon as possible.
+	image_drawer.PreloadImage( c_loading_image_file_name, ust::null_optional_ref );
+	DrawLoadingScreen( window, image_drawer );
+
+	image_drawer.PreloadImage( c_background_image_file_name, ust::null_optional_ref );
+
 	var Console mut console( settings_ptr, console_out_ptr, window.GetViewportSize() );
 
 	var Menu mut menu( settings_ptr, caching_game_resources_loader_ptr, window.GetViewportSize() );
@@ -79,11 +88,6 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 	var GameEventNotificationDrawer mut game_event_notification_drawer( window.GetViewportSize() );
 
 	var TextDrawer mut text_drawer( window.GetViewportSize(), game_filesystem_ptr, console_out_ptr );
-
-	var ImageDrawer mut image_drawer( window.GetViewportSize(), game_filesystem_ptr, settings_ptr );
-
-	var ResourceString& background_image_file_name= "BGR.BMP\0\0\0\0\0\0\0\0\0";
-	image_drawer.PreloadImage( background_image_file_name, ust::null_optional_ref );
 
 	var WorldDrawer mut world_drawer(
 		settings_ptr, caching_game_resources_loader_ptr, console_out_ptr, GLCapabilities::Create() );
@@ -103,6 +107,8 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 	else if( command_line_options.new_game )
 	{
 		PlayIntroCinematic( caching_game_resources_loader_ptr, video_player, window, audio_processor );
+
+		DrawLoadingScreen( window, image_drawer );
 
 		game.StartNewGame( command_line_options.skill.deref_or( c_default_skill ), audio_processor );
 
@@ -172,6 +178,7 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 									.window= window,
 									.video_player= video_player,
 									.caching_game_resources_loader_ptr= caching_game_resources_loader_ptr,
+									.image_drawer= image_drawer,
 								};
 
 								command_processor(v);
@@ -202,6 +209,7 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 								.window= window,
 								.video_player= video_player,
 								.caching_game_resources_loader_ptr= caching_game_resources_loader_ptr,
+								.image_drawer= image_drawer,
 							};
 
 							console.ProcessKeyPress( keyboard_event.keysym, command_processor );
@@ -222,6 +230,7 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 									.window= window,
 									.video_player= video_player,
 									.caching_game_resources_loader_ptr= caching_game_resources_loader_ptr,
+									.image_drawer= image_drawer,
 								};
 
 								command_processor(v);
@@ -360,7 +369,7 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 			else
 			{
 				// Fill background with a tileable image.
-				image_drawer.DrawImage( background_image_file_name, 0, 0, 1.0f, 0u, 0u, viewport_size[0], viewport_size[1] );
+				image_drawer.DrawImage( c_background_image_file_name, 0, 0, 1.0f, 0u, 0u, viewport_size[0], viewport_size[1] );
 			}
 		}
 
@@ -442,6 +451,8 @@ struct HostCommandProcessor
 	{
 		PlayIntroCinematic( caching_game_resources_loader_ptr, video_player, window , audio_processor );
 
+		DrawLoadingScreen( window, image_drawer );
+
 		var u32 skill= ParseSkillOrGetDefault( args );
 		game.StartNewGame( skill, audio_processor );
 	}
@@ -458,6 +469,7 @@ struct HostCommandProcessor
 			if_var( map_index : ust::parse_number_exact</u32/>( map_name ) )
 			{
 				var u32 skill= ParseSkillOrGetDefault( args );
+				DrawLoadingScreen( window, image_drawer );
 				game.TeleportToMap( map_index, skill, audio_processor );
 			}
 			else
@@ -492,6 +504,7 @@ struct HostCommandProcessor
 			return;
 		}
 
+		DrawLoadingScreen( window, image_drawer );
 		game.Load( save_name_opt.try_deref(), audio_processor );
 	}
 
@@ -560,6 +573,7 @@ struct HostCommandProcessor
 	OpenGLWindow &mut @('d') window;
 	VideoPlayer &mut @('e') video_player;
 	CachingGameResourcesLoaderPtr & @('f') caching_game_resources_loader_ptr;
+	ImageDrawer &mut @('g') image_drawer;
 }
 
 struct MenuCommandProcessor
@@ -573,11 +587,14 @@ struct MenuCommandProcessor
 	{
 		PlayIntroCinematic( caching_game_resources_loader_ptr, video_player, window, audio_processor );
 
+		DrawLoadingScreen( window, image_drawer );
+
 		game.StartNewGame( c.skill, audio_processor );
 	}
 
 	op()( this, Menu::CommandLoadGame& c )
 	{
+		DrawLoadingScreen( window, image_drawer );
 		game.Load( c.slot_name, audio_processor );
 	}
 
@@ -598,6 +615,32 @@ struct MenuCommandProcessor
 	OpenGLWindow &mut @('c') window;
 	VideoPlayer &mut @('d') video_player;
 	CachingGameResourcesLoaderPtr & @('e') caching_game_resources_loader_ptr;
+	ImageDrawer &mut @('f') image_drawer;
+}
+
+// TODO - consider moving this function into a separate file.
+fn DrawLoadingScreen( OpenGLWindow & mut window, ImageDrawer &mut image_drawer )
+{
+	unsafe( glClearColor( 0.0f, 0.0f, 0.0f, 0.0f ) );
+	unsafe( glClear( GLbitfield( GL_COLOR_BUFFER_BIT ) ) );
+
+	if_var( &image_size : image_drawer.GetImageSize( c_loading_image_file_name ) )
+	{
+		var [ u32, 2 ] viewport_size= window.GetViewportSize();
+		var f32 scale=
+			ust::max(
+				1.0f,
+				ust::min(
+					f32( viewport_size[0] ) / f32( image_size[0] ),
+					f32( viewport_size[1] ) / f32( image_size[1] ) ) * 0.5f );
+
+		var f32 x= f32( viewport_size[0] ) * 0.5f - f32( image_size[0] ) * 0.5f * scale;
+		var f32 y= f32( viewport_size[1] ) * 0.5f - f32( image_size[1] ) * 0.5f * scale;
+
+		image_drawer.DrawImage( c_loading_image_file_name, i32(x), i32(y), scale );
+	}
+
+	window.SwapWindow();
 }
 
 fn DrawWorldDrawingStats( TextDrawer &mut text_drawer, [ u32, 2 ] viewport_size, WorldDrawingStats& stats )
@@ -767,5 +810,8 @@ fn GetMaxFPS( SettingsPtr& settings_ptr ) : u32
 }
 
 var u32 c_default_skill= 1u;
+
+var ResourceString& c_background_image_file_name= "BGR.BMP\0\0\0\0\0\0\0\0\0";
+var ResourceString& c_loading_image_file_name= "MENU_W.BMP\0\0\0\0\0\0";
 
 } // namespace PM
