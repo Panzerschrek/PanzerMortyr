@@ -180,6 +180,9 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 									.video_player= video_player,
 									.caching_game_resources_loader_ptr= caching_game_resources_loader_ptr,
 									.image_drawer= image_drawer,
+									.console_out= console_out_ptr,
+									.world_drawer= world_drawer,
+									.hud_drawer= hud_drawer,
 								};
 
 								command_processor(v);
@@ -232,6 +235,9 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 									.video_player= video_player,
 									.caching_game_resources_loader_ptr= caching_game_resources_loader_ptr,
 									.image_drawer= image_drawer,
+									.console_out= console_out_ptr,
+									.world_drawer= world_drawer,
+									.hud_drawer= hud_drawer,
 								};
 
 								command_processor(v);
@@ -622,6 +628,7 @@ struct MenuCommandProcessor
 	op()( this, Menu::CommandSaveGame& c )
 	{
 		game.Save( c.save_comment, c.slot_name, audio_processor );
+		MakeSavegameScreenshot( console_out, window, game, world_drawer, hud_drawer );
 	}
 
 	op()( mut this, Menu::CommandQuit c )
@@ -637,6 +644,50 @@ struct MenuCommandProcessor
 	VideoPlayer &mut @('d') video_player;
 	CachingGameResourcesLoaderPtr & @('e') caching_game_resources_loader_ptr;
 	ImageDrawer &mut @('f') image_drawer;
+	ConsoleOutPtr console_out;
+	WorldDrawer &mut @('g') world_drawer;
+	HudDrawer &mut @('h') hud_drawer;
+}
+
+fn MakeSavegameScreenshot(
+	ConsoleOutPtr& console_out,
+	OpenGLWindow &mut window,
+	Game& game,
+	WorldDrawer &mut world_drawer,
+	HudDrawer &mut hud_drawer )
+{
+	var [ u32, 2 ] viewport_size= window.GetViewportSize();
+
+	// Draw the world and HUD prior to reading framebuffer data.
+	world_drawer.Draw(
+		game.GetWorldDrawingInfo(),
+		WorldDrawingViewportInfo
+		{
+			.viewport_size= viewport_size,
+			.view_aspect= f32( viewport_size[0] ) / f32( viewport_size[1] )
+		} );
+
+	if_var( &hud_drawing_info : game.GetHudDrawingInfo() )
+	{
+		hud_drawer.Draw( hud_drawing_info );
+	}
+
+	// Read framebuffer data, save it as an image.
+
+	var ImageData mut image_data
+	{
+		.size= viewport_size,
+		.pixels( size_type( viewport_size[0] * viewport_size[1] ), ust::make_zeroed</RGBAColor/>() ),
+	};
+
+	unsafe( glReadPixels(
+		0, 0,
+		GLsizei( image_data.size[0] ), GLsizei( image_data.size[1] ),
+		GLenum( GL_RGBA ),
+		GLenum( GL_UNSIGNED_BYTE ),
+		image_data.pixels.range().to_byte8_range().data() ) );
+
+	SaveImageBMP( image_data, "test.bmp", console_out );
 }
 
 // TODO - consider moving this function into a separate file.
