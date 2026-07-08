@@ -23,39 +23,37 @@ fn LoadImageBMP( ust::file_readable &mut f ) : ust::io_result</ImageData/>
 	var BitmapInfoHeader mut info_header= zero_init;
 	result_check_or_return( f.read_exact( ust::single_element_array_view( info_header ).to_byte8_range() ) );
 
-	if( info_header.bitcount != 8u16 )
-	{
-		ust::stderr_print( ust::concat( "Unexpected bitmap bitcount \"", ust::to_string8( info_header.bitcount ), "\"!" ) );
-		return ust::io_error::other;
-	}
-
-	var u32 num_colors= ( info_header.clrused == 0u ? 256u : info_header.clrused );
-
-	var [ RGBAColor, 256 ] mut palette= zero_init;
-
-	{
-		auto palette_view= ust::array_view_mut</RGBAColor/>( palette ).subrange_end( size_type( num_colors ) );
-		result_check_or_return( f.read_exact( palette_view.to_byte8_range() ) );
-
-		foreach( &mut c : palette_view )
-		{
-			// Swap palette colors (they are in BGRA format).
-			auto g= c[2];
-			auto b= c[0];
-			c[0]= g;
-			c[2]= b;
-		}
-	}
-
 	var u32 area= info_header.width * info_header.height;
 
-	scoped_array u8 mut indexed_image_data[ size_type( area ) ]( 0u8 );
-	result_check_or_return( f.read_exact( indexed_image_data.to_byte8_range() ) );
-
-	return ImageData
+	var ImageData mut image_data
 	{
 		.size[ info_header.width, info_header.height ],
-		.pixels=
+	};
+
+	if( info_header.bitcount == 8u16 )
+	{
+		var u32 num_colors= ( info_header.clrused == 0u ? 256u : info_header.clrused );
+
+		var [ RGBAColor, 256 ] mut palette= zero_init;
+
+		{
+			auto palette_view= ust::array_view_mut</RGBAColor/>( palette ).subrange_end( size_type( num_colors ) );
+			result_check_or_return( f.read_exact( palette_view.to_byte8_range() ) );
+
+			foreach( &mut c : palette_view )
+			{
+				// Swap palette colors (they are in BGRA format).
+				auto r= c[2];
+				auto b= c[0];
+				c[0]= r;
+				c[2]= b;
+			}
+		}
+
+		scoped_array u8 mut indexed_image_data[ size_type( area ) ]( 0u8 );
+		result_check_or_return( f.read_exact( indexed_image_data.to_byte8_range() ) );
+
+		image_data.pixels=
 			ust::make_vector_from_mapped_range(
 				indexed_image_data,
 				lambda[ &palette ]( u8 index ) : RGBAColor
@@ -63,8 +61,31 @@ fn LoadImageBMP( ust::file_readable &mut f ) : ust::io_result</ImageData/>
 					// HACK! Use the whole 256-color palette, even if the actual BMP image contains less colors.
 					// It's needed for some broken images from beta version of the original game.
 					return palette[ size_type( index ) ];
-				} )
-	};
+				} );
+
+	}
+	else if( info_header.bitcount == 32u16 )
+	{
+		image_data.pixels.resize( size_type( area ), ust::make_zeroed</RGBAColor/>() );
+
+		result_check_or_return( f.read_exact( image_data.pixels.range().to_byte8_range() ) );
+
+		// Swap red and blue channels.
+		foreach( &mut pixel : image_data.pixels )
+		{
+			auto r= pixel[2];
+			auto b= pixel[0];
+			pixel[0]= r;
+			pixel[2]= b;
+		}
+	}
+	else
+	{
+		ust::stderr_print( ust::concat( "Unexpected bitmap bitcount \"", ust::to_string8( info_header.bitcount ), "\"!\n" ) );
+		return ust::io_error::other;
+	}
+
+	return image_data;
 }
 
 } // namespace PM
