@@ -190,6 +190,7 @@ fn CreateNewMapGameState(
 				.velocity_z= 0.0f,
 				.collider_index= ~0u,
 				.attack_target_entity_index= ~0u,
+				.pickup_target_entity_index= ~0u,
 			};
 
 		with( &mut entity : out_entity.try_deref() )
@@ -2325,6 +2326,7 @@ fn TriggerEntitiesSpawn( GameParams& game_params, GameMapData& map_data, GameSta
 				.velocity_z= 0.0f,
 				.collider_index= ~0u,
 				.attack_target_entity_index= ~0u,
+				.pickup_target_entity_index= ~0u,
 			};
 
 		with( &mut entity : game_state.entities[entity_index].try_deref() )
@@ -2393,13 +2395,15 @@ fn ProcessEntityLogicStep(
 		--entity.num_mind_control_steps_left;
 	}
 
-	// Check for player visibility only on even steps for even entities and on odd steps for odd entities.
+	// Check for player visibility and perform other target calculations only on even steps for even entities and on odd steps for odd entities.
 	// Such sparse update is needed, since this calculation are costly.
 	// Doing this only each second step isn't that problematic, it means only that enemies react slightly slower.
 	if( ( entity_index & 1s ) == ( size_type( game_state.step_index ) & 1s ) )
 	{
 		UpdateEntityAttackTarget( map_data, game_state, entity, entity_navigation_state_opt.as_ref() );
 		UpdateEntityAttackTargetInSightFlag( map_data, game_state, entity_description, entity );
+		UpdateEntityPickupTarget(
+			entities_description, game_state, entity_description, entity, entity_navigation_state_opt.as_ref() );
 	}
 
 	// For now update movement target each step.
@@ -2409,6 +2413,8 @@ fn ProcessEntityLogicStep(
 		UpdateEntityMovementTarget(
 			map_data, game_state, route_search_context, entity_description, entity, entity_navigation_state );
 	}
+
+	EntityPickupItems( entities_description, entity, game_state );
 
 	if( entity.attack_target_is_in_sight & !entity.alarmed )
 	{
@@ -2820,6 +2826,7 @@ fn ProcessEntityLogicStep(
 								.velocity_z= 0.0f,
 								.collider_index= ~0u,
 								.attack_target_entity_index= ~0u,
+								.pickup_target_entity_index= ~0u,
 							} );
 					}
 				}
@@ -6239,6 +6246,227 @@ fn UpdateEntityAttackTargetInSightFlag(
 	entity.last_seen_attack_target_position= attack_target_position;
 }
 
+fn UpdateEntityPickupTarget(
+	EntitiesDescription& entities_description,
+	GameState &mut game_state,
+	EntitiesDescription::EntityDescription& entity_description,
+	EntityState &mut entity,
+	ust::optional_ref_mut</EntityNavigationState/> entity_navigation_state_opt )
+{
+	if( entity_description.mode != EntitiesDescription::EntityDescription::c_mode_enemy )
+	{
+		// Non-enemies can't pick-up items.
+		entity.pickup_target_entity_index= ~0u;
+		return;
+	}
+
+	if( entity.energy <= 0u )
+	{
+		// Dead enemies can't pick-up items.
+		entity.pickup_target_entity_index= ~0u;
+		return;
+	}
+
+	if( entity_description.search_for_ammunition != 0u && entity.ammo <= 0u )
+	{
+		// No ammo is left - need to pick-up an item giving ammo.
+
+		if( entity.pickup_target_entity_index != ~0u )
+		{
+			// Already has a pick-up target. Check if it's still actual.
+
+			var bool mut need_to_reset_pickup_target= false;
+
+			if( size_type( entity.pickup_target_entity_index ) < game_state.entities.size() )
+			{
+				if_var( &other_entity : game_state.entities[ size_type( entity.pickup_target_entity_index ) ] )
+				{
+					var EntitiesDescription::EntityDescription& other_entity_description=
+						entities_description.entities[ size_type( other_entity.kind ) ];
+					if( other_entity_description.mode != EntitiesDescription::EntityDescription::c_mode_pickup )
+					{
+						need_to_reset_pickup_target= true;
+					}
+
+					// Assume here that the selected entity didn't change its kind (it should be impossible)
+					// and still can give necessary ammo.
+				}
+				else
+				{
+					need_to_reset_pickup_target= true; // Target entity was probably picked-up by someone else.
+				}
+			}
+			else
+			{
+				need_to_reset_pickup_target= true;
+			}
+
+			if( need_to_reset_pickup_target )
+			{
+				entity.pickup_target_entity_index= ~0u;
+
+				if( !entity_navigation_state_opt.empty() )
+				{
+					// Reset navigation target and route to it.
+					var EntityNavigationState &mut entity_naviagation_state= entity_navigation_state_opt.try_deref();
+
+					entity_naviagation_state.target_navigation_graph_node= GlobalNavigationGraph::c_invalid_node_index;
+					foreach( &mut node : entity_naviagation_state.route )
+					{
+						node= GlobalNavigationGraph::c_invalid_node_index;
+					}
+				}
+			}
+		}
+
+		if( entity.pickup_target_entity_index != ~0u )
+		{
+			return; // Already has something to pick-up.
+		}
+
+		// Need to select new pickup target.
+
+		// Execute pickup target selection with some random chance.
+		// Avoid doing this on each step, since such selection may be pretty costly.
+		// Even more constly can be route search to this target.
+		if( game_state.random.Next() % 16u != 9u )
+		{
+			return;
+		}
+
+		// Determine what kind of ammo this entity requires.
+
+		// Some enemies use more than one ammo type. So, collect ammo tool indices into a small array.
+		var [ u32, 4 ] mut ammo_tool_indices[ ~0u ... ];
+		var size_type mut num_ammo_tool_indices= 0s;
+
+		foreach( &operation : entity_description.operations )
+		{
+			if_var( &operation_control : operation.operation_control )
+			{
+				if_var( &operation_control_item : operation_control.item )
+				{
+					var i32 weapon_tool_index= operation_control_item[0];
+					if( weapon_tool_index >= 0 && size_type( weapon_tool_index ) < entities_description.tools.size() )
+					{
+						var EntitiesDescription::Tool& weapon_tool=
+							entities_description.tools[ size_type( weapon_tool_index ) ];
+						if( weapon_tool.ammo_item >= 0 &&
+							size_type( weapon_tool.ammo_item ) < entities_description.tools.size() )
+						{
+							var bool mut already_listed= false;
+							for( auto mut i= 0s; i < num_ammo_tool_indices; ++i )
+							{
+								already_listed|= ammo_tool_indices[i] == u32( weapon_tool.ammo_item );
+							}
+
+							if( !already_listed &&
+								num_ammo_tool_indices < typeinfo</ typeof( ammo_tool_indices ) />.element_count )
+							{
+								ammo_tool_indices[ num_ammo_tool_indices ]= u32( weapon_tool.ammo_item );
+								++num_ammo_tool_indices;
+							}
+						}
+					}
+				}
+			}
+		}
+
+		if( num_ammo_tool_indices == 0s )
+		{
+			return; // No ammo is required. This entity has no attacks or has only meelee attacks.
+		}
+
+		var f32 max_horizontal_distance= 1536.0f;
+		var f32 max_vertical_distance= 256.0f;
+
+		// Build a short list of possible targets nearby.
+
+		var size_type c_max_targets= 8s;
+		var [ u32, c_max_targets ] mut candidate_targets[ ~0u ... ];
+		var size_type mut num_candidate_targets= 0s;
+
+		for( auto mut entity_index= 0s; entity_index < game_state.entities.size(); ++entity_index )
+		{
+			auto& other_entity_opt= game_state.entities[ entity_index ];
+			if( other_entity_opt.empty() )
+			{
+				continue;
+			}
+
+			var EntityState& other_entity= other_entity_opt.try_deref();
+
+			var EntitiesDescription::EntityDescription& other_entity_description=
+					entities_description.entities[ size_type( other_entity.kind ) ];
+
+			if( other_entity_description.mode != EntitiesDescription::EntityDescription::c_mode_pickup )
+			{
+				continue;
+			}
+
+			var bool mut gives_required_ammo= false;
+
+			foreach( &operation : other_entity_description.operations )
+			{
+				if_var( &box_contents : operation.box_contents )
+				{
+					for( auto mut i= 0s; i < num_ammo_tool_indices; ++i )
+					{
+						var EntitiesDescription::Tool& ammo_tool=
+							entities_description.tools[ size_type( ammo_tool_indices[i] ) ];
+
+						gives_required_ammo|= box_contents.tool_type == ammo_tool.tool_type;
+
+						if( box_contents.ammo > 0u )
+						{
+							var size_type pickup_tool_index(
+								entities_description.tool_type_to_index_map[ size_type( box_contents.tool_type ) ] );
+							if( pickup_tool_index < entities_description.tools.size() )
+							{
+								var EntitiesDescription::Tool& pickup_tool= entities_description.tools[ pickup_tool_index ];
+								if( pickup_tool.ammo_item >= 0 &&
+									size_type( pickup_tool.ammo_item ) < entities_description.tools.size() )
+								{
+									var EntitiesDescription::Tool& pickup_ammo_tool=
+										entities_description.tools[ size_type( pickup_tool.ammo_item ) ];
+
+									gives_required_ammo|= pickup_ammo_tool.tool_type == ammo_tool.tool_type;
+								}
+							}
+						}
+					}
+				}
+			}
+
+			if( !gives_required_ammo )
+			{
+				continue;
+			}
+
+			var Vec3f vec_to_other_entity= other_entity.position - entity.position;
+			if( vec_to_other_entity.xy().SquareLength() <= max_horizontal_distance * max_horizontal_distance &&
+				ust::abs( vec_to_other_entity.z ) <= max_vertical_distance )
+			{
+				candidate_targets[ num_candidate_targets ]= u32( entity_index );
+				++num_candidate_targets;
+				if( num_candidate_targets >= c_max_targets )
+				{
+					break;
+				}
+			}
+		}
+
+		// Select one of possible targets randomly.
+		// We can't choose the same target each time, since it may be unreachable (no route can be found to it).
+		// By using random selection we give a chance for other targets to be selected, which may be reachable.
+
+		if( num_candidate_targets > 0s )
+		{
+			entity.pickup_target_entity_index= candidate_targets[ game_state.random.Next() % u32( num_candidate_targets ) ];
+		}
+	}
+}
+
 struct RouteSearchContext
 {
 	GlobalNavigationGraphRouteSearcher &mut route_searcher;
@@ -6252,7 +6480,7 @@ fn UpdateEntityMovementTarget(
 	GameState &mut game_state,
 	RouteSearchContext &mut route_search_context,
 	EntitiesDescription::EntityDescription& entity_description,
-	EntityState& entity,
+	EntityState &mut entity,
 	EntityNavigationState &mut navigation_state )
 {
 	if( entity.energy == 0u )
@@ -6378,7 +6606,97 @@ fn UpdateEntityMovementTarget(
 		navigation_state.target_navigation_graph_node= GlobalNavigationGraph::c_invalid_node_index;
 	}
 
-	if( entity.alarmed && !entity.last_seen_attack_target_position.empty() )
+	if( entity.pickup_target_entity_index != ~0u &&
+		size_type( entity.pickup_target_entity_index ) < game_state.entities.size() )
+	{
+		// If has a pickup target - try moving towards it.
+		// This behavior has priority over movement towards attack target and even panic mode.
+		// The original game behaves slightly differently, panic mode overrides ammo/health search,
+		// but PanzerMortyr prioritizes picking up items over being in panic, since it seems to be better.
+
+		var ust::optional</Vec3f/> mut pickup_target_position_opt;
+
+		var f32 constexpr max_distance_to_pickup_target_entity= 128.0f;
+
+		if( size_type( entity.pickup_target_entity_index ) < game_state.entities.size() )
+		{
+			if_var( &pickup_target_entity : game_state.entities[ size_type( entity.pickup_target_entity_index ) ] )
+			{
+				pickup_target_position_opt= pickup_target_entity.position;
+
+				if( navigation_state.target_navigation_graph_node != GlobalNavigationGraph::c_invalid_node_index )
+				{
+					var GlobalNavigationGraph::Node& target_node=
+						map_data.global_navigation_graph.nodes[ size_type( navigation_state.target_navigation_graph_node ) ];
+
+					var f32 square_distance= ( target_node.position - pickup_target_entity.position ).SquareLength();
+					if( square_distance > max_distance_to_pickup_target_entity * max_distance_to_pickup_target_entity )
+					{
+						// Reset target navigation graph node if it's too far away from actual location of the pickup target.
+						navigation_state.target_navigation_graph_node= GlobalNavigationGraph::c_invalid_node_index;
+					}
+				}
+			}
+		}
+
+		if( navigation_state.target_navigation_graph_node != GlobalNavigationGraph::c_invalid_node_index &&
+			navigation_state.route[0] == GlobalNavigationGraph::c_invalid_node_index )
+		{
+			// No intermediate points are left.
+			// Just reset the target in such case to force recalculate route to it.
+			navigation_state.target_navigation_graph_node= GlobalNavigationGraph::c_invalid_node_index;
+		}
+
+		if( navigation_state.target_navigation_graph_node == GlobalNavigationGraph::c_invalid_node_index &&
+			!pickup_target_position_opt.empty() &&
+			game_state.step_index >= navigation_state.last_route_search_step_index + EntityNavigationConstants::min_steps_between_route_searches &&
+			route_search_context.num_nodes_visited < EntityNavigationConstants::max_nodes_to_visit_in_single_game_logic_step )
+		{
+			// Search for a route to pickup target.
+
+			if_var( pickup_target_node_index :
+					FindNearestNavigationGraphNode(
+						map_data,
+						game_state.broken_quad_bits,
+						pickup_target_position_opt.try_deref(),
+						large_entity ) )
+			{
+				var size_type mut num_nodes_visited= 0s;
+
+				var ust::array_view_imut</GlobalNavigationGraph::NodeIndex/> route=
+					route_search_context.route_searcher.PerformDirectedSearch(
+						map_data.global_navigation_graph,
+						navigation_state.current_navigation_graph_node,
+						pickup_target_node_index,
+						large_entity,
+						lambda[&]( GlobalNavigationGraph::NodeIndex node_index ) : bool
+						{
+							ust::ignore_unused( node_index );
+							++num_nodes_visited;
+							return num_nodes_visited < EntityNavigationConstants::max_nodes_to_visit_for_direct_route_search;
+						} );
+
+				// Remember time point at which a route search/nodes enumeration for this entity was executed.
+				navigation_state.last_route_search_step_index= game_state.step_index;
+
+				route_search_context.num_nodes_visited+= num_nodes_visited;
+
+				if( !route.empty() )
+				{
+					navigation_state.target_navigation_graph_node= pickup_target_node_index;
+					SaveEntityRoute( route, navigation_state );
+				}
+				else
+				{
+					// Can't find a route to pickup target.
+					// Reset it.
+					navigation_state.target_navigation_graph_node= GlobalNavigationGraph::c_invalid_node_index;
+					entity.pickup_target_entity_index= ~0u;
+				}
+			}
+		}
+	}
+	else if( entity.alarmed && !entity.last_seen_attack_target_position.empty() )
 	{
 		var Vec3f& attack_target_position= entity.last_seen_attack_target_position.try_deref();
 
@@ -6623,6 +6941,8 @@ fn UpdateEntityMovementTarget(
 
 					var size_type mut num_nodes_visited= 0s;
 
+					var EntityState& entity_ref= entity;
+
 					route_search_context.route_searcher.EnumerateOutputNodes(
 						map_data.global_navigation_graph,
 						navigation_state.current_navigation_graph_node,
@@ -6655,7 +6975,7 @@ fn UpdateEntityMovementTarget(
 								// Check if it's possible to see the attack target from it.
 								var Vec3f& trace_start= attack_target_position_for_visibility_trace;
 
-								var Vec3f trace_end= GetEntityPointForVisibilityTrace( node.position, entity, entity_description );
+								var Vec3f trace_end= GetEntityPointForVisibilityTrace( node.position, entity_ref, entity_description );
 
 								if( trace_end != trace_start )
 								{
@@ -6868,6 +7188,8 @@ fn UpdateEntityMovementTarget(
 
 					var size_type mut num_nodes_visited= 0s;
 
+					var Vec3f& entity_position= entity.position;
+
 					route_search_context.route_searcher.EnumerateOutputNodes(
 						map_data.global_navigation_graph,
 						navigation_state.current_navigation_graph_node,
@@ -6893,9 +7215,9 @@ fn UpdateEntityMovementTarget(
 							{
 								// Check if moving from current position to this node in a straight line doesn't cause to walk to the attack target too close.
 
-								var Vec3f vec_from_entity_to_node= node.position - entity.position;
+								var Vec3f vec_from_entity_to_node= node.position - entity_position;
 								var Vec3f vec_from_node_to_attack_target= attack_target_position - node.position;
-								var Vec3f vec_from_entity_to_attack_target= attack_target_position - entity.position;
+								var Vec3f vec_from_entity_to_attack_target= attack_target_position - entity_position;
 
 								var bool mut too_close= false;
 
@@ -7368,6 +7690,132 @@ fn SaveEntityRoute(
 	}
 }
 
+fn EntityPickupItems( EntitiesDescription& entities_description, EntityState &mut entity, GameState &mut game_state )
+{
+	if( entity.pickup_target_entity_index == ~0u ||
+		size_type( entity.pickup_target_entity_index ) >= game_state.entities.size() )
+	{
+		return; // No pickup target.
+	}
+
+	if( entity.energy <= 0u )
+	{
+		return; // Dead enemies can't pick-up items.
+	}
+
+	var ust::optional</EntityState/>& mut pickup_entity_opt= game_state.entities[
+		size_type( entity.pickup_target_entity_index ) ];
+
+	if( pickup_entity_opt.empty() )
+	{
+		 // Someone else picked it up.
+		entity.pickup_target_entity_index= ~0u;
+		return;
+	}
+
+	var EntitiesDescription::EntityDescription& entity_description=
+		entities_description.entities[ size_type( entity.kind ) ];
+
+	if( size_type( entity.current_operation ) >= entity_description.operations.size() )
+	{
+		return;
+	}
+
+	var EntitiesDescription::Operation& operation=
+		entity_description.operations[ size_type( entity.current_operation ) ];
+
+	var Vec3f bbox_center=
+		entity.position +
+		Vec3f(
+			f32( operation.animation.bounding_box_center_x ),
+			f32( operation.animation.bounding_box_center_y ),
+			f32( operation.animation.bounding_box_center_z ) );
+
+	// Increase bbox size a bit, so that enemies have no troubles picking-up items located somewhere inbetween nodes of the global navigation graph.
+	var f32 constexpr extra_half_size_add= 16.0f;
+
+	var Vec3f bbox_half_size(
+		f32( operation.animation.bounding_box_half_size_x ) + extra_half_size_add,
+		f32( operation.animation.bounding_box_half_size_y ) + extra_half_size_add,
+		f32( operation.animation.bounding_box_half_size_z ) + extra_half_size_add );
+
+	var BBox3f entity_bbox
+	{
+		.min= bbox_center - bbox_half_size,
+		.max= bbox_center + bbox_half_size,
+	};
+
+	var bool mut picked_up_target_entity= false;
+
+	{
+		var EntityState& pickup_entity= pickup_entity_opt.try_deref();
+
+		var EntitiesDescription::EntityDescription& pickup_entity_description=
+			entities_description.entities[ size_type( pickup_entity.kind ) ];
+
+		if( size_type( pickup_entity.current_operation ) >= pickup_entity_description.operations.size() )
+		{
+			return;
+		}
+
+		var EntitiesDescription::Operation& pickup_entity_operation=
+			pickup_entity_description.operations[ size_type( pickup_entity.current_operation ) ];
+
+		if( pickup_entity_operation.box_contents.empty() )
+		{
+			return;
+		}
+
+		var EntitiesDescription::BoxContents& box_contents= pickup_entity_operation.box_contents.try_deref();
+
+		var Vec3f pickup_bbox_center=
+			pickup_entity.position +
+			Vec3f(
+				f32( pickup_entity_operation.animation.bounding_box_center_x ),
+				f32( pickup_entity_operation.animation.bounding_box_center_y ),
+				f32( pickup_entity_operation.animation.bounding_box_center_z ) );
+
+		var Vec3f pickup_bbox_half_size(
+			f32( pickup_entity_operation.animation.bounding_box_half_size_x ),
+			f32( pickup_entity_operation.animation.bounding_box_half_size_y ),
+			f32( pickup_entity_operation.animation.bounding_box_half_size_z ) );
+
+		var BBox3f pickup_entity_bbox
+		{
+			.min= pickup_bbox_center - pickup_bbox_half_size,
+			.max= pickup_bbox_center + pickup_bbox_half_size,
+		};
+
+		if( entity_bbox.InstersectsOrTouches( pickup_entity_bbox ) )
+		{
+			if( box_contents.tool_type >= EntitiesDescription::ToolType::ProjectileA &&
+				box_contents.tool_type <= EntitiesDescription::ToolType::ProjectileH )
+			{
+				// If it's an ammo item - add ammo.
+				// It should be checked while selecting a pickup target if it's a correct ammo type.
+				entity.ammo+= box_contents.amount;
+			}
+			else if( box_contents.tool_type == EntitiesDescription::ToolType::HealthPack )
+			{
+				// If it's a health pack - add energy.
+				// TODO - limit it?
+				entity.energy+= box_contents.amount;
+			}
+
+			// If extra ammo is specified - add it too.
+			// It is used for weapon pickups giving not only a weapon, but also some ammo for it.
+			entity.ammo+= box_contents.ammo;
+
+			picked_up_target_entity= true;
+		}
+	}
+
+	if( picked_up_target_entity )
+	{
+		pickup_entity_opt.reset();
+		entity.pickup_target_entity_index= ~0u;
+	}
+}
 
 fn EntityShoot(
 	GameGlobalData& global_data,
@@ -7604,7 +8052,7 @@ fn MoveEntity(
 
 	var Vec3f old_position= entity.position;
 
-	PerformEntityOwnMovement( map_data, entity, navigation_state_opt, current_operation );
+	PerformEntityOwnMovement( map_data, game_state, entity, navigation_state_opt, current_operation );
 
 	var Vec3f mut new_position= entity.position;
 
@@ -7865,6 +8313,7 @@ fn MoveEntity(
 
 fn PerformEntityOwnMovement(
 	GameMapData& map_data,
+	GameState& game_state,
 	EntityState &mut entity,
 	ust::optional_ref_mut</EntityNavigationState/> navigation_state_opt,
 	EntitiesDescription::Operation& current_operation )
@@ -7874,7 +8323,7 @@ fn PerformEntityOwnMovement(
 		if( !navigation_state_opt.empty() )
 		{
 			PerformEntityOperationControlBasedMovement(
-				map_data, entity, navigation_state_opt.try_deref(), operation_control );
+				map_data, game_state, entity, navigation_state_opt.try_deref(), operation_control );
 		}
 	}
 	else
@@ -7897,6 +8346,7 @@ fn PerformEntityOwnMovement(
 
 fn PerformEntityOperationControlBasedMovement(
 	GameMapData& map_data,
+	GameState& game_state,
 	EntityState &mut entity,
 	EntityNavigationState &mut navigation_state,
 	EntitiesDescription::OperationControl& operation_control )
@@ -7909,6 +8359,16 @@ fn PerformEntityOperationControlBasedMovement(
 		{
 			movement_target_opt=
 				map_data.global_navigation_graph.nodes[ size_type( navigation_state.route[0] ) ].position.xy();
+		}
+		else if(
+			entity.pickup_target_entity_index != ~0u &&
+			size_type( entity.pickup_target_entity_index ) < game_state.entities.size() )
+		{
+			// If we reached a navigation graph node nearest to the pickup target, move to the target directly.
+			if_var( &target_entity : game_state.entities[ size_type( entity.pickup_target_entity_index ) ] )
+			{
+				movement_target_opt= target_entity.position.xy();
+			}
 		}
 	}
 	else if( operation_control.functioning_mode == EntitiesDescription::OperationControl::c_functioning_mode_move_towards_player )

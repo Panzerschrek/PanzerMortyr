@@ -181,6 +181,8 @@ fn CreateNavigationGraphNodes(
 
 		CreateNavigationGraphNodesForEnemyPatrollingPoints(
 			map_data, broken_quad_bits, nodes_spacing, node_bbox, result );
+
+		CreateNavigationGraphNodesForPickups( map_data, broken_quad_bits, nodes_spacing, node_bbox, result );
 	}
 
 	var ust::array_view_imut</ZvoxCluster/> clusters= map_data.zvox_data.deref().clusters;
@@ -233,9 +235,10 @@ fn CreateNavigationGraphNodes(
 		result.append_from_other( thread_nodes );
 	}
 
-	// Don't care creating nodes for patrolling points using multithreading.
+	// Don't care creating nodes for patrolling points and pickups using multithreading.
 	// There is not so many of them.
 	CreateNavigationGraphNodesForEnemyPatrollingPoints( map_data, broken_quad_bits, nodes_spacing, node_bbox, result );
+	CreateNavigationGraphNodesForPickups( map_data, broken_quad_bits, nodes_spacing, node_bbox, result );
 
 	return result;
 }
@@ -401,6 +404,51 @@ fn CreateNavigationGraphNodesForEnemyPatrollingPoints(
 			{
 				result.push_back( node_position_tweaked );
 			}
+		}
+	}
+}
+
+fn CreateNavigationGraphNodesForPickups(
+	GameMapData& map_data,
+	BitArrayView broken_quad_bits,
+	f32 nodes_spacing,
+	BBox3f& node_bbox,
+	ust::vector</Vec3f/> &mut result )
+{
+	// Create nodes for pickups.
+	// It's necessary in order to allow enemies using navagation graph to reach pickups.
+
+	var ZpozData& zpoz_data= map_data.zpoz_data.deref();
+
+	var EntitiesDescription& entities_description= map_data.entities_description.deref();
+
+	foreach( &entity : zpoz_data.entities )
+	{
+		if( entity.alive_flag == 0u16 )
+		{
+			continue;
+		}
+
+		if( size_type( entity.kind ) >= entities_description.entities.size() )
+		{
+			continue;
+		}
+
+		if( entities_description.entities[ size_type( entity.kind ) ].mode
+			!= EntitiesDescription::EntityDescription::c_mode_pickup )
+		{
+			continue;
+		}
+
+		// Move initial position slightly down.
+		// If a pickup is located on ground, "TweakNodePosition" will move it upwards.
+		// If it's slightly above ground, result node will be created on ground.
+		var Vec3f position( f32( entity.position[0] ), f32( entity.position[1] ), f32( entity.position[2] ) + 32.0f );
+
+		if_var( node_position_tweaked :
+				TweakNodePosition( map_data, broken_quad_bits, node_bbox, nodes_spacing, position ) )
+		{
+			result.push_back( node_position_tweaked );
 		}
 	}
 }

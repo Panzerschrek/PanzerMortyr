@@ -14,8 +14,8 @@ This documents describes various interesting facts about the original game.
 ### Non-obvious gameplay facts
 
 * Enemies have limited ammo, like panzerfaust guy having only single shot, but some enemies have really a lot of ammo (like machinegunners with 900 bullets).
-* Enemies can search for health kits and armor, but this behavior is rare due to low chance of search behavior specified in the entities config.
-* Enemies can search for ammo boxes if they run out of ammo, but this behavior is rarely observed or isn't observed at all.
+* Enemies can search for health kits and armor, but this works only for some enemy types, since panic behavior often overrides health search behavior.
+* Enemies can search for ammo boxes if they run out of ammo, but this behavior is rarely observed, since the most enemies have a lot of ammo and they don't live long enough to consume it all.
 * At least some enemies rotate towards the player while playing death animation.
 * Enemies with health level below some threshold don't chase the player, but try to flee from him.
 * It looks like enemies have slightly different model scale from each other, which seems to be random.
