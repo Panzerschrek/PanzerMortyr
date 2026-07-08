@@ -1,0 +1,98 @@
+import "/enum_string_conversions.iu"
+import "image_saving.iu"
+import "windows_bitmap.iu"
+
+namespace PM
+{
+
+fn SaveImageBMP( ImageData& image_data, ust::filesystem_path_view file_path, ConsoleOutPtr& console_out ) : bool
+{
+	auto mut file_res= ust::file_writeable::create( file_path );
+	if_var( &e : file_res.as_error_ref() )
+	{
+		ConsoleOutAddTextLine(
+			console_out,
+			ust::concat( "Failed to open file \"", file_path, "\" for writing. Error: ", ust::enum_to_string(e) ) );
+		return false;
+	}
+
+	var ust::file_writeable mut file= move(file_res).try_take();
+
+	var u32 file_size(
+		typeinfo</BitmapFileHeader/>.size_of +
+		typeinfo</BitmapInfoHeader/>.size_of +
+		image_data.pixels.size() * typeinfo</RGBAColor/>.size_of );
+
+	var u32 pixels_offset( typeinfo</BitmapFileHeader/>.size_of + typeinfo</BitmapInfoHeader/>.size_of );
+
+	var BitmapFileHeader file_header
+	{
+		.type_= BitmapFileHeader::c_expected_type,
+		.size[ ( file_size ), ( file_size >> 8 ), ( file_size >> 16 ), ( file_size >> 24 ) ],
+		.reserved1= zero_init,
+		.reserved2= zero_init,
+		.offbits[ ( pixels_offset ), ( pixels_offset >> 8 ), ( pixels_offset >> 16 ), ( pixels_offset >> 24 ) ],
+	};
+
+	if_var( &e : file.write_all( ust::single_element_array_view( file_header ).to_byte8_range() ).as_error_ref() )
+	{
+		ConsoleOutAddTextLine(
+			console_out,
+			ust::concat( "Failed to write file \"", file_path, "\" for writing. Error: ", ust::enum_to_string(e) ) );
+		return false;
+	}
+
+	var BitmapInfoHeader info_header
+	{
+		.size( typeinfo</BitmapInfoHeader/>.size_of ),
+		.width ( image_data.size[0] ),
+		.height( image_data.size[1] ),
+		.planes(1),
+		.bitcount(32),
+		.compression(0),
+		.sizeimage( image_data.size[0] * image_data.size[1] * u32( typeinfo</RGBAColor/>.size_of ) ),
+		.xplespermeter= 10000u,
+		.ypelspermeter= 10000u,
+		.clrused= 0u,
+		.clrimportant= 0u,
+	};
+
+	if_var( &e : file.write_all( ust::single_element_array_view( info_header ).to_byte8_range() ).as_error_ref() )
+	{
+		ConsoleOutAddTextLine(
+			console_out,
+			ust::concat( "Failed to write file \"", file_path, "\" for writing. Error: ", ust::enum_to_string(e) ) );
+		return false;
+	}
+
+	// Perform RGBA to BRGA swap in chunks.
+	var size_type chunk_size= 1024s;
+	var [ RGBAColor, chunk_size ] mut pixels_swapped= zero_init;
+
+	for( auto mut offset= 0s; offset < image_data.pixels.size(); offset += chunk_size )
+	{
+		var size_type current_chunk_size= ust::min( chunk_size, image_data.pixels.size() - offset );
+		var ust::array_view_mut</RGBAColor/> chunk_pixels= pixels_swapped;
+
+		foreach( &pair : chunk_pixels.iter().zip(
+			image_data.pixels.range().subrange( offset, offset + current_chunk_size ).iter() ) )
+		{
+			pair.first[0]= pair.second[2];
+			pair.first[1]= pair.second[1];
+			pair.first[2]= pair.second[0];
+			pair.first[3]= pair.second[3];
+		}
+
+		if_var( &e : file.write_all( chunk_pixels.to_byte8_range() ).as_error_ref() )
+		{
+			ConsoleOutAddTextLine(
+				console_out,
+				ust::concat( "Failed to write file \"", file_path, "\" for writing. Error: ", ust::enum_to_string(e) ) );
+			return false;
+		}
+	}
+
+	return true;
+}
+
+} // namespace PM
