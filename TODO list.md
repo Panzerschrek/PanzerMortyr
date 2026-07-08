@@ -59,7 +59,7 @@ PanzerMortyr general:
 
 PanzerMortyr game logic:
 
-* Implement rare animation types used for some entities (barrel roll, flies).
+* Implement flies animation (used only for single dog enemy on map 19).
 * Implement logic elements specific for dog enemies.
 * Implement remaining entity state transitions (used only by some enemy types).
 * Implement health kit/armor seeking behavior for enemies.
@@ -67,7 +67,6 @@ PanzerMortyr game logic:
 * Implement jetpack tool.
 * Implement invisibility tool (false documents) and enemy properties allowing to uncover the player having invisibility.
 * Implement flame particles emitted by explosive decorations ("wybuch_benzyny"/"plomienie").
-* Damage and eventually kill the player spending too much time in water without swimming up for breathing.
 * Spawn water splash particles if a projectile hits water surface.
 * Spawn water circles if a projectile hits water surface.
 * Do something with unconditional entity state transition "w_zasiegu_strzalu_b" - try making it somewhat random.
