@@ -2403,7 +2403,7 @@ fn ProcessEntityLogicStep(
 		UpdateEntityAttackTarget( map_data, game_state, entity, entity_navigation_state_opt.as_ref() );
 		UpdateEntityAttackTargetInSightFlag( map_data, game_state, entity_description, entity );
 		UpdateEntityPickupTarget(
-			map_data, game_state, entity_description, entity, entity_navigation_state_opt.as_ref() );
+			entities_description, game_state, entity_description, entity, entity_navigation_state_opt.as_ref() );
 	}
 
 	// For now update movement target each step.
@@ -6247,7 +6247,7 @@ fn UpdateEntityAttackTargetInSightFlag(
 }
 
 fn UpdateEntityPickupTarget(
-	GameMapData& map_data,
+	EntitiesDescription& entities_description,
 	GameState &mut game_state,
 	EntitiesDescription::EntityDescription& entity_description,
 	EntityState &mut entity,
@@ -6271,8 +6271,6 @@ fn UpdateEntityPickupTarget(
 	{
 		// No ammo is left - need to pick-up an item giving ammo.
 
-		var EntitiesDescription& entities_description= map_data.entities_description.deref();
-
 		if( entity.pickup_target_entity_index != ~0u )
 		{
 			// Already has a pick-up target. Check if it's still actual.
@@ -6289,10 +6287,13 @@ fn UpdateEntityPickupTarget(
 					{
 						need_to_reset_pickup_target= true;
 					}
+
+					// Assume here that the selected entity didn't change its kind (it should be impossible)
+					// and still can give necessary ammo.
 				}
 				else
 				{
-					need_to_reset_pickup_target= true;
+					need_to_reset_pickup_target= true; // Target entity was probably picked-up by someone else.
 				}
 			}
 			else
@@ -6335,7 +6336,7 @@ fn UpdateEntityPickupTarget(
 
 		// Determine what kind of ammo this entity requires.
 
-		// Some enemies use more than one ammo type. So, collect tool indices into a small array.
+		// Some enemies use more than one ammo type. So, collect ammo tool indices into a small array.
 		var [ u32, 4 ] mut ammo_tool_indices[ ~0u ... ];
 		var size_type mut num_ammo_tool_indices= 0s;
 
@@ -6442,9 +6443,9 @@ fn UpdateEntityPickupTarget(
 				continue;
 			}
 
-			var Vec3f vec_to_pickup_entity= other_entity.position - entity.position;
-			if( vec_to_pickup_entity.xy().SquareLength() <= max_horizontal_distance * max_horizontal_distance &&
-				ust::abs( vec_to_pickup_entity.z ) <= max_vertical_distance )
+			var Vec3f vec_to_other_entity= other_entity.position - entity.position;
+			if( vec_to_other_entity.xy().SquareLength() <= max_horizontal_distance * max_horizontal_distance &&
+				ust::abs( vec_to_other_entity.z ) <= max_vertical_distance )
 			{
 				candidate_targets[ num_candidate_targets ]= u32( entity_index );
 				++num_candidate_targets;
@@ -6456,6 +6457,8 @@ fn UpdateEntityPickupTarget(
 		}
 
 		// Select one of possible targets randomly.
+		// We can't choose the same target each time, since it may be unreachable (no route can be found to it).
+		// By using random selection we give a chance for other targets to be selected, which may be reachable.
 
 		if( num_candidate_targets > 0s )
 		{
@@ -6606,24 +6609,32 @@ fn UpdateEntityMovementTarget(
 	if( entity.pickup_target_entity_index != ~0u &&
 		size_type( entity.pickup_target_entity_index ) < game_state.entities.size() )
 	{
+		// If has a pickup target - try moving towards it.
+		// This behavior has priority over movement towards attack target and even panic mode.
+		// The original game behaves slightly differently, panic mode overrides ammo/health search,
+		// but PanzerMortyr prioritizes picking up items over being in panic, since it seems to be better.
+
 		var ust::optional</Vec3f/> mut pickup_target_position_opt;
 
 		var f32 constexpr max_distance_to_pickup_target_entity= 128.0f;
 
-		if_var( &pickup_target_entity : game_state.entities[ size_type( entity.pickup_target_entity_index ) ] )
+		if( size_type( entity.pickup_target_entity_index ) < game_state.entities.size() )
 		{
-			pickup_target_position_opt= pickup_target_entity.position;
-
-			if( navigation_state.target_navigation_graph_node != GlobalNavigationGraph::c_invalid_node_index )
+			if_var( &pickup_target_entity : game_state.entities[ size_type( entity.pickup_target_entity_index ) ] )
 			{
-				var GlobalNavigationGraph::Node& target_node=
-					map_data.global_navigation_graph.nodes[ size_type( navigation_state.target_navigation_graph_node ) ];
+				pickup_target_position_opt= pickup_target_entity.position;
 
-				var f32 square_distance= ( target_node.position - pickup_target_entity.position ).SquareLength();
-				if(square_distance > max_distance_to_pickup_target_entity * max_distance_to_pickup_target_entity )
+				if( navigation_state.target_navigation_graph_node != GlobalNavigationGraph::c_invalid_node_index )
 				{
-					// Reset target navigation graph node if it's too far away from actual location of the pickup target.
-					navigation_state.target_navigation_graph_node= GlobalNavigationGraph::c_invalid_node_index;
+					var GlobalNavigationGraph::Node& target_node=
+						map_data.global_navigation_graph.nodes[ size_type( navigation_state.target_navigation_graph_node ) ];
+
+					var f32 square_distance= ( target_node.position - pickup_target_entity.position ).SquareLength();
+					if( square_distance > max_distance_to_pickup_target_entity * max_distance_to_pickup_target_entity )
+					{
+						// Reset target navigation graph node if it's too far away from actual location of the pickup target.
+						navigation_state.target_navigation_graph_node= GlobalNavigationGraph::c_invalid_node_index;
+					}
 				}
 			}
 		}
