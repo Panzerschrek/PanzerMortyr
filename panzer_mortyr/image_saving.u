@@ -1,4 +1,5 @@
 import "/enum_string_conversions.iu"
+import "/scoped_array.iu"
 import "image_saving.iu"
 import "windows_bitmap.iu"
 
@@ -90,6 +91,90 @@ fn SaveImageBMP( ImageData& image_data, ust::filesystem_path_view file_path, Con
 				ust::concat( "Failed to write file \"", file_path, "\" for writing. Error: ", ust::enum_to_string(e) ) );
 			return false;
 		}
+	}
+
+	return true;
+}
+
+fn SaveImageBMP16Bit( ImageData& image_data, ust::filesystem_path_view file_path, ConsoleOutPtr& console_out ) : bool
+{
+	auto mut file_res= ust::file_writeable::create( file_path );
+	if_var( &e : file_res.as_error_ref() )
+	{
+		ConsoleOutAddTextLine(
+			console_out,
+			ust::concat( "Failed to open file \"", file_path, "\" for writing. Error: ", ust::enum_to_string(e) ) );
+		return false;
+	}
+
+	type Color16= u16;
+
+	var ust::file_writeable mut file= move(file_res).try_take();
+
+	var u32 file_size(
+		typeinfo</BitmapFileHeader/>.size_of +
+		typeinfo</BitmapInfoHeader/>.size_of +
+		image_data.pixels.size() * typeinfo</Color16/>.size_of );
+
+	var u32 pixels_offset( typeinfo</BitmapFileHeader/>.size_of + typeinfo</BitmapInfoHeader/>.size_of );
+
+	var BitmapFileHeader file_header
+	{
+		.type_= BitmapFileHeader::c_expected_type,
+		.size[ ( file_size ), ( file_size >> 8 ), ( file_size >> 16 ), ( file_size >> 24 ) ],
+		.reserved1= zero_init,
+		.reserved2= zero_init,
+		.offbits[ ( pixels_offset ), ( pixels_offset >> 8 ), ( pixels_offset >> 16 ), ( pixels_offset >> 24 ) ],
+	};
+
+	if_var( &e : file.write_all( ust::single_element_array_view( file_header ).to_byte8_range() ).as_error_ref() )
+	{
+		ConsoleOutAddTextLine(
+			console_out,
+			ust::concat( "Failed to write file \"", file_path, "\" for writing. Error: ", ust::enum_to_string(e) ) );
+		return false;
+	}
+
+	var BitmapInfoHeader info_header
+	{
+		.size( typeinfo</BitmapInfoHeader/>.size_of ),
+		.width ( image_data.size[0] ),
+		.height( image_data.size[1] ),
+		.planes(1),
+		.bitcount(16),
+		.compression(0),
+		.sizeimage( image_data.size[0] * image_data.size[1] * u32( typeinfo</Color16/>.size_of ) ),
+		.xplespermeter= 10000u,
+		.ypelspermeter= 10000u,
+		.clrused= 0u,
+		.clrimportant= 0u,
+	};
+
+	if_var( &e : file.write_all( ust::single_element_array_view( info_header ).to_byte8_range() ).as_error_ref() )
+	{
+		ConsoleOutAddTextLine(
+			console_out,
+			ust::concat( "Failed to write file \"", file_path, "\" for writing. Error: ", ust::enum_to_string(e) ) );
+		return false;
+	}
+
+	scoped_array Color16 colors16[ image_data.pixels.size() ](
+		image_data.pixels.iter().map(
+			lambda( RGBAColor& c ) : Color16
+			{
+				return
+					Color16(
+						( ( u32( c[2] ) >> 3 ) << 0 ) |
+						( ( u32( c[1] ) >> 3 ) << 5 ) |
+						( ( u32( c[0] ) >> 3 ) << 10 ) );
+			} ) );
+
+	if_var( &e : file.write_all( colors16.to_byte8_range() ).as_error_ref() )
+	{
+		ConsoleOutAddTextLine(
+			console_out,
+			ust::concat( "Failed to write file \"", file_path, "\" for writing. Error: ", ust::enum_to_string(e) ) );
+		return false;
 	}
 
 	return true;
