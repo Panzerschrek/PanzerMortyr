@@ -127,7 +127,6 @@ PanzerMortyr rendering:
 PanzerMortyr menus and HUD:
 
 * Implement loading screen.
-* Draw a screenshot for each save slot in load/save menus.
 * Allow changing HUD position via settings menu.
 * Implement some stub page for parental lock menu.
 * Make advanced options menu functinal.
