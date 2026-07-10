@@ -15,6 +15,7 @@ import "menu.iu"
 import "message_box.iu"
 import "opengl_window.iu"
 import "performance_counter.iu"
+import "savegame_screenshot.iu"
 import "video_player.iu"
 import "world_drawer.iu"
 
@@ -179,6 +180,9 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 									.video_player= video_player,
 									.caching_game_resources_loader_ptr= caching_game_resources_loader_ptr,
 									.image_drawer= image_drawer,
+									.console_out= console_out_ptr,
+									.world_drawer= world_drawer,
+									.hud_drawer= hud_drawer,
 								};
 
 								command_processor(v);
@@ -231,6 +235,9 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 									.video_player= video_player,
 									.caching_game_resources_loader_ptr= caching_game_resources_loader_ptr,
 									.image_drawer= image_drawer,
+									.console_out= console_out_ptr,
+									.world_drawer= world_drawer,
+									.hud_drawer= hud_drawer,
 								};
 
 								command_processor(v);
@@ -600,7 +607,12 @@ struct MenuCommandProcessor
 
 	op()( this, Menu::CommandSaveGame& c )
 	{
-		game.Save( c.save_comment, c.slot_name, audio_processor );
+		if( game.Save( c.save_comment, c.slot_name, audio_processor ) )
+		{
+			// Save savegame screenshot if managed to save a game.
+			// This screenshot will be later shown on save and load menu pages.
+			MakeSavegameScreenshot( console_out, window, game, world_drawer, hud_drawer, c.slot_name );
+		}
 	}
 
 	op()( mut this, Menu::CommandQuit c )
@@ -616,6 +628,57 @@ struct MenuCommandProcessor
 	VideoPlayer &mut @('d') video_player;
 	CachingGameResourcesLoaderPtr & @('e') caching_game_resources_loader_ptr;
 	ImageDrawer &mut @('f') image_drawer;
+	ConsoleOutPtr console_out;
+	WorldDrawer &mut @('g') world_drawer;
+	HudDrawer &mut @('h') hud_drawer;
+}
+
+fn MakeSavegameScreenshot(
+	ConsoleOutPtr& console_out,
+	OpenGLWindow& window,
+	Game& game,
+	WorldDrawer &mut world_drawer,
+	HudDrawer &mut hud_drawer,
+	SaveSlotName& save_slot_name )
+{
+	var [ u32, 2 ] viewport_size= window.GetViewportSize();
+
+	// Draw the world and HUD prior to making screenshot.
+	// We need this to ensure no other stuff is drawn, like menu, console or some debug overlay.
+	world_drawer.Draw(
+		game.GetWorldDrawingInfo(),
+		WorldDrawingViewportInfo
+		{
+			.viewport_size= viewport_size,
+			.view_aspect= f32( viewport_size[0] ) / f32( viewport_size[1] )
+		} );
+
+	if_var( &hud_drawing_info : game.GetHudDrawingInfo() )
+	{
+		hud_drawer.Draw( hud_drawing_info );
+	}
+
+	SaveSavegameScreenshot( MakeScreenshot( window ), save_slot_name, console_out );
+}
+
+fn MakeScreenshot( OpenGLWindow& window ) : ImageData
+{
+	var [ u32, 2 ] viewport_size= window.GetViewportSize();
+
+	var ImageData mut screen_image_data
+	{
+		.size= viewport_size,
+		.pixels( size_type( viewport_size[0] * viewport_size[1] ), ust::make_zeroed</RGBAColor/>() ),
+	};
+
+	unsafe( glReadPixels(
+		0, 0,
+		GLsizei( screen_image_data.size[0] ), GLsizei( screen_image_data.size[1] ),
+		GLenum( GL_RGBA ),
+		GLenum( GL_UNSIGNED_BYTE ),
+		screen_image_data.pixels.range().to_byte8_range().data() ) );
+
+	return screen_image_data;
 }
 
 // TODO - consider moving this function into a separate file.

@@ -1,0 +1,145 @@
+import "image_saving.iu"
+import "savegame_screenshot.iu"
+
+namespace PM
+{
+
+fn SaveSavegameScreenshot(
+	ImageData& screen_image_data, SaveSlotName& save_slot_name, ConsoleOutPtr& console_out ) : bool
+{
+	// Save using 16 bits per pixel. 32-bits without compression produces too heavy screenshots.
+	return
+		SaveImageBMP16Bit(
+			ResizeSavegameScreenshot( screen_image_data ),
+			GetSaveScreenshotFilePath( save_slot_name, savegame_screenshot_file_extension ),
+			console_out );
+}
+
+fn LoadSavegameScreenshot( SaveSlotName& save_slot_name ) : ust::optional</ImageData/>
+{
+	result_match(
+		ust::file_readable::open( GetSaveScreenshotFilePath( save_slot_name, savegame_screenshot_file_extension ) ) )
+	{
+		Ok( mut f ) ->
+		{
+			result_match( LoadImageBMP(f) )
+			{
+				Ok( mut image_data ) ->
+				{
+					return image_data;
+				},
+				Err(e) ->
+				{
+					ust::ignore_unused(e);
+					return ust::null_optional;
+				}
+			}
+		},
+		Err(e) ->
+		{
+			ust::ignore_unused(e);
+			return ust::null_optional;
+		},
+	}
+}
+
+fn ResizeSavegameScreenshot( ImageData& screen_image_data ) : ImageData
+{
+	var f32 scale=
+		ust::max(
+			f32( screen_image_data.size[0] ) / f32( c_savegame_screenshot_target_size[0] ),
+			f32( screen_image_data.size[1] ) / f32( c_savegame_screenshot_target_size[1] ) );
+
+	var ImageData mut dst_image
+	{
+		.size
+		[
+			( ust::round( f32( screen_image_data.size[0] ) / scale ) ),
+			( ust::round( f32( screen_image_data.size[1] ) / scale ) ),
+		]
+	};
+
+	dst_image.pixels.resize( size_type( dst_image.size[0] * dst_image.size[1] ), ust::make_zeroed</RGBAColor/>() );
+
+	if( scale >= 2.0f )
+	{
+		// Perform downscaling with some simple averaging.
+		for( var u32 mut dst_y= 0u; dst_y < dst_image.size[1]; ++dst_y )
+		{
+			var ust::array_view_mut</RGBAColor/> dst_line= dst_image.pixels.range().subrange(
+				size_type( dst_y * dst_image.size[0] ),
+				size_type( ( dst_y + 1u ) * dst_image.size[0] ) );
+
+			var u32 src_y_begin= dst_y * screen_image_data.size[1] / dst_image.size[1];
+			var u32 src_y_end= ( dst_y + 1u ) * screen_image_data.size[1] / dst_image.size[1];
+
+			for( var u32 mut dst_x= 0u; dst_x < dst_image.size[0]; ++dst_x )
+			{
+				var u32 src_x_begin= dst_x * screen_image_data.size[0] / dst_image.size[0];
+				var u32 src_x_end= ( dst_x + 1u ) * screen_image_data.size[0] / dst_image.size[0];
+
+				var [ u32, 4 ] mut colors_sum= zero_init;
+				for( var u32 mut src_y= src_y_begin; src_y < src_y_end; ++src_y )
+				{
+					for( var u32 mut src_x= src_x_begin; src_x < src_x_end; ++src_x )
+					{
+						var RGBAColor& src_color=
+							screen_image_data.pixels[ size_type( src_x + src_y * screen_image_data.size[0] ) ];
+
+						for( auto mut i= 0s; i < 4s; ++i )
+						{
+							colors_sum[i]+= u32( src_color[i] );
+						}
+					}
+				}
+
+				var u32 area= ( src_y_end - src_y_begin ) * ( src_x_end - src_x_begin );
+				if( area == 0u )
+				{
+					continue;
+				}
+
+				var RGBAColor mut result_color= zero_init;
+				for( auto mut i= 0s; i < 4s; ++i )
+				{
+					result_color[i]= u8( colors_sum[i] / area );
+				}
+
+				dst_line[ size_type( dst_x ) ]= result_color;
+			}
+		}
+	}
+	else
+	{
+		// Just perform nearest pixel fetches for not so huge rescaling.
+		for( var u32 mut dst_y= 0u; dst_y < dst_image.size[1]; ++dst_y )
+		{
+			var ust::array_view_mut</RGBAColor/> dst_line= dst_image.pixels.range().subrange(
+				size_type( dst_y * dst_image.size[0] ),
+				size_type( ( dst_y + 1u ) * dst_image.size[0] ) );
+
+			var u32 src_y= dst_y * screen_image_data.size[1] / dst_image.size[1];
+
+			var ust::array_view_imut</RGBAColor/> src_line= screen_image_data.pixels.range().subrange(
+				size_type( src_y * screen_image_data.size[0] ),
+				size_type( ( src_y + 1u ) * screen_image_data.size[0] ) );
+
+			for( var u32 mut dst_x= 0u; dst_x < dst_image.size[0]; ++dst_x )
+			{
+				var u32 src_x= dst_x * screen_image_data.size[0] / dst_image.size[0];
+				dst_line[ size_type( dst_x ) ]= src_line[ size_type( src_x ) ];
+			}
+		}
+	}
+
+	return dst_image;
+}
+
+// Use pretty small resolution for savegame screenshots.
+// We don't need much quality for them.
+var [ u32, 2 ] constexpr c_savegame_screenshot_target_size[ 240u, 180u ];
+
+// Use BMP file for simplicity. This format has no proper compresion, but it's fine, as long as savegame screenshots aren't large.
+auto& savegame_screenshot_file_extension= "bmp";
+
+} // namespace PM
