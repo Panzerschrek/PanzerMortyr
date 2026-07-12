@@ -354,6 +354,25 @@ fn ConstructWorldDrawingInfo(
 						elevation_angle= distance_along_facing_direction / ust::max( radius, 1.0f );
 					}
 
+					// Mix frames between previous and current frame. It adds some delay, but it's tolerable.
+					// We can't use predicted state, since miss-predicting animation is terrible.
+					var WorldDrawingInfo::ModelFrames mut model_frames= CreateModelFrames( entity.animation_frames );
+
+					if_var( &previous_game_state : previous_game_state_opt )
+					{
+						if( i < previous_game_state.entities.size()  )
+						{
+							if_var( &previous_entity : previous_game_state.entities[i] )
+							{
+								model_frames=
+									MixModelFrames(
+										CreateModelFrames( previous_entity.animation_frames ),
+										model_frames,
+										time_steps_fraction );
+							}
+						}
+					}
+
 					drawing_info.model_objects.push_back(
 						WorldDrawingInfo::ModelObject
 						{
@@ -362,7 +381,7 @@ fn ConstructWorldDrawingInfo(
 							.azimuth= entity_azimuth,
 							.elevation= elevation_angle,
 							// TODO - perform mixing.
-							.frames= CreateModelFrames( entity.animation_frames ),
+							.frames= model_frames,
 							// If it's a sky decoration - disable culling.
 							// It should be always visible, even if such decoration is located somewhere outside map bounds.
 							.disable_culling= is_sky_decoration,
@@ -2150,6 +2169,78 @@ fn CreateModelFrames( ModelAnimationFrames& in_frames ) : WorldDrawingInfo::Mode
 		.frame0= in_frames[0],
 		.frame1= in_frames[1],
 		.frame_mix= 0.5f,
+	};
+}
+
+fn MixModelFrames(
+	WorldDrawingInfo::ModelFrames& a, WorldDrawingInfo::ModelFrames& b, f32 mix_factor ) : WorldDrawingInfo::ModelFrames
+{
+	type WeightedFrame= tup[ u32, f32 ];
+
+	var [ WeightedFrame, 4 ] initial_frames
+	[
+		[ a.frame0, ( ( 1.0f - a.frame_mix ) * ( 1.0f - mix_factor ) ) ],
+		[ a.frame1, a.frame_mix  * ( 1.0f - mix_factor ) ],
+		[ b.frame0, ( ( 1.0f - b.frame_mix ) * mix_factor ) ],
+		[ b.frame1, b.frame_mix * mix_factor ],
+	];
+
+	var [ WeightedFrame, 4 ] mut frames_deduplicated= zero_init;
+	var size_type mut num_unique_frames= 0s;
+
+	for( auto mut i= 0s; i < 4s; ++i ) label initial_frames_loop
+	{
+		var WeightedFrame& frame_i= initial_frames[i];
+
+		for( auto mut j= 0s; j < num_unique_frames; ++j )
+		{
+			var WeightedFrame &mut frame_j= frames_deduplicated[j];
+
+			if( frame_j[0] == frame_i[0] )
+			{
+				frame_j[1]+= frame_i[1];
+				continue label initial_frames_loop;
+			}
+		}
+
+		frames_deduplicated[ num_unique_frames ]= frame_i;
+		++num_unique_frames;
+	}
+
+	if( num_unique_frames == 1s )
+	{
+		return WorldDrawingInfo::ModelFrames
+		{
+			.frame0= frames_deduplicated[0][0],
+			.frame1= frames_deduplicated[0][0],
+			.frame_mix= 0.5f,
+		};
+	}
+
+	// Use bubble sort to get two frames with the biggest weights.
+
+	for( auto mut i= 0s; i < num_unique_frames; ++i )
+	{
+		for( auto mut j= i + 1s; j < num_unique_frames; ++j )
+		{
+			if( frames_deduplicated[j][1] > frames_deduplicated[i][1] )
+			{
+				var WeightedFrame frame_j= frames_deduplicated[j];
+				var WeightedFrame frame_i= frames_deduplicated[i];
+				frames_deduplicated[j]= frame_i;
+				frames_deduplicated[i]= frame_j;
+			}
+		}
+	}
+
+	var f32 weights_sum= frames_deduplicated[0][1] + frames_deduplicated[1][1];
+	var f32 rescaling_factor= 1.0f / ust::max( weights_sum, 1.0f / 1024.0f );
+
+	return WorldDrawingInfo::ModelFrames
+	{
+		.frame0= frames_deduplicated[0][0],
+		.frame1= frames_deduplicated[1][0],
+		.frame_mix= frames_deduplicated[1][1] * rescaling_factor,
 	};
 }
 
