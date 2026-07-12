@@ -1167,8 +1167,13 @@ fn PerformFirstPersonWeaponAnimation(
 		},
 	}
 
+	// For weapons we have single actual model frame for two game logic steps.
+	// So, sometimes we need to mix frames.
+	// Calculate frames to mix properly.
+
 	if( num_animation_steps <= 1u )
 	{
+		// Single step - round frame number down.
 		weapon_state.animation_frames[0]= start_animation_step / 2u;
 		weapon_state.animation_frames[1]= weapon_state.animation_frames[0];
 	}
@@ -2987,15 +2992,18 @@ fn ProcessEntityLogicStep(
 		entity_description,
 		operation );
 
-	// Calculate current frame based on animation params.
+	// Calculate current model animation frame(s) based on animation params.
+	// For entities we have single actual model frame for two game logic steps.
+	// So, sometimes we need to mix frames.
+	// Calculate frames to mix properly.
 
 	entity.prev_animation_frames= entity.animation_frames;
 
 	if( operation.animation.num_steps <= 1u )
 	{
-		var u32 frame= operation.animation.start_step / 2u;
-		entity.animation_frames[0]= frame;
-		entity.animation_frames[1]= frame;
+		// Single step - round frame number down.
+		entity.animation_frames[0]= operation.animation.start_step / 2u;
+		entity.animation_frames[1]= entity.animation_frames[0];
 	}
 	else
 	{
@@ -3005,13 +3013,12 @@ fn ProcessEntityLogicStep(
 		if( animation_step % 2u == 0u )
 		{
 			// True animation frame, not an intermediate frame.
-			var u32 frame= animation_step / 2u;
-			entity.animation_frames[0]= frame;
-			entity.animation_frames[1]= frame;
+			entity.animation_frames[0]= animation_step / 2u;
+			entity.animation_frames[1]= entity.animation_frames[1];
 		}
 		else
 		{
-			// It's an intermediate frame. Needs mixing between two frames.
+			// It's an intermediate frame. We Need mixing between two frames.
 
 			// General case. Perform simple mixing between two adjacent frames.
 			entity.animation_frames[0]= animation_step / 2u;
@@ -3022,129 +3029,129 @@ fn ProcessEntityLogicStep(
 				// For the first step of an operation mix between previous frame and current rounded up.
 				entity.animation_frames[0]= entity.prev_animation_frames[1];
 			}
-			else
+
+			if( animation_step + 1u >= operation.animation.start_step + operation.animation.num_steps )
 			{
-				if( animation_step + 1u >= operation.animation.start_step + operation.animation.num_steps )
+				// Mix between last and first frames.
+				entity.animation_frames[1]= ( operation.animation.start_step + 1u ) / 2u;
+			}
+
+			// Try predicting next operation and frame for it.
+			// If we can predict it, we can use its first frame.
+			// If we can't predict it (have some transition based on unpredictable condition),
+			// don't do frame mixing at all.
+
+			var bool mut next_operation_is_unpredictable= false;
+			var u32 mut predicted_next_operation_index= ~0u;
+
+			var u32 next_num_steps_since_operation_start= entity.num_steps_since_operation_start + 1u;
+
+			if_var( &if_alive : operation.if_alive )
+			{
+				if( if_alive.time != 0u && next_num_steps_since_operation_start == if_alive.time )
 				{
-					// Mix between last and first frames.
-					entity.animation_frames[1]= ( operation.animation.start_step + 1u ) / 2u;
+					// Assume "if_alive" to be almost predictable.
+					predicted_next_operation_index=
+						( entity.energy > 0u ? if_alive.new_operation[0] : if_alive.new_operation[1] );
 				}
-
-				// Try predicting next operation and frame for it.
-				// If we can predict it, we can use its first frame.
-				// If we can't predict it (have some transition based on unpredictable transition), don't do frame mixing at all.
-
-				var bool mut next_operation_is_unpredictable= false;
-				var u32 mut predicted_next_operation_index= ~0u;
-
-				var u32 next_num_steps_since_operation_start= entity.num_steps_since_operation_start + 1u;
-
-				if_var( &if_alive : operation.if_alive )
+			}
+			if_var( &stopper : operation.stopper )
+			{
+				if( stopper.time != 0u && next_num_steps_since_operation_start % stopper.time == 0u )
 				{
-					if( if_alive.time != 0u && next_num_steps_since_operation_start == if_alive.time )
+					// Assume "stopper" to be predictable.
+					predicted_next_operation_index= stopper.new_operation;
+				}
+			}
+			if_var( &operation_control : operation.operation_control )
+			{
+				if_var( &timeout : operation_control.timeout )
+				{
+					if( next_num_steps_since_operation_start >= timeout[0] )
 					{
-						// Assume "if_alive" to be almost predictable.
-						predicted_next_operation_index=
-							( entity.energy > 0u ? if_alive.new_operation[0] : if_alive.new_operation[1] );
+						// Assume timeout to be predictable.
+						predicted_next_operation_index= u32( timeout[1] );
 					}
 				}
-				if_var( &stopper : operation.stopper )
+				if_var( &transformation : operation_control.transformation )
 				{
-					if( stopper.time != 0u && next_num_steps_since_operation_start % stopper.time == 0u )
+					if( next_num_steps_since_operation_start == transformation[1] )
 					{
-						// Assume "stopper" to be predictable.
-						predicted_next_operation_index= stopper.new_operation;
+						// "transformation" depends on ammo count and is almost predictable.
+						predicted_next_operation_index= ( entity.ammo > 0u ? transformation[2] : transformation[3] );
 					}
 				}
-				if_var( &operation_control : operation.operation_control )
+				if_var( &within_sight : operation_control.within_sight )
 				{
-					if_var( &timeout : operation_control.timeout )
+					if( next_num_steps_since_operation_start == within_sight[0] )
 					{
-						if( next_num_steps_since_operation_start >= timeout[0] )
-						{
-							// Assume timeout to be predictable.
-							predicted_next_operation_index= u32( timeout[1] );
-						}
+						// Assume that "within_sight" is pretty predictable.
+						predicted_next_operation_index= within_sight[1];
 					}
-					if_var( &transformation : operation_control.transformation )
+				}
+				if_var( &inside_shooting_zone_b : operation_control.inside_shooting_zone_b )
+				{
+					// TODO - check what else condition is necessary.
+					// Maybe add some random element?
+					if( entity.attack_target_is_in_sight && entity.ammo > 0u && attack_target_is_alive )
 					{
-						if( next_num_steps_since_operation_start == transformation[1] )
-						{
-							// "transformation" depends on ammo count and is almost predictable.
-							predicted_next_operation_index= ( entity.ammo > 0u ? transformation[2] : transformation[3] );
-						}
-					}
-					if_var( &within_sight : operation_control.within_sight )
-					{
-						if( next_num_steps_since_operation_start == within_sight[0] )
-						{
-							// Assume that "within_sight" is pretty predictable.
-							predicted_next_operation_index= within_sight[1];
-						}
-					}
-					if_var( &inside_shooting_zone_b : operation_control.inside_shooting_zone_b )
-					{
-						// TODO - check what else condition is necessary.
-						// Maybe add some random element?
-						if( entity.attack_target_is_in_sight && entity.ammo > 0u && attack_target_is_alive )
-						{
-							var u32 period( inside_shooting_zone_b[0] );
-							if( period != 0u && next_num_steps_since_operation_start % period == 0u )
-							{
-								// Assume "inside_shooting_zone_b" to be almost predictable.
-								predicted_next_operation_index= inside_shooting_zone_b[2];
-							}
-						}
-					}
-					if_var( &inside_shooting_zone_a : operation_control.inside_shooting_zone_a )
-					{
-						var u32 period( inside_shooting_zone_a[0] );
+						var u32 period( inside_shooting_zone_b[0] );
 						if( period != 0u && next_num_steps_since_operation_start % period == 0u )
 						{
-							// "inside_shooting_zone_a" is unpredictalbe, since it depends on exact distance to the attack target.
-							next_operation_is_unpredictable= true;
-						}
-					}
-					if_var( &convenient_position : operation_control.convenient_position )
-					{
-						if( next_num_steps_since_operation_start == convenient_position[0] )
-						{
-							// "convenient_position" has random elements in it.
-							next_operation_is_unpredictable= true;
-						}
-					}
-					if_var( &randomness : operation_control.randomness )
-					{
-						if( next_num_steps_since_operation_start == u32( randomness[0] ) )
-						{
-							// Random state transitions are unpredictable.
-							next_operation_is_unpredictable= true;
+							// Assume "inside_shooting_zone_b" to be almost predictable.
+							predicted_next_operation_index= inside_shooting_zone_b[2];
 						}
 					}
 				}
-
-				if( next_operation_is_unpredictable )
+				if_var( &inside_shooting_zone_a : operation_control.inside_shooting_zone_a )
 				{
-					// Perform no mixing if we aren't sure which operation will be the next one.
-					entity.animation_frames[1]= entity.animation_frames[0];
+					var u32 period( inside_shooting_zone_a[0] );
+					if( period != 0u && next_num_steps_since_operation_start % period == 0u )
+					{
+						// "inside_shooting_zone_a" is unpredictalbe, since it depends on exact distance to the attack target.
+						next_operation_is_unpredictable= true;
+					}
 				}
-				else if(
-					predicted_next_operation_index != ~0u &&
-					size_type( predicted_next_operation_index ) < entity_description.operations.size() )
+				if_var( &convenient_position : operation_control.convenient_position )
 				{
-					var EntitiesDescription::Operation& predicted_next_operation=
-						entity_description.operations[ size_type( predicted_next_operation_index ) ];
+					if( next_num_steps_since_operation_start == convenient_position[0] )
+					{
+						// "convenient_position" has random elements in it.
+						next_operation_is_unpredictable= true;
+					}
+				}
+				if_var( &randomness : operation_control.randomness )
+				{
+					if( next_num_steps_since_operation_start == u32( randomness[0] ) )
+					{
+						// Random state transitions are unpredictable.
+						next_operation_is_unpredictable= true;
+					}
+				}
+			}
 
-					if( predicted_next_operation.animation.num_steps <= 1u )
-					{
-						// Round down for animations having only single steps.
-						entity.animation_frames[1]= predicted_next_operation.animation.start_step / 2u;
-					}
-					else
-					{
-						// Round up for animations with 2 steps or more.
-						entity.animation_frames[1]= ( predicted_next_operation.animation.start_step + 1u ) / 2u;
-					}
+			if( next_operation_is_unpredictable )
+			{
+				// Perform no mixing if we operation change will take place,
+				// but we aren't sure which operation will be the next one.
+				entity.animation_frames[1]= entity.animation_frames[0];
+			}
+			else if(
+				predicted_next_operation_index != ~0u &&
+				size_type( predicted_next_operation_index ) < entity_description.operations.size() )
+			{
+				var EntitiesDescription::Operation& predicted_next_operation=
+					entity_description.operations[ size_type( predicted_next_operation_index ) ];
+
+				if( predicted_next_operation.animation.num_steps <= 1u )
+				{
+					// Round down for animations having only single step.
+					entity.animation_frames[1]= predicted_next_operation.animation.start_step / 2u;
+				}
+				else
+				{
+					// Round up for animations with 2 steps or more.
+					entity.animation_frames[1]= ( predicted_next_operation.animation.start_step + 1u ) / 2u;
 				}
 			}
 		}
