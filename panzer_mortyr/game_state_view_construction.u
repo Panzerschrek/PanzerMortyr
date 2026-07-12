@@ -1358,6 +1358,7 @@ fn ConstructWorldDrawingInfo(
 				lambda[&](
 					EntitiesDescription::ToolType weapon_tool_type,
 					PlayerWeaponState& weapon_state,
+					WorldDrawingInfo::ModelFrames& model_frames,
 					f32 switching_fraction_normalized )
 				{
 					var size_type weapon_tool_index(
@@ -1396,8 +1397,7 @@ fn ConstructWorldDrawingInfo(
 								.position= camera_position_without_depth_shift + position_variation,
 								.azimuth= camera_controller.GetAzimuth(),
 								.elevation= camera_controller.GetElevation() + elevation_add,
-								// TODO - perform smooth transition.
-								.frames= CreateModelFrames( weapon_state.animation_frames ),
+								.frames= model_frames,
 								.disable_culling= true,
 								.first_person_weapon= true,
 								.constant_lighting= false,
@@ -1405,13 +1405,42 @@ fn ConstructWorldDrawingInfo(
 					}
 				};
 
+			// Mix frames between previous and current frame. It adds some delay, but it's tolerable.
+			// We can't use predicted state, since miss-predicting animation is terrible.
+			var WorldDrawingInfo::ModelFrames mut primary_weapon_model_frames=
+				CreateModelFrames( game_state.player.primary_weapon_state.weapon_state.animation_frames );
+			var WorldDrawingInfo::ModelFrames mut kick_weapon_model_frames=
+				CreateModelFrames( game_state.player.kick_weapon_state.animation_frames );
+
+			if_var( &previous_game_state : previous_game_state_opt )
+			{
+				if( previous_game_state.player.primary_weapon_state.current_weapon == game_state.player.primary_weapon_state.current_weapon )
+				{
+					primary_weapon_model_frames=
+						MixModelFrames(
+							CreateModelFrames( previous_game_state.player.primary_weapon_state.weapon_state.animation_frames ),
+							primary_weapon_model_frames,
+							time_steps_fraction );
+				}
+
+				kick_weapon_model_frames=
+					MixModelFrames(
+						CreateModelFrames( previous_game_state.player.kick_weapon_state.animation_frames ),
+						kick_weapon_model_frames,
+						time_steps_fraction );
+			}
+
 			add_first_person_weapon_model(
 				game_state.player.primary_weapon_state.current_weapon,
 				game_state.player.primary_weapon_state.weapon_state,
+				primary_weapon_model_frames,
 				f32( game_state.player.primary_weapon_state.weapon_switching_fraction ) / f32( c_weapon_switching_half_time_steps ) );
 
 			add_first_person_weapon_model(
-				EntitiesDescription::ToolType::Kick, game_state.player.kick_weapon_state, 1.0f );
+				EntitiesDescription::ToolType::Kick,
+				game_state.player.kick_weapon_state,
+				kick_weapon_model_frames,
+				1.0f );
 		}
 
 		if( num_player_damaging_flames > 0u )
