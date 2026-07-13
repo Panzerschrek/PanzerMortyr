@@ -53,7 +53,7 @@ fn CreateNewMapGameState(
 					.extra_lowering= 0.0f,
 					.animation_state= PlayerWeaponState::AnimationState::Steady,
 					.steps_since_last_animation_state_transition= 0u,
-					.animation_step= 0u,
+					.animation_frames[ 0u, 0u ],
 				},
 			},
 			.kick_weapon_state
@@ -61,7 +61,7 @@ fn CreateNewMapGameState(
 				.extra_lowering= 0.0f,
 				.animation_state= PlayerWeaponState::AnimationState::Steady,
 				.steps_since_last_animation_state_transition= 0u,
-				.animation_step= 0u,
+				.animation_frames[ 0u, 0u ],
 			},
 			.tools_state
 			{
@@ -184,8 +184,9 @@ fn CreateNewMapGameState(
 				.alarmed_by_seeing_player= false,
 				.attack_target_is_in_sight= false,
 				.lost_energy_in_current_step= false,
-				.animation_frame= 0u, // Set exact frame later.
-				.directional_animation_frame= 0u, // Set exact frame later.
+				.prev_animation_frames[ 0u, 0u ], // Set exact frames later.
+				.animation_frames[ 0u, 0u ], // Set exact frames later.
+				.directional_animation_frames[ 0u, 0u ], // Set exact frames later.
 				.num_mind_control_steps_left= 0u,
 				.velocity_z= 0.0f,
 				.collider_index= ~0u,
@@ -273,7 +274,7 @@ fn CreateNewMapGameState(
 							.extra_lowering= 0.0f,
 							.animation_state= PlayerWeaponState::AnimationState::Steady,
 							.steps_since_last_animation_state_transition= 0u,
-							.animation_step= 0u,
+							.animation_frames[ 0u, 0u ],
 						},
 					},
 					.kick_weapon_state
@@ -281,7 +282,7 @@ fn CreateNewMapGameState(
 						.extra_lowering= 0.0f,
 						.animation_state= PlayerWeaponState::AnimationState::Steady,
 						.steps_since_last_animation_state_transition= 0u,
-						.animation_step= 0u,
+						.animation_frames[ 0u, 0u ],
 					},
 					.tools_state
 					{
@@ -1135,41 +1136,63 @@ fn PerformFirstPersonWeaponAnimation(
 
 	// Calculate animation frame based on current state.
 
+	var u32 mut start_animation_step= 0u, mut num_animation_steps= 0u;
+
 	switch( weapon_state.animation_state )
 	{
-		PlayerWeaponState::AnimationState::Steady ->
+		PlayerWeaponState::AnimationState::Steady, PlayerWeaponState::AnimationState::PostSwitch ->
 		{
-			weapon_state.animation_step= u32( tool.weapon_data[0] );
-		},
-		PlayerWeaponState::AnimationState::PostSwitch ->
-		{
-			weapon_state.animation_step= u32( tool.weapon_data[0] );
+			start_animation_step= u32( tool.weapon_data[0] );
+			num_animation_steps= 1u;
 		},
 		PlayerWeaponState::AnimationState::Walking ->
 		{
-			var u32 animation_loop_duration= ust::max( u32( tool.weapon_data[1] ), 1u );
-
-			weapon_state.animation_step=
-				u32( tool.weapon_data[0] ) +
-				weapon_state.steps_since_last_animation_state_transition % animation_loop_duration;
+			start_animation_step= u32( tool.weapon_data[0] );
+			num_animation_steps= u32( tool.weapon_data[1] );
 		},
 		PlayerWeaponState::AnimationState::Idle0 ->
 		{
-			weapon_state.animation_step=
-				u32( tool.weapon_data[2] ) +
-				ust::min( weapon_state.steps_since_last_animation_state_transition, u32( tool.weapon_data[3] ) );
+			start_animation_step= u32( tool.weapon_data[2] );
+			num_animation_steps= u32( tool.weapon_data[3] );
 		},
 		PlayerWeaponState::AnimationState::Idle1 ->
 		{
-			weapon_state.animation_step=
-				u32( tool.weapon_data[4] ) +
-				ust::min( weapon_state.steps_since_last_animation_state_transition, u32( tool.weapon_data[5] ) );
+			start_animation_step= u32( tool.weapon_data[4] );
+			num_animation_steps= u32( tool.weapon_data[5] );
 		},
 		PlayerWeaponState::AnimationState::Shooting ->
 		{
-			weapon_state.animation_step=
-				u32( tool.weapon_data[6] ) + weapon_state.steps_since_last_animation_state_transition;
+			start_animation_step= u32( tool.weapon_data[6] );
+			num_animation_steps= 65536u; // Use some large value here, since we have no duration for shooting animation.
 		},
+	}
+
+	// For weapons we have single actual model frame for two game logic steps.
+	// So, sometimes we need to mix frames.
+	// Calculate frames to mix properly.
+
+	if( num_animation_steps <= 1u )
+	{
+		// Single step - round frame number down.
+		weapon_state.animation_frames[0]= start_animation_step / 2u;
+		weapon_state.animation_frames[1]= weapon_state.animation_frames[0];
+	}
+	else
+	{
+		var u32 mut looped_step=
+			start_animation_step + weapon_state.steps_since_last_animation_state_transition % num_animation_steps;
+
+		// Avoid selecting frames outside given range.
+		// It works well for non-looping animations.
+		// For looping animations such approach will not create intermediate state between last and first frames, but it's mostly fine.
+
+		// Round up the first step to next whole frame.
+		ust::max_assign( looped_step, ( start_animation_step + 1u ) & ~1u );
+		// Round down the last step to whole frame.
+		ust::min_assign( looped_step, ( start_animation_step + num_animation_steps - 1u ) & ~1u );
+
+		weapon_state.animation_frames[0]= looped_step / 2u;
+		weapon_state.animation_frames[1]= ( looped_step + 1u ) / 2u;
 	}
 
 	// Perform state transition if necessary.
@@ -2320,8 +2343,9 @@ fn TriggerEntitiesSpawn( GameParams& game_params, GameMapData& map_data, GameSta
 				.alarmed_by_seeing_player= false,
 				.attack_target_is_in_sight= false,
 				.lost_energy_in_current_step= false,
-				.animation_frame= 0u, // Set later.
-				.directional_animation_frame= 0u, // Set later.
+				.prev_animation_frames[ 0u, 0u ], // Set exact frames later.
+				.animation_frames[ 0u, 0u ], // Set exact frames later.
+				.directional_animation_frames[ 0u, 0u ], // Set exact frames later.
 				.num_mind_control_steps_left= 0u,
 				.velocity_z= 0.0f,
 				.collider_index= ~0u,
@@ -2423,6 +2447,19 @@ fn ProcessEntityLogicStep(
 		entity.alarmed_by_seeing_player= true;
 	}
 
+	var bool mut attack_target_is_alive= false;
+	if( entity.attack_target_entity_index == c_player_entity_index )
+	{
+		attack_target_is_alive= game_state.player.energy > 0u;
+	}
+	else if( size_type( entity.attack_target_entity_index ) < game_state.entities.size() )
+	{
+		if_var( &attack_target_entity : game_state.entities[ size_type( entity.attack_target_entity_index ) ] )
+		{
+			attack_target_is_alive= attack_target_entity.energy > 0u;
+		}
+	}
+
 	// Perform operation transition (if necessary).
 	var u32 mut next_operation= ~0u;
 
@@ -2431,19 +2468,6 @@ fn ProcessEntityLogicStep(
 			entity_description.operations[ size_type( entity.current_operation ) ];
 
 		// TODO - determine exact priorities of different operation transition conditions.
-
-		var bool mut attack_target_is_alive= false;
-		if( entity.attack_target_entity_index == c_player_entity_index )
-		{
-			attack_target_is_alive= game_state.player.energy > 0u;
-		}
-		else if( size_type( entity.attack_target_entity_index ) < game_state.entities.size() )
-		{
-			if_var( &attack_target_entity : game_state.entities[ size_type( entity.attack_target_entity_index ) ] )
-			{
-				attack_target_is_alive= attack_target_entity.energy > 0u;
-			}
-		}
 
 		if_var( &operation_control : operation.operation_control )
 		{
@@ -2766,8 +2790,7 @@ fn ProcessEntityLogicStep(
 
 		if_var( &stopper : operation.stopper )
 		{
-			if( stopper.time != 0u &&
-				entity.num_steps_since_operation_start % stopper.time == 0u )
+			if( stopper.time != 0u && entity.num_steps_since_operation_start % stopper.time == 0u )
 			{
 				next_operation= stopper.new_operation;
 			}
@@ -2820,8 +2843,9 @@ fn ProcessEntityLogicStep(
 								.alarmed_by_seeing_player= false,
 								.attack_target_is_in_sight= false,
 								.lost_energy_in_current_step= false,
-								.animation_frame= 0u, // Set exact frame later.
-								.directional_animation_frame= 0u, // Set exact frame later.
+								.prev_animation_frames[ 0u, 0u ], // Set exact frames later.
+								.animation_frames[ 0u, 0u ], // Set exact frames later.
+								.directional_animation_frames[ 0u, 0u ], // Set exact frames later.
 								.num_mind_control_steps_left= 0u,
 								.velocity_z= 0.0f,
 								.collider_index= ~0u,
@@ -2967,22 +2991,187 @@ fn ProcessEntityLogicStep(
 		entity_description,
 		operation );
 
-	// Calculate current frame based on animation params.
-	// TODO - perform extra animation logic for some special animation kinds.
+	// Calculate current model animation frame(s) based on animation params.
+	// For entities we have single actual model frame for two game logic steps.
+	// So, sometimes we need to mix frames.
+	// Calculate frames to mix properly.
 
+	entity.prev_animation_frames= entity.animation_frames;
+
+	if( operation.animation.num_steps <= 1u )
+	{
+		// Single step - round frame number down.
+		entity.animation_frames[0]= operation.animation.start_step / 2u;
+		entity.animation_frames[1]= entity.animation_frames[0];
+	}
+	else
 	{
 		var u32 animation_step=
-			operation.animation.start_step +
-			entity.num_steps_since_operation_start % ust::max( 1u, operation.animation.num_steps );
+			operation.animation.start_step + entity.num_steps_since_operation_start % operation.animation.num_steps;
 
-		entity.animation_frame= animation_step / c_num_steps_per_animation_frame;
+		if( animation_step % 2u == 0u )
+		{
+			// True animation frame, not an intermediate frame.
+			entity.animation_frames[0]= animation_step / 2u;
+			entity.animation_frames[1]= entity.animation_frames[1];
+		}
+		else
+		{
+			// It's an intermediate frame. We need mixing between two frames.
+
+			// General case. Perform simple mixing between two adjacent frames.
+			entity.animation_frames[0]= animation_step / 2u;
+			entity.animation_frames[1]= ( animation_step + 1u ) / 2u;
+
+			if( entity.num_steps_since_operation_start == 0u )
+			{
+				// For the first step of an operation mix between previous frame and current rounded up.
+				entity.animation_frames[0]= entity.prev_animation_frames[1];
+			}
+
+			if( animation_step + 1u >= operation.animation.start_step + operation.animation.num_steps )
+			{
+				// Mix between last and first frames.
+				entity.animation_frames[1]= ( operation.animation.start_step + 1u ) / 2u;
+			}
+
+			// Try predicting next operation and frame for it.
+			// If we can predict it, we can use its first frame.
+			// If we can't predict it (have some transition based on unpredictable condition),
+			// don't do frame mixing at all.
+
+			var bool mut next_operation_is_unpredictable= false;
+			var u32 mut predicted_next_operation_index= ~0u;
+
+			var u32 next_num_steps_since_operation_start= entity.num_steps_since_operation_start + 1u;
+
+			if_var( &if_alive : operation.if_alive )
+			{
+				if( if_alive.time != 0u && next_num_steps_since_operation_start == if_alive.time )
+				{
+					// Assume "if_alive" to be almost predictable.
+					predicted_next_operation_index=
+						( entity.energy > 0u ? if_alive.new_operation[0] : if_alive.new_operation[1] );
+				}
+			}
+			if_var( &stopper : operation.stopper )
+			{
+				if( stopper.time != 0u && next_num_steps_since_operation_start % stopper.time == 0u )
+				{
+					// Assume "stopper" to be predictable.
+					predicted_next_operation_index= stopper.new_operation;
+				}
+			}
+			if_var( &operation_control : operation.operation_control )
+			{
+				if_var( &timeout : operation_control.timeout )
+				{
+					if( next_num_steps_since_operation_start >= timeout[0] )
+					{
+						// Assume timeout to be predictable.
+						predicted_next_operation_index= u32( timeout[1] );
+					}
+				}
+				if_var( &transformation : operation_control.transformation )
+				{
+					if( next_num_steps_since_operation_start == transformation[1] )
+					{
+						// "transformation" depends on ammo count and is almost predictable.
+						predicted_next_operation_index= ( entity.ammo > 0u ? transformation[2] : transformation[3] );
+					}
+				}
+				if_var( &within_sight : operation_control.within_sight )
+				{
+					if( next_num_steps_since_operation_start == within_sight[0] )
+					{
+						// Assume that "within_sight" is pretty predictable.
+						predicted_next_operation_index= within_sight[1];
+					}
+				}
+				if_var( &inside_shooting_zone_b : operation_control.inside_shooting_zone_b )
+				{
+					// TODO - check what else condition is necessary.
+					// Maybe add some random element?
+					if( entity.attack_target_is_in_sight && entity.ammo > 0u && attack_target_is_alive )
+					{
+						var u32 period( inside_shooting_zone_b[0] );
+						if( period != 0u && next_num_steps_since_operation_start % period == 0u )
+						{
+							// Assume "inside_shooting_zone_b" to be almost predictable.
+							predicted_next_operation_index= inside_shooting_zone_b[2];
+						}
+					}
+				}
+				if_var( &inside_shooting_zone_a : operation_control.inside_shooting_zone_a )
+				{
+					var u32 period( inside_shooting_zone_a[0] );
+					if( period != 0u && next_num_steps_since_operation_start % period == 0u )
+					{
+						// "inside_shooting_zone_a" is unpredictalbe, since it depends on exact distance to the attack target.
+						next_operation_is_unpredictable= true;
+					}
+				}
+				if_var( &convenient_position : operation_control.convenient_position )
+				{
+					if( next_num_steps_since_operation_start == convenient_position[0] )
+					{
+						// "convenient_position" has random elements in it.
+						next_operation_is_unpredictable= true;
+					}
+				}
+				if_var( &randomness : operation_control.randomness )
+				{
+					if( next_num_steps_since_operation_start == u32( randomness[0] ) )
+					{
+						// Random state transitions are unpredictable.
+						next_operation_is_unpredictable= true;
+					}
+				}
+			}
+
+			if( next_operation_is_unpredictable )
+			{
+				// Perform no mixing if an operation change will take place,
+				// but we aren't sure which operation will be the next one.
+				entity.animation_frames[1]= entity.animation_frames[0];
+			}
+			else if(
+				predicted_next_operation_index != ~0u &&
+				size_type( predicted_next_operation_index ) < entity_description.operations.size() )
+			{
+				// Has a predicted operation. Mix with its first frame.
+
+				var EntitiesDescription::OperationAnimationDescription& predicted_next_operation_animation=
+					entity_description.operations[ size_type( predicted_next_operation_index ) ].animation;
+
+				if( predicted_next_operation_animation.num_steps <= 1u )
+				{
+					// Round down for animations having only single step.
+					entity.animation_frames[1]= predicted_next_operation_animation.start_step / 2u;
+				}
+				else
+				{
+					// Round up for animations with 2 steps or more.
+					entity.animation_frames[1]= ( predicted_next_operation_animation.start_step + 1u ) / 2u;
+				}
+			}
+		}
 	}
+
+	if( operation.directional_animation.num_steps > 0u )
 	{
+		// Use simple mixing for directional animation.
+		// Don't bother doing more complex stuff,
+		// since this animation is used only once in the entire game - for the tank boss on map 24.
 		var u32 animation_step=
 			operation.directional_animation.start_step +
-			entity.num_steps_since_operation_start % ust::max( 1u, operation.directional_animation.num_steps );
-
-		entity.directional_animation_frame= animation_step / c_num_steps_per_animation_frame;
+			entity.num_steps_since_operation_start % operation.directional_animation.num_steps;
+		entity.directional_animation_frames[0]= animation_step / 2u;
+		entity.directional_animation_frames[1]= ( animation_step + 1u ) / 2u;
+	}
+	else
+	{
+		entity.directional_animation_frames= ust::make_array( 0u, 0u );
 	}
 
 	// Increase step counter after doing any other logic.
