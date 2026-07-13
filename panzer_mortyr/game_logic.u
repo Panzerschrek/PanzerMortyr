@@ -6456,62 +6456,64 @@ fn UpdateEntityPickupTarget(
 		return;
 	}
 
-	if( entity_description.search_for_ammunition != 0u && entity.ammo <= 0u )
+	if( entity.pickup_target_entity_index != ~0u )
 	{
-		// No ammo is left - need to pick-up an item giving ammo.
+		// Already has a pick-up target. Check if it's still actual.
 
-		if( entity.pickup_target_entity_index != ~0u )
+		var bool mut need_to_reset_pickup_target= false;
+
+		if( size_type( entity.pickup_target_entity_index ) < game_state.entities.size() )
 		{
-			// Already has a pick-up target. Check if it's still actual.
-
-			var bool mut need_to_reset_pickup_target= false;
-
-			if( size_type( entity.pickup_target_entity_index ) < game_state.entities.size() )
+			if_var( &other_entity : game_state.entities[ size_type( entity.pickup_target_entity_index ) ] )
 			{
-				if_var( &other_entity : game_state.entities[ size_type( entity.pickup_target_entity_index ) ] )
+				var EntitiesDescription::EntityDescription& other_entity_description=
+					entities_description.entities[ size_type( other_entity.kind ) ];
+				if( other_entity_description.mode != EntitiesDescription::EntityDescription::c_mode_pickup )
 				{
-					var EntitiesDescription::EntityDescription& other_entity_description=
-						entities_description.entities[ size_type( other_entity.kind ) ];
-					if( other_entity_description.mode != EntitiesDescription::EntityDescription::c_mode_pickup )
-					{
-						need_to_reset_pickup_target= true;
-					}
+					need_to_reset_pickup_target= true;
+				}
 
-					// Assume here that the selected entity didn't change its kind (it should be impossible)
-					// and still can give necessary ammo.
-				}
-				else
-				{
-					need_to_reset_pickup_target= true; // Target entity was probably picked-up by someone else.
-				}
+				// Assume here that the selected entity didn't change its kind (it should be impossible)
+				// and still can give necessary ammo or health.
 			}
 			else
 			{
-				need_to_reset_pickup_target= true;
+				need_to_reset_pickup_target= true; // Target entity was probably picked-up by someone else.
 			}
+		}
+		else
+		{
+			need_to_reset_pickup_target= true;
+		}
 
-			if( need_to_reset_pickup_target )
+		if( need_to_reset_pickup_target )
+		{
+			entity.pickup_target_entity_index= ~0u;
+
+			if( !entity_navigation_state_opt.empty() )
 			{
-				entity.pickup_target_entity_index= ~0u;
+				// Reset navigation target and route to it.
+				var EntityNavigationState &mut entity_naviagation_state= entity_navigation_state_opt.try_deref();
 
-				if( !entity_navigation_state_opt.empty() )
+				entity_naviagation_state.target_navigation_graph_node= GlobalNavigationGraph::c_invalid_node_index;
+				foreach( &mut node : entity_naviagation_state.route )
 				{
-					// Reset navigation target and route to it.
-					var EntityNavigationState &mut entity_naviagation_state= entity_navigation_state_opt.try_deref();
-
-					entity_naviagation_state.target_navigation_graph_node= GlobalNavigationGraph::c_invalid_node_index;
-					foreach( &mut node : entity_naviagation_state.route )
-					{
-						node= GlobalNavigationGraph::c_invalid_node_index;
-					}
+					node= GlobalNavigationGraph::c_invalid_node_index;
 				}
 			}
 		}
+	}
 
-		if( entity.pickup_target_entity_index != ~0u )
-		{
-			return; // Already has something to pick-up.
-		}
+	if( entity.pickup_target_entity_index != ~0u )
+	{
+		// Already has something to pick-up.
+		// Don't care if a thing we care to pick-up is not the most needed right now.
+		return;
+	}
+
+	if( entity_description.search_for_ammunition != 0u && entity.ammo <= 0u )
+	{
+		// No ammo is left - need to pick-up an item giving ammo.
 
 		// Need to select new pickup target.
 
