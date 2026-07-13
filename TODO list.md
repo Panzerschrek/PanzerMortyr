@@ -34,7 +34,6 @@ Gameplay investigation:
 * Investigate what kinds of entities are affected by gravity (what in an entity description turns gravity on and off).
 * Investigate what "zarowka" entity property is and whether it's actually used.
 * Investigate whether bullet holes may be disabled by material properties.
-* Investigate what "celnosc" entity property means and how it affects enemies.
 * Investigate what "ponowny_atak" entity property means, how it affects enemies and what is its default value.
 * Investigate what "dobry_wzrok" entity property means and how it affects enemies.
 * Investigate what  "automatyczny_alarm" entity property means and how it affects enemies.
@@ -102,7 +101,6 @@ PanzerMortyr multiplayer game logic:
 PanzerMortyr rendering:
 
 * Apply additional tessellation for tessellated polygons in order to perform smoother light values interpolation (naively triangulating them doesn't produce good result always).
-* Use smooth animation for animated models (with two or more frames interpolation).
 * Draw animated water circle decals on map quads with "wet" property enabled in points where a rain particle hits such quad.
 * Suport light soruces with conic shape and use such source kind of source for flashlight.
 * Add support for MSAA (with proper support of fullscreen effects like fog).
