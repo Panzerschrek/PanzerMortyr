@@ -88,6 +88,7 @@ Changes:
 * In the original game enemies don't collide with each other (can pass through), in PanzerMortyr they do collide with each other and can sometimes even give each other way if they are going into opposite directions.
 * It's just guessed how weapon spread for both player and entities is calculated. Thus the player and enemies may shoot more or less accurately compared to the original game.
 * Enemies having no ammo can pick-up ammo boxes nearby and even weapons of fallen allies, if they have no ammo left. In the original game they can only pick up some ammo boxes at precalculated positions.
+* Enemies are more likely to search for health packs when they are injured compared to the original game.
 
 
 ### HUD and menus

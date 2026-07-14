@@ -60,7 +60,7 @@ PanzerMortyr game logic:
 * Implement flies animation (used only for single dog enemy on map 19).
 * Implement logic elements specific for dog enemies.
 * Implement remaining entity state transitions (used only by some enemy types).
-* Implement health kit/armor seeking behavior for enemies.
+* Consider implement armor seeking/pick-up behavior for enemies.
 * Break glass quads and quads with breakable materials while applying spash damage. The original game doesn't do this and it doesn't look right.
 * Implement jetpack tool.
 * Implement invisibility tool (false documents) and enemy properties allowing to uncover the player having invisibility.
