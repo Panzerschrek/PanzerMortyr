@@ -33,7 +33,6 @@ Gameplay investigation:
 * Investigate where maximum amount of current armor (not inventory armor) is specified.
 * Investigate what kinds of entities are affected by gravity (what in an entity description turns gravity on and off).
 * Investigate what "zarowka" entity property is and whether it's actually used.
-* Investigate whether bullet holes may be disabled by material properties.
 * Investigate what "ponowny_atak" entity property means, how it affects enemies and what is its default value.
 * Investigate what "dobry_wzrok" entity property means and how it affects enemies.
 * Investigate what  "automatyczny_alarm" entity property means and how it affects enemies.
