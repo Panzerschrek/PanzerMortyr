@@ -1354,7 +1354,6 @@ fn ConstructWorldDrawingInfo(
 			auto add_first_person_weapon_model=
 				lambda[&](
 					EntitiesDescription::ToolType weapon_tool_type,
-					PlayerWeaponState& weapon_state,
 					WorldDrawingInfo::ModelFrames& model_frames,
 					f32 switching_fraction_normalized )
 				{
@@ -1379,13 +1378,7 @@ fn ConstructWorldDrawingInfo(
 							ust::sin( total_game_time_steps * 0.03f ) * 0.1f,
 							ust::sin( total_game_time_steps * 0.05f ) * 0.1f );
 
-						// Lower the weapon model if performing weapon switching.
-						// Also lower some weapons while shooting.
-						// TODO - maybe perform lowering rotation around axis at camera position?
-
-						var f32 total_lowering= ( 1.0f - switching_fraction_normalized ) + weapon_state.extra_lowering;
-
-						var f32 elevation_add= c_tau / 4.0f * total_lowering;
+						var f32 elevation_add= c_tau / 4.0f * ( 1.0f - switching_fraction_normalized );
 
 						drawing_info.model_objects.push_back(
 							WorldDrawingInfo::ModelObject
@@ -1409,6 +1402,13 @@ fn ConstructWorldDrawingInfo(
 			var WorldDrawingInfo::ModelFrames mut kick_weapon_model_frames=
 				CreateModelFrames( game_state.player.kick_weapon_state.animation_frames );
 
+			// Lower the weapon model if performing weapon switching.
+			// Also lower some weapons while shooting.
+			var f32 mut primary_weapon_switching_fraction=
+				f32( game_state.player.primary_weapon_state.weapon_switching_fraction );
+			var f32 mut primary_weapon_extra_lowering=
+				game_state.player.primary_weapon_state.weapon_state.extra_lowering;
+
 			if_var( &previous_game_state : previous_game_state_opt )
 			{
 				if( previous_game_state.player.primary_weapon_state.current_weapon == game_state.player.primary_weapon_state.current_weapon )
@@ -1425,19 +1425,27 @@ fn ConstructWorldDrawingInfo(
 						CreateModelFrames( previous_game_state.player.kick_weapon_state.animation_frames ),
 						kick_weapon_model_frames,
 						time_steps_fraction );
+
+				primary_weapon_switching_fraction=
+					MixScalar(
+						f32( previous_game_state.player.primary_weapon_state.weapon_switching_fraction ),
+						primary_weapon_switching_fraction,
+						time_steps_fraction );
+
+				primary_weapon_extra_lowering=
+					MixScalar(
+						previous_game_state.player.primary_weapon_state.weapon_state.extra_lowering,
+						primary_weapon_extra_lowering,
+						time_steps_fraction );
 			}
 
 			add_first_person_weapon_model(
 				game_state.player.primary_weapon_state.current_weapon,
-				game_state.player.primary_weapon_state.weapon_state,
 				primary_weapon_model_frames,
-				f32( game_state.player.primary_weapon_state.weapon_switching_fraction ) / f32( c_weapon_switching_half_time_steps ) );
+				primary_weapon_switching_fraction / f32( c_weapon_switching_half_time_steps ) -
+					primary_weapon_extra_lowering );
 
-			add_first_person_weapon_model(
-				EntitiesDescription::ToolType::Kick,
-				game_state.player.kick_weapon_state,
-				kick_weapon_model_frames,
-				1.0f );
+			add_first_person_weapon_model( EntitiesDescription::ToolType::Kick, kick_weapon_model_frames, 1.0f );
 		}
 
 		if( num_player_damaging_flames > 0u )
