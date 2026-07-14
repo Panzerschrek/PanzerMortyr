@@ -6511,22 +6511,26 @@ fn UpdateEntityPickupTarget(
 		return;
 	}
 
+	// Execute pickup target selection with some random chance.
+	// Avoid doing this on each step, since such selection may be pretty costly.
+	// Even more costly can be route search to this target.
+	if( game_state.random.Next() % 16u != 9u )
+	{
+		return;
+	}
+
+	var f32 max_horizontal_distance= 1536.0f;
+	var f32 max_vertical_distance= 256.0f;
+
+	var size_type c_max_targets= 8s;
+	var [ u32, c_max_targets ] mut candidate_targets[ ~0u ... ];
+	var size_type mut num_candidate_targets= 0s;
+
 	if( entity_description.search_for_ammunition != 0u && entity.ammo <= 0u )
 	{
 		// No ammo is left - need to pick-up an item giving ammo.
 
-		// Need to select new pickup target.
-
-		// Execute pickup target selection with some random chance.
-		// Avoid doing this on each step, since such selection may be pretty costly.
-		// Even more constly can be route search to this target.
-		if( game_state.random.Next() % 16u != 9u )
-		{
-			return;
-		}
-
 		// Determine what kind of ammo this entity requires.
-
 		// Some enemies use more than one ammo type. So, collect ammo tool indices into a small array.
 		var [ u32, 4 ] mut ammo_tool_indices[ ~0u ... ];
 		var size_type mut num_ammo_tool_indices= 0s;
@@ -6563,20 +6567,6 @@ fn UpdateEntityPickupTarget(
 			}
 		}
 
-		if( num_ammo_tool_indices == 0s )
-		{
-			return; // No ammo is required. This entity has no attacks or has only meelee attacks.
-		}
-
-		var f32 max_horizontal_distance= 1536.0f;
-		var f32 max_vertical_distance= 256.0f;
-
-		// Build a short list of possible targets nearby.
-
-		var size_type c_max_targets= 8s;
-		var [ u32, c_max_targets ] mut candidate_targets[ ~0u ... ];
-		var size_type mut num_candidate_targets= 0s;
-
 		for( auto mut entity_index= 0s; entity_index < game_state.entities.size(); ++entity_index )
 		{
 			auto& other_entity_opt= game_state.entities[ entity_index ];
@@ -6588,7 +6578,7 @@ fn UpdateEntityPickupTarget(
 			var EntityState& other_entity= other_entity_opt.try_deref();
 
 			var EntitiesDescription::EntityDescription& other_entity_description=
-					entities_description.entities[ size_type( other_entity.kind ) ];
+				entities_description.entities[ size_type( other_entity.kind ) ];
 
 			if( other_entity_description.mode != EntitiesDescription::EntityDescription::c_mode_pickup )
 			{
@@ -6638,47 +6628,21 @@ fn UpdateEntityPickupTarget(
 			if( vec_to_other_entity.xy().SquareLength() <= max_horizontal_distance * max_horizontal_distance &&
 				ust::abs( vec_to_other_entity.z ) <= max_vertical_distance )
 			{
-				candidate_targets[ num_candidate_targets ]= u32( entity_index );
-				++num_candidate_targets;
-				if( num_candidate_targets >= c_max_targets )
+				if( num_candidate_targets < c_max_targets )
 				{
-					break;
+					candidate_targets[ num_candidate_targets ]= u32( entity_index );
+					++num_candidate_targets;
 				}
+
 			}
 		}
-
-		// Select one of possible targets randomly.
-		// We can't choose the same target each time, since it may be unreachable (no route can be found to it).
-		// By using random selection we give a chance for other targets to be selected, which may be reachable.
-
-		if( num_candidate_targets > 0s )
-		{
-			entity.pickup_target_entity_index= candidate_targets[ game_state.random.Next() % u32( num_candidate_targets ) ];
-		}
 	}
-	else if(
-		entity_description.search_for_health_kits > 0u &&
+
+	if( entity_description.search_for_health_kits > 0u &&
 		entity.energy <= entity_description.search_for_health_kits &&
 		entity.energy < entity_description.energy )
 	{
 		// Need to pick-up a health-pack.
-
-		// Execute pickup target selection with some random chance.
-		// Avoid doing this on each step, since such selection may be pretty costly.
-		// Even more constly can be route search to this target.
-		if( game_state.random.Next() % 16u != 9u )
-		{
-			return;
-		}
-
-		var f32 max_horizontal_distance= 1536.0f;
-		var f32 max_vertical_distance= 256.0f;
-
-		// Build a short list of possible targets nearby.
-
-		var size_type c_max_targets= 8s;
-		var [ u32, c_max_targets ] mut candidate_targets[ ~0u ... ];
-		var size_type mut num_candidate_targets= 0s;
 
 		for( auto mut entity_index= 0s; entity_index < game_state.entities.size(); ++entity_index )
 		{
@@ -6691,7 +6655,7 @@ fn UpdateEntityPickupTarget(
 			var EntityState& other_entity= other_entity_opt.try_deref();
 
 			var EntitiesDescription::EntityDescription& other_entity_description=
-					entities_description.entities[ size_type( other_entity.kind ) ];
+				entities_description.entities[ size_type( other_entity.kind ) ];
 
 			if( other_entity_description.mode != EntitiesDescription::EntityDescription::c_mode_pickup )
 			{
@@ -6717,23 +6681,22 @@ fn UpdateEntityPickupTarget(
 			if( vec_to_other_entity.xy().SquareLength() <= max_horizontal_distance * max_horizontal_distance &&
 				ust::abs( vec_to_other_entity.z ) <= max_vertical_distance )
 			{
-				candidate_targets[ num_candidate_targets ]= u32( entity_index );
-				++num_candidate_targets;
-				if( num_candidate_targets >= c_max_targets )
+				if( num_candidate_targets < c_max_targets )
 				{
-					break;
+					candidate_targets[ num_candidate_targets ]= u32( entity_index );
+					++num_candidate_targets;
 				}
 			}
 		}
+	}
 
-		// Select one of possible targets randomly.
-		// We can't choose the same target each time, since it may be unreachable (no route can be found to it).
-		// By using random selection we give a chance for other targets to be selected, which may be reachable.
+	// Select one of possible targets randomly.
+	// We can't choose the same target each time, since it may be unreachable (no route can be found to it).
+	// By using random selection we give a chance for other targets to be selected, which may be reachable.
 
-		if( num_candidate_targets > 0s )
-		{
-			entity.pickup_target_entity_index= candidate_targets[ game_state.random.Next() % u32( num_candidate_targets ) ];
-		}
+	if( num_candidate_targets > 0s )
+	{
+		entity.pickup_target_entity_index= candidate_targets[ game_state.random.Next() % u32( num_candidate_targets ) ];
 	}
 }
 
