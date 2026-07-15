@@ -81,7 +81,6 @@ fn CreateNewMapGameState(
 			.pain= 0.0f,
 		},
 		.broken_quad_bits( map_data.zmap_data.deref().quads.size() ),
-		.map_leave_condition_message= zero_init,
 		.activated_trigger_volumes_mask= 0u,
 		.next_map_index= 0u,
 		.game_end_triggered= false,
@@ -610,11 +609,6 @@ fn ProcessGameLogicStep(
 	GameState &mut game_state,
 	GlobalNavigationGraphRouteSearcher &mut route_searcher )
 {
-	// Reset the map leave condition message.
-	foreach( &mut c : game_state.map_leave_condition_message )
-	{
-		c= '\0';
-	}
 
 	DecayPlayerPain( game_state.player );
 
@@ -5813,13 +5807,10 @@ fn InteractWithTriggerVolumes( GameGlobalData& global_data, GameMapData& map_dat
 
 						if( !leave_condition_satisfied )
 						{
-							var ust::array_view_mut</char8/> dst_message= game_state.map_leave_condition_message;
-							dst_message.copy_from( leave_condition[2].range() );
-
-							for( auto mut i= leave_condition[2].size(); i < dst_message.size(); ++i )
-							{
-								dst_message[i]= '\0';
-							}
+							PushOrUpdateMapLeaveConditionNotification(
+								game_state.step_index,
+								game_state.event_notifications,
+								leave_condition[2] );
 						}
 					}
 				}
@@ -9264,6 +9255,58 @@ fn PushEventNotificaton(
 			slot.text[ dst ]= c;
 			++dst;
 		}
+	}
+
+	// Fill the tail with zeros. Don't leave garbage in even notification slots.
+	while( dst < typeinfo</ typeof(slot.text) />.element_count )
+	{
+		slot.text[ dst ]= '\0';
+		++dst;
+	}
+}
+
+fn PushOrUpdateMapLeaveConditionNotification(
+	u32 current_step,
+	EventNotificationsContainer &mut event_notifications,
+	ust::string_view8 text )
+{
+	if( event_notifications.num_event_notifications > 0u )
+	{
+		var EventNotificationMessage &mut last_notification=
+			event_notifications.slots[
+				( event_notifications.num_event_notifications - 1u ) % EventNotificationsContainer::c_max_event_notifications ];
+
+		var size_type len= ust::min( text.size(), typeinfo</ typeof( last_notification.text ) />.element_count );
+
+		if( text.subrange_end( len ) == ust::string_view8( last_notification.text ).subrange_end( len ) )
+		{
+			var u32 age_limit= c_max_event_notification_message_age_steps - 2u;
+			if( last_notification.creation_step + age_limit < current_step )
+			{
+				last_notification.creation_step= current_step - age_limit;
+			}
+			return;
+		}
+	}
+
+	var EventNotificationMessage &mut slot=
+		event_notifications.slots[
+			event_notifications.num_event_notifications % EventNotificationsContainer::c_max_event_notifications ];
+
+	slot.creation_step= current_step;
+
+	++event_notifications.num_event_notifications;
+
+	var size_type mut dst= 0s;
+
+	foreach( c : text )
+	{
+		if( dst >= typeinfo</ typeof(slot.text) />.element_count )
+		{
+			break;
+		}
+		slot.text[ dst ]= c;
+		++dst;
 	}
 
 	// Fill the tail with zeros. Don't leave garbage in even notification slots.
