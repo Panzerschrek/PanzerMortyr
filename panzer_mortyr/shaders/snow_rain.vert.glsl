@@ -20,7 +20,7 @@ void main()
 
 	// Assume each snow/rain particle moves along a path with such length.
 	// It should be big enough to ensure snow/rain can fall into the deepest places and small enough to avoid reducing snow/rain density too much.
-	const float c_max_path_length= 1536.0;
+	const float c_max_path_length= 2048.0;
 
 	g_movement_distance= mod( vu_movement_distance + v_movement_distance_phase * c_max_path_length, c_max_path_length );
 
