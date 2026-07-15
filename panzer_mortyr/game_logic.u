@@ -81,7 +81,6 @@ fn CreateNewMapGameState(
 			.pain= 0.0f,
 		},
 		.broken_quad_bits( map_data.zmap_data.deref().quads.size() ),
-		.map_leave_condition_message= zero_init,
 		.activated_trigger_volumes_mask= 0u,
 		.next_map_index= 0u,
 		.game_end_triggered= false,
@@ -503,6 +502,15 @@ fn CreateNewMapGameState(
 		}
 	}
 
+	var MapsDescription& maps_description= global_data.maps_description.deref();
+	if( size_type( map_data.map_index ) < maps_description.maps.size() )
+	{
+		PushEventNotificaton(
+			game_state.step_index,
+			game_state.event_notifications,
+			ust::make_array</ust::string_view8/>( maps_description.maps[ size_type( map_data.map_index ) ].caption ) );
+	}
+
 	return game_state;
 }
 
@@ -601,15 +609,10 @@ fn ProcessGameLogicStep(
 	GameState &mut game_state,
 	GlobalNavigationGraphRouteSearcher &mut route_searcher )
 {
-	// Reset the map leave condition message.
-	foreach( &mut c : game_state.map_leave_condition_message )
-	{
-		c= '\0';
-	}
 
 	DecayPlayerPain( game_state.player );
 
-	PerformPlayerWeaponLogic( global_data.sounds_description.deref(), map_data, player_input, game_state );
+	PerformPlayerWeaponLogic( global_data, map_data, player_input, game_state );
 
 	PerformPlayerInventoryLogic(
 		global_data.sounds_description.deref(),
@@ -676,7 +679,7 @@ fn ProcessGameLogicStep(
 
 	ProcessRatsLogicStep( map_data, game_state );
 
-	PickUpItems( global_data.sounds_description.deref(), map_data, game_state );
+	PickUpItems( global_data, map_data, game_state );
 
 	DealPlayerEnvironmentalDamage( global_data.sounds_description.deref(), map_data, game_state );
 
@@ -694,7 +697,7 @@ fn DecayPlayerPain( PlayerState& mut player )
 }
 
 fn PerformPlayerWeaponLogic(
-	SoundsDescription& sounds_description, GameMapData& map_data, PlayerInput& player_input, GameState &mut game_state )
+	GameGlobalData& global_data, GameMapData& map_data, PlayerInput& player_input, GameState &mut game_state )
 {
 	var EntitiesDescription& entities_description= map_data.entities_description.deref();
 
@@ -906,7 +909,7 @@ fn PerformPlayerWeaponLogic(
 							c_player_shot_enemy_alarm_max_distance );
 
 						AlarmAnimalTriggersByNearbyEvent(
-							sounds_description,
+							global_data.sounds_description.deref(),
 							map_data,
 							game_state.activated_trigger_volumes_mask,
 							game_state.static_sound_sources,
@@ -990,11 +993,49 @@ fn PerformPlayerWeaponLogic(
 		// Perform weapon switching logic (if not shooting right now or if is alive).
 
 		// Check if has requested weapon and ammo for it. If not - keep current weapon.
-		if( player_state.primary_weapon_state.requested_weapon != player_state.primary_weapon_state.current_weapon &&
-			!HasWeaponAndAmmoForIt(
-				entities_description, player_state.inventory, player_state.primary_weapon_state.requested_weapon ) )
+		if( player_state.primary_weapon_state.requested_weapon != player_state.primary_weapon_state.current_weapon )
 		{
-			player_state.primary_weapon_state.requested_weapon= player_state.primary_weapon_state.current_weapon;
+			if( !HasWeapon( player_state.inventory, player_state.primary_weapon_state.requested_weapon ) )
+			{
+				player_state.primary_weapon_state.requested_weapon= player_state.primary_weapon_state.current_weapon;
+
+				if( player_input.inventory_input.requested_weapon != EntitiesDescription::ToolType::None )
+				{
+					PushEventNotificaton(
+						game_state.step_index,
+						game_state.event_notifications,
+						ust::make_array</ust::string_view8/>(
+							FetchStringFromTable( global_data.string_table.deref(), StringTableKey::NotAvailable ),
+							GetToolName( entities_description, player_input.inventory_input.requested_weapon ) ) );
+				}
+			}
+			else if( !HasAmmoForWeapon(
+				entities_description, player_state.inventory, player_state.primary_weapon_state.requested_weapon ) )
+			{
+				player_state.primary_weapon_state.requested_weapon= player_state.primary_weapon_state.current_weapon;
+
+				if( player_input.inventory_input.requested_weapon != EntitiesDescription::ToolType::None )
+				{
+					PushEventNotificaton(
+						game_state.step_index,
+						game_state.event_notifications,
+						ust::make_array</ust::string_view8/>(
+							FetchStringFromTable( global_data.string_table.deref(), StringTableKey::NoAmmoFor ),
+							GetToolName( entities_description, player_input.inventory_input.requested_weapon ) ) );
+				}
+			}
+			else
+			{
+				if( player_input.inventory_input.requested_weapon != EntitiesDescription::ToolType::None )
+				{
+					PushEventNotificaton(
+						game_state.step_index,
+						game_state.event_notifications,
+						ust::make_array</ust::string_view8/>(
+							FetchStringFromTable( global_data.string_table.deref(), StringTableKey::SelectedWeapon ),
+							GetToolName( entities_description, player_input.inventory_input.requested_weapon ) ) );
+				}
+			}
 		}
 
 		// Check if has current weapon and ammo for it. If not - select some other weapon.
@@ -1095,11 +1136,19 @@ fn HasWeaponAndAmmoForIt(
 	PlayerInventory& inventory,
 	EntitiesDescription::ToolType weapon_tool ) : bool
 {
-	if( inventory[ size_type( weapon_tool ) ] <= 0u )
-	{
-		return false;
-	}
+	return HasWeapon( inventory, weapon_tool ) && HasAmmoForWeapon( entities_description, inventory, weapon_tool );
+}
 
+fn HasWeapon( PlayerInventory& inventory, EntitiesDescription::ToolType weapon_tool ) : bool
+{
+	return inventory[ size_type( weapon_tool ) ] > 0u;
+}
+
+fn HasAmmoForWeapon(
+	EntitiesDescription& entities_description,
+	PlayerInventory& inventory,
+	EntitiesDescription::ToolType weapon_tool ) : bool
+{
 	var u32 weapon_tool_index= entities_description.tool_type_to_index_map[ size_type( weapon_tool ) ];
 
 	if( size_type( weapon_tool_index ) < entities_description.tools.size() )
@@ -1116,6 +1165,17 @@ fn HasWeaponAndAmmoForIt(
 	}
 
 	return true;
+}
+
+fn GetToolName( EntitiesDescription& entities_description, EntitiesDescription::ToolType tool_type )
+	: ust::string_view8 @( ust::reference_notation::return_inner_references::param0 )
+{
+	var u32 tool_index= entities_description.tool_type_to_index_map[ size_type( tool_type ) ];
+	if( size_type( tool_index ) < entities_description.tools.size() )
+	{
+		return entities_description.tools[ size_type( tool_index ) ].name;
+	}
+	return "";
 }
 
 fn PerformFirstPersonWeaponAnimation(
@@ -5367,7 +5427,7 @@ fn ProcessRatsLogicStep( GameMapData& map_data, GameState &mut game_state )
 		} );
 }
 
-fn PickUpItems( SoundsDescription& sounds_description, GameMapData& map_data, GameState &mut game_state )
+fn PickUpItems( GameGlobalData& global_data, GameMapData& map_data, GameState &mut game_state )
 {
 	if( game_state.player.energy == 0u )
 	{
@@ -5446,7 +5506,7 @@ fn PickUpItems( SoundsDescription& sounds_description, GameMapData& map_data, Ga
 							if( total_energy < box_energy )
 							{
 								EmitPickupSound(
-									sounds_description,
+									global_data.sounds_description.deref(),
 									EntitiesDescription::ToolType::HealthPack,
 									game_state.player.sound_source_slots );
 
@@ -5480,7 +5540,7 @@ fn PickUpItems( SoundsDescription& sounds_description, GameMapData& map_data, Ga
 							if( total_armor < box_armor )
 							{
 								EmitPickupSound(
-									sounds_description,
+									global_data.sounds_description.deref(),
 									EntitiesDescription::ToolType::Armor,
 									game_state.player.sound_source_slots );
 
@@ -5526,7 +5586,17 @@ fn PickUpItems( SoundsDescription& sounds_description, GameMapData& map_data, Ga
 
 						if( need_to_remove_entity )
 						{
-							EmitPickupSound( sounds_description, tool.tool_type, game_state.player.sound_source_slots );
+							EmitPickupSound(
+								global_data.sounds_description.deref(),
+								tool.tool_type,
+								game_state.player.sound_source_slots );
+
+							PushEventNotificaton(
+								game_state.step_index,
+								game_state.event_notifications,
+								ust::make_array</ust::string_view8/>(
+									FetchStringFromTable( global_data.string_table.deref(), StringTableKey::PickedUp ),
+									tool.name ) );
 						}
 
 						// TODO - handle regenerating entities in multiplayer.
@@ -5737,13 +5807,10 @@ fn InteractWithTriggerVolumes( GameGlobalData& global_data, GameMapData& map_dat
 
 						if( !leave_condition_satisfied )
 						{
-							var ust::array_view_mut</char8/> dst_message= game_state.map_leave_condition_message;
-							dst_message.copy_from( leave_condition[2].range() );
-
-							for( auto mut i= leave_condition[2].size(); i < dst_message.size(); ++i )
-							{
-								dst_message[i]= '\0';
-							}
+							PushOrUpdateMapLeaveConditionNotification(
+								game_state.step_index,
+								game_state.event_notifications,
+								leave_condition[2] );
 						}
 					}
 				}
@@ -9160,6 +9227,69 @@ fn GetShotVectorBasis( Vec3f& shot_vector ) : [ Vec3f, 3 ]
 			basis_vector_a / basis_vector_a_length,
 			basis_vector_b / basis_vector_b_length,
 			basis_vector_c / basis_vector_c_length );
+}
+
+fn PushEventNotificaton(
+	u32 current_step,
+	EventNotificationsContainer &mut event_notifications,
+	ust::array_view_imut</ust::string_view8/> text_parts )
+{
+	var EventNotificationMessage &mut slot=
+		event_notifications.slots[
+			event_notifications.num_event_notifications % EventNotificationsContainer::c_max_event_notifications ];
+
+	++event_notifications.num_event_notifications;
+
+	slot.creation_step= current_step;
+
+	var size_type mut dst= 0s;
+
+	foreach( text : text_parts )
+	{
+		foreach( c : text )
+		{
+			if( dst >= typeinfo</ typeof(slot.text) />.element_count )
+			{
+				break;
+			}
+			slot.text[ dst ]= c;
+			++dst;
+		}
+	}
+
+	// Fill the tail with zeros. Don't leave garbage in even notificationt slots.
+	while( dst < typeinfo</ typeof(slot.text) />.element_count )
+	{
+		slot.text[ dst ]= '\0';
+		++dst;
+	}
+}
+
+fn PushOrUpdateMapLeaveConditionNotification(
+	u32 current_step,
+	EventNotificationsContainer &mut event_notifications,
+	ust::string_view8 text )
+{
+	if( event_notifications.num_event_notifications > 0u )
+	{
+		var EventNotificationMessage &mut last_notification=
+			event_notifications.slots[
+				( event_notifications.num_event_notifications - 1u ) % EventNotificationsContainer::c_max_event_notifications ];
+
+		var size_type len= ust::min( text.size(), typeinfo</ typeof( last_notification.text ) />.element_count );
+
+		if( text.subrange_end( len ) == ust::string_view8( last_notification.text ).subrange_end( len ) )
+		{
+			var u32 age_limit= c_max_event_notification_message_age_steps - 2u;
+			if( last_notification.creation_step + age_limit < current_step )
+			{
+				last_notification.creation_step= current_step - age_limit;
+			}
+			return;
+		}
+	}
+
+	PushEventNotificaton( current_step, event_notifications, ust::single_element_array_view( text ) );
 }
 
 var [ EntitiesDescription::ToolType, 11 ] c_weapon_tools
