@@ -182,6 +182,98 @@ fn CreateDecalPolygons(
 	}
 }
 
+fn CreateWaterCircleDecalPolygons(
+	ust::array_view_imut</ZvoxCluster/> clusters,
+	ust::array_view_imut</ZmapQuad/> quads,
+	ZmapLamData& zmap_lam_data,
+	QuadsHierarchy& quads_hierarchy,
+	Vec3f& camera_position,
+	ust::vector</MapVertex/> &mut out_vertices,
+	ust::vector</u16/> &mut out_indices )
+{
+	var Vec3f move_vector( 0.235f, 0.235f, 0.943f );
+
+	var DecalPolygonVertex zero_vertex{ .position= Vec3f::MakeZero(), .light= Vec3f::MakeZero() };
+	var DecalPolygonVertexBuffers mut decal_vertices[ [ zero_vertex ... ], [ zero_vertex ... ] ];
+
+	var [ Vec3f, 3 ] basis_vecs
+	[
+		( 1.0f, 0.0f, 0.0f ),
+		( 0.0f, 1.0f, 0.0f ),
+		( 0.0f, 0.0f, -1.0f ),
+	];
+
+	foreach( &rain_droplet : zmap_lam_data.rain_droplets )
+	{
+		var Vec3f rain_droplet_position(
+			f32( rain_droplet.position[0] ), f32( rain_droplet.position[1] ), f32( rain_droplet.position[2] ) );
+
+		var Vec3f water_circle_center= rain_droplet_position + move_vector * f32( rain_droplet.travel_distance );
+
+		if( ( water_circle_center - camera_position ).SquareLength() >= 512.0f * 512.0f )
+		{
+			continue;
+		}
+
+		if( size_type( rain_droplet.cluster_index ) >= clusters.size() ||
+			size_type( rain_droplet.quad_index ) >= quads.size() )
+		{
+			continue;
+		}
+
+		var f32 half_size= 16.0f;
+		var f32 decal_radius= ust::sqrt( 3.0f ) * half_size;
+
+		var Vec3f corner_vector= ( basis_vecs[0] + basis_vecs[1] ) * half_size;
+		var [ Vec3f, 2 ] decal_corners[ water_circle_center - corner_vector, water_circle_center + corner_vector ];
+
+		var [ Planef, 4 ] clip_planes
+		[
+			// Decal side clip planes.
+			Planef::CreateFromNormalAndPoint(  basis_vecs[0], decal_corners[0] ),
+			Planef::CreateFromNormalAndPoint(  basis_vecs[1], decal_corners[0] ),
+			Planef::CreateFromNormalAndPoint( -basis_vecs[0], decal_corners[1] ),
+			Planef::CreateFromNormalAndPoint( -basis_vecs[1], decal_corners[1] ),
+		];
+
+		var f32 constexpr base_texture_layer= 153.0f; // This should match texture layer used for decal textures!
+		var f32 texture_layer= base_texture_layer + 0.0f;
+
+		// Use a pair of plane equations for calculating texture coordinates for decals.
+		var [ Planef, 2 ] tc_planes
+		[
+			Planef::CreateFromNormalAndPoint( basis_vecs[0] / ( half_size * 4.0f ), decal_corners[0] ),
+			Planef::CreateFromNormalAndPoint( basis_vecs[1] / ( half_size * 4.0f ), decal_corners[0] ),
+		];
+
+		VisitBoundingBoxesHierarchyForBBox(
+			quads_hierarchy,
+			BBox3f
+			{
+				.min= water_circle_center - Vec3f( decal_radius, decal_radius, decal_radius ),
+				.max= water_circle_center + Vec3f( decal_radius, decal_radius, decal_radius ),
+			},
+			lambda[&]( PackedQuadIndex packed_quad_index )
+			{
+				var ZvoxCluster& cluster= clusters[ packed_quad_index.GetClusterIndex() ];
+
+				EmitDecalPolygonsForMapQuad(
+					quads,
+					zmap_lam_data,
+					packed_quad_index.GetQuadIndex(),
+					Vec3f( f32( cluster.c.center[0] ), f32( cluster.c.center[1] ), f32( cluster.c.center[2] ) ),
+					water_circle_center,
+					basis_vecs[2],
+					clip_planes,
+					tc_planes,
+					texture_layer,
+					decal_vertices,
+					out_vertices,
+					out_indices );
+			} );
+	}
+}
+
 // Need two of them for clipping.
 type DecalPolygonVertexBuffers= tup[ DecalPolygonVertices, DecalPolygonVertices ];
 
