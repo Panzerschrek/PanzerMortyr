@@ -618,7 +618,7 @@ fn ProcessGameLogicStep(
 
 	DecayPlayerPain( game_state.player );
 
-	PerformPlayerWeaponLogic( global_data.sounds_description.deref(), map_data, player_input, game_state );
+	PerformPlayerWeaponLogic( global_data, map_data, player_input, game_state );
 
 	PerformPlayerInventoryLogic(
 		global_data.sounds_description.deref(),
@@ -703,7 +703,7 @@ fn DecayPlayerPain( PlayerState& mut player )
 }
 
 fn PerformPlayerWeaponLogic(
-	SoundsDescription& sounds_description, GameMapData& map_data, PlayerInput& player_input, GameState &mut game_state )
+	GameGlobalData& global_data, GameMapData& map_data, PlayerInput& player_input, GameState &mut game_state )
 {
 	var EntitiesDescription& entities_description= map_data.entities_description.deref();
 
@@ -915,7 +915,7 @@ fn PerformPlayerWeaponLogic(
 							c_player_shot_enemy_alarm_max_distance );
 
 						AlarmAnimalTriggersByNearbyEvent(
-							sounds_description,
+							global_data.sounds_description.deref(),
 							map_data,
 							game_state.activated_trigger_volumes_mask,
 							game_state.static_sound_sources,
@@ -999,11 +999,49 @@ fn PerformPlayerWeaponLogic(
 		// Perform weapon switching logic (if not shooting right now or if is alive).
 
 		// Check if has requested weapon and ammo for it. If not - keep current weapon.
-		if( player_state.primary_weapon_state.requested_weapon != player_state.primary_weapon_state.current_weapon &&
-			!HasWeaponAndAmmoForIt(
-				entities_description, player_state.inventory, player_state.primary_weapon_state.requested_weapon ) )
+		if( player_state.primary_weapon_state.requested_weapon != player_state.primary_weapon_state.current_weapon )
 		{
-			player_state.primary_weapon_state.requested_weapon= player_state.primary_weapon_state.current_weapon;
+			if( !HasWeapon( player_state.inventory, player_state.primary_weapon_state.requested_weapon ) )
+			{
+				player_state.primary_weapon_state.requested_weapon= player_state.primary_weapon_state.current_weapon;
+
+				if( player_input.inventory_input.requested_weapon != EntitiesDescription::ToolType::None )
+				{
+					PushEventNotificaton(
+						game_state.step_index,
+						game_state.event_notifications,
+						ust::make_array</ust::string_view8/>(
+							FetchStringFromTable( global_data.string_table.deref(), StringTableKey::NotAvailable ),
+							GetToolName( entities_description, player_input.inventory_input.requested_weapon ) ) );
+				}
+			}
+			else if( !HasAmmoForWeapon(
+				entities_description, player_state.inventory, player_state.primary_weapon_state.requested_weapon ) )
+			{
+				player_state.primary_weapon_state.requested_weapon= player_state.primary_weapon_state.current_weapon;
+
+				if( player_input.inventory_input.requested_weapon != EntitiesDescription::ToolType::None )
+				{
+					PushEventNotificaton(
+						game_state.step_index,
+						game_state.event_notifications,
+						ust::make_array</ust::string_view8/>(
+							FetchStringFromTable( global_data.string_table.deref(), StringTableKey::NoAmmoFor ),
+							GetToolName( entities_description, player_input.inventory_input.requested_weapon ) ) );
+				}
+			}
+			else
+			{
+				if( player_input.inventory_input.requested_weapon != EntitiesDescription::ToolType::None )
+				{
+					PushEventNotificaton(
+						game_state.step_index,
+						game_state.event_notifications,
+						ust::make_array</ust::string_view8/>(
+							FetchStringFromTable( global_data.string_table.deref(), StringTableKey::SelectedWeapon ),
+							GetToolName( entities_description, player_input.inventory_input.requested_weapon ) ) );
+				}
+			}
 		}
 
 		// Check if has current weapon and ammo for it. If not - select some other weapon.
@@ -1104,11 +1142,19 @@ fn HasWeaponAndAmmoForIt(
 	PlayerInventory& inventory,
 	EntitiesDescription::ToolType weapon_tool ) : bool
 {
-	if( inventory[ size_type( weapon_tool ) ] <= 0u )
-	{
-		return false;
-	}
+	return HasWeapon( inventory, weapon_tool ) && HasAmmoForWeapon( entities_description, inventory, weapon_tool );
+}
 
+fn HasWeapon( PlayerInventory& inventory, EntitiesDescription::ToolType weapon_tool ) : bool
+{
+	return inventory[ size_type( weapon_tool ) ] > 0u;
+}
+
+fn HasAmmoForWeapon(
+	EntitiesDescription& entities_description,
+	PlayerInventory& inventory,
+	EntitiesDescription::ToolType weapon_tool ) : bool
+{
 	var u32 weapon_tool_index= entities_description.tool_type_to_index_map[ size_type( weapon_tool ) ];
 
 	if( size_type( weapon_tool_index ) < entities_description.tools.size() )
@@ -1125,6 +1171,17 @@ fn HasWeaponAndAmmoForIt(
 	}
 
 	return true;
+}
+
+fn GetToolName( EntitiesDescription& entities_description, EntitiesDescription::ToolType tool_type )
+	: ust::string_view8 @( ust::reference_notation::return_inner_references::param0 )
+{
+	var u32 tool_index= entities_description.tool_type_to_index_map[ size_type( tool_type ) ];
+	if( size_type( tool_index ) < entities_description.tools.size() )
+	{
+		return entities_description.tools[ size_type( tool_index ) ].name;
+	}
+	return "";
 }
 
 fn PerformFirstPersonWeaponAnimation(
