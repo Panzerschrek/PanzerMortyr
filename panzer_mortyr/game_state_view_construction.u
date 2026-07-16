@@ -1479,6 +1479,8 @@ fn ConstructWorldDrawingInfo(
 			var f32 c_flashlight_trace_max_distance= 1024.0f;
 			var Vec3f trace_vec= CalculateCameraDirectionVector( camera_controller ) * c_flashlight_trace_max_distance;
 
+			var f32 mut min_trace_distance= 1.0f;
+
 			if_var( trace_res :
 					LineTrace(
 						map_data,
@@ -1489,18 +1491,39 @@ fn ConstructWorldDrawingInfo(
 			{
 				if( trace_res.distance > 0.0f && trace_res.distance < 1.0f )
 				{
-					var Vec3f light_position=
-						flashlight_ray_start +
-						trace_vec * ust::max( 0.0f, trace_res.distance  - 32.0f / c_flashlight_trace_max_distance );
-
-					drawing_info.dynamic_light_sources.push_back(
-						WorldDrawingInfo::DynamicLightSource
-						{
-							.position= light_position,
-							.color_index= c_flashlight_color_index,
-							.power= c_flashlight_base_power * c_light_power_scale * ( 1.0f - trace_res.distance ),
-						} );
+					ust::min_assign( min_trace_distance, trace_res.distance );
 				}
+			}
+
+			foreach( &collider : game_state.colliders )
+			{
+				if( collider.entity_index == c_player_entity_index )
+				{
+					continue;
+				}
+
+				if_var( res : FindRayBBoxIntersection( flashlight_ray_start, trace_vec, collider.bbox ) )
+				{
+					if( res.near_point_distance > 0.0f && res.near_point_distance < 1.0f )
+					{
+						ust::min_assign( min_trace_distance, res.near_point_distance );
+					}
+				}
+			}
+
+			if( min_trace_distance > 0.0f && min_trace_distance < 1.0f )
+			{
+				var Vec3f light_position=
+					flashlight_ray_start +
+					trace_vec * ust::max( 0.0f, min_trace_distance  - 32.0f / c_flashlight_trace_max_distance );
+
+				drawing_info.dynamic_light_sources.push_back(
+					WorldDrawingInfo::DynamicLightSource
+					{
+						.position= light_position,
+						.color_index= c_flashlight_color_index,
+						.power= c_flashlight_base_power * c_light_power_scale * ( 1.0f - min_trace_distance ),
+					} );
 			}
 		}
 
