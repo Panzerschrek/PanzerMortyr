@@ -1,6 +1,7 @@
 import "/scoped_array.iu"
 import "/common_lib/billboards_description_file.iu"
 import "bounding_boxes_hierarchy_debug_visualization.iu"
+import "collisions.iu"
 import "game_constants.iu"
 import "game_logic.iu"
 import "game_state_view_construction.iu"
@@ -1471,16 +1472,38 @@ fn ConstructWorldDrawingInfo(
 
 		if( game_state.player.tools_state.flashlight_is_active )
 		{
-			// Use some hardcoded flashlight position relative to the camera position.
-			var Vec3f offset= Vec3f( -10.0f, 20.0f, -13.0f ) * Mat4f::MakeRotationZ( camera_controller.GetAzimuth() );
+			var Mat4f camera_rotation_matrix=
+				Mat4f::MakeRotationX( camera_controller.GetElevation() ) *
+				Mat4f::MakeRotationZ( camera_controller.GetAzimuth() );
 
-			drawing_info.dynamic_light_sources.push_back(
-				WorldDrawingInfo::DynamicLightSource
+			var Vec3f view_vec= Vec3f( 0.0f, 1.0f, 0.0f ) * camera_rotation_matrix;
+
+			var f32 max_distance= 2048.0f;
+			var Vec3f trace_vec= view_vec * max_distance;
+
+			if_var( trace_res :
+					LineTrace(
+						map_data,
+						game_state.broken_quad_bits,
+						game_state.dynamic_cluster_colliders,
+						camera_position_without_depth_shift,
+						trace_vec ) )
+			{
+				if( trace_res.distance > 0.0f && trace_res.distance < 1.0f )
 				{
-					.position= camera_position_without_depth_shift + offset,
-					.color_index= c_flashlight_color_index,
-					.power= c_flashlight_power * c_light_power_scale,
-				} );
+					var Vec3f light_position=
+						camera_position_without_depth_shift +
+						view_vec * ust::max( 0.0f, max_distance * trace_res.distance - 8.0f );
+
+					drawing_info.dynamic_light_sources.push_back(
+						WorldDrawingInfo::DynamicLightSource
+						{
+							.position= light_position,
+							.color_index= c_flashlight_color_index,
+							.power= c_flashlight_power * c_light_power_scale * ( 1.0f - trace_res.distance ) / 4.0f,
+						} );
+				}
+			}
 		}
 
 		// Process fullscreen effects.
