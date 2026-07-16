@@ -75,6 +75,7 @@ This documents describes various interesting facts about the original game.
 * Pre-recorded player inputs in a played demo (at game start) are applied shortly after starting a new game.
 * Bullet hole decals are cut by borders of a quad with hole center, even if it's not necessary (with an adjacent quad lying in the same plane).
 * Bullet hole decals aren't drawn in mirrors.
+* Decals (bullet holes, blood stains) aren't placed on polygons having water circles (with wet material property and rain above).
 * Some maps contain holes in their geometry, where a hall-of-mirrors effect can be seen.
 * Clusters visibility information is sometimes incorrectly calculated and thus a hall-of-mirrors effect can be seen due to missing clusters which should be actually drawn.
 * In a couple of places (map exit door button on map 34, elevator buttons on map 3) buttons move in wrong direction.
