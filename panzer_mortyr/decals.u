@@ -189,6 +189,10 @@ fn CreateWaterCircleDecalPolygons(
 	var f32 c_max_path_length= 2048.0f;
 	var f32 c_circle_stay_distance= 256.0f; // TODO - tune this.
 
+	var f32 c_max_water_circle_visible_distance= 1024.0f;
+	var f32 c_max_water_curcle_visible_distance_squared=
+		c_max_water_circle_visible_distance * c_max_water_circle_visible_distance;
+
 	var f32 c_max_circle_radius= 32.0f; // TODO - tune this.
 
 	var f32 rain_movement_distance= game_time_s * c_movement_speed;
@@ -225,7 +229,8 @@ fn CreateWaterCircleDecalPolygons(
 
 		var Vec3f water_circle_center= rain_droplet_position + move_vector * rain_droplet.travel_distance;
 
-		if( ( water_circle_center - camera_position ).SquareLength() >= 512.0f * 512.0f )
+		var f32 square_distance_to_water_circle= ( water_circle_center - camera_position ).SquareLength();
+		if( square_distance_to_water_circle >= c_max_water_curcle_visible_distance_squared )
 		{
 			continue;
 		}
@@ -302,8 +307,18 @@ fn CreateWaterCircleDecalPolygons(
 					out_indices );
 			} );
 
-		var f32 brightness= ( relative_age <= 0.25f ? ( relative_age / 0.25f ) : ( ( 1.0f - relative_age ) / 0.75f ) );
-		var u8 brightness8( ust::max( 0.0f, brightness * 96.0f ) ); // Use pretty small maximum brightness.
+		var f32 distance_based_attenuation=
+			( square_distance_to_water_circle <= 0.5f * c_max_water_curcle_visible_distance_squared
+				? 1.0f
+				: ( c_max_water_curcle_visible_distance_squared - square_distance_to_water_circle ) *
+					( 2.0f / c_max_water_curcle_visible_distance_squared ) );
+
+		var f32 brightness=
+			distance_based_attenuation *
+			( relative_age <= 0.25f ? ( relative_age / 0.25f ) : ( ( 1.0f - relative_age ) / 0.75f ) );
+
+		var u8 brightness8( ust::max( 0.0f, distance_based_attenuation * brightness * 96.0f ) ); // Use pretty small maximum brightness.
+
 		foreach( &mut v : out_vertices.range().subrange_start( first_vertex_index_of_current_decal ) )
 		{
 			v.light= ust::make_array( brightness8, brightness8, brightness8, brightness8 );
