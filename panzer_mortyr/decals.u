@@ -3,6 +3,7 @@ import "decals.iu"
 import "mat.iu"
 import "physics_utils.iu"
 import "plane.iu"
+import "precipitation_constants.iu"
 
 namespace PM
 {
@@ -189,18 +190,11 @@ fn CreateWaterCircleDecalPolygons(
 
 	var size_type first_decal_vertex_index= out_vertices.size();
 
-	// TODO - move constants into common place.
-	var f32 c_movement_speed= 384.0f;
-	var f32 c_max_path_length= 2048.0f;
-	var f32 c_circle_stay_distance= 256.0f; // TODO - tune this.
+	var f32 constexpr water_circle_max_visible_distance_squared=
+		PrecipitationConstants::water_circle_max_visible_distance *
+		PrecipitationConstants::water_circle_max_visible_distance;
 
-	var f32 c_max_water_circle_visible_distance= 1024.0f;
-	var f32 c_max_water_curcle_visible_distance_squared=
-		c_max_water_circle_visible_distance * c_max_water_circle_visible_distance;
-
-	var f32 c_max_circle_radius= 32.0f; // TODO - tune this.
-
-	var f32 rain_movement_distance= game_time_s * c_movement_speed;
+	var f32 rain_movement_distance= game_time_s * PrecipitationConstants::rain_speed;
 
 	var DecalPolygonVertex zero_vertex{ .position= Vec3f::MakeZero(), .light= Vec3f::MakeZero() };
 	var DecalPolygonVertexBuffers mut decal_vertices[ [ zero_vertex ... ], [ zero_vertex ... ] ];
@@ -212,27 +206,18 @@ fn CreateWaterCircleDecalPolygons(
 		( 0.0f, 0.0f, -1.0f ),
 	];
 
+	var Vec3f fetch_bbox_half_size(
+		PrecipitationConstants::water_circle_max_visible_distance,
+		PrecipitationConstants::water_circle_max_visible_distance,
+		PrecipitationConstants::water_circle_max_visible_distance );
+
 	VisitBoundingBoxesHierarchyForBBox(
 		water_circles_hierarchy,
-		BBox3f
-		{
-			.min=
-				camera_position -
-				Vec3f(
-					c_max_water_circle_visible_distance,
-					c_max_water_circle_visible_distance,
-					c_max_water_circle_visible_distance ),
-			.max=
-				camera_position +
-				Vec3f(
-					c_max_water_circle_visible_distance,
-					c_max_water_circle_visible_distance,
-					c_max_water_circle_visible_distance ),
-		},
+		BBox3f{ .min= camera_position - fetch_bbox_half_size, .max= camera_position + fetch_bbox_half_size },
 		lambda[&]( WaterCircleInHierarchy& water_circle )
 		{
 			var f32 square_distance_to_water_circle= ( water_circle.position - camera_position ).SquareLength();
-			if( square_distance_to_water_circle >= c_max_water_curcle_visible_distance_squared )
+			if( square_distance_to_water_circle >= water_circle_max_visible_distance_squared )
 			{
 				return;
 			}
@@ -241,18 +226,20 @@ fn CreateWaterCircleDecalPolygons(
 				f32( water_circle.rain_droplet_movement_phase ) / water_circle.rain_droplet_travel_distance;
 
 			var f32 current_movement_distance=
-				( rain_movement_distance + movement_distance_phase * c_max_path_length ) % c_max_path_length;
+				( rain_movement_distance + movement_distance_phase * PrecipitationConstants::max_path_length ) %
+				PrecipitationConstants::max_path_length;
 
 			if( current_movement_distance < water_circle.rain_droplet_travel_distance ||
-				current_movement_distance > water_circle.rain_droplet_travel_distance + c_circle_stay_distance )
+				current_movement_distance > water_circle.rain_droplet_travel_distance + PrecipitationConstants::water_circle_stay_distance )
 			{
 				return;
 			}
 
 			var f32 relative_age=
-				( current_movement_distance - water_circle.rain_droplet_travel_distance ) / c_circle_stay_distance;
+				( current_movement_distance - water_circle.rain_droplet_travel_distance ) /
+				PrecipitationConstants::water_circle_stay_distance;
 
-			var f32 half_size= ( 0.25f + relative_age * 0.75f ) * c_max_circle_radius;
+			var f32 half_size= ( 0.25f + relative_age * 0.75f ) * PrecipitationConstants::water_circle_max_radius;
 			var f32 decal_radius= ust::sqrt( 3.0f ) * half_size;
 
 			var Vec3f corner_vector= ( basis_vecs[0] + basis_vecs[1] ) * half_size;
@@ -328,10 +315,10 @@ fn CreateWaterCircleDecalPolygons(
 				} );
 
 			var f32 distance_based_attenuation=
-				( square_distance_to_water_circle <= 0.5f * c_max_water_curcle_visible_distance_squared
+				( square_distance_to_water_circle <= 0.5f * water_circle_max_visible_distance_squared
 					? 1.0f
-					: ( c_max_water_curcle_visible_distance_squared - square_distance_to_water_circle ) *
-						( 2.0f / c_max_water_curcle_visible_distance_squared ) );
+					: ( water_circle_max_visible_distance_squared - square_distance_to_water_circle ) *
+						( 2.0f / water_circle_max_visible_distance_squared ) );
 
 			var f32 brightness=
 				distance_based_attenuation *
