@@ -26,7 +26,7 @@ out float f_additive_fog_density;
 flat out float f_texture_layer;
 
 // Experimentally-found value, which matches rain droplet paths observable in the original game.
-// It should match the same constant in the snow shader!
+// It should match the same constant in the snow shader and in Ü code!
 const vec3 c_move_vector= vec3( 0.235, 0.235, 0.943 );
 
 const float c_max_distance_to_camera= 1536.0;

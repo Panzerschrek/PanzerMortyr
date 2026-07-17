@@ -1,8 +1,10 @@
 import "bounding_boxes_hierarchy_visiting.iu"
 import "decals.iu"
 import "mat.iu"
+import "math_constants.iu"
 import "physics_utils.iu"
 import "plane.iu"
+import "precipitation_constants.iu"
 
 namespace PM
 {
@@ -77,8 +79,7 @@ fn CreateDecalPolygons(
 			Planef::CreateFromNormalAndPoint( -basis_vecs[1], decal_corners[1] ),
 		];
 
-		var f32 constexpr base_texture_layer= 153.0f; // This should match texture layer used for decal textures!
-		var f32 texture_layer= base_texture_layer + f32( decal.texture_index );
+		var f32 texture_layer= c_decal_base_texture_layer + f32( decal.texture_index );
 
 		// Use a pair of plane equations for calculating texture coordinates for decals.
 		var [ Planef, 2 ] tc_planes
@@ -131,7 +132,7 @@ fn CreateDecalPolygons(
 		{
 			// Static decal - attached to the world.
 
-			var f32 decal_radius= ust::sqrt( 3.0f ) * decal.half_size;
+			var f32 decal_radius= c_sqrt_3 * decal.half_size;
 
 			// Visit all quads nearby and create decal polygons for them.
 			VisitBoundingBoxesHierarchyForBBox(
@@ -167,8 +168,181 @@ fn CreateDecalPolygons(
 		}
 	}
 
+	ApplyDecalsOffsetTowardsCamera( out_vertices.range().subrange_start( first_decal_vertex_index ), camera_position );
+}
+
+fn CreateWaterCircleDecalPolygons(
+	f32 game_time_s,
+	WaterCirclesHierarchy& water_circles_hierarchy,
+	ust::array_view_imut</ZvoxCluster/> clusters,
+	ust::array_view_imut</ZmapQuad/> quads,
+	ZmapLamData& zmap_lam_data,
+	QuadsHierarchy& quads_hierarchy,
+	BitArrayView wet_material_bits,
+	Vec3f& camera_position,
+	ust::vector</MapVertex/> &mut out_vertices,
+	ust::vector</u16/> &mut out_indices )
+{
+	if( water_circles_hierarchy.nodes.empty() )
+	{
+		return;
+	}
+
+	var size_type first_decal_vertex_index= out_vertices.size();
+
+	var f32 rain_movement_distance= game_time_s * PrecipitationConstants::rain_speed;
+
+	var DecalPolygonVertex zero_vertex{ .position= Vec3f::MakeZero(), .light= Vec3f::MakeZero() };
+	var DecalPolygonVertexBuffers mut decal_vertices[ [ zero_vertex ... ], [ zero_vertex ... ] ];
+
+	// Water circles are always located in horizontal plane.
+	// They are radiallu-symmetrical, so, it's not a problem to use the same basis for all of them.
+	var [ Vec3f, 3 ] basis_vecs
+	[
+		( 1.0f, 0.0f, 0.0f ),
+		( 0.0f, 1.0f, 0.0f ),
+		( 0.0f, 0.0f, -1.0f ),
+	];
+
+	var Vec3f fetch_bbox_half_size(
+		PrecipitationConstants::water_circle_max_visible_distance,
+		PrecipitationConstants::water_circle_max_visible_distance,
+		PrecipitationConstants::water_circle_max_visible_distance );
+
+	VisitBoundingBoxesHierarchyForBBox(
+		water_circles_hierarchy,
+		BBox3f{ .min= camera_position - fetch_bbox_half_size, .max= camera_position + fetch_bbox_half_size },
+		lambda[&]( WaterCircleInHierarchy& water_circle )
+		{
+			var f32 square_distance_to_water_circle= ( water_circle.position - camera_position ).SquareLength();
+			if( square_distance_to_water_circle >= c_water_circle_max_visible_distance_squared )
+			{
+				return;
+			}
+
+			var f32 current_activation_phase_distance=
+				( rain_movement_distance + water_circle.activation_phase_distance ) %
+				PrecipitationConstants::max_path_length;
+
+			if( current_activation_phase_distance > PrecipitationConstants::water_circle_stay_distance )
+			{
+				return;
+			}
+
+			var f32 relative_age=
+				current_activation_phase_distance / PrecipitationConstants::water_circle_stay_distance;
+
+			var f32 half_size= ( 0.125f + relative_age * 0.875f ) * PrecipitationConstants::water_circle_max_radius;
+			var f32 decal_radius= c_sqrt_3 * half_size;
+
+			var Vec3f corner_vector= ( basis_vecs[0] + basis_vecs[1] ) * half_size;
+			var [ Vec3f, 2 ] decal_corners
+			[
+				water_circle.position - corner_vector,
+				water_circle.position + corner_vector,
+			];
+
+			var [ Planef, 4 ] clip_planes
+			[
+				// Decal side clip planes.
+				Planef::CreateFromNormalAndPoint(  basis_vecs[0], decal_corners[0] ),
+				Planef::CreateFromNormalAndPoint(  basis_vecs[1], decal_corners[0] ),
+				Planef::CreateFromNormalAndPoint( -basis_vecs[0], decal_corners[1] ),
+				Planef::CreateFromNormalAndPoint( -basis_vecs[1], decal_corners[1] ),
+			];
+
+			// Use a pair of plane equations for calculating texture coordinates for decals.
+			var [ Planef, 2 ] tc_planes
+			[
+				Planef::CreateFromNormalAndPoint( basis_vecs[0] / ( half_size * 4.0f ), decal_corners[0] ),
+				Planef::CreateFromNormalAndPoint( basis_vecs[1] / ( half_size * 4.0f ), decal_corners[0] ),
+			];
+
+			var size_type first_vertex_index_of_current_decal= out_vertices.size();
+
+			VisitBoundingBoxesHierarchyForBBox(
+				quads_hierarchy,
+				BBox3f
+				{
+					.min= water_circle.position - Vec3f( decal_radius, decal_radius, decal_radius ),
+					.max= water_circle.position + Vec3f( decal_radius, decal_radius, decal_radius ),
+				},
+				lambda
+					[
+						&water_circle= water_circle,
+						&basis_vecs= basis_vecs,
+						&clip_planes= clip_planes,
+						&tc_planes= tc_planes,
+						clusters= clusters,
+						quads= quads,
+						&zmap_lam_data= zmap_lam_data,
+						wet_material_bits= wet_material_bits,
+						&decal_vertices= decal_vertices,
+						&out_vertices= out_vertices,
+						&out_indices= out_indices
+					]
+					( PackedQuadIndex packed_quad_index )
+				{
+					var ZvoxCluster& cluster= clusters[ packed_quad_index.GetClusterIndex() ];
+
+					var size_type quad_index= packed_quad_index.GetQuadIndex();
+
+					var size_type quad_textre_id( quads[ quad_index ].texture_id );
+					if( quad_textre_id >= wet_material_bits.GetSize() || !wet_material_bits.GetBit( quad_textre_id ) )
+					{
+						return;
+					}
+
+					EmitDecalPolygonsForMapQuad(
+						quads,
+						zmap_lam_data,
+						quad_index,
+						Vec3f( f32( cluster.c.center[0] ), f32( cluster.c.center[1] ), f32( cluster.c.center[2] ) ),
+						water_circle.position,
+						basis_vecs[2],
+						clip_planes,
+						tc_planes,
+						c_water_circle_texture_layer,
+						decal_vertices,
+						out_vertices,
+						out_indices );
+				} );
+
+			var f32 distance_based_attenuation=
+				( square_distance_to_water_circle <= 0.5f * c_water_circle_max_visible_distance_squared
+					? 1.0f
+					: ( c_water_circle_max_visible_distance_squared - square_distance_to_water_circle ) *
+						( 2.0f / c_water_circle_max_visible_distance_squared ) );
+
+			var f32 brightness=
+				distance_based_attenuation *
+				( relative_age <= 0.2f ? ( relative_age / 0.2f ) : ( ( 1.0f - relative_age ) / 0.8f ) );
+
+			// Use pretty small maximum brightness for water circles.
+			// They shouldn't be too bright, since they use additive blending.
+			var u8 brightness8( ust::max( 0.0f, distance_based_attenuation * brightness * 72.0f ) );
+
+			foreach( &mut v : out_vertices.range().subrange_start( first_vertex_index_of_current_decal ) )
+			{
+				v.light= ust::make_array( brightness8, brightness8, brightness8, brightness8 );
+			}
+		} );
+
+	ApplyDecalsOffsetTowardsCamera( out_vertices.range().subrange_start( first_decal_vertex_index ), camera_position );
+}
+
+var f32 constexpr c_water_circle_max_visible_distance_squared=
+	PrecipitationConstants::water_circle_max_visible_distance *
+	PrecipitationConstants::water_circle_max_visible_distance;
+
+ // These values should match texture layers used for decals and water circles!
+var f32 constexpr c_water_circle_texture_layer= 151.0f;
+var f32 constexpr c_decal_base_texture_layer= 153.0f;
+
+fn ApplyDecalsOffsetTowardsCamera( ust::array_view_mut</ MapVertex /> vertices, Vec3f& camera_position )
+{
 	// Apply some offset towards the camera to avoid Z-fighting.
-	foreach( &mut v : out_vertices.range().subrange_start( first_decal_vertex_index ) )
+	foreach( &mut v : vertices )
 	{
 		var Vec3f position( v.position );
 

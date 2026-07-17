@@ -1,6 +1,7 @@
 import "/scoped_array.iu"
 import "/common_lib/billboards_description_file.iu"
 import "bounding_boxes_hierarchy_debug_visualization.iu"
+import "collisions.iu"
 import "game_constants.iu"
 import "game_logic.iu"
 import "game_state_view_construction.iu"
@@ -1471,16 +1472,61 @@ fn ConstructWorldDrawingInfo(
 
 		if( game_state.player.tools_state.flashlight_is_active )
 		{
-			// Use some hardcoded flashlight position relative to the camera position.
-			var Vec3f offset= Vec3f( -10.0f, 20.0f, -13.0f ) * Mat4f::MakeRotationZ( camera_controller.GetAzimuth() );
+			// Implement flashlight in way how the original game implements it.
+			// Trace a ray from a position close to the camera towards view direction and find an intersection with map geometry or some collider.
+			// Add a spherical light source at the point slightly before intersection point.
 
-			drawing_info.dynamic_light_sources.push_back(
-				WorldDrawingInfo::DynamicLightSource
+			var Vec3f flashlight_ray_start=
+				drawing_info.camera_params.position +
+				Vec3f( -5.0f, 10.0f, -8.0f ) * Mat4f::MakeRotationZ( camera_controller.GetAzimuth() );
+
+			var f32 c_flashlight_trace_max_distance= 1024.0f;
+			var Vec3f trace_vec= CalculateCameraDirectionVector( camera_controller ) * c_flashlight_trace_max_distance;
+
+			var f32 mut min_trace_distance= 1.0f;
+
+			if_var( trace_res :
+					LineTrace(
+						map_data,
+						game_state.broken_quad_bits,
+						game_state.dynamic_cluster_colliders,
+						flashlight_ray_start,
+						trace_vec ) )
+			{
+				if( trace_res.distance > 0.0f )
 				{
-					.position= camera_position_without_depth_shift + offset,
-					.color_index= c_flashlight_color_index,
-					.power= c_flashlight_power * c_light_power_scale,
-				} );
+					ust::min_assign( min_trace_distance, trace_res.distance );
+				}
+			}
+
+			foreach( &collider : game_state.colliders )
+			{
+				if( collider.entity_index == c_player_entity_index )
+				{
+					continue; // Ignore player collider while tracing flashlight ray.
+				}
+
+				if_var( res : FindRayBBoxIntersection( flashlight_ray_start, trace_vec, collider.bbox ) )
+				{
+					if( res.near_point_distance > 0.0f )
+					{
+						ust::min_assign( min_trace_distance, res.near_point_distance );
+					}
+				}
+			}
+
+			if( min_trace_distance > 0.0f && min_trace_distance < 1.0f )
+			{
+				drawing_info.dynamic_light_sources.push_back(
+					WorldDrawingInfo::DynamicLightSource
+					{
+						.position=
+							flashlight_ray_start +
+							trace_vec * ust::max( 0.0f, min_trace_distance  - 32.0f / c_flashlight_trace_max_distance ),
+						.color_index= c_flashlight_color_index,
+						.power= c_flashlight_base_power * c_light_power_scale * ( 1.0f - min_trace_distance ),
+					} );
+			}
 		}
 
 		// Process fullscreen effects.
@@ -2085,17 +2131,7 @@ fn ConstructGameEventNotificationsDrawingInfo(
 		var f32 c_note_full_alpha_distance= 32.0f;
 		var f32 c_note_base_scale= 20.0f;
 
-		var f32 azimuth= camera_controller.GetAzimuth();
-		var f32 elevation= camera_controller.GetElevation();
-
-		var f32 elevation_cos= ust::cos(elevation);
-		var f32 elevation_sin= ust::sin(elevation);
-
-		var Vec3f direction_vector=
-			Vec3f(
-				-ust::sin(azimuth) * elevation_cos,
-				 ust::cos(azimuth) * elevation_cos,
-				elevation_sin ) * c_note_visible_max_distance;
+		var Vec3f direction_vector= CalculateCameraDirectionVector( camera_controller ) * c_note_visible_max_distance;
 
 		// Extrapolate/mix camera position used for note volume intersection search.
 
@@ -2354,6 +2390,21 @@ fn MixAngle( f32 a, f32 b, f32 mix_factor ) : f32
 	return a + angle_delta * mix_factor;
 }
 
+fn CalculateCameraDirectionVector( CameraController& camera_controller ) : Vec3f
+{
+	var f32 azimuth= camera_controller.GetAzimuth();
+	var f32 elevation= camera_controller.GetElevation();
+
+	var f32 elevation_cos= ust::cos(elevation);
+	var f32 elevation_sin= ust::sin(elevation);
+
+	return
+		Vec3f(
+			-ust::sin(azimuth) * elevation_cos,
+			 ust::cos(azimuth) * elevation_cos,
+			elevation_sin ) ;
+}
+
 fn CalculatePsedudoRandomFireLightSourceModulation( f32 modulation_phase ) : f32
 {
 	return
@@ -2368,7 +2419,7 @@ var u32 constexpr c_flashlight_color_index= 11u;
 
 var f32 constexpr c_burning_entities_flame_power= 4.0f;
 
-var f32 constexpr c_flashlight_power= 384.0f;
+var f32 constexpr c_flashlight_base_power= 64.0f;
 
 var f32 constexpr c_light_power_scale= 256.0f;
 

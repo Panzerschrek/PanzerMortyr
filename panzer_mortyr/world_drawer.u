@@ -15,6 +15,7 @@ import "gl_functions.iu"
 import "image_loading.iu"
 import "map_quad_utils.iu"
 import "map_visibility_visualization.iu"
+import "precipitation_constants.iu"
 import "room_clusters_bsp_tree_visualization.iu"
 import "world_drawer.iu"
 
@@ -1104,8 +1105,7 @@ fn WorldDrawer::DrawPartial(
 			{
 				var ZmapLamData& zmap_lam_data= map_data.zmap_lam_data.deref();
 
-				var f32 c_movement_speed= 64.0f;
-				var f32 movement_distance= drawing_info.game_time_s * c_movement_speed;
+				var f32 movement_distance= drawing_info.game_time_s * PrecipitationConstants::snow_speed;
 
 				// For some reason the billboards description file doesn't contain a description for snowflake billboard.
 				// So, just hardcode it.
@@ -1140,8 +1140,7 @@ fn WorldDrawer::DrawPartial(
 					global_light_params.light_scale[2] * 0.25f,
 				];
 
-				var f32 c_movement_speed= 384.0f;
-				var f32 movement_distance= drawing_info.game_time_s * c_movement_speed;
+				var f32 movement_distance= drawing_info.game_time_s * PrecipitationConstants::rain_speed;
 
 				DrawSnowOrRain(
 					zmap_lam_data,
@@ -1201,6 +1200,22 @@ fn WorldDrawer::DrawPartial(
 			map_data.zmap_lam_data.deref(),
 			materials_block,
 			drawing_info.breaking_glass_effects,
+			semitransparent_polygons_buffer_.vertices,
+			semitransparent_polygons_buffer_.indices );
+	}
+
+	if( settings_.lock_imut().deref().r_water_circle_decals_enabled )
+	{
+		// Water circle decals use blending. So, put them into the buffer with other semitransparent polygons.
+		CreateWaterCircleDecalPolygons(
+			drawing_info.game_time_s,
+			map_data.water_circles_heirarchy,
+			map_data.zvox_data.deref().clusters,
+			map_data.zmap_data.deref().quads,
+			map_data.zmap_lam_data.deref(),
+			map_data.quads_hierarchy.deref(),
+			map_data.wet_material_bits,
+			camera_position,
 			semitransparent_polygons_buffer_.vertices,
 			semitransparent_polygons_buffer_.indices );
 	}
@@ -1645,6 +1660,15 @@ fn WorldDrawer::SetMap( mut this, u32 map_index )
 	var ust::shared_ptr_final</RoomClustersBSPTree/> room_clusters_bsp_tree(
 		BuildRoomClustersBSPTree( zvox_data.clusters ) );
 
+	var BitArray mut wet_material_bits= CreateWetMaterialsBitArray( materials_properties_ptr.deref(), materials_block );
+
+	var WaterCirclesHierarchy mut water_circles_heirarchy;
+	if( map_description.precipitation_kind == MapsDescription::MapDescription::c_precipitation_kind_rain )
+	{
+		water_circles_heirarchy=
+			BuildWaterCirclesHierarchy( zmap_lam_data.rain_droplets, zmap_data.quads, wet_material_bits );
+	}
+
 	map_data_.reset(
 		MapFullDrawData
 		{
@@ -1685,6 +1709,8 @@ fn WorldDrawer::SetMap( mut this, u32 map_index )
 				],
 				.global_fog_enabled= map_description.linear_fog_enabled,
 				.breakable_material_bits= move(breakable_material_bits),
+				.wet_material_bits= move(wet_material_bits),
+				.water_circles_heirarchy= move(water_circles_heirarchy),
 			},
 			.map_visibility_calculators[ ( room_clusters_bsp_tree ) ... ],
 		} );
@@ -3539,8 +3565,7 @@ fn PrepareVertexArrayObjectWithMapVertexFormat(
 }
 
 fn CreateBreakableMaterialsBitArray(
-	MaterialsProperties& materials_properties,
-	MaterialsDescription::Block& materials_block ) : BitArray
+	MaterialsProperties& materials_properties, MaterialsDescription::Block& materials_block ) : BitArray
 {
 	var size_type num_tiles_in_texture(
 		MaterialsDescription::c_texture_file_num_tiles_x * MaterialsDescription::c_texture_file_num_tiles_y );
@@ -3557,8 +3582,7 @@ fn CreateBreakableMaterialsBitArray(
 
 			foreach( &material_property : materials_properties )
 			{
-				if( material_kind_name == material_property.name &&
-					material_property.fragile )
+				if( material_kind_name == material_property.name && material_property.fragile )
 				{
 					breakable_materials_bit_array.SetBitToOne( i * num_tiles_in_texture + j );
 				}
@@ -3567,6 +3591,35 @@ fn CreateBreakableMaterialsBitArray(
 	}
 
 	return breakable_materials_bit_array;
+}
+
+fn CreateWetMaterialsBitArray(
+	MaterialsProperties& materials_properties, MaterialsDescription::Block& materials_block ) : BitArray
+{
+	var size_type num_tiles_in_texture(
+		MaterialsDescription::c_texture_file_num_tiles_x * MaterialsDescription::c_texture_file_num_tiles_y );
+
+	var BitArray mut wet_materials_bit_array( materials_block.textures.size() * num_tiles_in_texture );
+
+	for( auto mut i= 0s; i < materials_block.textures.size(); ++i )
+	{
+		var MaterialsDescription::Texture& texture= materials_block.textures[i];
+
+		for( auto mut j= 0s; j < num_tiles_in_texture; ++j )
+		{
+			var ust::string_view8 material_kind_name= texture.materials[j];
+
+			foreach( &material_property : materials_properties )
+			{
+				if( material_kind_name == material_property.name && material_property.water_mark != 0u )
+				{
+					wet_materials_bit_array.SetBitToOne( i * num_tiles_in_texture + j );
+				}
+			}
+		}
+	}
+
+	return wet_materials_bit_array;
 }
 
 fn CreateSnowRainBuffer( ZmapLamData& zmap_lam_data ) : SnowRainBuffer
@@ -4009,9 +4062,9 @@ var size_type c_max_mirror_polygon_indices= c_max_mirror_polygon_vertices * 3s /
 var size_type c_max_breakable_polygon_vertices= 2048s;
 var size_type c_max_breakable_polygon_indices= c_max_breakable_polygon_vertices * 3s / 2s;
 
-// Enough vertices/indices for 4096 quads or 5461 triangles.
-// We require so many, since we can have a lot of glass shards.
-var size_type c_max_semitransparent_polygon_vertices= 16384s;
+// Enough vertices/indices for 5000 quads or 6666 triangles.
+// We require so many, since we can have a lot of glass shards and water circles.
+var size_type c_max_semitransparent_polygon_vertices= 20000s;
 var size_type c_max_semitransparent_polygon_indices= c_max_semitransparent_polygon_vertices * 3s / 2s;
 
 // Enough vertices for 512 decals considering each decal is split in two parts.
