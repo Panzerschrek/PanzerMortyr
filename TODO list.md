@@ -100,7 +100,6 @@ PanzerMortyr rendering:
 
 * Apply additional tessellation for tessellated polygons in order to perform smoother light values interpolation (naively triangulating them doesn't produce good result always).
 * Draw animated water circle decals on map quads with "wet" property enabled in points where a rain particle hits such quad.
-* Suport light soruces with conic shape and use such source kind of source for flashlight.
 * Add support for MSAA (with proper support of fullscreen effects like fog).
 * Somehow distort/colorize the whole image while swimming in water. Maybe even add or alter global fog if camera is in water volume.
 * Consider optimizing calculating light from point light sources for models - avoid enumerating all lights.
