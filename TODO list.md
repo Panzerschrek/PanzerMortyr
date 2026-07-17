@@ -103,7 +103,6 @@ PanzerMortyr rendering:
 * Somehow distort/colorize the whole image while swimming in water. Maybe even add or alter global fog if camera is in water volume.
 * Consider optimizing calculating light from point light sources for models - avoid enumerating all lights.
 * Consider drawing blob shadows under models (as some sort of decal?).
-* Allow changing brightness, maybe by tuning lights power.
 * Consider drawing map polygons with detail textures (generate such textures somehow).
 * Consider drawing some sort of fullscreen frame-like image of the acid protection suit mask if this powerup is active.
 * Consider colorizing the whole image while the acid protection suit is active.
@@ -121,12 +120,12 @@ PanzerMortyr rendering:
 
 PanzerMortyr menus and HUD:
 
-* Implement loading screen.
 * Allow changing HUD position via settings menu.
 * Implement some stub page for parental lock menu.
 * Make advanced options menu functinal.
 * Extend existing setting menus/add new ones for extra options specific for PanzerMortyr.
 * Consider allowing specifying custom window resolution for windowed mode on video settings page.
+* Allow setting game and brightness via menu.
 * Show low health and armor numbers in HUD using red color.
 * Consider displaying in HUD amounts of tools in inventory, at least important ones - health, ammo.
 * Consider drawing active tools at some edge (left or right) of the screen.
