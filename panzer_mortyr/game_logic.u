@@ -71,6 +71,7 @@ fn CreateNewMapGameState(
 				.night_vision_is_active= false,
 				.infrared_vision_is_active= false,
 				.flashlight_is_active= false,
+				.jetpack_is_active= false,
 			},
 			.last_requested_key_type= EntitiesDescription::ToolType::None,
 			.last_key_request_step= 0u,
@@ -291,6 +292,7 @@ fn CreateNewMapGameState(
 						.night_vision_is_active= false,
 						.infrared_vision_is_active= false,
 						.flashlight_is_active= false,
+						.jetpack_is_active= false,
 					},
 					.last_requested_key_type= EntitiesDescription::ToolType::None,
 					.last_key_request_step= 0u,
@@ -362,6 +364,7 @@ fn CreateNewMapGameState(
 					player_state.tools_state.night_vision_is_active= prev_state.tools_state.night_vision_is_active;
 					player_state.tools_state.infrared_vision_is_active= prev_state.tools_state.infrared_vision_is_active;
 					player_state.tools_state.flashlight_is_active= prev_state.tools_state.flashlight_is_active;
+					player_state.tools_state.jetpack_is_active= prev_state.tools_state.jetpack_is_active;
 				}
 			}
 
@@ -1518,6 +1521,10 @@ fn PerformPlayerInventoryLogic(
 			{
 				ProcesFlashlightToolActivationRequest( player );
 			},
+			EntitiesDescription::ToolType::Jetpack ->
+			{
+				ProcessJetpackToolActivationRequest( player );
+			},
 			default -> {},
 		}
 	}
@@ -1537,6 +1544,10 @@ fn PerformPlayerInventoryLogic(
 	if( player_inventory_input.flashlight_activation_requested )
 	{
 		ProcesFlashlightToolActivationRequest( player );
+	}
+	if( player_inventory_input.jetpack_activation_requested )
+	{
+		ProcessJetpackToolActivationRequest( player );
 	}
 }
 
@@ -1587,6 +1598,18 @@ fn ProcesFlashlightToolActivationRequest( PlayerState &mut player )
 	else if( player.inventory[ size_type( EntitiesDescription::ToolType::Flashlight ) ] > 0u )
 	{
 		player.tools_state.flashlight_is_active= true;
+	}
+}
+
+fn ProcessJetpackToolActivationRequest( PlayerState &mut player )
+{
+	if( player.tools_state.jetpack_is_active )
+	{
+		player.tools_state.jetpack_is_active= false;
+	}
+	else if( player.inventory[ size_type( EntitiesDescription::ToolType::Jetpack ) ] > 0u )
+	{
+		player.tools_state.jetpack_is_active= true;
 	}
 }
 
@@ -1665,6 +1688,23 @@ fn UpdatePlayerActiveTools( PlayerState &mut player, u32 step_index )
 			if( amount == 0u )
 			{
 				player.tools_state.flashlight_is_active= false;
+			}
+		}
+	}
+
+	if( player.tools_state.jetpack_is_active )
+	{
+		var u32 &mut amount= player.inventory[ size_type( EntitiesDescription::ToolType::Jetpack ) ];
+		if( amount == 0u )
+		{
+			player.tools_state.jetpack_is_active= false;
+		}
+		else
+		{
+			--amount;
+			if( amount == 0u )
+			{
+				player.tools_state.jetpack_is_active= false;
 			}
 		}
 	}
@@ -2074,17 +2114,33 @@ fn ApplyPlayerUnclippedMovement(
 		// Apply fast no deceleration while in air.
 		var f32 constexpr horizontal_air_deceleation_per_step= 0.05f;
 
+		var f32 constexpr jetpack_horizontal_acceleration_per_step= 0.4f;
+		// Use jetpack acceleration slightly greater than gravity to be able to fly up.
+		var f32 constexpr jetpack_vertical_acceleration_per_step= c_gravity_per_step + 0.4f;
+
 		var Vec3f move_vector_transformed=
 			move_wish_direction.x * forward_vector +
 			move_wish_direction.y * right_vector;
 
 		player_state.velocity+=
 			move_vector_transformed *
-			( player_state.on_ground ? horizontal_acceleration_per_step : horizontal_air_acceleration_per_step );
+			( player_state.on_ground
+				? horizontal_acceleration_per_step
+				: ( player_state.tools_state.jetpack_is_active
+					? jetpack_horizontal_acceleration_per_step
+					: horizontal_air_acceleration_per_step ) );
+
+		if( player_state.tools_state.jetpack_is_active )
+		{
+			// With jetpack allow accelerating up, but not down.
+			player_state.velocity.z+=
+				ust::min( move_wish_direction.z, 0.0f ) * down_vector.z * jetpack_vertical_acceleration_per_step;
+		}
 
 		player_state.velocity.z+= c_gravity_per_step;
 
-		if( jump_requested && player_state.on_ground )
+		if( jump_requested && player_state.on_ground &&
+			!player_state.tools_state.jetpack_is_active /* Jumping with jetpack looks ugly. So, disable it. */ )
 		{
 			player_state.velocity.z+= c_jump_vertical_velocity_add * crouching_related_movement_scale;
 

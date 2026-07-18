@@ -61,7 +61,6 @@ PanzerMortyr game logic:
 * Implement remaining entity state transitions (used only by some enemy types).
 * Consider implement armor seeking/pick-up behavior for enemies.
 * Break glass quads and quads with breakable materials while applying spash damage. The original game doesn't do this and it doesn't look right.
-* Implement jetpack tool.
 * Implement invisibility tool (false documents) and enemy properties allowing to uncover the player having invisibility.
 * Implement flame particles emitted by explosive decorations ("wybuch_benzyny"/"plomienie").
 * Spawn water splash particles if a projectile hits water surface.

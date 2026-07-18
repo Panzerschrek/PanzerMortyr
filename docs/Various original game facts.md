@@ -29,6 +29,7 @@ This documents describes various interesting facts about the original game.
 * The volkssturm enemy (with grenades) surrenders if has no ammo left, but it's a false surrender (a notable war crime), he continues fighting and searches for more ammunition as long as the player can't see him.
 * Some maps can't be left until some condition is satisfied - necessary items (Quantum Receptor piece) are collected or a boss (the Tank) is killed.
 * The jetpack item is present only at one place in the whole game - on the last level just before boss battle.
+* Jetpack being activated doesn't prevent fall damage.
 * Enemies can pass through each other (with no collision), at least while patrolling.
 * Idle animations for first-person weapons are the same as walk animations on multiplayer maps.
 * Having two different idle animations for first-person weapons is supported, but no weapon actually uses it.
@@ -65,6 +66,8 @@ This documents describes various interesting facts about the original game.
 * Map 0 is a raw version of maps 10 and 33 combined.
 * Map 22 contains elements of maps 1 and 11.
 * Note images 14, 21, 22 aren't used.
+* Game resources contain many sound files intended to be used for some specific enemies, but they are not actually used and not listed in the GLOS.STD file. It's presumably due to memory limitation, adding them manually causes the game to exit on startup with an error message reporting too much audio samples being used.
+* There is an item with codename BUTLA_TLENU, which isn't used in the game. It's possible to get it via cheats, it acts like a power-up allowing breathing under water and has an icon identical to the acid protection suit item.
 
 ### Bugs
 
@@ -81,7 +84,8 @@ This documents describes various interesting facts about the original game.
 * In a couple of places (map exit door button on map 34, elevator buttons on map 3) buttons move in wrong direction.
 * Many dynamic clusters (doors, buttons, elevators) are pitch-dark - no proper light is calculated for them.
 * Due to buggy precalculated snow paths sometimes snow can be seen where it shouldn't be (with no sky above).
-* Cabinet decorations have incorrect collider box - it's too low and wide.
+* Many decorations have incorrect collider box - it's too low and wide.
+* Many pick-ups have incorrect collider box, so that they appear to be half-submerged into the ground.
 * In some rare places it's possible to see some map parts through a broken window - where normally only sky should be shown.
 * Perspective for first-person weapon models is broken while zooming.
 * Sun and moon sprites are rotated together with camera rotation, which is incorrect.
@@ -89,3 +93,4 @@ This documents describes various interesting facts about the original game.
 * In future maps icons for key items are incorrect. There are golden/silver/blue keycard icons present in PANEL.BMP, but instead golden/silver swastic keys and golden keycard (instead of blue one) are used.
 * The original game has some hard limit for the number of sounds playing simultaneously. This limit is reached on some future maps due to Robo Ed enemies emitting idle sounds, so that some other sounds disappear.
 * Projectiles have very limited lifetime (2 seconds or so), so that panzerfaust shots may disappear before hitting something.
+* Robo Ed. enemies can't sometimes navigate in tight corridors (like on map 19), because their bounding boxes are way too large.
