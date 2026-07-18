@@ -69,6 +69,12 @@ This documents describes various interesting facts about the original game.
 * Game resources contain many sound files intended to be used for some specific enemies, but they are not actually used and not listed in the GLOS.STD file. It's presumably due to memory limitation, adding them manually causes the game to exit on startup with an error message reporting too much audio samples being used.
 * There is an item with codename BUTLA_TLENU, which isn't used in the game. It's possible to get it via cheats, it acts like a power-up allowing breathing under water and has an icon identical to the acid protection suit item.
 
+## Supplement material oddities
+
+* It's mentioned on the back side of the retail box, that the game has 21 levels. But it has actually 30 singleplayer levels. But if some adjacent levels are considered to be one level (as they technically are combined in the beta version), the result number is 21.
+* There is a screenshot of map 19 on the back side of the retail box with the character having MP-40 as active weapon. This is impossible to achieve, MP-40 is not obtainable on future maps.
+* The original manual suggest to change crosshair mode via console by typing command `aim on`. It seems to be very strange.
+
 ### Bugs
 
 * It's possible to shoot through walls via some weapons by staying too close to a wall.
