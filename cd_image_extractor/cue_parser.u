@@ -104,7 +104,7 @@ fn ParseCueTrack(
 	ParsingState &mut parsing_state ) : ust::optional</CueFileParsed::Track/>
 {
 	auto track_number_opt=
-		TryParseNumberWithLeadingZeros( track_words_iterator.next().deref_or( ust::string_view8() ) );
+		ParseNumberWithLeadingZeros( track_words_iterator.next().deref_or( ust::string_view8() ) );
 
 	if( track_number_opt.empty() )
 	{
@@ -140,7 +140,11 @@ fn ParseCueTrack(
 			parsing_state.NextLine();
 			ust::stdout_print( "Has index\n" );
 
-			// TODO - parse index here.
+			auto mut track_index_opt= ParseTrackIndex( words_iterator );
+			if( !track_index_opt.empty() )
+			{
+				track.indices.push_back( track_index_opt.try_take() );
+			}
 		}
 		else
 		{
@@ -149,6 +153,73 @@ fn ParseCueTrack(
 	}
 
 	return track;
+}
+
+fn ParseTrackIndex(
+	ust::iterator</ WordsIterator /> &mut words_iterator ) : ust::optional</ CueFileParsed::TrackIndex />
+{
+	auto number_opt= ParseNumberWithLeadingZeros( words_iterator.next().deref_or( ust::string_view8() ) );
+
+	if( number_opt.empty() )
+	{
+		ust::stderr_print( "Failed to parse index number!\n" );
+		return ust::null_optional;
+	}
+
+	auto mut offset_opt= ParseOffset( words_iterator.next().deref_or( ust::string_view8() ) );
+
+	if( offset_opt.empty() )
+	{
+		ust::stderr_print( "Failed to parse frame offset!\n" );
+		return ust::null_optional;
+	}
+
+	ust::stdout_print( ust::concat( "Offset is ", ust::to_string8( offset_opt.try_deref() ), "\n" ) );
+
+	return CueFileParsed::TrackIndex
+	{
+		.number= number_opt.try_deref(),
+		.offset_frames= offset_opt.try_deref(),
+	};
+}
+
+fn ParseOffset( ust::string_view8 mut s ) : ust::optional</u32/>
+{
+	if( s.size() < 8s )
+	{
+		return ust::null_optional;
+	}
+
+	if( s[2s] != ':' || s[5s] != ':' )
+	{
+		return ust::null_optional;
+	}
+
+	var [ u32, 3 ] mut components[ 0u ... ];
+
+	for( auto mut i= 0s; i < 3s; ++i )
+	{
+		var char8 d0= s[0s];
+		var char8 d1= s[1s];
+		if( !( d0 >= '0' && d0 <= '9' ) )
+		{
+			return ust::null_optional;
+		}
+		if( !( d1 >= '0' && d1 <= '9' ) )
+		{
+			return ust::null_optional;
+		}
+
+		components[i]= ( u32( d0 ) - u32('0') ) * 10u + ( u32( d1 ) - u32( '0' ) );
+		s.drop_front();
+		s.drop_front();
+		if( !s.empty() )
+		{
+			s.drop_front();
+		}
+	}
+
+	return ( components[0] * 60u + components[1] ) * 75u + components[2];
 }
 
 fn ParseQuotedString( ust::string_view8 &mut s ) : ust::optional</ust::string8/>
@@ -186,7 +257,7 @@ fn SkipWhitespaces( ust::string_view8 &mut s )
 	}
 }
 
-fn TryParseNumberWithLeadingZeros( ust::string_view8 mut s ) : ust::optional</u32/>
+fn ParseNumberWithLeadingZeros( ust::string_view8 mut s ) : ust::optional</u32/>
 {
 	if( s.empty() )
 	{
