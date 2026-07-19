@@ -1,0 +1,148 @@
+import "/stdout.iu"
+import "/common_lib/string_iterators.iu"
+import "cue_parser.iu"
+
+namespace PM
+{
+
+fn ParseCueFile( ust::string_view8 file_contents ) : ust::optional</CueFileParsed/>
+{
+	var CueFileParsed mut cue_file_parsed;
+
+	var ParsingState mut parsing_state{ .it= ust::wrap_raw_iterator( LinesRawIterator( file_contents ) ) };
+
+	parsing_state.NextLine();
+
+	while( !parsing_state.current_line.empty() )
+	{
+		var ust::string_view8 current_line= parsing_state.current_line.try_deref();
+
+		if( current_line.starts_with( "FILE " ) )
+		{
+			var ust::string_view8 mut line= current_line.subrange_start( 5s );
+
+			while( !line.empty() && line.front() == ' ' )
+			{
+				line.drop_front();
+			}
+
+			if( line.empty() )
+			{
+				ust::stderr_print( "Unexpected end of line\n" );
+				continue;
+			}
+
+			if( line.front() != '"' )
+			{
+				ust::stderr_print( "Expected \"\n" );
+				continue;
+			}
+			line.drop_front();
+
+			var ust::filesystem_path mut file_path;
+			while( !line.empty() )
+			{
+				var char8 c= line.drop_and_get_front();
+				if( c == '"' )
+				{
+					break;
+				}
+				file_path.push_back(c);
+			}
+
+			ust::stdout_print( ust::concat( "Has file \"", file_path, "\"\n" ) );
+
+			// TODO - parse file type here (BINARY or soemthing else).
+
+			parsing_state.NextLine();
+
+			auto mut file_entry_opt= ParseCueFileEntry( move(file_path), parsing_state );
+			if( !file_entry_opt.empty() )
+			{
+				cue_file_parsed.files.push_back( file_entry_opt.try_take() );
+			}
+		}
+		else
+		{
+			ust::stderr_print( ust::concat( "Unknown top-level entry: ", current_line, "\n" ) );
+			parsing_state.NextLine();
+		}
+	}
+
+	return cue_file_parsed;
+}
+
+struct ParsingState
+{
+	ust::optional</ ust::string_view8 /> @( "a" ) current_line;
+	ust::iterator</ LinesRawIterator /> @( "a" ) it;
+
+	fn NextLine( mut this )
+	{
+		current_line= it.next();
+	}
+}
+
+fn ParseCueFileEntry(
+	ust::filesystem_path mut file_path, ParsingState &mut parsing_state ) : ust::optional</CueFileParsed::File/>
+{
+	var CueFileParsed::File mut file_entry{ .path= file_path };
+
+	while( !parsing_state.current_line.empty() )
+	{
+		auto mut words_iterator= ust::wrap_raw_iterator( WordsIterator( parsing_state.current_line.try_deref() ) );
+
+		var ust::string_view8 first_word= words_iterator.next().deref_or( ust::string_view8() );
+
+		if( first_word == "TRACK" )
+		{
+			parsing_state.NextLine();
+
+			ust::stdout_print( "has track\n" );
+			auto mut track_opt= ParseCueTrack( words_iterator, parsing_state );
+			if( !track_opt.empty() )
+			{
+				file_entry.tracks.push_back( track_opt.try_take() );
+			}
+		}
+		else
+		{
+			break;
+		}
+	}
+
+	return file_entry;
+}
+
+fn ParseCueTrack(
+	ust::iterator</ WordsIterator /> &mut track_words_iterator,
+	ParsingState &mut parsing_state ) : ust::optional</CueFileParsed::Track/>
+{
+	// TODO - parse track description here.
+	ust::ignore_unused( track_words_iterator );
+
+	var CueFileParsed::Track mut track{ .index= 0u, .mode= CueFileParsed::TrackMode::Audio };
+
+	while( !parsing_state.current_line.empty() )
+	{
+		auto mut words_iterator= ust::wrap_raw_iterator( WordsIterator( parsing_state.current_line.try_deref() ) );
+
+		var ust::string_view8 first_word= words_iterator.next().deref_or( ust::string_view8() );
+
+		if( first_word == "INDEX" )
+		{
+			parsing_state.NextLine();
+			ust::stdout_print( "Has index\n" );
+
+			// TODO - parse index here.
+		}
+		else
+		{
+			break;
+		}
+	}
+
+	return track;
+}
+
+} // namespace PM
