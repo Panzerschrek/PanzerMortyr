@@ -94,7 +94,7 @@ fn nodiscard ExtractFile(
 					ust::to_string8( end_offset.deref_or( ~0u ) ),
 					"\n" ) );
 
-			result_check_or_return( WriteTrack( f, out_file_path, index, end_offset ) );
+			result_check_or_return( WriteTrack( f, out_file_path, index, track.mode, end_offset ) );
 
 			break;
 		}
@@ -107,17 +107,16 @@ fn WriteTrack(
 	ust::file_readable &mut f,
 	ust::filesystem_path_view out_file_path,
 	CueFileParsed::TrackIndex& index,
+	CueFileParsed::TrackMode track_mode,
 	ust::optional</u32/> end_offset ) : ust::io_result</void/>
 {
 	result_unwrap_or_return( mut out_file : ust::file_writeable::create( out_file_path ) );
-
-	var u64 constexpr c_frame_size_bytes( 2352 );
 
 	result_check_or_return( f.seek( c_frame_size_bytes * u64( index.offset_frames ) ) );
 
 	// TODO - write WAV header for audio data.
 
-	var [ byte8, c_frame_size_bytes ] mut bytes= zero_init;
+	var [ byte8, c_frame_size_bytes ] mut frame_bytes= zero_init;
 
 	if_var( &o : end_offset )
 	{
@@ -125,11 +124,8 @@ fn WriteTrack(
 
 		while( current_offset_frames < o )
 		{
-			result_check_or_return( f.read_exact( bytes ) );
-
-			// TODO - write only 2048 bytes for MODE1/2352.
-			result_check_or_return( out_file.write_all( bytes ) );
-
+			result_check_or_return( f.read_exact( frame_bytes ) );
+			result_check_or_return( WriteFrame( out_file, frame_bytes, track_mode ) );
 			++current_offset_frames;
 		}
 	}
@@ -137,13 +133,12 @@ fn WriteTrack(
 	{
 		loop
 		{
-			result_match( f.read_exact( bytes ) )
+			result_match( f.read_exact( frame_bytes ) )
 			{
 				Ok(v) ->
 				{
 					ust::ignore_unused(v);
-					// TODO - write only 2048 bytes for MODE1/2352.
-					result_check_or_return( out_file.write_all( bytes ) );
+					result_check_or_return( WriteFrame( out_file, frame_bytes, track_mode ) );
 				},
 				Err(e) ->
 				{
@@ -158,6 +153,29 @@ fn WriteTrack(
 	}
 
 	return move( out_file ).close();
+}
+
+var u64 constexpr c_frame_size_bytes( 2352 );
+
+fn WriteFrame(
+	ust::file_writeable &mut f,
+	[ byte8, c_frame_size_bytes ]& frame_bytes,
+	CueFileParsed::TrackMode track_mode ) : ust::io_result</void/>
+{
+	switch( track_mode )
+	{
+		CueFileParsed::TrackMode::Audio ->
+		{
+			result_check_or_return( f.write_all( frame_bytes ) );
+		},
+		CueFileParsed::TrackMode::Mode1_2352 ->
+		{
+			result_check_or_return(
+				f.write_all( ust::array_view_imut</byte8/>( frame_bytes ).subrange( 16s, 2064s ) ) );
+		},
+	}
+
+	return void();
 }
 
 } // namespace PM
