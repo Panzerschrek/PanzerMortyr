@@ -5,6 +5,7 @@ import "/path_utils.iu"
 import "/sort.iu"
 import "/string_conversions.iu"
 import "cue_tracks_extractor.iu"
+import "wav_header.iu"
 
 namespace PM
 {
@@ -119,7 +120,32 @@ fn WriteTrack(
 
 	result_check_or_return( f.seek( c_frame_size_bytes * u64( index.offset_frames ) ) );
 
-	// TODO - write WAV header for audio data.
+	switch( track_mode )
+	{
+		CueFileParsed::TrackMode::Audio ->
+		{
+			var u32 num_data_bytes= ( end_offset - index.offset_frames ) * u32( c_frame_size_bytes );
+			var WavHeader header
+			{
+				.file_type_block_id= 0x46464952u,
+				.file_size= u32( typeinfo</WavHeader/>.size_of ) - 8u + num_data_bytes,
+				.file_format_id= 0x45564157u,
+				.format_block_id= 0x20746D66u,
+				.block_size= 0x10u,
+				.audio_format(1),
+				.num_channels(2),
+				.frequency= 44100u,
+				.bytes_per_sec= 44100u * 2u * 2u,
+				.bytes_per_block( 2u * 2u ),
+				.bits_per_sample(16),
+				.data_block_id= 0x61746164u,
+				.data_size= num_data_bytes,
+			};
+
+			result_check_or_return( out_file.write_all( ust::single_element_array_view( header ).to_byte8_range() ) );
+		},
+		CueFileParsed::TrackMode::Mode1_2352 -> {},
+	}
 
 	var [ byte8, c_frame_size_bytes ] mut frame_bytes= zero_init;
 
