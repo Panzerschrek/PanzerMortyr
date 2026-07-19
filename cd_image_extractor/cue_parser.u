@@ -1,4 +1,7 @@
+import "/enum_string_conversions.iu"
+import "/number_parsing.iu"
 import "/stdout.iu"
+import "/string_conversions.iu"
 import "/common_lib/string_iterators.iu"
 import "cue_parser.iu"
 
@@ -100,10 +103,31 @@ fn ParseCueTrack(
 	ust::iterator</ WordsIterator /> &mut track_words_iterator,
 	ParsingState &mut parsing_state ) : ust::optional</CueFileParsed::Track/>
 {
-	// TODO - parse track description here.
-	ust::ignore_unused( track_words_iterator );
+	auto track_number_opt=
+		TryParseNumberWithLeadingZeros( track_words_iterator.next().deref_or( ust::string_view8() ) );
 
-	var CueFileParsed::Track mut track{ .index= 0u, .mode= CueFileParsed::TrackMode::Audio };
+	if( track_number_opt.empty() )
+	{
+		ust::stderr_print( "Failed to parse track number!\n" );
+		return ust::null_optional;
+	}
+
+	ust::stdout_print( ust::concat( "Track number is ", ust::to_string8( track_number_opt.try_deref() ), "\n" ) );
+
+	auto track_mode_opt= TraParseTrackMode( track_words_iterator.next().deref_or( ust::string_view8() ) );
+	if( track_mode_opt.empty() )
+	{
+		ust::stderr_print( "Unsupported track mode!\n" );
+		return ust::null_optional;
+	}
+
+	ust::stdout_print( ust::concat( "Track mode is ", ust::enum_to_string( track_mode_opt.try_deref() ), "\n" ) );
+
+	var CueFileParsed::Track mut track
+	{
+		.number= track_number_opt.try_deref(),
+		.mode= track_mode_opt.try_deref(),
+	};
 
 	while( !parsing_state.current_line.empty() )
 	{
@@ -160,6 +184,39 @@ fn SkipWhitespaces( ust::string_view8 &mut s )
 	{
 		s.drop_front();
 	}
+}
+
+fn TryParseNumberWithLeadingZeros( ust::string_view8 mut s ) : ust::optional</u32/>
+{
+	if( s.empty() )
+	{
+		return ust::null_optional;
+	}
+
+	if( s == "0" )
+	{
+		return 0u;
+	}
+
+	while( !s.empty() && s.front() == '0' )
+	{
+		s.drop_front();
+	}
+
+	return ust::parse_number_exact</u32/>( s );
+}
+
+fn TraParseTrackMode( ust::string_view8 name ) : ust::optional</CueFileParsed::TrackMode/>
+{
+	if( name == "AUDIO" )
+	{
+		return CueFileParsed::TrackMode::Audio;
+	}
+	if( name == "MODE1/2352" )
+	{
+		return CueFileParsed::TrackMode::Mode1_2352;
+	}
+	return ust::null_optional;
 }
 
 } // namespace PM
