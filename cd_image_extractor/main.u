@@ -1,7 +1,8 @@
 import "/enum_string_conversions.iu"
+import "/file_helpers.iu"
 import "/main_wrapper.iu"
 import "/stdout.iu"
-import "/file_helpers.iu"
+import "/string_conversions.iu"
 import "/path_utils.iu"
 import "/common_lib/char_case.iu"
 import "cue_parser.iu"
@@ -105,15 +106,45 @@ fn nodiscard ProcessIsoFile( ust::filesystem_path_view iso_file_path ) : bool
 
 	var ust::file_readable mut file= move(file_res).try_take();
 
-	if_var( e : ParseIsoFile( file ).as_error_ref() )
+	auto mut parse_res= ParseIsoFile( file );
+
+	if_var( e : parse_res.as_error_ref() )
 	{
 		ust::stderr_print(
 			ust::concat( "Failed to parse ISO file \"", iso_file_path, "\"! Error: ", ust::enum_to_string(e) ) );
 		return false;
 	}
 
-	// TODO
+	PrintIsoDirectory_r( parse_res.try_deref(), "" );
+
 	return true;
+}
+
+fn PrintIsoHierarchy_r( EntryInIso& entry, ust::string_view8 prefix )
+{
+	if_var( &dir : entry.get</ ust::box</ DirectoryInIso /> />() )
+	{
+		PrintIsoDirectory_r( dir.deref(), prefix );
+	}
+	else if_var( &file : entry.get</ FileInIso />() )
+	{
+		ust::stdout_print(
+			ust::concat(
+				"\"",
+				prefix,
+				"\" at offset ",
+				ust::to_string8( file.offset ),
+				" with size ",
+				ust::to_string8( file.size ), "\n" ) );
+	}
+}
+
+fn PrintIsoDirectory_r(  DirectoryInIso& dir, ust::string_view8 prefix )
+{
+	foreach( &subentry : dir.entries )
+	{
+		PrintIsoHierarchy_r( subentry[1], ust::concat( prefix, "/", subentry[0] ) );
+	}
 }
 
 } // namespace PM

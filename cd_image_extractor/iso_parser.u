@@ -2,14 +2,13 @@ import "/path_utils.iu"
 import "/stdout.iu"
 import "/string_conversions.iu"
 import "/utf.iu"
-import "/vector.iu"
 import "iso_file.iu"
 import "iso_parser.iu"
 
 namespace PM
 {
 
-fn ParseIsoFile( ust::file_readable &mut f ) : ust::io_result</void/>
+fn ParseIsoFile( ust::file_readable &mut f ) : ust::io_result</DirectoryInIso/>
 {
 	result_check_or_return( f.seek( 32768u64 ) );
 
@@ -40,8 +39,6 @@ fn ParseIsoFile( ust::file_readable &mut f ) : ust::io_result</void/>
 			break;
 		}
 
-		ust::stdout_print( ust::concat( "A volume of type ", ust::to_string8( volume_descriptor.header.type_ ), "\n" ) );
-
 		volume_descriptors.push_back( volume_descriptor );
 	}
 
@@ -50,7 +47,6 @@ fn ParseIsoFile( ust::file_readable &mut f ) : ust::io_result</void/>
 		// Process only TYPE 2 volumes, since they have non-restricted file names (with no file name limit).
 		if( v.header.type_ == 2u8 )
 		{
-			ust::stdout_print( "\nTYPE 2 VOLUME:\n\n" );
 
 			var IsoPrimaryVolumeDescriptor mut primary_volume_descriptor= zero_init;
 			ust::single_element_array_view( primary_volume_descriptor ).to_byte8_range().copy_from(
@@ -61,23 +57,19 @@ fn ParseIsoFile( ust::file_readable &mut f ) : ust::io_result</void/>
 
 			var u32 block_size( primary_volume_descriptor.logical_block_size[0] );
 
-			var u32 root_extent_location= ReadNumBytes( root_directory.extent_location[0] );
-			var u32 root_extent_length= ReadNumBytes( root_directory.data_length[0] );
-
-			ust::stdout_print( ust::concat( "length is ", ust::to_string8( root_extent_length ), " at ", ust::to_string8( root_extent_location ), "\n" ) );
-
-			result_check_or_return( ReadDirectory( f, block_size, root_directory, "" ) );
+			return ReadDirectory( f, block_size, root_directory );
 		}
 	}
 
-	return void();
+	ust::stderr_print( "No volume of type 2 found!\n" );
+
+	return ust::io_error::not_found;
 }
 
 fn ReadDirectory(
 	ust::file_readable &mut f,
 	u32 block_size,
-	IsoDirectoryRecordHeader& directory_header,
-	ust::filesystem_path_view prefix ) : ust::io_result</void/>
+	IsoDirectoryRecordHeader& directory_header ) : ust::io_result</DirectoryInIso/>
 {
 	var u32 extent_location= ReadNumBytes( directory_header.extent_location[0] );
 	var u32 extent_length= ReadNumBytes( directory_header.data_length[0] );
@@ -85,6 +77,8 @@ fn ReadDirectory(
 	result_check_or_return( f.seek( u64( block_size ) * u64( extent_location ) ) );
 
 	var ust::vector</ tup[ IsoDirectoryRecordHeader, ust::string8 ] /> mut subdirectories;
+
+	var DirectoryInIso mut out_directory;
 
 	var size_type mut record_index= 0s;
 	for( auto mut dir_offset= 0u; dir_offset < extent_length; )
@@ -121,16 +115,26 @@ fn ReadDirectory(
 
 		name.resize( separator_pos, '\0'c16 );
 
-		var ust::string8 name_prefixed= ust::path::join( prefix, ust::utf::convert_utf16_to_utf8_string( name ) );
-
-		ust::stdout_print( ust::concat( "Entry \"", name_prefixed, "\" with length ", ust::to_string8( size_type( entry_header.length_of_identifier ) / 2s ), "\n" ) );
+		var ust::string8 name_utf8= ust::utf::convert_utf16_to_utf8_string( name );
 
 		if( ( u32( entry_header.file_flags ) & 2u ) != 0u )
 		{
 			if( record_index >= 2s ) // Ignore "." and ".."
 			{
-				subdirectories.push_back( ust::make_tuple( entry_header, name_prefixed ) );
+				subdirectories.push_back( ust::make_tuple( entry_header, name_utf8 ) );
 			}
+		}
+		else
+		{
+			out_directory.entries.push_back(
+				ust::make_tuple(
+					name_utf8,
+					EntryInIso(
+						FileInIso
+						{
+							.offset= u64( block_size ) * u64( ReadNumBytes( entry_header.extent_location[0] ) ),
+							.size= u64( ReadNumBytes( entry_header.data_length[0] ) ),
+						} ) ) );
 		}
 
 		++record_index;
@@ -138,10 +142,11 @@ fn ReadDirectory(
 
 	foreach( &subdirectory : subdirectories )
 	{
-		result_check_or_return( ReadDirectory( f, block_size, subdirectory[0], subdirectory[1] ) );
+		result_unwrap_or_return( mut sd : ReadDirectory( f, block_size, subdirectory[0] ) );
+		out_directory.entries.push_back( ust::make_tuple( subdirectory[1], EntryInIso( ust::make_box( move(sd) ) ) ) );
 	}
 
-	return void();
+	return out_directory;
 }
 
 /*
