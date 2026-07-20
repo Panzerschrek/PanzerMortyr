@@ -25,36 +25,95 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 
 	if( args.size() < 2s )
 	{
-		ust::stderr_print( "Expected at least one argument!\n" );
-		return -1;
+		return ( SearchAndUseImageFileInCurrentDirectory() ? 0 : -1 );
 	}
 
-	var ust::filesystem_path_view in_file_path= args[1s];
+	return ( ProcessGivenFile( args[1s] ) ? 0 : -1 );
+}
 
+// Returns true on successs.
+fn nodiscard SearchAndUseImageFileInCurrentDirectory() : bool
+{
+	ust::stdout_print( "No arguments provided, searching for a CUE of an ISO file in the current directory\n" );
+
+	auto mut directory_iterator_res= ust::open_directory_for_iteration( ust::get_current_directory() );
+	if_var( e : directory_iterator_res.as_error_ref() )
+	{
+		ust::stderr_print(
+				ust::concat(
+					"Failed to open current directory for iteration! Error: ", ust::enum_to_string(e), "\n" ) );
+			return false;
+	}
+
+	var ust::vector</ust::filesystem_path/> mut cue_files, mut iso_files;
+
+	foreach( entry_res : move( directory_iterator_res ).try_take() )
+	{
+		if_var( &entry : entry_res.as_ref() )
+		{
+			if( entry.kind == ust::file_kind::file )
+			{
+				var ust::string_view8 file_extension=
+					ust::path::get_file_extension( entry.name ).deref_or( ust::string_view8() );
+				if( StringsAreCaseInsensetiveEqual( file_extension, "cue" ) )
+				{
+					ust::stdout_print( ust::concat( "Found a CUE file \"", entry.name, "\".\n" ) );
+					cue_files.push_back( entry.name );
+				}
+				else if( StringsAreCaseInsensetiveEqual( file_extension, "iso" ) )
+				{
+					ust::stdout_print( ust::concat( "Found an ISO file \"", entry.name, "\".\n" ) );
+					iso_files.push_back( entry.name );
+				}
+			}
+		}
+		else
+		{
+			ust::stderr_print( ust::concat( "Failed to get directory entry!\n" ) );
+			break;
+		}
+	}
+
+	if( cue_files.empty() && iso_files.empty() )
+	{
+		ust::stderr_print( "No CUE or ISO file found in current directory!\n" );
+		return false;
+	}
+
+	if( cue_files.size() == 1s && iso_files.size() == 0s )
+	{
+		return ProcessCueFile( cue_files.front() );
+	}
+
+	if( cue_files.size() == 0s && iso_files.size() == 1s )
+	{
+		return ProcessIsoFile( iso_files.front() );
+	}
+
+	ust::stderr_print( "Too many CUE or ISO files in current directory. Specify one of them explicitly!\n" );
+
+	return true;
+}
+
+// Returns true on successs.
+fn nodiscard ProcessGivenFile( ust::filesystem_path_view file_path ) : bool
+{
 	var ust::filesystem_path_view in_file_extension=
-		ust::path::get_file_extension( in_file_path ).deref_or( ust::string_view8() );
+		ust::path::get_file_extension( file_path ).deref_or( ust::string_view8() );
 
 	if( StringsAreCaseInsensetiveEqual( in_file_extension, "cue" ) )
 	{
-		if( !ProcessCueFile( in_file_path ) )
-		{
-			return -1;
-		}
+		return ProcessCueFile( file_path );
 	}
 	else if( StringsAreCaseInsensetiveEqual( in_file_extension, "iso" ) )
 	{
-		if( !ProcessIsoFile( in_file_path ) )
-		{
-			return -1;
-		}
+		return ProcessIsoFile( file_path );
 	}
 	else
 	{
 		ust::stderr_print( "Unsupported input file type! Expected a CUE or an ISO file!\n" );
-		return -1;
+		return false;
 	}
-
-	return 0;
 }
 
 // Returns true on successs.
@@ -166,7 +225,7 @@ fn nodiscard ProcessIsoFile( ust::filesystem_path_view iso_file_path ) : bool
 // Returns true on successs.
 fn nodiscard ParseAndExtractIsoFile( ust::filesystem_path_view iso_file_path ) : bool
 {
-	ust::stdout_print( "Process an ISO file.\n" );
+	ust::stdout_print( "Process an ISO file.\nNote that NO audio tracks can be extracted from it.\n" );
 
 	auto mut file_res= ust::file_readable::open( iso_file_path );
 	if_var( e : file_res.as_error_ref() )
