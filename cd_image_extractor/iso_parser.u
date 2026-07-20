@@ -1,3 +1,7 @@
+import "/stdout.iu"
+import "/string_conversions.iu"
+import "/vector.iu"
+import "iso_file.iu"
 import "iso_parser.iu"
 
 namespace PM
@@ -5,7 +9,51 @@ namespace PM
 
 fn ParseIsoFile( ust::file_readable &mut f ) : ust::io_result</void/>
 {
-	result_check_or_return( f.seek( 0u64 ) );
+	result_check_or_return( f.seek( 32768u64 ) );
+
+	var ust::vector</IsoVolumeDescriptor/> mut volume_descriptors;
+
+	var IsoVolumeDescriptor mut volume_descriptor= zero_init;
+
+	loop
+	{
+		result_check_or_return( f.read_exact( ust::single_element_array_view( volume_descriptor ).to_byte8_range() ) );
+
+		if( volume_descriptor.header.type_ == 255u8 )
+		{
+			break; // A terminator.
+		}
+
+		if( volume_descriptor.header.identifier != "CD001" )
+		{
+			ust::stderr_print( "Incorrect volume descriptor identifier!\n" );
+			break;
+		}
+
+		if( volume_descriptor.header.version != 1u8 )
+		{
+			ust::stderr_print(
+				ust::concat(
+					"Unsupported volume descriptor version ", ust::to_string8( volume_descriptor.header.version ), "!\n" ) );
+			break;
+		}
+
+		ust::stdout_print( ust::concat( "A volume of type ", ust::to_string8( volume_descriptor.header.type_ ), "\n" ) );
+
+		volume_descriptors.push_back( volume_descriptor );
+	}
+
+	foreach( &v : volume_descriptors )
+	{
+		if( v.header.type_ == 1u8 )
+		{
+			var IsoPrimaryVolumeDescriptor mut primary_volume_descriptor= zero_init;
+			ust::single_element_array_view( primary_volume_descriptor ).to_byte8_range().copy_from(
+				ust::single_element_array_view( v ).to_byte8_range() );
+
+			ust::ignore_unused(v);
+		}
+	}
 
 	return void();
 }
