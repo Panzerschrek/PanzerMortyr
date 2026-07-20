@@ -12,7 +12,7 @@ fn ParseIsoFile( ust::file_readable &mut f ) : ust::io_result</DirectoryInIso/>
 {
 	result_check_or_return( f.seek( 32768u64 ) );
 
-	var ust::vector</IsoVolumeDescriptor/> mut volume_descriptors;
+	var ust::vector</IsoVolumeDescriptor/> mut type2_volume_descriptors;
 
 	var IsoVolumeDescriptor mut volume_descriptor= zero_init;
 
@@ -39,31 +39,34 @@ fn ParseIsoFile( ust::file_readable &mut f ) : ust::io_result</DirectoryInIso/>
 			break;
 		}
 
-		volume_descriptors.push_back( volume_descriptor );
-	}
-
-	foreach( &v : volume_descriptors )
-	{
 		// Process only TYPE 2 volumes, since they have non-restricted file names (with no file name limit).
-		if( v.header.type_ == 2u8 )
+		if( volume_descriptor.header.type_ == 2u8 )
 		{
-
-			var IsoPrimaryVolumeDescriptor mut primary_volume_descriptor= zero_init;
-			ust::single_element_array_view( primary_volume_descriptor ).to_byte8_range().copy_from(
-				ust::single_element_array_view( v ).to_byte8_range() );
-
-			var IsoDirectoryRecordHeader& root_directory=
-				primary_volume_descriptor.root_directory_entry.header;
-
-			var u32 block_size( primary_volume_descriptor.logical_block_size[0] );
-
-			return ReadDirectory( f, block_size, root_directory );
+		type2_volume_descriptors.push_back( volume_descriptor );
 		}
+
 	}
 
-	ust::stderr_print( "No volume of type 2 found!\n" );
+	if( type2_volume_descriptors.empty() )
+	{
+		ust::stderr_print( "No volume of type 2 found!\n" );
+		return ust::io_error::not_found;
+	}
 
-	return ust::io_error::not_found;
+	if( type2_volume_descriptors.size() > 1s )
+	{
+		ust::stdout_print( "Too many volumes of type 2! Expected exactly one.\n" );
+	}
+
+	var IsoPrimaryVolumeDescriptor mut primary_volume_descriptor= zero_init;
+	ust::single_element_array_view( primary_volume_descriptor ).to_byte8_range().copy_from(
+		ust::single_element_array_view( type2_volume_descriptors.front() ).to_byte8_range() );
+
+	return
+		ReadDirectory(
+			f,
+			u32( primary_volume_descriptor.logical_block_size[0] ),
+			primary_volume_descriptor.root_directory_entry.header );
 }
 
 fn ReadDirectory(
