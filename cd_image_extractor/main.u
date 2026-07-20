@@ -1,5 +1,6 @@
 import "/enum_string_conversions.iu"
 import "/file_helpers.iu"
+import "/filesystem.iu"
 import "/main_wrapper.iu"
 import "/stdout.iu"
 import "/string_conversions.iu"
@@ -100,7 +101,7 @@ fn nodiscard ProcessIsoFile( ust::filesystem_path_view iso_file_path ) : bool
 	if_var( e : file_res.as_error_ref() )
 	{
 		ust::stderr_print(
-			ust::concat( "Failed to open file \"", iso_file_path, "\"! Error: ", ust::enum_to_string(e) ) );
+			ust::concat( "Failed to open file \"", iso_file_path, "\"! Error: ", ust::enum_to_string(e), "\n" ) );
 		return false;
 	}
 
@@ -116,6 +117,15 @@ fn nodiscard ProcessIsoFile( ust::filesystem_path_view iso_file_path ) : bool
 	}
 
 	PrintIsoDirectory_r( parse_res.try_deref(), "" );
+
+	// Extract only some files from "Data" directory. Other files and directories aren't necessary for us.
+
+	if_var( &e : ProcessDataDirectoryFromIso( parse_res.try_deref(), file ).as_error_ref() )
+	{
+		ust::stderr_print(
+			ust::concat( "Failed to process data directory! Error: ", ust::enum_to_string(e), "\n" ) );
+		return false;
+	}
 
 	return true;
 }
@@ -146,5 +156,84 @@ fn PrintIsoDirectory_r(  DirectoryInIso& dir, ust::string_view8 prefix )
 		PrintIsoHierarchy_r( subentry[1], ust::concat( prefix, "/", subentry[0] ) );
 	}
 }
+
+fn ProcessDataDirectoryFromIso(
+	DirectoryInIso& root_directory, ust::file_readable &mut iso_file ) : ust::io_result</void/>
+{
+	foreach( &entry : root_directory.entries )
+	{
+		if( StringsAreCaseInsensetiveEqual( entry[0], c_data_directory_name ) )
+		{
+			if_var( &data_directory : entry[1].get</ ust::box</ DirectoryInIso /> />() )
+			{
+				return ExtractFilesFromIsoDataDirectory( data_directory.deref(), iso_file );
+			}
+			else
+			{
+				ust::stderr_print( ust::concat( "\"", entry[0], "\" is not a directory!\n" ) );
+				return ust::io_error::other;
+			}
+		}
+	}
+
+	ust::stderr_print( ust::concat( "Can't find \"", c_data_directory_name, "\" directory!\n" ) );
+	return ust::io_error::not_found;
+}
+
+fn ExtractFilesFromIsoDataDirectory(
+	DirectoryInIso& data_directory, ust::file_readable &mut iso_file ) : ust::io_result</void/>
+{
+	result_check_or_return( ust::create_directory( c_data_directory_name ) );
+
+	foreach( &entry : data_directory.entries )
+	{
+		// Extract only files with "hal" and "avi" extension. We don't need other files or directories.
+
+		if_var( &file_entry : entry[1].get</ FileInIso />() )
+		{
+			var ust::filesystem_path_view extension=
+				ust::path::get_file_extension( entry[0] ).deref_or( ust::filesystem_path_view() );
+
+			if( StringsAreCaseInsensetiveEqual( extension, "hal" ) ||
+				StringsAreCaseInsensetiveEqual( extension, "avi" ) )
+			{
+				var ust::filesystem_path dst_path= ust::path::join( c_data_directory_name, entry[0] );
+				ust::stdout_print( ust::concat( "Extracting \"", dst_path, "\"\n" ) );
+				result_check_or_return( ExtractFileFromIso( file_entry, dst_path, iso_file ) );
+			}
+		}
+	}
+
+	return void();
+}
+
+fn ExtractFileFromIso(
+	FileInIso& file_entry,
+	ust::filesystem_path_view out_file_path,
+	ust::file_readable &mut iso_file ) : ust::io_result</void/>
+{
+	result_unwrap_or_return( mut out_file : ust::file_writeable::create( out_file_path ) );
+
+	result_check_or_return( iso_file.seek( file_entry.offset ) );
+
+	var size_type c_chunk_size= 65536s;
+	var [ byte8, c_chunk_size ] mut chunk_data= zero_init;
+
+	for( auto mut offset= 0u64; offset < file_entry.size; )
+	{
+		auto mut range=
+			ust::array_view_mut</byte8/>( chunk_data ).subrange_end(
+				size_type( ust::min( file_entry.size - offset, u64( c_chunk_size ) ) ) );
+
+		result_check_or_return( iso_file.read_exact( range ) );
+		result_check_or_return( out_file.write_all( range ) );
+
+		offset+= u64( range.size() );
+	}
+
+	return void();
+}
+
+auto& c_data_directory_name= "Data";
 
 } // namespace PM
