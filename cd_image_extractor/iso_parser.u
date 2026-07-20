@@ -52,10 +52,90 @@ fn ParseIsoFile( ust::file_readable &mut f ) : ust::io_result</void/>
 				ust::single_element_array_view( v ).to_byte8_range() );
 
 			ust::ignore_unused(v);
+
+			var IsoDirectoryRecordHeader& root_directory=
+				primary_volume_descriptor.root_directory_entry.header;
+
+			var u32 block_size( primary_volume_descriptor.logical_block_size[0] );
+
+			var u32 root_extent_location= ReadNumBytes( root_directory.extent_location[0] );
+			var u32 root_extent_length= ReadNumBytes( root_directory.data_length[0] );
+
+			ust::stdout_print( ust::concat( "length is ", ust::to_string8( root_extent_length ), " at ", ust::to_string8( root_extent_location ), "\n" ) );
+
+			result_check_or_return( ReadDirectory( f, block_size, root_directory ) );
 		}
 	}
 
 	return void();
+}
+
+fn ReadDirectory(
+	ust::file_readable &mut f, u32 block_size, IsoDirectoryRecordHeader& directory_header ) : ust::io_result</void/>
+{
+	var u32 extent_location= ReadNumBytes( directory_header.extent_location[0] );
+	var u32 extent_length= ReadNumBytes( directory_header.data_length[0] );
+
+	result_check_or_return( f.seek( u64( block_size ) * u64( extent_location ) ) );
+
+	var ust::vector</ IsoDirectoryRecordHeader /> mut subdirectories;
+
+	for( auto mut dir_offset= 0u; dir_offset < extent_length; )
+	{
+		var IsoDirectoryRecordHeader mut entry_header= zero_init;
+
+		result_check_or_return( f.read_exact( ust::single_element_array_view( entry_header ).to_byte8_range() ) );
+
+		if( entry_header.length <= u8( typeinfo</ IsoDirectoryRecordHeader />.size_of ) )
+		{
+			break;
+		}
+		dir_offset+= u32( entry_header.length );
+
+		var size_type name_length= ( ( size_type( entry_header.length ) + 1s ) & ~1s ) - typeinfo</ IsoDirectoryRecordHeader />.size_of;
+
+		var ust::string8 mut name( name_length, '\0' );
+
+		result_check_or_return( f.read_exact( name.range().to_byte8_range() ) );
+
+		ust::stdout_print( ust::concat( "Entry \"", name, "\" with length ", ust::to_string8( entry_header.length ), "\n" ) );
+
+		if( ( u32( entry_header.file_flags ) & 2u ) != 0u )
+		{
+			ust::stdout_print( "is directory\n" );
+			if( name != "." && name != ".." )
+			{
+				subdirectories.push_back( entry_header );
+			}
+		}
+		else
+		{
+			ust::stdout_print( ust::concat( "Entry with flags ", ust::to_string8( entry_header.file_flags ), "\n" ) );
+		}
+	}
+
+	foreach( &subdirectory : subdirectories )
+	{
+		result_check_or_return( ReadDirectory( f, block_size, subdirectory ) );
+	}
+
+	return void();
+}
+
+/*
+fn ReadNumBytes( IsoNumBytes</2s/>& num_bytes ) : u16
+{
+	return u16( u32( num_bytes[0] ) | ( u32( num_bytes[1] ) << 8 ) );
+}
+*/
+
+fn ReadNumBytes( IsoNumBytes</4s/>& num_bytes ) : u32
+{
+	return
+		( u32( num_bytes[0] ) <<  0 ) |
+		( u32( num_bytes[1] ) <<  8 ) |
+		( u32( num_bytes[2] ) << 16 ) |
+		( u32( num_bytes[3] ) << 24 );
 }
 
 } // namespace PM
