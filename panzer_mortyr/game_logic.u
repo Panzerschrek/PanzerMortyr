@@ -63,16 +63,6 @@ fn CreateNewMapGameState(
 				.steps_since_last_animation_state_transition= 0u,
 				.animation_frames[ 0u, 0u ],
 			},
-			.tools_state
-			{
-				.selected_tool= EntitiesDescription::ToolType::None, // Set later.
-				.last_tool_selection_step= 0u,
-				.acid_protection_suit_is_active= false,
-				.night_vision_is_active= false,
-				.infrared_vision_is_active= false,
-				.flashlight_is_active= false,
-				.jetpack_is_active= false,
-			},
 			.last_requested_key_type= EntitiesDescription::ToolType::None,
 			.last_key_request_step= 0u,
 			.activated_triggers_mask= 0u,
@@ -283,16 +273,6 @@ fn CreateNewMapGameState(
 						.animation_state= PlayerWeaponState::AnimationState::Steady,
 						.steps_since_last_animation_state_transition= 0u,
 						.animation_frames[ 0u, 0u ],
-					},
-					.tools_state
-					{
-						.selected_tool= EntitiesDescription::ToolType::None, // Set later.
-						.last_tool_selection_step= 0u,
-						.acid_protection_suit_is_active= false,
-						.night_vision_is_active= false,
-						.infrared_vision_is_active= false,
-						.flashlight_is_active= false,
-						.jetpack_is_active= false,
 					},
 					.last_requested_key_type= EntitiesDescription::ToolType::None,
 					.last_key_request_step= 0u,
@@ -1525,6 +1505,10 @@ fn PerformPlayerInventoryLogic(
 			{
 				ProcessJetpackToolActivationRequest( player );
 			},
+			EntitiesDescription::ToolType::FalseDocuments ->
+			{
+				ProcessFalseDocumentsToolActivationRequest( player );
+			},
 			default -> {},
 		}
 	}
@@ -1613,6 +1597,18 @@ fn ProcessJetpackToolActivationRequest( PlayerState &mut player )
 	}
 }
 
+fn ProcessFalseDocumentsToolActivationRequest( PlayerState &mut player )
+{
+	if( player.tools_state.false_documents_are_active )
+	{
+		player.tools_state.false_documents_are_active= false;
+	}
+	else if( player.inventory[ size_type( EntitiesDescription::ToolType::FalseDocuments ) ] > 0u )
+	{
+		player.tools_state.false_documents_are_active= true;
+	}
+}
+
 fn UpdatePlayerActiveTools( PlayerState &mut player, u32 step_index )
 {
 	// Tools which can be activated have amount specified in (presumably) seconds.
@@ -1624,90 +1620,34 @@ fn UpdatePlayerActiveTools( PlayerState &mut player, u32 step_index )
 		return;
 	}
 
-	if( player.tools_state.acid_protection_suit_is_active )
-	{
-		var u32 &mut amount= player.inventory[ size_type( EntitiesDescription::ToolType::AcidProtectionSuit ) ];
-		if( amount == 0u )
+	auto process_tool=
+		lambda[ &inventory= player.inventory ]( bool &mut tool_active, EntitiesDescription::ToolType tool_type )
 		{
-			player.tools_state.acid_protection_suit_is_active= false;
-		}
-		else
-		{
-			--amount;
-			if( amount == 0u )
+			if( tool_active )
 			{
-				player.tools_state.acid_protection_suit_is_active= false;
+				var u32 &mut amount= inventory[ size_type( tool_type ) ];
+				if( amount == 0u )
+				{
+					tool_active= false;
+				}
+				else
+				{
+					--amount;
+					if( amount == 0u )
+					{
+						tool_active= false;
+					}
+				}
 			}
-		}
-	}
+		};
 
-	if( player.tools_state.night_vision_is_active )
-	{
-		var u32 &mut amount= player.inventory[ size_type( EntitiesDescription::ToolType::NightVision ) ];
-		if( amount == 0u )
-		{
-			player.tools_state.night_vision_is_active= false;
-		}
-		else
-		{
-			--amount;
-			if( amount == 0u )
-			{
-				player.tools_state.night_vision_is_active= false;
-			}
-		}
-	}
-
-	if( player.tools_state.infrared_vision_is_active )
-	{
-		var u32 &mut amount= player.inventory[ size_type( EntitiesDescription::ToolType::InfraredVision ) ];
-		if( amount == 0u )
-		{
-			player.tools_state.infrared_vision_is_active= false;
-		}
-		else
-		{
-			--amount;
-			if( amount == 0u )
-			{
-				player.tools_state.infrared_vision_is_active= false;
-			}
-		}
-	}
-
-	if( player.tools_state.flashlight_is_active )
-	{
-		var u32 &mut amount= player.inventory[ size_type( EntitiesDescription::ToolType::Flashlight ) ];
-		if( amount == 0u )
-		{
-			player.tools_state.flashlight_is_active= false;
-		}
-		else
-		{
-			--amount;
-			if( amount == 0u )
-			{
-				player.tools_state.flashlight_is_active= false;
-			}
-		}
-	}
-
-	if( player.tools_state.jetpack_is_active )
-	{
-		var u32 &mut amount= player.inventory[ size_type( EntitiesDescription::ToolType::Jetpack ) ];
-		if( amount == 0u )
-		{
-			player.tools_state.jetpack_is_active= false;
-		}
-		else
-		{
-			--amount;
-			if( amount == 0u )
-			{
-				player.tools_state.jetpack_is_active= false;
-			}
-		}
-	}
+	var PlayerToolsState &mut tools_state= player.tools_state;
+	process_tool( tools_state.acid_protection_suit_is_active, EntitiesDescription::ToolType::AcidProtectionSuit );
+	process_tool( tools_state.night_vision_is_active, EntitiesDescription::ToolType::NightVision );
+	process_tool( tools_state.infrared_vision_is_active, EntitiesDescription::ToolType::InfraredVision );
+	process_tool( tools_state.flashlight_is_active, EntitiesDescription::ToolType::Flashlight );
+	process_tool( tools_state.jetpack_is_active, EntitiesDescription::ToolType::Jetpack );
+	process_tool( tools_state.false_documents_are_active, EntitiesDescription::ToolType::FalseDocuments );
 }
 
 fn PerformPlayerMovement(
@@ -2896,6 +2836,26 @@ fn ProcessEntityLogicStep(
 			{
 				EntityDirectionalShot(
 					entities_description, directional_shot, entity, u32( entity_index ), game_state );
+			}
+		}
+
+		if_var( &alarm_vicinity : operation.alarm_vicinity )
+		{
+			if( entity.num_steps_since_operation_start == alarm_vicinity.time )
+			{
+				// Investigations of the original game have shown,
+				// that "alarmuj_okolice" causes the player to lost his false document item, if it's active.
+				if( entity.attack_target_entity_index == c_player_entity_index &&
+					game_state.player.tools_state.false_documents_are_active )
+				{
+					game_state.player.inventory[ size_type( EntitiesDescription::ToolType::FalseDocuments ) ]= 0u;
+					game_state.player.tools_state.false_documents_are_active= false;
+				}
+
+				if( alarm_vicinity.sound >= 0 && alarm_vicinity.sound < 255 )
+				{
+					EmitSound( entity.sound_source_slots, u8( alarm_vicinity.sound ), 255u );
+				}
 			}
 		}
 
@@ -6445,6 +6405,20 @@ fn UpdateEntityAttackTargetInSightFlag(
 		if( game_state.player.invisibility )
 		{
 			// Entities can't see invisible player.
+			return;
+		}
+
+		// Investigations of the original game have shown,
+		// that the false documents item works just like invisibility.
+		// Enemies don't see the player having it.
+		// Even if an enemy have been attacked previoulsy,
+		// he don't attack if the false documents item was activated after such an attack.
+		// Even attacking an enemy while having the false document item active doesn't result in back-fire,
+		// except a couple of cases with firing animation following a pain animation.
+		if( game_state.player.tools_state.false_documents_are_active &&
+			// Enemies having "dobry_wzrok" can still see the player having the false document item active.
+			entity_description.good_sight == 0u )
+		{
 			return;
 		}
 

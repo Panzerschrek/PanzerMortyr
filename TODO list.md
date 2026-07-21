@@ -34,9 +34,7 @@ Gameplay investigation:
 * Investigate what kinds of entities are affected by gravity (what in an entity description turns gravity on and off).
 * Investigate what "zarowka" entity property is and whether it's actually used.
 * Investigate what "ponowny_atak" entity property means, how it affects enemies and what is its default value.
-* Investigate what "dobry_wzrok" entity property means and how it affects enemies.
-* Investigate what  "automatyczny_alarm" entity property means and how it affects enemies.
-* Investigate how invisibility tool (false documents) works - how enemies react to the player having invisibility enabled, what happens if he shoots or attacks, what kind of whether some enemies can deactivate it and how, etc.
+* Investigate what is default value for "kontakt_bezposredni" entity property. It seems to be used by the gestapo enemy.
 
 PanzerMortyr general:
 
@@ -56,7 +54,6 @@ PanzerMortyr general:
 PanzerMortyr game logic:
 
 * Implement flies animation (used only for single dog enemy on map 19).
-* Implement logic elements specific for dog enemies.
 * Implement remaining entity state transitions (used only by some enemy types).
 * Consider implement armor seeking/pick-up behavior for enemies.
 * Break glass quads and quads with breakable materials while applying spash damage. The original game doesn't do this and it doesn't look right.
@@ -80,6 +77,7 @@ PanzerMortyr game logic:
 * Consider not creating edges in global navigation graph requiring jumping down too deep (to avoid fall damage).
 * Avoid creating global navigation graph nodes located in liquids, but allow them in shallow water (but not acid or lava).
 * Consider implementing some physics or data hack to allow leaving a shallow pit with inclined walls on map 19.
+* Consider making the false document tool better (compared to the original game) - don't treat it as dumb and magic invisibility.
 
 PanzerMortyr multiplayer game logic:
 
@@ -87,7 +85,6 @@ PanzerMortyr multiplayer game logic:
 * Implement multiplayer game logic with client/server.
 * Implement multiplayer-specific game modes.
 * Make singleplayer mode tweaks for cooperative mode support.
-* Implement logic elements specific for gestapo enemies (they are used only on single cooperative map 36).
 * Implement logic specific for multiplayer entities.
 * Implement weapon amplifier (multiplayer-only power-up).
 * Implement omni protection (multiplayer-only power-up).
