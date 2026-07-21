@@ -8,9 +8,11 @@ import "iso_parser.iu"
 namespace PM
 {
 
-fn ParseIsoFile( ust::file_readable &mut f ) : ust::io_result</DirectoryInIso/>
+fn ParseIsoFile( ust::file_readable &mut file ) : ust::io_result</DirectoryInIso/>
 {
-	result_check_or_return( f.seek( 32768u64 ) );
+	// Volume descriptors are stored starting with offset 32768.
+
+	result_check_or_return( file.seek( 32768u64 ) );
 
 	var ust::vector</IsoVolumeDescriptor/> mut type2_volume_descriptors;
 
@@ -18,7 +20,8 @@ fn ParseIsoFile( ust::file_readable &mut f ) : ust::io_result</DirectoryInIso/>
 
 	loop
 	{
-		result_check_or_return( f.read_exact( ust::single_element_array_view( volume_descriptor ).to_byte8_range() ) );
+		result_check_or_return(
+			file.read_exact( ust::single_element_array_view( volume_descriptor ).to_byte8_range() ) );
 
 		if( volume_descriptor.header.type_ == 255u8 )
 		{
@@ -27,7 +30,7 @@ fn ParseIsoFile( ust::file_readable &mut f ) : ust::io_result</DirectoryInIso/>
 
 		if( volume_descriptor.header.identifier != "CD001" )
 		{
-			ust::stderr_print( "Incorrect volume descriptor identifier!\n" );
+			ust::stderr_print( "Incorrect volume descriptor identifier! Expected \"CD001\".\n" );
 			break;
 		}
 
@@ -37,11 +40,11 @@ fn ParseIsoFile( ust::file_readable &mut f ) : ust::io_result</DirectoryInIso/>
 				ust::concat(
 					"Unsupported volume descriptor version ",
 					ust::to_string8( volume_descriptor.header.version ),
-					"!\n" ) );
+					"! Expected version 1.\n" ) );
 			break;
 		}
 
-		// Process only TYPE 2 volumes, since they have non-restricted file names (with no file name limit).
+		// Process only TYPE 2 volumes, since they have non-restricted file names (with no file name length limit).
 		if( volume_descriptor.header.type_ == 2u8 )
 		{
 			type2_volume_descriptors.push_back( volume_descriptor );
@@ -65,31 +68,32 @@ fn ParseIsoFile( ust::file_readable &mut f ) : ust::io_result</DirectoryInIso/>
 
 	return
 		ReadDirectory_r(
-			f,
+			file,
 			u32( primary_volume_descriptor.logical_block_size[0] ),
 			primary_volume_descriptor.root_directory_entry.header );
 }
 
 fn ReadDirectory_r(
-	ust::file_readable &mut f,
+	ust::file_readable &mut file,
 	u32 block_size,
 	IsoDirectoryRecordHeader& directory_header ) : ust::io_result</DirectoryInIso/>
 {
 	var u32 extent_location= ReadNumBytes( directory_header.extent_location[0] );
 	var u32 extent_length= ReadNumBytes( directory_header.data_length[0] );
 
-	result_check_or_return( f.seek( u64( block_size ) * u64( extent_location ) ) );
+	result_check_or_return( file.seek( u64( block_size ) * u64( extent_location ) ) );
 
 	var ust::vector</ tup[ IsoDirectoryRecordHeader, ust::string8 ] /> mut subdirectories;
 
 	var DirectoryInIso mut out_directory;
 
 	var size_type mut record_index= 0s;
+
 	for( auto mut dir_offset= 0u; dir_offset < extent_length; )
 	{
 		var IsoDirectoryRecordHeader mut entry_header= zero_init;
 
-		result_check_or_return( f.read_exact( ust::single_element_array_view( entry_header ).to_byte8_range() ) );
+		result_check_or_return( file.read_exact( ust::single_element_array_view( entry_header ).to_byte8_range() ) );
 
 		if( entry_header.length <= u8( typeinfo</ IsoDirectoryRecordHeader />.size_of ) )
 		{
@@ -99,20 +103,23 @@ fn ReadDirectory_r(
 
 		{
 			var byte8 mut padding= zero_init;
-			result_check_or_return( f.read_exact( ust::single_element_array_view( padding ) ) );
+			result_check_or_return( file.read_exact( ust::single_element_array_view( padding ) ) );
 		}
 
+		// Expect that the file name is stored in 16-bit characters.
+		// Assume it's UTF-16, but it doesn't really matter, since all file names in "Mortyr" ISO are ASCII-only.
+
 		var ust::string16 mut name( size_type( entry_header.length_of_identifier ) / 2s , '\0'c16 );
-		result_check_or_return( f.read_exact( name.range().to_byte8_range() ) );
+		result_check_or_return( file.read_exact( name.range().to_byte8_range() ) );
 
 		// File names have version number after ";". Don't care about it, just skip it.
-		StringFileNameSeparator( name );
+		DropFileVersion( name );
 
 		var ust::string8 name_utf8= ust::utf::convert_utf16_to_utf8_string( name );
 
 		if( ( u32( entry_header.file_flags ) & 2u ) != 0u )
 		{
-			if( record_index >= 2s ) // Ignore "." and ".."
+			if( record_index >= 2s ) // Ignore first two entries "." (self) and ".." (parent).
 			{
 				subdirectories.push_back( ust::make_tuple( entry_header, name_utf8 ) );
 			}
@@ -135,7 +142,7 @@ fn ReadDirectory_r(
 
 	foreach( &subdirectory : subdirectories )
 	{
-		result_unwrap_or_return( mut sd : ReadDirectory_r( f, block_size, subdirectory[0] ) );
+		result_unwrap_or_return( mut sd : ReadDirectory_r( file, block_size, subdirectory[0] ) );
 		out_directory.entries.push_back( ust::make_tuple( subdirectory[1], EntryInIso( ust::make_box( move(sd) ) ) ) );
 	}
 
@@ -151,9 +158,10 @@ fn ReadNumBytes( IsoNumBytes</4s/>& num_bytes ) : u32
 		( u32( num_bytes[3] ) << 24 );
 }
 
-fn StringFileNameSeparator( ust::string16 &mut name )
+fn DropFileVersion( ust::string16 &mut name )
 {
 	var size_type mut separator_pos= name.size();
+
 	for( auto mut i= name.size(); i > 0s; --i )
 	{
 		if( name[ i - 1s ] == ';'c16 )

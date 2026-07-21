@@ -26,12 +26,25 @@ fn nodiscard ExtractCueTracks(
 
 fn nodiscard ExtractFile(
 	ust::filesystem_path_view base_directory,
-	CueFileParsed::File& file,
+	CueFileParsed::File& cue_file_parsed,
 	ust::filesystem_path_view base_file_name ) : ust::io_result</void/>
 {
+	// Extract and sort offsets of each index of each track.
+	// We need it for searching for track ends.
+
 	var ust::vector</u32/> mut offsets;
 
-	var ust::filesystem_path full_path= ust::path::join( base_directory, file.name );
+	foreach( &track : cue_file_parsed.tracks )
+	{
+		foreach( &index : track.indices )
+		{
+			offsets.push_back( index.offset_frames );
+		}
+	}
+
+	ust::sort( offsets );
+
+	var ust::filesystem_path full_path= ust::path::join( base_directory, cue_file_parsed.name );
 
 	auto mut file_res= ust::file_readable::open( full_path );
 	if_var( e : file_res.as_error_ref() )
@@ -41,25 +54,15 @@ fn nodiscard ExtractFile(
 		return e;
 	}
 
-	var ust::file_readable mut f= move( file_res ).try_take();
+	var ust::file_readable mut file= move( file_res ).try_take();
 
-	foreach( &track : file.tracks )
-	{
-		foreach( &index : track.indices )
-		{
-			offsets.push_back( index.offset_frames );
-		}
-	}
-
-	ust::sort(offsets);
-
-	foreach( &track : file.tracks )
+	foreach( &track : cue_file_parsed.tracks )
 	{
 		foreach( &index : track.indices )
 		{
 			if( index.number != 1u )
 			{
-				continue;
+				continue; // Extract only index 1.
 			}
 
 			var size_type i= ust::binary_search::first_greater_or_equal( offsets.range(), index.offset_frames );
@@ -71,11 +74,13 @@ fn nodiscard ExtractFile(
 			var u32 mut end_offset= 0u;
 			if( i + 1s < offsets.size() )
 			{
+				// Use next offset as end offset..
 				end_offset= offsets[ i + 1s ];
 			}
 			else
 			{
-				result_unwrap_or_return( mut file_size : f.get_size() );
+				// Use file size as end offset.
+				result_unwrap_or_return( mut file_size : file.get_size() );
 				end_offset= u32( file_size / c_frame_size_bytes );
 			}
 
@@ -85,17 +90,7 @@ fn nodiscard ExtractFile(
 					ust::to_string8( track.number ),
 					GetFileExtensionForTrackMode( track.mode ) );
 
-			ust::stdout_print(
-				ust::concat(
-					"Write file \"",
-					out_file_path,
-					"\" with start offset ",
-					ust::to_string8( index.offset_frames ),
-					" and end offset ",
-					ust::to_string8( end_offset ),
-					"\n" ) );
-
-			result_check_or_return( WriteTrack( f, out_file_path, index, track.mode, end_offset ) );
+			result_check_or_return( WriteTrack( file, out_file_path, index, track.mode, end_offset ) );
 
 			break;
 		}
@@ -121,21 +116,26 @@ fn GetFileExtensionForTrackMode( CueFileParsed::TrackMode track_mode ) : ust::st
 }
 
 fn WriteTrack(
-	ust::file_readable &mut f,
+	ust::file_readable &mut in_file,
 	ust::filesystem_path_view out_file_path,
 	CueFileParsed::TrackIndex& index,
 	CueFileParsed::TrackMode track_mode,
 	u32 end_offset ) : ust::io_result</void/>
 {
+	ust::stdout_print( ust::concat( "Writing file \"", out_file_path, "\".\n" ) );
+
 	result_unwrap_or_return( mut out_file : ust::file_writeable::create( out_file_path ) );
 
-	result_check_or_return( f.seek( c_frame_size_bytes * u64( index.offset_frames ) ) );
+	result_check_or_return( in_file.seek( c_frame_size_bytes * u64( index.offset_frames ) ) );
 
 	switch( track_mode )
 	{
 		CueFileParsed::TrackMode::Audio ->
 		{
+			// Create WAV header for audio tracks.
+
 			var u32 num_data_bytes= ( end_offset - index.offset_frames ) * u32( c_frame_size_bytes );
+
 			var WavHeader header
 			{
 				.file_type_block_id= 0x46464952u,
@@ -155,23 +155,27 @@ fn WriteTrack(
 
 			result_check_or_return( out_file.write_all( ust::single_element_array_view( header ).to_byte8_range() ) );
 		},
-		CueFileParsed::TrackMode::Mode1_2352 -> {},
+		CueFileParsed::TrackMode::Mode1_2352 -> { /* No header is needed for data tracks. */ },
 	}
 
 	var [ byte8, c_frame_size_bytes ] mut frame_bytes= zero_init;
 
 	for( auto mut o= index.offset_frames; o < end_offset; ++o )
 	{
-		result_check_or_return( f.read_exact( frame_bytes ) );
+		result_check_or_return( in_file.read_exact( frame_bytes ) );
 
 		switch( track_mode )
 		{
 			CueFileParsed::TrackMode::Audio ->
 			{
+				// Write the whole frame for audio tracks.
+
 				result_check_or_return( out_file.write_all( frame_bytes ) );
 			},
 			CueFileParsed::TrackMode::Mode1_2352 ->
 			{
+				// Data tracks contain only 2048 bytes in each frame, first 16 bytes are header, trailing bytes are used for error correction codes.
+
 				result_check_or_return(
 					out_file.write_all( ust::array_view_imut</byte8/>( frame_bytes ).subrange( 16s, 2064s ) ) );
 			},
