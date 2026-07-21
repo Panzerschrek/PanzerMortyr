@@ -1,0 +1,357 @@
+import "/directory_iterator.iu"
+import "/enum_string_conversions.iu"
+import "/file_helpers.iu"
+import "/filesystem.iu"
+import "/main_wrapper.iu"
+import "/stdout.iu"
+import "/string_conversions.iu"
+import "/path_utils.iu"
+import "/common_lib/char_case.iu"
+import "cue_parser.iu"
+import "cue_tracks_extractor.iu"
+import "iso_parser.iu"
+
+pretty_main
+{
+	return PM::Main( args );
+}
+
+namespace PM
+{
+
+fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
+{
+	ust::stdout_print( "PanzerMortyr CD image extractor\n" );
+
+	if( args.size() < 2s )
+	{
+		return ( SearchAndUseImageFileInCurrentDirectory() ? 0 : -1 );
+	}
+
+	var ust::string_view8 first_arg= args[1s];
+
+	if( first_arg == "--help" || first_arg == "-h" || first_arg == "-help" )
+	{
+		ust::stdout_print( c_help_message );
+		return 0;
+	}
+
+	return ( ProcessGivenFile( first_arg ) ? 0 : -1 );
+}
+
+auto constexpr c_help_message=
+	"\n" +
+	"ABOUT:\n" +
+	" This tool is designed to extract data of the game \"Mortyr 2093 - 1944\" from its original CD image to be used later with PanzerMortyr.\n" +
+	" It supports disk images in BIN/CUE and ISO formats. The first one is recommended to use, since it provides original audio tracks.\n" +
+	"\n" +
+	"USAGE:\n" +
+	" Simple run this tool in the directory where CD image file(s) is/are located. It will find necessary files and extract them into \"" + c_data_directory_name + "\" directory.\n" +
+	" Alternatively you can specify disk image to extract explicitly (via command line). It should be a CUE or an ISO file (but not BIN or IMG).\n";
+
+// Returns true on successs.
+fn nodiscard SearchAndUseImageFileInCurrentDirectory() : bool
+{
+	ust::stdout_print( "No arguments provided, searching for a CUE of an ISO file in the current directory.\n" );
+
+	auto mut directory_iterator_res= ust::open_directory_for_iteration( ust::get_current_directory() );
+	if_var( e : directory_iterator_res.as_error_ref() )
+	{
+		ust::stderr_print(
+				ust::concat(
+					"Failed to open current directory for iteration! Error: ", ust::enum_to_string(e), "\n" ) );
+			return false;
+	}
+
+	var ust::vector</ust::filesystem_path/> mut cue_files, mut iso_files;
+
+	foreach( entry_res : move( directory_iterator_res ).try_take() )
+	{
+		if_var( &entry : entry_res.as_ref() )
+		{
+			if( entry.kind == ust::file_kind::file )
+			{
+				var ust::string_view8 file_extension=
+					ust::path::get_file_extension( entry.name ).deref_or( ust::string_view8() );
+				if( StringsAreCaseInsensetiveEqual( file_extension, "cue" ) )
+				{
+					ust::stdout_print( ust::concat( "Found a CUE file \"", entry.name, "\".\n" ) );
+					cue_files.push_back( entry.name );
+				}
+				else if( StringsAreCaseInsensetiveEqual( file_extension, "iso" ) )
+				{
+					ust::stdout_print( ust::concat( "Found an ISO file \"", entry.name, "\".\n" ) );
+					iso_files.push_back( entry.name );
+				}
+			}
+		}
+		else
+		{
+			ust::stderr_print( ust::concat( "Failed to get directory entry!\n" ) );
+			break;
+		}
+	}
+
+	if( cue_files.empty() && iso_files.empty() )
+	{
+		ust::stderr_print( "No CUE or ISO file found in current directory!\n" );
+		return false;
+	}
+
+	if( cue_files.size() == 1s && iso_files.size() == 0s )
+	{
+		return ProcessCueFile( cue_files.front() );
+	}
+
+	if( cue_files.size() == 0s && iso_files.size() == 1s )
+	{
+		return ProcessIsoFile( iso_files.front() );
+	}
+
+	ust::stderr_print( "Too many CUE or ISO files in current directory. Specify one of them explicitly!\n" );
+
+	return true;
+}
+
+// Returns true on successs.
+fn nodiscard ProcessGivenFile( ust::filesystem_path_view file_path ) : bool
+{
+	var ust::filesystem_path_view file_extension=
+		ust::path::get_file_extension( file_path ).deref_or( ust::string_view8() );
+
+	if( StringsAreCaseInsensetiveEqual( file_extension, "cue" ) )
+	{
+		return ProcessCueFile( file_path );
+	}
+	else if( StringsAreCaseInsensetiveEqual( file_extension, "iso" ) )
+	{
+		return ProcessIsoFile( file_path );
+	}
+	else
+	{
+		ust::stderr_print( "Unsupported input file type! Expected a CUE or an ISO file!\n" );
+		return false;
+	}
+}
+
+// Returns true on successs.
+fn nodiscard ProcessCueFile( ust::filesystem_path_view cue_file_path ) : bool
+{
+	ust::stdout_print( "Processing a CUE file.\n" );
+
+	auto mut cue_file_contents_res= ust::read_file_to_string( cue_file_path );
+	if_var( e : cue_file_contents_res.as_error_ref() )
+	{
+		ust::stderr_print(
+			ust::concat( "Failed to read file \"", cue_file_path, "\"! Error: ", ust::enum_to_string(e), "\n" ) );
+			return false;
+	}
+
+	auto cue_file_parsed_opt= ParseCueFile( cue_file_contents_res.try_deref() );
+	if( cue_file_parsed_opt.empty() )
+	{
+		ust::stderr_print( "Failed to parse CUE file!" );
+		return false;
+	}
+
+	// Extract tracks (including an ISO image) from the given CUE file.
+
+	if( ! ExtractCueTracks(
+			ust::path::get_parent_path( cue_file_path ).deref_or( ust::filesystem_path_view() ),
+			cue_file_parsed_opt.try_deref(),
+			c_track_base_name ) )
+	{
+		return false;
+	}
+
+	// Read and extract files from the ISO we extracted previously from the given CUE file.
+
+	if( !ParseAndExtractIsoFile( c_track1_iso_base_name ) )
+	{
+		return false;
+	}
+
+	// Remove no longer necessary ISO file.
+	if_var( e : ust::remove_file( c_track1_iso_base_name ).as_error_ref() )
+	{
+		ust::stderr_print(
+			ust::concat( "Failed to remove file \"", cue_file_path, " \"! Error: ", ust::enum_to_string(e), "\n" ) );
+	}
+
+	// Search for track files in current directory (which should be extracted previously from the given CUE file).
+
+	result_match( ust::open_directory_for_iteration( ust::get_current_directory() ) )
+	{
+		Ok( mut it ) ->
+		{
+			var ust::vector</ ust::filesystem_path /> mut track_files;
+
+			foreach( entry_res : move(it) )
+			{
+				if_var( &entry : entry_res.as_ref() )
+				{
+					if( entry.kind == ust::file_kind::file &&
+						entry.name.starts_with( c_track_base_name ) &&
+						ust::path::get_file_extension( entry.name ) == ust::string_view8( "wav" ) )
+					{
+						track_files.push_back( entry.name );
+					}
+				}
+				else
+				{
+					ust::stderr_print( ust::concat( "Failed to get directory entry!\n" ) );
+					break;
+				}
+			}
+
+			// Move all track files into the data directory.
+
+			foreach( &track_file : track_files )
+			{
+				if_var( e :
+						ust::rename_file_or_directory(
+							track_file, ust::path::join( c_data_directory_name, track_file ) ).as_error_ref() )
+				{
+					ust::stderr_print(
+						ust::concat(
+							"Failed to move file \"", track_file, "\"! Error: ", ust::enum_to_string(e), "\n" ) );
+				}
+			}
+		},
+		Err(e) ->
+		{
+			ust::stderr_print(
+				ust::concat(
+					"Failed to open current directory for iteration! Error: ", ust::enum_to_string(e), "\n" ) );
+			return false;
+		},
+	}
+
+	return true;
+}
+
+// Returns true on successs.
+fn nodiscard ProcessIsoFile( ust::filesystem_path_view iso_file_path ) : bool
+{
+	ust::stdout_print( "Processing an ISO file.\nNote that NO audio tracks can be extracted from it.\n" );
+	return ParseAndExtractIsoFile( iso_file_path );
+}
+
+// Returns true on successs.
+fn nodiscard ParseAndExtractIsoFile( ust::filesystem_path_view iso_file_path ) : bool
+{
+	auto mut file_res= ust::file_readable::open( iso_file_path );
+	if_var( e : file_res.as_error_ref() )
+	{
+		ust::stderr_print(
+			ust::concat( "Failed to open file \"", iso_file_path, "\"! Error: ", ust::enum_to_string(e), "\n" ) );
+		return false;
+	}
+
+	var ust::file_readable mut file= move(file_res).try_take();
+
+	auto mut parse_res= ParseIsoFile( file );
+
+	if_var( e : parse_res.as_error_ref() )
+	{
+		ust::stderr_print(
+			ust::concat( "Failed to parse ISO file \"", iso_file_path, "\"! Error: ", ust::enum_to_string(e) ) );
+		return false;
+	}
+
+	// Extract only some files from "Data" directory. Other files and directories aren't necessary for us.
+
+	if_var( e : ProcessDataDirectoryFromIso( parse_res.try_deref(), file ).as_error_ref() )
+	{
+		ust::stderr_print(
+			ust::concat( "Failed to process data directory! Error: ", ust::enum_to_string(e), "\n" ) );
+		return false;
+	}
+
+	return true;
+}
+
+fn ProcessDataDirectoryFromIso(
+	DirectoryInIso& root_directory, ust::file_readable &mut iso_file ) : ust::io_result</void/>
+{
+	foreach( &entry : root_directory.entries )
+	{
+		if( StringsAreCaseInsensetiveEqual( entry[0], c_data_directory_name ) )
+		{
+			if_var( &data_directory : entry[1].get</ ust::box</ DirectoryInIso /> />() )
+			{
+				return ExtractFilesFromIsoDataDirectory( data_directory.deref(), iso_file );
+			}
+			else
+			{
+				ust::stderr_print( ust::concat( "\"", entry[0], "\" is not a directory!\n" ) );
+				return ust::io_error::other;
+			}
+		}
+	}
+
+	ust::stderr_print( ust::concat( "Can't find \"", c_data_directory_name, "\" directory!\n" ) );
+	return ust::io_error::not_found;
+}
+
+fn ExtractFilesFromIsoDataDirectory(
+	DirectoryInIso& data_directory, ust::file_readable &mut iso_file ) : ust::io_result</void/>
+{
+	result_check_or_return( ust::create_directory( c_data_directory_name ) );
+
+	foreach( &entry : data_directory.entries )
+	{
+		// Extract only files with "hal" and "avi" extension. We don't need other files or directories.
+
+		if_var( &file_entry : entry[1].get</ FileInIso />() )
+		{
+			var ust::filesystem_path_view extension=
+				ust::path::get_file_extension( entry[0] ).deref_or( ust::filesystem_path_view() );
+
+			if( StringsAreCaseInsensetiveEqual( extension, "hal" ) ||
+				StringsAreCaseInsensetiveEqual( extension, "avi" ) )
+			{
+				var ust::filesystem_path dst_path= ust::path::join( c_data_directory_name, entry[0] );
+				result_check_or_return( ExtractFileFromIso( file_entry, dst_path, iso_file ) );
+			}
+		}
+	}
+
+	return void();
+}
+
+fn ExtractFileFromIso(
+	FileInIso& file_entry,
+	ust::filesystem_path_view out_file_path,
+	ust::file_readable &mut iso_file ) : ust::io_result</void/>
+{
+	ust::stdout_print( ust::concat( "Extracting \"", out_file_path, "\".\n" ) );
+
+	result_unwrap_or_return( mut out_file : ust::file_writeable::create( out_file_path ) );
+
+	result_check_or_return( iso_file.seek( file_entry.offset ) );
+
+	var size_type c_chunk_size= 65536s;
+	var [ byte8, c_chunk_size ] mut chunk_data= zero_init;
+
+	for( auto mut offset= 0u64; offset < file_entry.size; )
+	{
+		auto mut range=
+			ust::array_view_mut</byte8/>( chunk_data ).subrange_end(
+				size_type( ust::min( file_entry.size - offset, u64( c_chunk_size ) ) ) );
+
+		result_check_or_return( iso_file.read_exact( range ) );
+		result_check_or_return( out_file.write_all( range ) );
+
+		offset+= u64( range.size() );
+	}
+
+	return void();
+}
+
+auto& c_track_base_name= "track";
+auto c_track1_iso_base_name= c_track_base_name + "1.iso";
+
+auto& c_data_directory_name= "Data";
+
+} // namespace PM

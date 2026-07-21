@@ -41,7 +41,6 @@ Gameplay investigation:
 PanzerMortyr general:
 
 * Allow changing shot and zoom controls (change mouse buttons and maybe even use key buttons).
-* Consider writing some kind of alternative installer - a tool, which depacks game data from the original game ISO or mdf/mds files.
 * Consider embedding git revision into the game executable and showing it somewhere in the game.
 * Allow turning off some costly effects via settings - breaking glass, fog, dynamic lighting, etc.
 * Consider performing even more advanced game data search - with more hardcoded paths, Windows registry fetches, etc.
@@ -147,3 +146,10 @@ PanzerMortyr sound:
 PanzerMortyr cinimatics:
 
 * Consider reading/decoding video files in a separate thread to avoid blocking the main thread due to disk access.
+
+CD image extractor:
+
+* Consider supporting images in MDF/MDS format.
+* Consider writing a log file.
+* Consider handling more CUE commands (investigate which commands are actually used in Mortyr CUE files).
+* Consider adding more validation for contents of the given ISO file - make sure it's really a Mortyr ISO and not something else.
