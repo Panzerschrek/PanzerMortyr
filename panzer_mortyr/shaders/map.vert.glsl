@@ -9,7 +9,7 @@ layout( location= 0 ) in vec3 v_position;
 layout( location= 1 ) in vec3 v_texture_coordinates;
 layout( location= 2 ) in vec4 v_light;
 
-out vec2 f_texture_coordinates;
+noperspective out vec2 f_texture_coordinates;
 out vec3 f_light;
 flat out float f_texture_layer;
 

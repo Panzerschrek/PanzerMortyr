@@ -2,7 +2,7 @@
 
 uniform sampler2DArray fu_texture;
 
-in vec2 f_texture_coordinates;
+noperspective in vec2 f_texture_coordinates;
 in vec3 f_light;
 flat in float f_texture_layer;
 
