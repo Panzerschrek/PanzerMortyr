@@ -1,5 +1,6 @@
 import "/enum_string_conversions.iu"
 import "/path_utils.iu"
+import "/scoped_array.iu"
 import "/string_conversions.iu"
 import "/common_lib/wav_header.iu"
 import "sound_loading.iu"
@@ -41,8 +42,30 @@ fn LoadSoundDataImpl( ust::file_readable &mut f, ConsoleOutPtr& console_out ) : 
 	var WavHeader mut wav_header= zero_init;
 	result_check_or_return( f.read_exact( ust::single_element_array_view( wav_header ).to_byte8_range() ) );
 
+	if( wav_header.block_size < 16u )
+	{
+		ConsoleOutAddTextLine( console_out, "Format block size of WAV is too small!" );
+		return ust::io_error::other;
+	}
+
+	if( wav_header.block_size > 16u )
+	{
+		// HACK! A couple of sounds have block size greater than expected. Skip some bytes.
+		scoped_array byte8 mut extra_bytes[ size_type( wav_header.block_size - 16u ) ]( byte8(0u8) );
+		result_check_or_return( f.read_exact( extra_bytes ) );
+	}
+
 	var WavDataBlockHeader mut wav_data_block_header= zero_init;
 	result_check_or_return( f.read_exact( ust::single_element_array_view( wav_data_block_header ).to_byte8_range() ) );
+
+	if( wav_data_block_header.data_block_id == "fact" )
+	{
+		// HACK! Skip <fact> block and try reading data block again.
+		var [ byte8, 4 ] mut extra_bytes= zero_init;
+		result_check_or_return( f.read_exact( extra_bytes ) );
+
+		result_check_or_return( f.read_exact( ust::single_element_array_view( wav_data_block_header ).to_byte8_range() ) );
+	}
 
 	if( !(
 		wav_header.file_type_block_id == WavHeader::c_expected_file_type_block_id &&
