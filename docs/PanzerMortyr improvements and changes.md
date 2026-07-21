@@ -90,6 +90,7 @@ Changes:
 * Enemies having no ammo can pick-up ammo boxes nearby and even weapons of fallen allies, if they have no ammo left. In the original game they can only pick up some ammo boxes at precalculated positions.
 * Enemies are more likely to search for health packs when they are injured compared to the original game.
 * Jetpack behavior may slightly differ from the original game.
+* The false documents item may behave slightly differently from the original game. Enemies, for example, aren't alarmed when the player having this item active comes too close.
 
 
 ### HUD and menus
