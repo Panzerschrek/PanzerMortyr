@@ -1,6 +1,8 @@
 import "/enum_string_conversions.iu"
 import "/path_utils.iu"
+import "/scoped_array.iu"
 import "/string_conversions.iu"
+import "/common_lib/wav_header.iu"
 import "sound_loading.iu"
 
 namespace PM
@@ -11,97 +13,110 @@ fn LoadSoundData(
 	GameFilesystem &mut game_filesystem,
 	ResourceString& file_name ) : ust::optional</SoundDataAbstract/>
 {
-	result_match( game_filesystem.LoadFileToByte8Vector( file_name ) )
-	{
-		Ok( mut file_contents ) ->
-		{
-			unsafe
+	auto mut load_res=
+		game_filesystem.LoadFile(
+			file_name,
+			lambda[&]( ust::file_readable &mut f ) : ust::io_result</ SoundDataAbstract />
 			{
-				// TODO - consider writing our own code loading WAV files, which doesn't require "unsafe" to be used.
+				return LoadSoundDataImpl( f, console_out );
+			} );
 
-				var SDL_AudioSpec mut spec= zero_init;
-				var $(Uint8) mut audio_buf= zero_init;
-				var Uint32 mut audio_len= 0u;
+	if_var( e : load_res.as_error_ref() )
+	{
+		ConsoleOutAddTextLine(
+			console_out,
+			ust::concat(
+				"Failed to load file \"",
+				ConvertResourceStringToStringView( file_name ),
+				"\"! Error: ",
+				ust::enum_to_string(e) ) );
 
-				auto call_res=
-					SDL_LoadWAV_RW(
-						SDL_RWFromMem( file_contents.data(), i32( file_contents.size() ) ),
-						1,
-						$<( spec ),
-						$<( audio_buf ),
-						$<( audio_len ) );
+		return ust::null_optional;
+	}
 
-				if( ust::is_nullptr( call_res ) )
-				{
-					safe( ConsoleOutAddTextLine(
-						console_out,
-						ust::concat(
-							"Failed to load WAV file\"",
-							ConvertResourceStringToStringView( file_name ),
-							"\"!" ) ) );
-					return ust::null_optional;
-				}
+	return move( load_res ).try_take();
+}
 
-				if( spec.channels != 1u8 )
-				{
-					safe( ConsoleOutAddTextLine(
-						console_out,
-						ust::concat(
-							"Unsupported number of channels in WAV file\"",
-							ConvertResourceStringToStringView( file_name ),
-							"\"! Expected exactly 1 channel." ) ) );
-					return ust::null_optional;
-				}
+fn LoadSoundDataImpl( ust::file_readable &mut f, ConsoleOutPtr& console_out ) : ust::io_result</ SoundDataAbstract />
+{
+	var WavHeader mut wav_header= zero_init;
+	result_check_or_return( f.read_exact( ust::single_element_array_view( wav_header ).to_byte8_range() ) );
 
-				switch( i32( spec.format ) )
-				{
-					AUDIO_U8 ->
-					{
-						type SampleType= u8;
-						return
-							SoundDataAbstract(
-								SoundData</SampleType/>(
-									u32( spec.freq ),
-									ust::byte_ptr_cast</SampleType/>( ust::ptr_cast_to_byte8( audio_buf ) ),
-									u32( audio_len ) / u32( typeinfo</SampleType/>.size_of ) ) );
-					},
-					AUDIO_S16LSB ->
-					{
-						type SampleType= i16;
-						return
-							SoundDataAbstract(
-								SoundData</SampleType/>(
-									u32( spec.freq ),
-									ust::byte_ptr_cast</SampleType/>( ust::ptr_cast_to_byte8( audio_buf ) ),
-									u32( audio_len ) / u32( typeinfo</SampleType/>.size_of ) ) );
-					},
-					default ->
-					{
-						safe( ConsoleOutAddTextLine(
-							console_out,
-							ust::concat(
-								"Unsupported format ",
-									ust::to_string8( spec.format ),
-									" for WAV file\"",
-									ConvertResourceStringToStringView( file_name ),
-									"\"!" ) ) );
-						return ust::null_optional;
-					}
-				}
-			}
-		},
-		Err(e) ->
+	if( wav_header.block_size < 16u )
+	{
+		ConsoleOutAddTextLine( console_out, "Format block size of WAV is too small!" );
+		return ust::io_error::other;
+	}
+
+	if( wav_header.block_size > 16u )
+	{
+		// HACK! A couple of sounds have block size greater than expected. Skip some bytes.
+		scoped_array byte8 mut extra_bytes[ size_type( wav_header.block_size - 16u ) ]( byte8(0u8) );
+		result_check_or_return( f.read_exact( extra_bytes ) );
+	}
+
+	var WavDataBlockHeader mut wav_data_block_header= zero_init;
+	result_check_or_return( f.read_exact( ust::single_element_array_view( wav_data_block_header ).to_byte8_range() ) );
+
+	if( wav_data_block_header.data_block_id == "fact" )
+	{
+		// HACK! Skip <fact> block and try reading data block again.
+		scoped_array byte8 mut extra_bytes[ size_type( wav_data_block_header.data_size ) ]( byte8(0u8) );
+		result_check_or_return( f.read_exact( extra_bytes ) );
+
+		result_check_or_return( f.read_exact( ust::single_element_array_view( wav_data_block_header ).to_byte8_range() ) );
+	}
+
+	if( !(
+		wav_header.file_type_block_id == WavHeader::c_expected_file_type_block_id &&
+		wav_header.file_format_id == WavHeader::c_expected_file_format_id &&
+		wav_header.format_block_id == WavHeader::c_expected_format_block_id &&
+		wav_data_block_header.data_block_id == WavDataBlockHeader::c_expected_data_block_id ) )
+	{
+		ConsoleOutAddTextLine( console_out, "Not a WAV file!" );
+		return ust::io_error::other;
+	}
+
+	if( wav_header.audio_format != 1u16 )
+	{
+		ConsoleOutAddTextLine( console_out, "Unsupported audio format of WAV file!" );
+		return ust::io_error::other;
+	}
+
+	if( wav_header.num_channels != 1u16 )
+	{
+		ConsoleOutAddTextLine( console_out, "Unsupported number of channels in WAV file! Expected exactly 1 channel." );
+		return ust::io_error::other;
+	}
+
+	if( wav_header.bits_per_sample == 8u16 )
+	{
+		var SoundData</u8/> mut sound_data
 		{
-			ConsoleOutAddTextLine(
-				console_out,
-				ust::concat(
-					"Failed to load file \"",
-					ConvertResourceStringToStringView( file_name ),
-					"\"! Error: ",
-					ust::enum_to_string(e) ) );
+			.frequency= wav_header.frequency,
+			.samples( size_type( wav_data_block_header.data_size ) / typeinfo</u8/>.size_of, 0u8 ),
+		};
 
-			return ust::null_optional;
-		},
+		result_check_or_return( f.read_exact( sound_data.samples.range().to_byte8_range() ) );
+
+		return SoundDataAbstract( move( sound_data ) );
+	}
+	else if( wav_header.bits_per_sample == 16u16 )
+	{
+		var SoundData</i16/> mut sound_data
+		{
+			.frequency= wav_header.frequency,
+			.samples( size_type( wav_data_block_header.data_size ) / typeinfo</i16/>.size_of, 0i16 ),
+		};
+
+		result_check_or_return( f.read_exact( sound_data.samples.range().to_byte8_range() ) );
+
+		return SoundDataAbstract( move( sound_data ) );
+	}
+	else
+	{
+		ConsoleOutAddTextLine( console_out, "Unsupported audio format of WAV file! Expected 8-bit or 32-bit." );
+		return ust::io_error::other;
 	}
 }
 
