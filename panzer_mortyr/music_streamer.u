@@ -1,14 +1,108 @@
 import "/directory_iterator.iu"
 import "/enum_string_conversions.iu"
+import "/path_utils.iu"
+import "/scoped_array.iu"
 import "/common_lib/char_case.iu"
+import "/common_lib/wav_header.iu"
 import "music_streamer.iu"
 
 namespace PM
 {
 
-fn MusicStreamer::constructor( ust::filesystem_path_view data_directory, ConsoleOutPtr& console_out )
-	( track_file_names_= SearchForTracks( data_directory, console_out ) )
+fn MusicStreamer::constructor( ust::filesystem_path_view data_directory, ConsoleOutPtr mut console_out )
+	( track_file_names_= SearchForTracks( data_directory, console_out ), console_out_= move( console_out ) )
 {
+}
+
+fn MusicStreamer::Play( mut this, u32 track_index ) : ust::optional</ AudioStream::ReadEnd />
+{
+	active_track_.reset();
+
+	if( size_type( track_index ) >= typeinfo</ TrackFileNames />.element_count )
+	{
+		return ust::null_optional;
+	}
+
+	var ust::filesystem_path_view track_file_name= track_file_names_[ track_index ];
+
+	if( track_file_name.empty() )
+	{
+		return ust::null_optional;
+	}
+
+	auto mut file_res= ust::file_readable::open( track_file_name );
+	if_var( e : file_res.as_error_ref() )
+	{
+		ConsoleOutAddTextLine(
+			console_out_,
+			ust::concat( "Failed to open track \"", track_file_name, "\"! Error: ", ust::enum_to_string(e) ) );
+		return ust::null_optional;
+	}
+
+	var ust::file_readable mut file= move(file_res).try_take();
+
+	var WavHeader mut wav_header= zero_init;
+	if_var( e : file.read_exact( ust::single_element_array_view( wav_header ).to_byte8_range() ).as_error_ref() )
+	{
+		ConsoleOutAddTextLine(
+			console_out_, ust::concat( "Failed to read WAV header! Error: ", ust::enum_to_string(e) ) );
+		return ust::null_optional;
+	}
+
+	if( wav_header.block_size != 16u )
+	{
+		ConsoleOutAddTextLine( console_out_, "Format block size of WAV has unexpected size!" );
+		return ust::null_optional;
+	}
+
+	var WavDataBlockHeader mut wav_data_block_header= zero_init;
+	if_var( e :
+		file.read_exact( ust::single_element_array_view( wav_data_block_header ).to_byte8_range() ).as_error_ref() )
+	{
+		ConsoleOutAddTextLine(
+			console_out_, ust::concat( "Failed to read WAV data header! Error: ", ust::enum_to_string(e) ) );
+		return ust::null_optional;
+	}
+
+	if( !(
+		wav_header.file_type_block_id == WavHeader::c_expected_file_type_block_id &&
+		wav_header.file_format_id == WavHeader::c_expected_file_format_id &&
+		wav_header.format_block_id == WavHeader::c_expected_format_block_id &&
+		wav_data_block_header.data_block_id == WavDataBlockHeader::c_expected_data_block_id ) )
+	{
+		ConsoleOutAddTextLine( console_out_, "Not a WAV file!" );
+		return ust::null_optional;
+	}
+
+	if( wav_header.audio_format != 1u16 )
+	{
+		ConsoleOutAddTextLine( console_out_, "Unsupported audio format of WAV file!" );
+		return ust::null_optional;
+	}
+
+	if( wav_header.num_channels != 2u16 )
+	{
+		ConsoleOutAddTextLine( console_out_, "Unsupported number of channels in WAV file! Expected exactly 2 channels." );
+		return ust::null_optional;
+	}
+
+	if( wav_header.bits_per_sample != 16u16 )
+	{
+		ConsoleOutAddTextLine( console_out_, "Unsupported bitrate in WAV file! Expected 16-bit." );
+		return ust::null_optional;
+	}
+
+	auto [ mut write_end, mut read_end ]= AudioStream::Create( wav_header.frequency );
+
+	active_track_=
+		ActiveTrack
+		{
+			.file= move(file),
+			.samples_left= wav_data_block_header.data_size / u32( 2s * typeinfo</i16/>.size_of ),
+			.stream_write_end= move( write_end ),
+		};
+
+	return read_end;
 }
 
 fn MusicStreamer::SearchForTracks(
@@ -48,7 +142,7 @@ fn MusicStreamer::SearchForTracks(
 			{
 				ConsoleOutAddTextLine( console_out, ust::concat( "Found a track file \"", entry.name, "\"." ) );
 
-				track_file_names[ u32( entry.name[5s] ) - u32( '0' ) ]= entry.name;
+				track_file_names[ u32( entry.name[5s] ) - u32( '0' ) ]= ust::path::join( data_directory, entry.name );
 			}
 		}
 		else if_var( e : entry_res.as_error_ref() )
