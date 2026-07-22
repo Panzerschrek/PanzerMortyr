@@ -107,29 +107,50 @@ fn MusicStreamer::Play( mut this, u32 track_index ) : ust::optional</ AudioStrea
 
 fn MusicStreamer::Update( mut this )
 {
+	var bool mut need_to_remove_track= false;
+
 	if_var( &mut active_track : active_track_ )
 	{
-		var u32 number_of_samples_in_queue= active_track.stream_write_end.GetNumberOfSamplesInQueue();
+		var u32 number_of_sample_pairs_in_queue= active_track.stream_write_end.GetNumberOfSamplesInQueue();
 
-		if( number_of_samples_in_queue < AudioStream::c_queue_size / 2u )
+		if( number_of_sample_pairs_in_queue == 0u && active_track.sample_pairs_left == 0u )
 		{
+			// No more samples are left.
+			need_to_remove_track= true;
+		}
+		else if( number_of_sample_pairs_in_queue < AudioStream::c_queue_size / 2u )
+		{
+			// Read more samples if less than half of capacity is left.
+
 			var u32 sample_pairs_to_read=
-				ust::min( AudioStream::c_queue_size - number_of_samples_in_queue, active_track.sample_pairs_left );
+				ust::min( AudioStream::c_queue_size - number_of_sample_pairs_in_queue, active_track.sample_pairs_left );
 			if( sample_pairs_to_read > 0u )
 			{
 				sample_read_buffer_.resize(
 					size_type( sample_pairs_to_read ), ust::make_zeroed</ AudioStream::SamplePairType />() );
 
 				auto read_res= active_track.file.read_exact( sample_read_buffer_.range().to_byte8_range() );
-				ust::ignore_unused( read_res ); // TODO - use it.
+				if( read_res.is_error() )
+				{
+					// An error occured. Stop playing to avoid encounting the same error again.
+					need_to_remove_track= true;
+				}
+				else
+				{
+					// Should always be able to push samples, since we check for capacity before.
+					var size_type num_sample_pairs_written=
+						active_track.stream_write_end.WriteSamples( sample_read_buffer_ );
+					ust::ignore_unused( num_sample_pairs_written );
 
-				// Should always be able to push samples, since we check for capacity before.
-				var size_type num_samples_written= active_track.stream_write_end.WriteSamples( sample_read_buffer_ );
-				ust::ignore_unused( num_samples_written );
-
-				active_track.sample_pairs_left-= sample_pairs_to_read;
+					active_track.sample_pairs_left-= sample_pairs_to_read;
+				}
 			}
 		}
+	}
+
+	if( need_to_remove_track )
+	{
+		active_track_.reset();
 	}
 }
 
