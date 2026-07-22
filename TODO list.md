@@ -34,7 +34,6 @@ Gameplay investigation:
 * Investigate what kinds of entities are affected by gravity (what in an entity description turns gravity on and off).
 * Investigate what "zarowka" entity property is and whether it's actually used.
 * Investigate what "ponowny_atak" entity property means, how it affects enemies and what is its default value.
-* Investigate what is default value for "kontakt_bezposredni" entity property. It seems to be used by the gestapo enemy.
 
 PanzerMortyr general:
 
