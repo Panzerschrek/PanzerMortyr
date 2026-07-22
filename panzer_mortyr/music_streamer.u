@@ -98,11 +98,39 @@ fn MusicStreamer::Play( mut this, u32 track_index ) : ust::optional</ AudioStrea
 		ActiveTrack
 		{
 			.file= move(file),
-			.samples_left= wav_data_block_header.data_size / u32( 2s * typeinfo</i16/>.size_of ),
+			.sample_pairs_left= wav_data_block_header.data_size / u32( 2s * typeinfo</i16/>.size_of ),
 			.stream_write_end= move( write_end ),
 		};
 
 	return read_end;
+}
+
+fn MusicStreamer::Update( mut this )
+{
+	if_var( &mut active_track : active_track_ )
+	{
+		var u32 number_of_samples_in_queue= active_track.stream_write_end.GetNumberOfSamplesInQueue();
+
+		if( number_of_samples_in_queue < AudioStream::c_queue_size / 2u )
+		{
+			var u32 sample_pairs_to_read=
+				ust::min( AudioStream::c_queue_size - number_of_samples_in_queue, active_track.sample_pairs_left );
+			if( sample_pairs_to_read > 0u )
+			{
+				sample_read_buffer_.resize(
+					size_type( sample_pairs_to_read ), ust::make_zeroed</ AudioStream::SamplePairType />() );
+
+				auto read_res= active_track.file.read_exact( sample_read_buffer_.range().to_byte8_range() );
+				ust::ignore_unused( read_res ); // TODO - use it.
+
+				// Should always be able to push samples, since we check for capacity before.
+				var size_type num_samples_written= active_track.stream_write_end.WriteSamples( sample_read_buffer_ );
+				ust::ignore_unused( num_samples_written );
+
+				active_track.sample_pairs_left-= sample_pairs_to_read;
+			}
+		}
+	}
 }
 
 fn MusicStreamer::SearchForTracks(
