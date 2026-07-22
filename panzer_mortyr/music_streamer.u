@@ -2,6 +2,7 @@ import "/directory_iterator.iu"
 import "/enum_string_conversions.iu"
 import "/path_utils.iu"
 import "/scoped_array.iu"
+import "/vector.iu"
 import "/common_lib/char_case.iu"
 import "/common_lib/wav_header.iu"
 import "music_streamer.iu"
@@ -16,7 +17,7 @@ fn MusicStreamer::constructor( ust::filesystem_path_view data_directory, Console
 
 fn MusicStreamer::Play( mut this, u32 track_index ) : ust::optional</ AudioStream::ReadEnd />
 {
-	active_track_.reset();
+	music_reader_thread_.reset();
 
 	if( size_type( track_index ) >= typeinfo</ TrackFileNames />.element_count )
 	{
@@ -94,29 +95,35 @@ fn MusicStreamer::Play( mut this, u32 track_index ) : ust::optional</ AudioStrea
 
 	auto [ mut write_end, mut read_end ]= AudioStream::Create( wav_header.frequency );
 
-	active_track_=
-		ActiveTrack
-		{
-			.file= move(file),
-			.sample_pairs_left= wav_data_block_header.data_size / u32( 2s * typeinfo</i16/>.size_of ),
-			.stream_write_end= move( write_end ),
-		};
+	music_reader_thread_=
+		MusicReaderThread(
+			ActiveTrack
+			{
+				.file= move(file),
+				.sample_pairs_left= wav_data_block_header.data_size / u32( 2s * typeinfo</i16/>.size_of ),
+				.stream_write_end= move( write_end ),
+			} );
 
 	return read_end;
 }
 
-fn MusicStreamer::Update( mut this )
+op MusicStreamer::MusicReaderThreadFunction::()( byval mut this )
 {
-	var bool mut need_to_remove_track= false;
+	var ust::vector</ AudioStream::SamplePairType /> mut sample_read_buffer;
 
-	if_var( &mut active_track : active_track_ )
+	loop
 	{
+		if( stop_flag.read() )
+		{
+			break;
+		}
+
 		var u32 number_of_sample_pairs_in_queue= active_track.stream_write_end.GetNumberOfSamplesInQueue();
 
 		if( number_of_sample_pairs_in_queue == 0u && active_track.sample_pairs_left == 0u )
 		{
 			// No more samples are left.
-			need_to_remove_track= true;
+			break;
 		}
 		else if( number_of_sample_pairs_in_queue < AudioStream::c_queue_size / 2u )
 		{
@@ -129,32 +136,47 @@ fn MusicStreamer::Update( mut this )
 				ust::min( AudioStream::c_queue_size - number_of_sample_pairs_in_queue, active_track.sample_pairs_left );
 			if( sample_pairs_to_read > 0u )
 			{
-				sample_read_buffer_.resize(
+				sample_read_buffer.resize(
 					size_type( sample_pairs_to_read ), ust::make_zeroed</ AudioStream::SamplePairType />() );
 
-				auto read_res= active_track.file.read_exact( sample_read_buffer_.range().to_byte8_range() );
+				auto read_res= active_track.file.read_exact( sample_read_buffer.range().to_byte8_range() );
 				if( read_res.is_error() )
 				{
 					// An error occured. Stop playing to avoid encounting the same error again.
-					need_to_remove_track= true;
+					break;
 				}
 				else
 				{
 					// Should always be able to push samples, since we check for capacity before.
 					var size_type num_sample_pairs_written=
-						active_track.stream_write_end.WriteSamples( sample_read_buffer_ );
+						active_track.stream_write_end.WriteSamples( sample_read_buffer );
 					ust::ignore_unused( num_sample_pairs_written );
 
 					active_track.sample_pairs_left-= sample_pairs_to_read;
 				}
 			}
 		}
-	}
 
-	if( need_to_remove_track )
-	{
-		active_track_.reset();
+		// Sleep some time.
+		// TODO - interrupt sleep if stop is requested.
+		// Use something like condition variable for this.
+		ust::sleep( ust::duration::from_milliseconds( 250u64 ) );
 	}
+}
+
+fn MusicStreamer::MusicReaderThread::constructor( ActiveTrack mut active_track )
+	(
+		stop_flag_(false),
+		thread_=
+			ust::make_thread( MusicReaderThreadFunction{ .active_track= move(active_track), .stop_flag= stop_flag_ } ),
+	)
+{
+}
+
+fn MusicStreamer::MusicReaderThread::destructor()
+{
+	// Tell the other thread, that it should stop doing its job.
+	stop_flag_.write( true );
 }
 
 fn MusicStreamer::SearchForTracks(
