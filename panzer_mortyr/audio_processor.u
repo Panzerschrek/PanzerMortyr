@@ -120,6 +120,8 @@ fn AudioProcessor::Update( mut this, bool pause_world_sounds )
 
 	ProcessMessages();
 
+	AddMusicStreamIfNeeded();
+
 	var bool message_pushed=
 		audio_out_ext_.mixer_in_messages_queue_write_end.TryPush(
 			AudioMixer::InMessageSetPaused{ .paused= pause_world_sounds } );
@@ -475,16 +477,9 @@ fn AudioProcessor::StartPlayingMusic( mut this, [ i32, 2 ] tracks_range )
 	if( tracks_range[0] < tracks_range[1] && tracks_range[0] >= 2 && tracks_range[1] <= 10 )
 	{
 		// TODO - support playing of multiple tracks.
-		auto mut read_end= music_streamer_.Play( u32( tracks_range[0] ) );
-		if( !read_end.empty() )
-		{
-			// TODO - consider supporting changing volume for playing sounds.
-			var f32 volume= ust::max( 0.0f, ust::min( 1.0f, settings_.lock_imut().deref().snd_music_volume ) );
+		music_stream_to_add_= music_streamer_.Play( u32( tracks_range[0] ) );
 
-			var bool pushed= audio_out_ext_.mixer_in_messages_queue_write_end.TryPush(
-			AudioMixer::InMessageAddAudioStream{ .stream= read_end.try_take(), .volume= volume } );
-			ust::ignore_unused( pushed ); // TODO - handle full queue.
-		}
+		AddMusicStreamIfNeeded();
 	}
 }
 
@@ -496,6 +491,8 @@ fn AudioProcessor::StopMusic( mut this )
 	}
 
 	music_streamer_.Stop();
+
+	music_stream_to_add_.reset();
 }
 
 fn nodiscard AudioProcessor::AddAudioStream(
@@ -785,6 +782,21 @@ fn AudioProcessor::ProcessMessageImpl( mut this, AudioMixer::OutMessageAudioStre
 {
 	// For now don't care. Audio streams can be added only externally.
 	ust::ignore_unused( message );
+}
+
+fn AudioProcessor::AddMusicStreamIfNeeded( mut this )
+{
+	if( !music_stream_to_add_.empty() &&
+		audio_out_ext_.mixer_in_messages_queue_write_end.GetRemainingCapacity() > 0u )
+	{
+		// TODO - consider supporting changing volume for playing sounds.
+		var f32 volume= ust::max( 0.0f, ust::min( 1.0f, settings_.lock_imut().deref().snd_music_volume ) );
+
+		// Now we are sure that we can push an element to the queue.
+		var bool pushed= audio_out_ext_.mixer_in_messages_queue_write_end.TryPush(
+			AudioMixer::InMessageAddAudioStream{ .stream= music_stream_to_add_.try_take(), .volume= volume } );
+		debug_assert( pushed );
+	}
 }
 
 class VolumeCalculator
