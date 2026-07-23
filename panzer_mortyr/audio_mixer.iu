@@ -28,7 +28,9 @@ public:
 			InMessageSetAmbientSoundVolume,
 			InMessageRemoveAmbientSound,
 			InMessageAddSingleShotSound,
-			InMessageAddAudioStream ] />;
+			InMessageAddAudioStream,
+			InMessageSetMusicStream,
+			InMessageSetMusicStreamVolume ] />;
 
 	struct InMessageSetPaused
 	{
@@ -89,6 +91,18 @@ public:
 	struct InMessageAddAudioStream
 	{
 		AudioStream::ReadEnd stream;
+		f32 volume;
+	}
+
+	// This sets a music stream. It can be removed only by closing its write end.
+	struct InMessageSetMusicStream
+	{
+		AudioStream::ReadEnd stream;
+		f32 volume;
+	}
+
+	struct InMessageSetMusicStreamVolume
+	{
 		f32 volume;
 	}
 
@@ -257,6 +271,13 @@ private:
 	fn MixAndUpdateAmbientSounds( mut this, ust::array_view_mut</SamplePairType/> out_sample_pairs );
 	fn MixAndUpdateSingleShotSounds( mut this, ust::array_view_mut</SamplePairType/> out_sample_pairs );
 	fn MixAndUpdateAudioStreams( mut this, ust::array_view_mut</SamplePairType/> out_sample_pairs );
+	fn MixAndUpdateMusicStream( mut this, ust::array_view_mut</SamplePairType/> out_sample_pairs );
+
+	fn MixAndUpdateAudioStream(
+		ust::optional</ AudioStreamState /> &mut audio_stream_opt,
+		u32 frequency,
+		OutMessagesQueue::WriteEnd &mut out_messages_queue_write_end,
+		ust::array_view_mut</SamplePairType/> out_sample_pairs );
 
 	fn ApplyUnderwaterEffect( mut this, ust::array_view_mut</SamplePairType/> out_sample_pairs );
 
@@ -271,8 +292,11 @@ private:
 	fn ProcessMessageImpl( mut this, InMessageRemoveAmbientSound& message );
 	fn ProcessMessageImpl( mut this, InMessageAddSingleShotSound& message );
 	fn ProcessMessageImpl( mut this, InMessageAddAudioStream& message ){ ust::ignore_unused(message); } // Just a stub. We can't variant_visit with move.
+	fn ProcessMessageImpl( mut this, InMessageSetMusicStream& message ){ ust::ignore_unused(message); } // Just a stub. We can't variant_visit with move.
+	fn ProcessMessageImpl( mut this, InMessageSetMusicStreamVolume& message );
 
 	fn AddAudioStream( mut this, InMessageAddAudioStream message );
+	fn SetMusicStream( mut this, InMessageSetMusicStream message );
 
 	fn AssignNewSoundSourceToSlot( SoundSource &mut source, u32 frequency, InMessageAddSoundSource& message );
 
@@ -295,9 +319,13 @@ private:
 
 	[ SingleShotSound, 8 ] single_shot_sounds_;
 
-	// We really need no more than a single stream in any given moment (for background music or for a video).
-	// But allow having a couple of extra active streams - for transition cases.
-	[ ust::optional</ AudioStreamState />, 3 ] audio_streams_;
+	// We really need no more than a single stream in any given moment (for video playback).
+	// But allow having one more extra active stream - for transition cases.
+	[ ust::optional</ AudioStreamState />, 2 ] audio_streams_;
+
+	// Have zero or one active music stream.
+	// Keep it separate from other streams to be able to change its volume separately.
+	ust::optional</ AudioStreamState /> music_stream_;
 
 	bool underwater_effect_active_;
 	bool new_underwater_effect_active_;
