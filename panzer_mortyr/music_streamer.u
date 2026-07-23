@@ -31,84 +31,9 @@ fn MusicStreamer::Play( mut this, u32 track_index ) : ust::optional</ AudioStrea
 		return ust::null_optional;
 	}
 
-	auto mut file_res= ust::file_readable::open( track_file_name );
-	if_var( e : file_res.as_error_ref() )
-	{
-		ConsoleOutAddTextLine(
-			console_out_,
-			ust::concat( "Failed to open track \"", track_file_name, "\"! Error: ", ust::enum_to_string(e) ) );
-		return ust::null_optional;
-	}
-
-	var ust::file_readable mut file= move(file_res).try_take();
-
-	var WavHeader mut wav_header= zero_init;
-	if_var( e : file.read_exact( ust::single_element_array_view( wav_header ).to_byte8_range() ).as_error_ref() )
-	{
-		ConsoleOutAddTextLine(
-			console_out_, ust::concat( "Failed to read WAV header! Error: ", ust::enum_to_string(e) ) );
-		return ust::null_optional;
-	}
-
-	if( wav_header.block_size != 16u )
-	{
-		ConsoleOutAddTextLine( console_out_, "Format block size of WAV has unexpected size!" );
-		return ust::null_optional;
-	}
-
-	var WavDataBlockHeader mut wav_data_block_header= zero_init;
-	if_var( e :
-		file.read_exact( ust::single_element_array_view( wav_data_block_header ).to_byte8_range() ).as_error_ref() )
-	{
-		ConsoleOutAddTextLine(
-			console_out_, ust::concat( "Failed to read WAV data header! Error: ", ust::enum_to_string(e) ) );
-		return ust::null_optional;
-	}
-
-	if( !(
-		wav_header.file_type_block_id == WavHeader::c_expected_file_type_block_id &&
-		wav_header.file_format_id == WavHeader::c_expected_file_format_id &&
-		wav_header.format_block_id == WavHeader::c_expected_format_block_id &&
-		wav_data_block_header.data_block_id == WavDataBlockHeader::c_expected_data_block_id ) )
-	{
-		ConsoleOutAddTextLine( console_out_, "Not a WAV file!" );
-		return ust::null_optional;
-	}
-
-	if( wav_header.audio_format != 1u16 )
-	{
-		ConsoleOutAddTextLine( console_out_, "Unsupported audio format of WAV file!" );
-		return ust::null_optional;
-	}
-
-	if( wav_header.num_channels != 2u16 )
-	{
-		ConsoleOutAddTextLine( console_out_, "Unsupported number of channels in WAV file! Expected exactly 2 channels." );
-		return ust::null_optional;
-	}
-
-	if( wav_header.bits_per_sample != 16u16 )
-	{
-		ConsoleOutAddTextLine( console_out_, "Unsupported bitrate in WAV file! Expected 16-bit." );
-		return ust::null_optional;
-	}
-
-	if( wav_header.frequency != c_music_frequency )
-	{
-		ConsoleOutAddTextLine( console_out_, "Unsupported frequency in WAV file! Expected 44100Hz." );
-		return ust::null_optional;
-	}
-
 	auto [ mut write_end, mut read_end ]= AudioStream::Create( c_music_frequency );
 
-	music_reader_thread_=
-		MusicReaderThread(
-			ActiveTrack
-			{
-				.file= move(file),
-				.sample_pairs_left= wav_data_block_header.data_size / u32( 2s * typeinfo</i16/>.size_of ),
-				.stream_write_end= move( write_end ),
-			} );
+	music_reader_thread_= MusicReaderThread( track_file_name, move( write_end ) );
 
 	return read_end;
 }
@@ -120,6 +45,14 @@ fn MusicStreamer::Stop( mut this )
 
 op MusicStreamer::MusicReaderThreadFunction::()( byval mut this )
 {
+	var ust::optional</ActiveTrack/> mut track_opt= OpenTrack( track_path );
+	if( track_opt.empty() )
+	{
+		return;
+	}
+
+	var ActiveTrack mut active_track= track_opt.try_take();
+
 	var ust::vector</ AudioStream::SamplePairType /> mut sample_read_buffer;
 
 	loop
@@ -129,7 +62,7 @@ op MusicStreamer::MusicReaderThreadFunction::()( byval mut this )
 			break;
 		}
 
-		var u32 number_of_sample_pairs_in_queue= active_track.stream_write_end.GetNumberOfSamplesInQueue();
+		var u32 number_of_sample_pairs_in_queue= audio_stream_write_end.GetNumberOfSamplesInQueue();
 
 		if( number_of_sample_pairs_in_queue == 0u && active_track.sample_pairs_left == 0u )
 		{
@@ -160,7 +93,7 @@ op MusicStreamer::MusicReaderThreadFunction::()( byval mut this )
 				{
 					// Should always be able to push samples, since we check for capacity before.
 					var size_type num_sample_pairs_written=
-						active_track.stream_write_end.WriteSamples( sample_read_buffer );
+						audio_stream_write_end.WriteSamples( sample_read_buffer );
 					ust::ignore_unused( num_sample_pairs_written );
 
 					active_track.sample_pairs_left-= sample_pairs_to_read;
@@ -175,11 +108,18 @@ op MusicStreamer::MusicReaderThreadFunction::()( byval mut this )
 	}
 }
 
-fn MusicStreamer::MusicReaderThread::constructor( ActiveTrack mut active_track )
+fn MusicStreamer::MusicReaderThread::constructor(
+	ust::filesystem_path mut track_path, AudioStream::WriteEnd mut audio_stream_write_end )
 	(
 		stop_flag_(false),
 		thread_=
-			ust::make_thread( MusicReaderThreadFunction{ .active_track= move(active_track), .stop_flag= stop_flag_ } ),
+			ust::make_thread(
+				MusicReaderThreadFunction
+				{
+					.track_path= move( track_path ),
+					.audio_stream_write_end= move( audio_stream_write_end ),
+					.stop_flag= stop_flag_,
+				} ),
 	)
 {
 }
@@ -239,6 +179,90 @@ fn MusicStreamer::SearchForTracks(
 	}
 
 	return track_file_names;
+}
+
+struct ActiveTrack
+{
+	ust::file_readable file;
+	u32 sample_pairs_left;
+}
+
+fn OpenTrack( ust::filesystem_path_view track_file_name ) : ust::optional</ActiveTrack/>
+{
+	auto mut file_res= ust::file_readable::open( track_file_name );
+
+	if_var( e : file_res.as_error_ref() )
+	{
+		ust::stderr_print(
+			ust::concat( "Failed to open track \"", track_file_name, "\"! Error: ", ust::enum_to_string(e), ".\n" ) );
+		return ust::null_optional;
+	}
+
+	var ust::file_readable mut file= move(file_res).try_take();
+
+	var WavHeader mut wav_header= zero_init;
+
+	if_var( e : file.read_exact( ust::single_element_array_view( wav_header ).to_byte8_range() ).as_error_ref() )
+	{
+		ust::stderr_print( ust::concat( "Failed to read WAV header! Error: ", ust::enum_to_string(e), ".\n" ) );
+		return ust::null_optional;
+	}
+
+	if( wav_header.block_size != 16u )
+	{
+		ust::stderr_print( "Format block size of WAV has unexpected size!\n" );
+		return ust::null_optional;
+	}
+
+	var WavDataBlockHeader mut wav_data_block_header= zero_init;
+
+	if_var( e :
+		file.read_exact( ust::single_element_array_view( wav_data_block_header ).to_byte8_range() ).as_error_ref() )
+	{
+		ust::stderr_print( ust::concat( "Failed to read WAV data header! Error: ", ust::enum_to_string(e), ".\n" ) );
+		return ust::null_optional;
+	}
+
+	if( !(
+		wav_header.file_type_block_id == WavHeader::c_expected_file_type_block_id &&
+		wav_header.file_format_id == WavHeader::c_expected_file_format_id &&
+		wav_header.format_block_id == WavHeader::c_expected_format_block_id &&
+		wav_data_block_header.data_block_id == WavDataBlockHeader::c_expected_data_block_id ) )
+	{
+		ust::stderr_print( "Not a WAV file!\n" );
+		return ust::null_optional;
+	}
+
+	if( wav_header.audio_format != 1u16 )
+	{
+		ust::stderr_print( "Unsupported audio format of WAV file!\n" );
+		return ust::null_optional;
+	}
+
+	if( wav_header.num_channels != 2u16 )
+	{
+		ust::stderr_print( "Unsupported number of channels in WAV file! Expected exactly 2 channels.\n" );
+		return ust::null_optional;
+	}
+
+	if( wav_header.bits_per_sample != 16u16 )
+	{
+		ust::stderr_print( "Unsupported bitrate in WAV file! Expected 16-bit.\n" );
+		return ust::null_optional;
+	}
+
+	if( wav_header.frequency != c_music_frequency )
+	{
+		ust::stderr_print( "Unsupported frequency in WAV file! Expected 44100Hz." );
+		return ust::null_optional;
+	}
+
+	return
+		ActiveTrack
+		{
+			.file= move(file),
+			.sample_pairs_left= wav_data_block_header.data_size / u32( 2s * typeinfo</i16/>.size_of ),
+		};
 }
 
 // Use hardcoded frequency. Tracks extracted from a CD should use it.
