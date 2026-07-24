@@ -1,4 +1,5 @@
 import "/path_utils.iu"
+import "/scoped_array.iu"
 import "/stdout.iu"
 import "/string_conversions.iu"
 import "/utf.iu"
@@ -14,7 +15,7 @@ fn ParseIsoFile( ust::file_readable &mut file ) : ust::io_result</DirectoryInIso
 
 	result_check_or_return( file.seek( 32768u64 ) );
 
-	var ust::vector</IsoVolumeDescriptor/> mut type2_volume_descriptors;
+	var ust::vector</IsoVolumeDescriptor/> mut type1_volume_descriptors, mut type2_volume_descriptors;
 
 	var IsoVolumeDescriptor mut volume_descriptor= zero_init;
 
@@ -44,36 +45,138 @@ fn ParseIsoFile( ust::file_readable &mut file ) : ust::io_result</DirectoryInIso
 			break;
 		}
 
-		// Process only TYPE 2 volumes, since they have non-restricted file names (with no file name length limit).
+		if( volume_descriptor.header.type_ == 1u8 )
+		{
+			type1_volume_descriptors.push_back( volume_descriptor );
+		}
 		if( volume_descriptor.header.type_ == 2u8 )
 		{
 			type2_volume_descriptors.push_back( volume_descriptor );
 		}
 	}
 
-	if( type2_volume_descriptors.empty() )
+	if( !type2_volume_descriptors.empty() )
 	{
-		ust::stderr_print( "No volume of type 2 found!\n" );
-		return ust::io_error::not_found;
+		// Prefer TYPE2 volumes, since they have unrestricted names.
+
+		if( type2_volume_descriptors.size() > 1s )
+		{
+			ust::stdout_print( "Too many volumes of type 2! Expected exactly one.\n" );
+		}
+
+		var IsoPrimaryVolumeDescriptor mut primary_volume_descriptor= zero_init;
+		ust::single_element_array_view( primary_volume_descriptor ).to_byte8_range().copy_from(
+			ust::single_element_array_view( type2_volume_descriptors.front() ).to_byte8_range() );
+
+		return
+			ReadDirectory16_r(
+				file,
+				u32( primary_volume_descriptor.logical_block_size[0] ),
+				primary_volume_descriptor.root_directory_entry.header );
 	}
 
-	if( type2_volume_descriptors.size() > 1s )
+	if( !type1_volume_descriptors.empty() )
 	{
-		ust::stdout_print( "Too many volumes of type 2! Expected exactly one.\n" );
+		// If no TYPE2 volumes are available, try at least a TYPE1 volume.
+
+		if( type2_volume_descriptors.size() > 1s )
+		{
+			ust::stdout_print( "Too many volumes of type 1! Expected exactly one.\n" );
+		}
+
+		var IsoPrimaryVolumeDescriptor mut primary_volume_descriptor= zero_init;
+		ust::single_element_array_view( primary_volume_descriptor ).to_byte8_range().copy_from(
+			ust::single_element_array_view( type1_volume_descriptors.front() ).to_byte8_range() );
+
+		return
+			ReadDirectory8_r(
+				file,
+				u32( primary_volume_descriptor.logical_block_size[0] ),
+				primary_volume_descriptor.root_directory_entry.header );
 	}
 
-	var IsoPrimaryVolumeDescriptor mut primary_volume_descriptor= zero_init;
-	ust::single_element_array_view( primary_volume_descriptor ).to_byte8_range().copy_from(
-		ust::single_element_array_view( type2_volume_descriptors.front() ).to_byte8_range() );
+	ust::stderr_print( "No volume description is found!\n" );
 
-	return
-		ReadDirectory_r(
-			file,
-			u32( primary_volume_descriptor.logical_block_size[0] ),
-			primary_volume_descriptor.root_directory_entry.header );
+	return ust::io_error::not_found;
 }
 
-fn ReadDirectory_r(
+fn ReadDirectory8_r(
+	ust::file_readable &mut file,
+	u32 block_size,
+	IsoDirectoryRecordHeader& directory_header ) : ust::io_result</DirectoryInIso/>
+{
+	var u32 extent_location= ReadNumBytes( directory_header.extent_location[0] );
+	var u32 extent_length= ReadNumBytes( directory_header.data_length[0] );
+
+	result_check_or_return( file.seek( u64( block_size ) * u64( extent_location ) ) );
+
+	var ust::vector</ tup[ IsoDirectoryRecordHeader, ust::string8 ] /> mut subdirectories;
+
+	var DirectoryInIso mut out_directory;
+
+	var size_type mut record_index= 0s;
+
+	for( auto mut dir_offset= 0u; dir_offset < extent_length; )
+	{
+		var IsoDirectoryRecordHeader mut entry_header= zero_init;
+
+		result_check_or_return( file.read_exact( ust::single_element_array_view( entry_header ).to_byte8_range() ) );
+
+		if( entry_header.length <= u8( typeinfo</ IsoDirectoryRecordHeader />.size_of ) )
+		{
+			break;
+		}
+		dir_offset+= u32( entry_header.length );
+
+		var ust::string8 mut name( size_type( entry_header.length_of_identifier ), '\0' );
+
+		result_check_or_return( file.read_exact( name.range().to_byte8_range() ) );
+
+		{
+			var size_type mut num_extra_bytes=
+				( ( size_type( entry_header.length ) + 1s ) & ~1s ) - typeinfo</ IsoDirectoryRecordHeader />.size_of -
+				size_type( entry_header.length_of_identifier );
+
+			if( num_extra_bytes > 0s )
+			{
+				scoped_array byte8 mut extra_bytes[ num_extra_bytes ]( byte8(0u8) );
+				result_check_or_return( file.read_exact( extra_bytes ) );
+			}
+		}
+
+		if( ( u32( entry_header.file_flags ) & 2u ) != 0u )
+		{
+			if( record_index >= 2s ) // Ignore first two entries "." (self) and ".." (parent).
+			{
+				subdirectories.push_back( ust::make_tuple( entry_header, name ) );
+			}
+		}
+		else
+		{
+			out_directory.entries.push_back(
+				ust::make_tuple(
+					name,
+					EntryInIso(
+						FileInIso
+						{
+							.offset= u64( block_size ) * u64( ReadNumBytes( entry_header.extent_location[0] ) ),
+							.size= u64( ReadNumBytes( entry_header.data_length[0] ) ),
+						} ) ) );
+		}
+
+		++record_index;
+	}
+
+	foreach( &subdirectory : subdirectories )
+	{
+		result_unwrap_or_return( mut sd : ReadDirectory8_r( file, block_size, subdirectory[0] ) );
+		out_directory.entries.push_back( ust::make_tuple( subdirectory[1], EntryInIso( ust::make_box( move(sd) ) ) ) );
+	}
+
+	return out_directory;
+}
+
+fn ReadDirectory16_r(
 	ust::file_readable &mut file,
 	u32 block_size,
 	IsoDirectoryRecordHeader& directory_header ) : ust::io_result</DirectoryInIso/>
@@ -142,7 +245,7 @@ fn ReadDirectory_r(
 
 	foreach( &subdirectory : subdirectories )
 	{
-		result_unwrap_or_return( mut sd : ReadDirectory_r( file, block_size, subdirectory[0] ) );
+		result_unwrap_or_return( mut sd : ReadDirectory16_r( file, block_size, subdirectory[0] ) );
 		out_directory.entries.push_back( ust::make_tuple( subdirectory[1], EntryInIso( ust::make_box( move(sd) ) ) ) );
 	}
 
