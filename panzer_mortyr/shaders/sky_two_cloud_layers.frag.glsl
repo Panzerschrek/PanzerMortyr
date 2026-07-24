@@ -17,11 +17,16 @@ void main()
 	float z_adjusted= view_vec_normalized.z + horizon_level;
 	vec2 tc= view_vec_normalized.xy / ( abs(z_adjusted) + 0.05 );
 
-	float tc_scale= 1.0; // TODO - tune it?
+	float tc_scale= 0.5;
+	float layer1_shift_scale= 2.0;
+
 	vec2 tc_scaled= tc * tc_scale;
 
-	vec3 tex_value0= texture( fu_texture, vec3( tc_scaled + fu_texture_shift, fu_texture_layer ) ).rgb;
-	vec3 tex_value1= texture( fu_texture, vec3( tc_scaled + fu_texture_shift * 2.0, fu_texture_layer + 1.0 ) ).rgb;
+	vec3 layer0_tc= vec3( tc_scaled + fu_texture_shift, fu_texture_layer );
+	vec3 layer1_tc= vec3( tc_scaled + fu_texture_shift * layer1_shift_scale, fu_texture_layer + 1.0 );
+
+	vec3 tex_value0= texture( fu_texture, layer0_tc ).rgb;
+	vec3 tex_value1= texture( fu_texture, layer1_tc ).rgb;
 
 	color= vec4( ( tex_value0 + tex_value1 ) * f_color, 1.0 );
 }

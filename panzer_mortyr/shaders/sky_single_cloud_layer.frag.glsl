@@ -17,7 +17,7 @@ void main()
 	float z_adjusted= view_vec_normalized.z + horizon_level;
 	vec2 tc= view_vec_normalized.xy / ( abs(z_adjusted) + 0.05 );
 
-	float tc_scale= 1.0; // TODO - tune it?
+	float tc_scale= 0.5;
 
 	color= vec4( texture( fu_texture, vec3( tc * tc_scale + fu_texture_shift, fu_texture_layer ) ).rgb * f_color, 1.0 );
 }
