@@ -93,7 +93,7 @@ op MusicStreamer::MusicReaderThreadFunction::()( byval mut this )
 			var ust::optional</ActiveTrack/> mut track_opt= OpenTrack( track_path );
 			if( track_opt.empty() )
 			{
-				return;
+				return; // An error occured. Stop playing to avoid encounting the same error again.
 			}
 
 			var ActiveTrack mut active_track= track_opt.try_take();
@@ -111,7 +111,7 @@ op MusicStreamer::MusicReaderThreadFunction::()( byval mut this )
 
 				if( number_of_sample_pairs_in_queue == 0u && active_track.sample_pairs_left == 0u )
 				{
-					// No more samples are left.
+					// No more samples are left in current track.
 					break;
 				}
 				else if( number_of_sample_pairs_in_queue < AudioStream::c_queue_size / 2u )
@@ -134,18 +134,15 @@ op MusicStreamer::MusicReaderThreadFunction::()( byval mut this )
 						auto read_res= active_track.file.read_exact( sample_read_buffer.range().to_byte8_range() );
 						if( read_res.is_error() )
 						{
-							// An error occured. Stop playing to avoid encounting the same error again.
-							return;
+							return; // An error occured. Stop playing to avoid encounting the same error again.
 						}
-						else
-						{
-							// Should always be able to push samples, since we check for capacity before.
-							var size_type num_sample_pairs_written=
-								audio_stream_write_end.WriteSamples( sample_read_buffer );
-							ust::ignore_unused( num_sample_pairs_written );
 
-							active_track.sample_pairs_left-= sample_pairs_to_read;
-						}
+						// Should always be able to push samples, since we check for capacity before.
+						var size_type num_sample_pairs_written=
+							audio_stream_write_end.WriteSamples( sample_read_buffer );
+						ust::ignore_unused( num_sample_pairs_written );
+
+						active_track.sample_pairs_left-= sample_pairs_to_read;
 					}
 				}
 
@@ -210,7 +207,7 @@ fn MusicStreamer::SearchForTracks(
 				ToLower( entry.name[3s] ) == 'c' &&
 				ToLower( entry.name[4s] ) == 'k' &&
 				entry.name[5s] >= '0' && entry.name[5s] <= '9' &&
-				ToLower( entry.name[6s] ) == '.' &&
+				entry.name[6s] == '.' &&
 				ToLower( entry.name[7s] ) == 'w' &&
 				ToLower( entry.name[8s] ) == 'a' &&
 				ToLower( entry.name[9s] ) == 'v' )
@@ -260,7 +257,7 @@ fn OpenTrack( ust::filesystem_path_view track_file_name ) : ust::optional</Activ
 
 	if( wav_header.block_size != 16u )
 	{
-		ust::stderr_print( "Format block size of WAV has unexpected size!\n" );
+		ust::stderr_print( "Format block size of WAV has unexpected size! Expected exactly 16.\n" );
 		return ust::null_optional;
 	}
 
@@ -285,7 +282,7 @@ fn OpenTrack( ust::filesystem_path_view track_file_name ) : ust::optional</Activ
 
 	if( wav_header.audio_format != 1u16 )
 	{
-		ust::stderr_print( "Unsupported audio format of WAV file!\n" );
+		ust::stderr_print( "Unsupported audio format of WAV file! Expected PCM format.\n" );
 		return ust::null_optional;
 	}
 
