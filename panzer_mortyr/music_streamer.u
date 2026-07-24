@@ -52,66 +52,69 @@ fn MusicStreamer::IsPlaying( this ) : bool
 
 op MusicStreamer::MusicReaderThreadFunction::()( byval mut this )
 {
-	var ust::optional</ActiveTrack/> mut track_opt= OpenTrack( track_path );
-	if( track_opt.empty() )
+	loop label playback_loop // Loop over all tracks and repeat them.
 	{
-		return;
-	}
-
-	var ActiveTrack mut active_track= track_opt.try_take();
-
-	var ust::vector</ AudioStream::SamplePairType /> mut sample_read_buffer;
-
-	loop
-	{
-		if( stop_flag.read() )
+		var ust::optional</ActiveTrack/> mut track_opt= OpenTrack( track_path );
+		if( track_opt.empty() )
 		{
-			break;
+			return;
 		}
 
-		var u32 number_of_sample_pairs_in_queue= audio_stream_write_end.GetNumberOfSamplesInQueue();
+		var ActiveTrack mut active_track= track_opt.try_take();
 
-		if( number_of_sample_pairs_in_queue == 0u && active_track.sample_pairs_left == 0u )
-		{
-			// No more samples are left.
-			break;
-		}
-		else if( number_of_sample_pairs_in_queue < AudioStream::c_queue_size / 2u )
-		{
-			// Read more samples if less than 50% of capacity is left.
-			// Filling new data into the buffer when it has 50% capacity seems to be the ideal approach.
-			// Using greater threshold (like 75%) will lead to too frequent reads and buffer capacity underutilization.
-			// Using smaller threshold (like 25%) will leave too few time for data reading, which may be slow due to disk access.
+		var ust::vector</ AudioStream::SamplePairType /> mut sample_read_buffer;
 
-			var u32 sample_pairs_to_read=
-				ust::min( AudioStream::c_queue_size - number_of_sample_pairs_in_queue, active_track.sample_pairs_left );
-			if( sample_pairs_to_read > 0u )
+		loop label track_loop // Loop over current track.
+		{
+			if( stop_flag.read() )
 			{
-				sample_read_buffer.resize(
-					size_type( sample_pairs_to_read ), ust::make_zeroed</ AudioStream::SamplePairType />() );
+				return;
+			}
 
-				auto read_res= active_track.file.read_exact( sample_read_buffer.range().to_byte8_range() );
-				if( read_res.is_error() )
-				{
-					// An error occured. Stop playing to avoid encounting the same error again.
-					break;
-				}
-				else
-				{
-					// Should always be able to push samples, since we check for capacity before.
-					var size_type num_sample_pairs_written=
-						audio_stream_write_end.WriteSamples( sample_read_buffer );
-					ust::ignore_unused( num_sample_pairs_written );
+			var u32 number_of_sample_pairs_in_queue= audio_stream_write_end.GetNumberOfSamplesInQueue();
 
-					active_track.sample_pairs_left-= sample_pairs_to_read;
+			if( number_of_sample_pairs_in_queue == 0u && active_track.sample_pairs_left == 0u )
+			{
+				// No more samples are left.
+				break;
+			}
+			else if( number_of_sample_pairs_in_queue < AudioStream::c_queue_size / 2u )
+			{
+				// Read more samples if less than 50% of capacity is left.
+				// Filling new data into the buffer when it has 50% capacity seems to be the ideal approach.
+				// Using greater threshold (like 75%) will lead to too frequent reads and buffer capacity underutilization.
+				// Using smaller threshold (like 25%) will leave too few time for data reading, which may be slow due to disk access.
+
+				var u32 sample_pairs_to_read=
+					ust::min( AudioStream::c_queue_size - number_of_sample_pairs_in_queue, active_track.sample_pairs_left );
+				if( sample_pairs_to_read > 0u )
+				{
+					sample_read_buffer.resize(
+						size_type( sample_pairs_to_read ), ust::make_zeroed</ AudioStream::SamplePairType />() );
+
+					auto read_res= active_track.file.read_exact( sample_read_buffer.range().to_byte8_range() );
+					if( read_res.is_error() )
+					{
+						// An error occured. Stop playing to avoid encounting the same error again.
+						return;
+					}
+					else
+					{
+						// Should always be able to push samples, since we check for capacity before.
+						var size_type num_sample_pairs_written=
+							audio_stream_write_end.WriteSamples( sample_read_buffer );
+						ust::ignore_unused( num_sample_pairs_written );
+
+						active_track.sample_pairs_left-= sample_pairs_to_read;
+					}
 				}
 			}
-		}
 
-		// Sleep some time.
-		// TODO - interrupt sleep if stop is requested.
-		// Use something like condition variable for this.
-		ust::sleep( ust::duration::from_milliseconds( 250u64 ) );
+			// Sleep some time.
+			// TODO - interrupt sleep if stop is requested.
+			// Use something like condition variable for this.
+			ust::sleep( ust::duration::from_milliseconds( 250u64 ) );
+		}
 	}
 }
 
