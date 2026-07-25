@@ -80,15 +80,15 @@ fn WorldDrawer::constructor(
 		model_burning_shader_(
 			embed</char8/>( "shaders/model_burning.vert.glsl" ),
 			embed</char8/>( "shaders/model_burning.frag.glsl" ) ),
-		sky_background_shader_(
-			embed</char8/>( "shaders/sky_background.vert.glsl" ),
-			embed</char8/>( "shaders/sky_background.frag.glsl" ) ),
+		sky_single_cloud_layer_shader_(
+			embed</char8/>( "shaders/sky.vert.glsl" ),
+			embed</char8/>( "shaders/sky_single_cloud_layer.frag.glsl" ) ),
+		sky_two_cloud_layers_shader_(
+			embed</char8/>( "shaders/sky.vert.glsl" ),
+			embed</char8/>( "shaders/sky_two_cloud_layers.frag.glsl" ) ),
 		stars_shader_(
 			embed</char8/>( "shaders/stars.vert.glsl" ),
 			embed</char8/>( "shaders/stars.frag.glsl" ) ),
-		clouds_shader_(
-			embed</char8/>( "shaders/clouds.vert.glsl" ),
-			embed</char8/>( "shaders/clouds.frag.glsl" ) ),
 		semitransparent_geometry_shader_(
 			embed</char8/>( "shaders/semitransparent_geometry.vert.glsl" ),
 			embed</char8/>( "shaders/semitransparent_geometry.frag.glsl" ) ),
@@ -1055,23 +1055,15 @@ fn WorldDrawer::DrawPartial(
 
 	// Draw sky after global fog.
 
-	DrawSkyBackground(
-		map_data.sky_background_buffer,
-		sky_background_shader_,
+	DrawSkySphere(
+		map_data.sky_sphere_buffer,
+		( map_data.use_two_cloud_layers ? sky_two_cloud_layers_shader_ : sky_single_cloud_layer_shader_ ) ,
+		map_data.map_textures_array,
+		map_data.clouds_texture_layer,
 		camera_matrices.rotation_and_projection_matrix,
 		// Scale sky light but not add constant factor. Black sky should remain black.
-		global_light_params.light_scale );
-
-	if( !map_data.sky_clouds_params.empty() && map_data.clouds_texture_layer != ~0u )
-	{
-		DrawClouds(
-			map_data.sky_clouds_params.try_deref(),
-			clouds_shader_,
-			map_data.map_textures_array,
-			map_data.clouds_texture_layer,
-			camera_matrices.rotation_and_projection_matrix,
-			drawing_info.game_time_s );
-	}
+		global_light_params.light_scale,
+		drawing_info.game_time_s );
 
 	// Draw stars/moon AFTER clouds. This isn't fully correct, but this allows to draw sun/moon with proper brightness.
 	DrawStarsAndSun(
@@ -1711,9 +1703,11 @@ fn WorldDrawer::SetMap( mut this, u32 map_index )
 				.clusters_draw_data= move(clusters_draw_data),
 				.special_material_valve_meshes= move(special_material_valve_meshes),
 				.special_material_film_meshes= move(special_material_film_meshes),
-				.sky_background_buffer= CreateSkyBackgroundBuffer( map_description ),
+				.sky_sphere_buffer= CreateSkySphereBuffer( map_description ),
 				.stars_buffer= CreateStarsBuffer( map_description, billboards_description_ ),
-				.sky_clouds_params= CreateSkyCloudsParams( map_description ),
+				// Investigations of the original game have shown, that sky model 3 has two cloud layers.
+				// Other skies have only single layer.
+				.use_two_cloud_layers= map_description.sky_model == 3u,
 				.snow_rain_buffer= CreateSnowRainBuffer( zmap_lam_data ),
 				.fog_color
 				[
@@ -3777,54 +3771,39 @@ fn DrawLocalFog(
 	}
 }
 
-fn DrawSkyBackground(
-	SkyBackgroundBuffer& sky_background_buffer,
-	ShaderProgram &mut shader,
-	Mat4f& rotation_and_projection_matrix,
-	[ f32, 3 ]& light_scale )
-{
-	SetGLState( g_sky_background_gl_state );
-
-	shader.Bind();
-	shader.SetUniform( "vu_matrix", Mat4f::MakeScale( c_sky_scale ) * rotation_and_projection_matrix );
-
-	shader.SetUniform( "vu_light_scale", Vec3f( light_scale ) );
-
-	sky_background_buffer.vertex_array_object.Bind();
-	sky_background_buffer.index_buffer.Bind();
-
-	unsafe( glDrawElements(
-		GLenum( GL_TRIANGLES ),
-		GLint( sky_background_buffer.num_triangle_indices ),
-		GLenum( GL_UNSIGNED_SHORT ),
-		ust::nullptr</byte8/>() ) );
-}
-
-fn DrawClouds(
-	SkyCloudsParams& clouds_params,
+fn DrawSkySphere(
+	SkySphereBuffer& sky_sphere_buffer,
 	ShaderProgram &mut shader,
 	Texture& map_textures_array,
 	u32 clouds_texture_layer,
 	Mat4f& rotation_and_projection_matrix,
+	[ f32, 3 ]& light_scale,
 	f32 time_s )
 {
-	SetGLState(
-		( clouds_params.scale_colors_by_two
-			? g_clouds_double_blending_gl_state
-			: g_clouds_single_blending_gl_state ) );
+	var f32 c_scroll_speed= 1.0f / 128.0f;
+	var Vec2f texture_shift= ( time_s * c_scroll_speed ) * Vec2f( 1.0f, 1.0f );
+
+	SetGLState( g_sky_sphere_gl_state );
 
 	var u32 texture_slot= 0u;
 	unsafe( glActiveTexture( GLenum( GL_TEXTURE0 ) + GLenum(texture_slot) ) );
 	map_textures_array.Bind();
 
 	shader.Bind();
-	shader.SetUniform( "vu_matrix", Mat4f::MakeScale( c_clouds_scale ) * rotation_and_projection_matrix );
+	shader.SetUniform( "vu_matrix", Mat4f::MakeScale( c_sky_scale ) * rotation_and_projection_matrix );
+	shader.SetUniform( "vu_light_scale", Vec3f( light_scale ) );
 	shader.SetUniform( "fu_texture", texture_slot );
 	shader.SetUniform( "fu_texture_layer", f32( clouds_texture_layer ) );
-	shader.SetUniform( "fu_texture_scale", clouds_params.scale );
-	shader.SetUniform( "fu_texture_shift",  time_s * clouds_params.scroll_speed * Vec2f( 1.0f, 1.0f ) );
+	shader.SetUniform( "fu_texture_shift", texture_shift );
 
-	unsafe( glDrawArrays( GLenum( GL_TRIANGLES ), GLint(0), GLsizei(18) ) );
+	sky_sphere_buffer.vertex_array_object.Bind();
+	sky_sphere_buffer.index_buffer.Bind();
+
+	unsafe( glDrawElements(
+		GLenum( GL_TRIANGLES ),
+		GLint( sky_sphere_buffer.num_triangle_indices ),
+		GLenum( GL_UNSIGNED_SHORT ),
+		ust::nullptr</byte8/>() ) );
 }
 
 fn DrawStarsAndSun(
@@ -4063,7 +4042,6 @@ fn LoadModels(
 
 var f32 c_sky_scale= c_z_far / 2.0f;
 var f32 c_stars_scale= c_sky_scale;
-var f32 c_clouds_scale= c_sky_scale;
 
 // Allow a lot of test primitive vertices in debug mode.
 var size_type c_max_test_primitive_vertices= ( compiler::options::generate_debug_info ? 2097152s : 4096s );
@@ -4098,7 +4076,7 @@ var GLState g_buffer_clear_gl_state
 	.blend_destination_factor( GL_INVALID_ENUM ),
 };
 
-var GLState g_sky_background_gl_state
+var GLState g_sky_sphere_gl_state
 {
 	.color_write_enabled= true,
 	.depth_test_enabled= true,
@@ -4122,32 +4100,6 @@ var GLState g_stars_gl_state
 	.blending_enabled= true,
 	.blend_source_factor( GL_ONE ),
 	.blend_destination_factor( GL_ONE ),
-};
-
-var GLState g_clouds_single_blending_gl_state
-{
-	.color_write_enabled= true,
-	.depth_test_enabled= true,
-	.depth_test_func( GL_LESS ),
-	.depth_write_enabled= false,
-	.cull_face_enabled= false,
-	.cull_face( GL_INVALID_ENUM ),
-	.blending_enabled= true,
-	.blend_source_factor( GL_ZERO ),
-	.blend_destination_factor( GL_SRC_COLOR ),
-};
-
-var GLState g_clouds_double_blending_gl_state
-{
-	.color_write_enabled= true,
-	.depth_test_enabled= true,
-	.depth_test_func( GL_LESS ),
-	.depth_write_enabled= false,
-	.cull_face_enabled= false,
-	.cull_face( GL_INVALID_ENUM ),
-	.blending_enabled= true,
-	.blend_source_factor( GL_DST_COLOR ),
-	.blend_destination_factor( GL_SRC_COLOR ),
 };
 
 var GLState g_map_drawing_gl_state

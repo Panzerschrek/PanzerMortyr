@@ -1,24 +1,32 @@
 This document describes sky models of the original game.
 
 Sky model = 0
-Just black skybox with stars, but without moon and clouds.
+Just black or almost skybox with stars, but without moon and clouds.
+It's found experementally, it's not used in the original game.
 
 Sky model = 1
 It's a color gradient with given colors from (-X, -Y) to (+X, +Y).
 Has clouds scrolling slowly towards (-X, -Y) direction.
+Clouds are blended with sky color using multiplicative blending.
 Has stars.
 
 Sky model = 2
 It's a color gradient with given colors from (-X, -Y) to (+X, +Y).
 Has clouds scrolling slowly towards (-X, -Y) direction.
+Clouds are blended with sky color using multiplicative blending.
 Has a moon.
 
 Sky model = 3
 It's a color gradient with given colors from (-X, -Y) to (+X, +Y).
-Has scaled clouds scrolling fast towards (-X, -Y) direction.
+Has clouds scrolling slowly towards (-X, -Y) direction.
+Has second clouds layer scrolling faster than the first one.
+Clouds are blended with sky color using multiplicative blending.
+Two cloud layers are added to each other.
 Has a moon.
 
 Specifying sky models above 3 gives the same result as mode 3.
+
+Moon and starts seems to use additive blending.
 
 Sky model 0 is unused.
 Sky model 1 is used on maps 4, 16, 23, 29.
