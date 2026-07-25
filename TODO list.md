@@ -39,7 +39,6 @@ PanzerMortyr general:
 
 * Allow changing shot and zoom controls (change mouse buttons and maybe even use key buttons).
 * Consider embedding git revision into the game executable and showing it somewhere in the game.
-* Allow turning off some costly effects via settings - breaking glass, fog, dynamic lighting, etc.
 * Consider performing even more advanced game data search - with more hardcoded paths, Windows registry fetches, etc.
 * Ensure PanzerMortyr works properly on Wayland-based systems.
 * Consider writing console messages into a file - to simplify troubleshooting.
@@ -53,10 +52,9 @@ PanzerMortyr general:
 PanzerMortyr game logic:
 
 * Implement flies animation (used only for single dog enemy on map 19).
-* Implement remaining entity state transitions (used only by some enemy types).
+* Ensure all entity properties affecting state transitions are implemented.
 * Consider implement armor seeking/pick-up behavior for enemies.
 * Break glass quads and quads with breakable materials while applying spash damage. The original game doesn't do this and it doesn't look right.
-* Implement invisibility tool (false documents) and enemy properties allowing to uncover the player having invisibility.
 * Implement flame particles emitted by explosive decorations ("wybuch_benzyny"/"plomienie").
 * Spawn water splash particles if a projectile hits water surface.
 * Spawn water circles if a projectile hits water surface.
@@ -70,7 +68,7 @@ PanzerMortyr game logic:
 * Consider disabling all or at least some weapons of the player if weapon shot start position is in water or other liquid. The original game allow shooting in water, but PanzerMortyr probably shouldn't allow this.
 * Consider extinguishing damaging flames on entities located inside liquids.
 * Consider reducing brightness of Volkssturm smoking lights - they are way to bright.
-* Perform camera rotation upon player's death as the original game does. It seems to be a full circle azimuth rotation and a rotation to some fixed elevation.
+* Perform camera rotation upon player's death as the original game does. It seems to be a full circle azimuth rotation and a rotation to some fixed elevation. Sometimes it's even a 180 degree flip.
 * Consider disabling burning effect for non-enemy entities. It doesn't look well for things made of iron or other non-burnable materials.
 * Consider optimizing global navigation graph calculation even more - to reduce map loading time.
 * Consider not creating edges in global navigation graph requiring jumping down too deep (to avoid fall damage).
@@ -100,14 +98,14 @@ PanzerMortyr rendering:
 * Consider drawing map polygons with detail textures (generate such textures somehow).
 * Consider drawing some sort of fullscreen frame-like image of the acid protection suit mask if this powerup is active.
 * Consider colorizing the whole image while the acid protection suit is active.
-* Consider drawing some extra effects for the night vision mode, like fullscreen radial brightness gradient or something similar.
-* Make sure clouds have proper scale and speed (similar to the original game).
-* Make sure clouds use proper blending mode for all available sky types.
+* Consider drawing some extra effects for the night vision mode, like fullscreen radial brightness gradient, thermal noise or something similar.
 * Consider optimizing dynamic lighting even more by using stencil test for them.
 * Consider limiting the number of active dynamic light sources - to avoid huge performance drops.
-* Consider applying dynamic light to glass quads.
+* Consider applying dynamic light to glass and water quads.
 * Consider optimizing drawing snow/rain - reject snow/rain particles for non-visible clusters and clusters located far away.
+* Consider drawing bullet and muzzle-flash billboards elongated along their rotation axis - as the original game seems to do.
 * Allow turning global fog for snow/rain off.
+* Allow turning breaking glass particles off.
 * Modyfy pixels of alpha-tested textures having zero alpha, so that their color is equal to average color of adjacent pixels with non-zero alpha. This is needed to avoid black borders on alpha-tested billboards and decals.
 * Allow switching to a fullscreen mode with refresh rate change.
 * Implement visual effect specific for omni protection item (multiplayer-only power-up).
