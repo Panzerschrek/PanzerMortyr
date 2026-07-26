@@ -114,10 +114,8 @@ PanzerMortyr menus and HUD:
 
 * Allow changing HUD position via settings menu.
 * Implement some stub page for parental lock menu.
-* Make advanced options menu functinal.
-* Extend existing setting menus/add new ones for extra options specific for PanzerMortyr.
 * Consider allowing specifying custom window resolution for windowed mode on video settings page.
-* Allow setting game and brightness via menu.
+* Allow setting gamma and brightness via menu.
 * Show low health and armor numbers in HUD using red color.
 * Consider displaying in HUD amounts of tools in inventory, at least important ones - health, ammo.
 * Consider drawing active tools at some edge (left or right) of the screen.

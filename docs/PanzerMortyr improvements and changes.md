@@ -106,6 +106,7 @@ Changes:
 
 * HUD images use slightly different blending compared to the original game.
 * Console looks differently.
+* PanzerMortyr has some menu pages implemented in different way from the original game, mainly to allow setting more options and key bindings.
 * Menu cursor position may be different - it's mostly just guessed.
 * A background texture pattern is displayed behind the main menu after launching the game instead of playing a prerecorded demo.
 * Note images are shown at screen's center with scale and alpha depending on distance from the player's camera to the note cluster volume, not with fixed scale as the original game does.
