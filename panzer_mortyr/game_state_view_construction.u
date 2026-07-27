@@ -523,14 +523,17 @@ fn ConstructWorldDrawingInfo(
 					weapon_tool.projectile_model >= 0 &&
 					weapon_tool.projectile_model < i32( typeinfo</ typeof( BillboardConstants::c_shot_ids ) />.element_count ) )
 				{
+					// Make length of custom billboard axis proportional to projectile velocity.
+					// Invert custom axis, which is needed for some non-symmetrical projectile billboards.
+					var Vec3f custom_axis= projectile_velocity * ( -0.25f );
+
 					drawing_info.billboards.push_back(
 						WorldDrawingInfo::Billboard
 						{
 							.alignment= WorldDrawingInfo::Billboard::Alignment::ToCustomAxis,
 							.position= projectile_position,
-							// Make projectiles slighly bigger than unit scale, since otherwise they are barely visible.
-							.scale= 2.0f,
-							.custom_axis= projectile_velocity,
+							.scale= 1.0f,
+							.custom_axis= custom_axis,
 							.billboard_index( BillboardConstants::c_shot_ids[ size_type( weapon_tool.projectile_model ) ] ),
 						} );
 				}
@@ -625,13 +628,8 @@ fn ConstructWorldDrawingInfo(
 						Mat4f::MakeRotationX( drawing_info.camera_params.elevation ) *
 						Mat4f::MakeRotationZ( drawing_info.camera_params.azimuth );
 
-					// HACK! Add extra shift to match how muzzle flashes look like in the original game.
-					// TODO - try removing it by tweaking code calculating billboard position?
-					var Vec3f extra_shift( 0.0f, ( is_axis_aligned_shot ? 24.0f : 0.0f ), 0.0f );
-
 					absolute_position=
-						camera_position_without_depth_shift +
-						( muzzle_flash.relative_position + extra_shift ) * rotation_matrix;
+						camera_position_without_depth_shift + muzzle_flash.relative_position * rotation_matrix;
 
 					custom_axis= Vec3f( 0.0f, 1.0f, 0.0f ) * rotation_matrix;
 				}
@@ -661,6 +659,13 @@ fn ConstructWorldDrawingInfo(
 				{
 					var u32 billboard_id= BillboardConstants::c_shot_ids[ muzzle_flash.model ];
 
+					// HACK! Add extra shift to match how muzzle flashes look like in the original game.
+					// TODO - try removing it by tweaking code calculating billboard position?
+					if( is_axis_aligned_shot )
+					{
+						absolute_position+= custom_axis * ( muzzle_flash.projectile_speed / 4.0f );
+					}
+
 					drawing_info.billboards.push_back(
 						WorldDrawingInfo::Billboard
 						{
@@ -670,11 +675,10 @@ fn ConstructWorldDrawingInfo(
 									: WorldDrawingInfo::Billboard::Alignment:: ToCamera ),
 							.billboard_index( billboard_id ),
 							.position= absolute_position,
-							.custom_axis= custom_axis,
+							.custom_axis= custom_axis * ( muzzle_flash.projectile_speed / 16.0f ),
+							.scale= 1.0f,
 							// Reduce brightness with time.
 							.brightness= 1.0f - ( f32( ust::max( 1u, muzzle_flash.age_steps ) - 1u ) + time_steps_fraction ) / f32( c_muzzle_flash_max_age ),
-							 // Make axis-aligned muzzle flashes slightly bigger. They are way to small.
-							.scale= ( is_axis_aligned_shot ? 6.0f : 1.0f ),
 						} );
 				}
 			} );
