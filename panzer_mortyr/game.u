@@ -468,42 +468,54 @@ fn Game::process_activate_spectator_camera( mut this )
 			continue;
 		}
 
-		var f32 trace_length= 8192.0f;
+		var f32 azimuth= ust::atan2( -vec_to_target.x, vec_to_target.y );
+		var f32 elevation= ust::atan2( vec_to_target.z, vec_to_target.xy().Length() );
 
-		var Vec3f trace_vec= vec_to_target * ( trace_length / vec_to_target_length );
+		var Mat4f rotation_matrix= Mat4f::MakeRotationX( elevation ) * Mat4f::MakeRotationZ( azimuth );
 
-		var f32 mut intersection_distance= 0.0f;
+		var f32 mut all_rays_sum_score= 0.0f;
 
-		if_var( trace_result :
-				LineTrace(
-					map_data,
-					game_state.broken_quad_bits,
-					game_state.dynamic_cluster_colliders,
-					camera_positon.position,
-					trace_vec ) )
+		// Cast rays in frustrum slightly less than 90 degrees wide.
+		// Sum distances of all rays.
+		// Assume distance for rays hitting nothing or back-faces to be zero.
+		// Doing so we prefer positions with the most overall view distance.
+		for( var i32 mut dx= -5; dx <= 5; ++dx )
 		{
-			// Don't allow looking to back-faces.
-			if( CalculateQuadNormal( quads[ size_type( trace_result.quad_index ) ] ).Dot( trace_vec ) >= 0.0f )
+			for( var i32 mut dz= -5; dz <= 5; ++dz )
 			{
-				continue;
-			}
+				var Vec3f trace_vec= Vec3f( f32(dx) / 7.0f, 1.0f, f32(dz) / 7.0f ) * rotation_matrix;
 
-			if( trace_result.distance > 0.0f && trace_result.distance < 1.0f )
-			{
-				intersection_distance= trace_length * trace_result.distance;
+				var f32 trace_length= 8192.0f;
+
+				var f32 mut ray_score= 0.0f;
+
+				if_var( trace_result :
+						LineTrace(
+							map_data,
+							game_state.broken_quad_bits,
+							game_state.dynamic_cluster_colliders,
+							camera_positon.position,
+							trace_vec * trace_length ) )
+				{
+					if( trace_result.distance > 0.0f && trace_result.distance < 1.0f )
+					{
+						ray_score= trace_length * trace_result.distance;
+					}
+
+					// Don't allow looking to back-faces.
+					if( CalculateQuadNormal( quads[ size_type( trace_result.quad_index ) ] ).Dot( trace_vec ) >= 0.0f )
+					{
+						ray_score= 0.0f;
+					}
+				}
+
+				all_rays_sum_score+= ray_score;
 			}
 		}
-		else
-		{
-			// Didn't hit anything.
-			continue;
-		}
 
-		var f32 score= intersection_distance;
-
-		if( score > best_camera_position_score )
+		if( all_rays_sum_score > best_camera_position_score )
 		{
-			best_camera_position_score= score;
+			best_camera_position_score= all_rays_sum_score;
 			best_camera_position= camera_positon;
 		}
 	}
