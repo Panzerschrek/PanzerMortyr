@@ -1,6 +1,7 @@
 import "/scoped_array.iu"
 import "/sort.iu"
 import "/string_conversions.iu"
+import "collisions.iu"
 import "debug_visualization.iu"
 import "game.iu"
 import "game_constants.iu"
@@ -359,10 +360,13 @@ fn Game::process_activate_spectator_camera( mut this )
 		return;
 	}
 
-	auto clusters= map_data_.try_deref().zvox_data.deref().clusters.range();
+	var GameState &mut game_state= game_state_.try_deref().current;
 
-	var i32 mut best_cluster_score= 0;
-	var size_type mut best_cluster_index= ~0s;
+	var GameMapData& map_data= map_data_.try_deref();
+
+	auto clusters= map_data.zvox_data.deref().clusters.range();
+
+	var ust::vector</size_type/> mut candidate_cluster_indices;
 
 	for( auto mut i= 0s; i < clusters.size(); ++i )
 	{
@@ -375,38 +379,121 @@ fn Game::process_activate_spectator_camera( mut this )
 
 		if( room_cluster.num_quads > 0 && room_cluster.c.bounding_box_half_size[2] >= 256 )
 		{
-			var i32 score=
-				room_cluster.c.bounding_box_half_size[0] *
-				room_cluster.c.bounding_box_half_size[1];
-
-			if( score > best_cluster_score )
-			{
-				best_cluster_score= score;
-				best_cluster_index= i;
-			}
+			candidate_cluster_indices.push_back(i);
 		}
 
 		i+= size_type( room_cluster.c.num_children_clusters ) + 1s;
 	}
 
-	if( best_cluster_index >= clusters.size() )
+	var ust::vector</ CameraPositionWithTarget /> mut candidate_positons;
+
+	foreach( cluster_index : candidate_cluster_indices )
+	{
+		var ZvoxCluster& cluster= clusters[ cluster_index ];
+
+		candidate_positons.push_back(
+			CameraPositionWithTarget
+			{
+				.position(
+					f32( cluster.c.center[0] - cluster.c.bounding_box_half_size[0] * 3 / 4 ),
+					f32( cluster.c.center[1] - cluster.c.bounding_box_half_size[1] * 3 / 4 ),
+					f32( cluster.c.center[2] - cluster.c.bounding_box_half_size[2] * 2 / 3 ) ),
+				.target(
+					f32( cluster.c.center[0] + cluster.c.bounding_box_half_size[0] ),
+					f32( cluster.c.center[1] + cluster.c.bounding_box_half_size[1] ),
+					f32( cluster.c.center[2] + cluster.c.bounding_box_half_size[2] ) ),
+			} );
+
+		candidate_positons.push_back(
+			CameraPositionWithTarget
+			{
+				.position(
+					f32( cluster.c.center[0] + cluster.c.bounding_box_half_size[0] * 3 / 4 ),
+					f32( cluster.c.center[1] - cluster.c.bounding_box_half_size[1] * 3 / 4 ),
+					f32( cluster.c.center[2] - cluster.c.bounding_box_half_size[2] * 2 / 3 ) ),
+				.target(
+					f32( cluster.c.center[0] - cluster.c.bounding_box_half_size[0] ),
+					f32( cluster.c.center[1] + cluster.c.bounding_box_half_size[1] ),
+					f32( cluster.c.center[2] + cluster.c.bounding_box_half_size[2] ) ),
+			} );
+
+		candidate_positons.push_back(
+			CameraPositionWithTarget
+			{
+				.position(
+					f32( cluster.c.center[0] - cluster.c.bounding_box_half_size[0] * 3 / 4 ),
+					f32( cluster.c.center[1] + cluster.c.bounding_box_half_size[1] * 3 / 4 ),
+					f32( cluster.c.center[2] - cluster.c.bounding_box_half_size[2] * 2 / 3 ) ),
+				.target(
+					f32( cluster.c.center[0] + cluster.c.bounding_box_half_size[0] ),
+					f32( cluster.c.center[1] - cluster.c.bounding_box_half_size[1] ),
+					f32( cluster.c.center[2] + cluster.c.bounding_box_half_size[2] ) ),
+			} );
+
+		candidate_positons.push_back(
+			CameraPositionWithTarget
+			{
+				.position(
+					f32( cluster.c.center[0] + cluster.c.bounding_box_half_size[0] * 3 / 4 ),
+					f32( cluster.c.center[1] + cluster.c.bounding_box_half_size[1] * 3 / 4 ),
+					f32( cluster.c.center[2] - cluster.c.bounding_box_half_size[2] * 2 / 3 ) ),
+				.target(
+					f32( cluster.c.center[0] - cluster.c.bounding_box_half_size[0] ),
+					f32( cluster.c.center[1] - cluster.c.bounding_box_half_size[1] ),
+					f32( cluster.c.center[2] + cluster.c.bounding_box_half_size[2] ) ),
+			} );
+	}
+
+	var ust::optional</CameraPositionWithTarget/> mut best_camera_position;
+	var f32 mut best_camera_position_score= 0.0f;
+
+	foreach( &camera_positon : candidate_positons )
+	{
+		var Vec3f vec_to_target= camera_positon.position - camera_positon.target;
+
+		var f32 vec_to_target_length= vec_to_target.Length();
+		if( vec_to_target_length == 0.0f )
+		{
+			continue;
+		}
+
+		var f32 trace_length= 8192.0f;
+
+		var Vec3f trace_vec= vec_to_target * ( trace_length / vec_to_target_length );
+
+		var f32 mut intersection_distance= trace_length;
+
+		if_var( trace_result :
+				LineTrace(
+					map_data,
+					game_state.broken_quad_bits,
+					game_state.dynamic_cluster_colliders,
+					camera_positon.position,
+					trace_vec ) )
+		{
+			if( trace_result.distance > 0.0f )
+			{
+				intersection_distance= trace_length * trace_result.distance;
+			}
+		}
+
+		var f32 score= intersection_distance;
+
+		if( score > best_camera_position_score )
+		{
+			best_camera_position_score= score;
+			best_camera_position= camera_positon;
+		}
+	}
+
+	if( best_camera_position.empty() )
 	{
 		return;
 	}
 
-	var ZvoxCluster& best_cluster= clusters[ best_cluster_index ];
+	var CameraPositionWithTarget& p= best_camera_position.try_deref();
 
-	var Vec3f camera_position(
-		f32( best_cluster.c.center[0] - best_cluster.c.bounding_box_half_size[0] * 3 / 4 ),
-		f32( best_cluster.c.center[1] - best_cluster.c.bounding_box_half_size[1] * 3 / 4 ),
-		f32( best_cluster.c.center[2] - best_cluster.c.bounding_box_half_size[2] * 2 / 3 ) );
-
-	var Vec3f camera_target(
-		f32( best_cluster.c.center[0] + best_cluster.c.bounding_box_half_size[0] ),
-		f32( best_cluster.c.center[1] + best_cluster.c.bounding_box_half_size[1] ),
-		f32( best_cluster.c.center[2] + best_cluster.c.bounding_box_half_size[2] ) );
-
-	var Vec3f vec_to_target= camera_target - camera_position;
+	var Vec3f vec_to_target= p.target - p.position;
 
 	camera_controller_=
 		CameraController(
@@ -417,9 +504,9 @@ fn Game::process_activate_spectator_camera( mut this )
 				.elevation= ust::atan2( vec_to_target.z, vec_to_target.xy().Length() ),
 			} );
 
-	var PlayerState &mut player_state= game_state_.try_deref().current.player;
+	var PlayerState &mut player_state= game_state.player;
 
-	player_state.position= Vec3f( camera_position.xy(), camera_position.z - c_camera_z_offset );
+	player_state.position= Vec3f( p.position.xy(), p.position.z - c_camera_z_offset );
 	player_state.crouching_phase= 0.0f;
 	player_state.noclip= true;
 	player_state.invisibility= true;
@@ -1039,6 +1126,12 @@ fn CopyAssignOrCopyConstructOptional( ust::optional</T/> &mut dst, T& src )
 	{
 		dst.reset( src /* copy-constructor is called here */ );
 	}
+}
+
+struct CameraPositionWithTarget
+{
+	Vec3f position;
+	Vec3f target;
 }
 
 } // namespace PM
