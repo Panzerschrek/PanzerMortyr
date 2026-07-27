@@ -67,6 +67,7 @@ This documents describes various interesting facts about the original game.
 * Map 22 contains elements of maps 1 and 11.
 * Note images 14, 21, 22 aren't used.
 * Game resources contain many sound files intended to be used for some specific enemies, but they are not actually used and not listed in the GLOS.STD file. It's presumably due to memory limitation, adding them manually causes the game to exit on startup with an error message reporting too much audio samples being used.
+* There are unused files BOOTS.WAV, LITTLE.WAV, PQUANT.WAV, U_WANT.WAV with player speech.
 * There is an item with codename BUTLA_TLENU, which isn't used in the game. It's possible to get it via cheats, it acts like a power-up allowing breathing under water and has an icon identical to the acid protection suit item.
 
 ## Supplement material oddities
