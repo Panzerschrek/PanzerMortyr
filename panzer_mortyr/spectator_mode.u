@@ -13,29 +13,29 @@ fn EnterSpectatorMode( GameMapData& map_data, GameState &mut game_state, CameraC
 	var ust::optional</CameraPositionWithTarget/> camera_position_opt=
 		FindGoodSpeactatorCameraPosition( map_data, game_state );
 
-	if( camera_position_opt.empty() )
-	{
-		return;
-	}
-
-	var CameraPositionWithTarget& p= camera_position_opt.try_deref();
-
-	var Vec3f vec_to_target= p.target - p.position;
-
-	camera_controller.SetState(
-		CameraController::State
-		{
-			.azimuth= ust::atan2( -vec_to_target.x, vec_to_target.y ),
-			.elevation= ust::atan2( vec_to_target.z, vec_to_target.xy().Length() ),
-		} );
-
 	var PlayerState &mut player_state= game_state.player;
 
-	// Set player position so that his camera is located at given position.
-	player_state.position= Vec3f( p.position.xy(), p.position.z - c_camera_z_offset );
-	player_state.crouching_phase= 0.0f;
+	if_var( &p : camera_position_opt )
+	{
+		var Vec3f vec_to_target= p.target - p.position;
 
-	// Activate noclip to avoid gravity and any phisics interaction.
+		camera_controller.SetState(
+			CameraController::State
+			{
+				.azimuth= ust::atan2( -vec_to_target.x, vec_to_target.y ),
+				.elevation= ust::atan2( vec_to_target.z, vec_to_target.xy().Length() ),
+			} );
+
+		// Set player position so that his camera is located at given position.
+		player_state.position= Vec3f( p.position.xy(), p.position.z - c_camera_z_offset );
+		player_state.crouching_phase= 0.0f;
+	}
+	else
+	{
+		// Just leave the player at spawn point if we failed to find a good camera position.
+	}
+
+	// Activate noclip to avoid gravity and any pphysics interaction.
 	player_state.noclip= true;
 
 	// Activate invisibility to prevent enemies seeing the player.
@@ -53,6 +53,8 @@ fn FindGoodSpeactatorCameraPosition(
 	auto quads= map_data.zmap_data.deref().quads.range();
 
 	var ust::vector</ CameraPositionWithTarget /> mut candidate_positons;
+
+	// Iterate over all room clusters. A camera can be placed within such cluster.
 
 	for( auto mut i= 0s; i < clusters.size(); ++i )
 	{
@@ -85,6 +87,7 @@ fn FindGoodSpeactatorCameraPosition(
 		if( has_entities_inside )
 		{
 			// Create candidate positions for 4 top corners of the cluster's bbox.
+			// Point the camera from each corner to the opposite box corner.
 
 			candidate_positons.push_back(
 				CameraPositionWithTarget
@@ -145,13 +148,12 @@ fn FindGoodSpeactatorCameraPosition(
 	var ust::optional</CameraPositionWithTarget/> mut best_camera_position;
 	var f32 mut best_camera_position_score= 0.0f; // Greater is better.
 
+	var BBox3f camera_bbox{ .min( -8.0f, -8.0f, -8.0f ), .max( 8.0f, 8.0f, 8.0f ) };
+
 	foreach( &camera_positon : candidate_positons )
 	{
 		// Require some free space around camera positon.
-		if( TestBBoxMapIntersection(
-				map_data,
-				camera_positon.position,
-				BBox3f{ .min( -8.0f, -8.0f, -8.0f ), .max( 8.0f, 8.0f, 8.0f ) } ) )
+		if( TestBBoxMapIntersection( map_data, camera_positon.position, camera_bbox ) )
 		{
 			continue;
 		}
@@ -171,7 +173,7 @@ fn FindGoodSpeactatorCameraPosition(
 
 		var f32 mut all_rays_sum_score= 0.0f;
 
-		// Cast rays in frustrum slightly less than 90 degrees wide.
+		// Cast rays in frustum slightly less than 90 degrees wide.
 		// Sum distances of all rays.
 		// Assume distance for rays hitting nothing or back-faces to be zero.
 		// Doing so we prefer positions with the most overall view distance.
@@ -199,7 +201,8 @@ fn FindGoodSpeactatorCameraPosition(
 						ray_score= trace_result.distance;
 					}
 
-					// Don't allow looking to back-faces.
+					// Set score to zero if we hit a back-face.
+					// Doing so we reduce score for positions outside actual map bounds.
 					if( CalculateQuadNormal( quads[ size_type( trace_result.quad_index ) ] ).Dot( trace_vec ) >= 0.0f )
 					{
 						ray_score= 0.0f;
