@@ -115,7 +115,6 @@ PanzerMortyr menus and HUD:
 * Implement some stub page for parental lock menu.
 * Consider allowing specifying custom window resolution for windowed mode on video settings page.
 * Allow setting gamma and brightness via menu.
-* Show low health and armor numbers in HUD using red color and blinking.
 * Consider displaying in HUD amounts of tools in inventory, at least important ones - health, ammo.
 * Consider drawing active tools at some edge (left or right) of the screen.
 * Allow configuring crosshair kind, investigate what kinds of crosshairs are available in the original game.

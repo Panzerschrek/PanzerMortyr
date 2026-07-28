@@ -105,6 +105,7 @@ Improvements:
 Changes:
 
 * HUD images use slightly different blending compared to the original game.
+* Thresholds for low ammo (displayed with blinking red numbers) are different from the original game and are calculated for each ammo type individually.
 * Console looks differently.
 * PanzerMortyr has some menu pages implemented in different way from the original game, mainly to allow setting more options and key bindings.
 * Menu cursor position may be different - it's mostly just guessed.
