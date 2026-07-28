@@ -4,7 +4,7 @@ Map differences:
 * Map 2 is combined with map 28, there are a couple of extra corridors connecting them and other areas cut from the release version. It has a couple of robo-enemies.
 * Map 3 layout is mostly the same.
 * Map 4 layout is (almost) the same, but it's way less decorated.
-* Map 5 is combined with map 31. It has WWII-time enemies, not future enemies.
+* Map 5 is combined with map 31. It has 1944-themed enemies, not 2093-themed enemies.
 * Map 6 layout is mostly the same. There are a couple of guys with panzerfaust.
 * Map 7 layout is mostly the same.
 * Map 8 is combined with map 32.
@@ -41,7 +41,9 @@ Other differences:
 
 * The starting map is map 1.
 * Some sounds are missing, like sounds of items pick-up and player's damaging.
-* Some HUD icons (like health) are different.
+* Some HUD icons (like health) are different. Weapon icons seems to be wrong.
 * Menu looks different - it's more futuristic (2093-themed), rather then 1944-themed.
 * Blood effects (wall blood, blood on enemies) looks differently.
 * Key models are rotated 90 degrees compared to their orientation in the final game version.
+* Lighting looks flat. There is no light averaging for adjacent vertices.
+* There are no ZMAP*.LEM files (with precalculated sky light).
