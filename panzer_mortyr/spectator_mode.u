@@ -1,0 +1,232 @@
+import "cluster_utils.iu"
+import "collisions.iu"
+import "game_constants.iu"
+import "mat.iu"
+import "physics_utils.iu"
+import "spectator_mode.iu"
+
+namespace PM
+{
+
+fn EnterSpectatorMode( GameMapData& map_data, GameState &mut game_state, CameraController &mut camera_controller )
+{
+	var ust::optional</CameraPositionWithTarget/> camera_position_opt=
+		FindGoodSpeactatorCameraPosition( map_data, game_state );
+
+	var PlayerState &mut player_state= game_state.player;
+
+	if_var( &p : camera_position_opt )
+	{
+		var Vec3f vec_to_target= p.target - p.position;
+
+		camera_controller.SetState(
+			CameraController::State
+			{
+				.azimuth= ust::atan2( -vec_to_target.x, vec_to_target.y ),
+				.elevation= ust::atan2( vec_to_target.z, vec_to_target.xy().Length() ),
+			} );
+
+		// Set player position so that his camera is located at given position.
+		player_state.position= Vec3f( p.position.xy(), p.position.z - c_camera_z_offset );
+		player_state.crouching_phase= 0.0f;
+	}
+	else
+	{
+		// Just leave the player at spawn point if we failed to find a good camera position.
+	}
+
+	// Activate noclip to avoid gravity and any pphysics interaction.
+	player_state.noclip= true;
+
+	// Activate invisibility to prevent enemies seeing the player.
+	player_state.invisibility= true;
+
+	// Select kick weapon. It's invisible unless used and we don't want to show a weapon.
+	player_state.primary_weapon_state.current_weapon= EntitiesDescription::ToolType::Kick;
+	player_state.primary_weapon_state.requested_weapon= EntitiesDescription::ToolType::Kick;
+}
+
+fn FindGoodSpeactatorCameraPosition(
+	GameMapData& map_data, GameState& game_state ) : ust::optional</CameraPositionWithTarget/>
+{
+	auto clusters= map_data.zvox_data.deref().clusters.range();
+	auto quads= map_data.zmap_data.deref().quads.range();
+
+	var ust::vector</ CameraPositionWithTarget /> mut candidate_positons;
+
+	// Iterate over all room clusters. A camera can be placed within such cluster.
+
+	for( auto mut i= 0s; i < clusters.size(); ++i )
+	{
+		var ZvoxCluster& cluster= clusters[i];
+		if( cluster.c.num_children_clusters < 0 )
+		{
+			++i;
+			continue;
+		}
+
+		// Select only clusters having at lest one entity inside.
+		// It's needed to filter-out clusters behind playable area and
+		// to prefer clusters where something happens and not just boring corners.
+
+		var bool mut has_entities_inside= false;
+
+		var BBox3f cluster_bbox= CreateClusterBBox( cluster );
+
+		foreach( &entity : map_data.zpoz_data.deref().entities )
+		{
+			if( entity.alive_flag != 0u16 &&
+				cluster_bbox.PointIsInsideOrOnFace(
+					Vec3f( f32( entity.position[0] ), f32( entity.position[1] ), f32( entity.position[2] ) ) ) )
+			{
+				has_entities_inside= true;
+				break;
+			}
+		}
+
+		if( has_entities_inside )
+		{
+			// Create candidate positions for 4 top corners of the cluster's bbox.
+			// Point the camera from each corner to the opposite box corner.
+
+			candidate_positons.push_back(
+				CameraPositionWithTarget
+				{
+					.position(
+						f32( cluster.c.center[0] - cluster.c.bounding_box_half_size[0] * 3 / 4 ),
+						f32( cluster.c.center[1] - cluster.c.bounding_box_half_size[1] * 3 / 4 ),
+						f32( cluster.c.center[2] - cluster.c.bounding_box_half_size[2] * 2 / 3 ) ),
+					.target(
+						f32( cluster.c.center[0] + cluster.c.bounding_box_half_size[0] ),
+						f32( cluster.c.center[1] + cluster.c.bounding_box_half_size[1] ),
+						f32( cluster.c.center[2] + cluster.c.bounding_box_half_size[2] ) ),
+				} );
+
+			candidate_positons.push_back(
+				CameraPositionWithTarget
+				{
+					.position(
+						f32( cluster.c.center[0] + cluster.c.bounding_box_half_size[0] * 3 / 4 ),
+						f32( cluster.c.center[1] - cluster.c.bounding_box_half_size[1] * 3 / 4 ),
+						f32( cluster.c.center[2] - cluster.c.bounding_box_half_size[2] * 2 / 3 ) ),
+					.target(
+						f32( cluster.c.center[0] - cluster.c.bounding_box_half_size[0] ),
+						f32( cluster.c.center[1] + cluster.c.bounding_box_half_size[1] ),
+						f32( cluster.c.center[2] + cluster.c.bounding_box_half_size[2] ) ),
+				} );
+
+			candidate_positons.push_back(
+				CameraPositionWithTarget
+				{
+					.position(
+						f32( cluster.c.center[0] - cluster.c.bounding_box_half_size[0] * 3 / 4 ),
+						f32( cluster.c.center[1] + cluster.c.bounding_box_half_size[1] * 3 / 4 ),
+						f32( cluster.c.center[2] - cluster.c.bounding_box_half_size[2] * 2 / 3 ) ),
+					.target(
+						f32( cluster.c.center[0] + cluster.c.bounding_box_half_size[0] ),
+						f32( cluster.c.center[1] - cluster.c.bounding_box_half_size[1] ),
+						f32( cluster.c.center[2] + cluster.c.bounding_box_half_size[2] ) ),
+				} );
+
+			candidate_positons.push_back(
+				CameraPositionWithTarget
+				{
+					.position(
+						f32( cluster.c.center[0] + cluster.c.bounding_box_half_size[0] * 3 / 4 ),
+						f32( cluster.c.center[1] + cluster.c.bounding_box_half_size[1] * 3 / 4 ),
+						f32( cluster.c.center[2] - cluster.c.bounding_box_half_size[2] * 2 / 3 ) ),
+					.target(
+						f32( cluster.c.center[0] - cluster.c.bounding_box_half_size[0] ),
+						f32( cluster.c.center[1] - cluster.c.bounding_box_half_size[1] ),
+						f32( cluster.c.center[2] + cluster.c.bounding_box_half_size[2] ) ),
+				} );
+		}
+
+		i+= size_type( cluster.c.num_children_clusters ) + 1s;
+	}
+
+	var ust::optional</CameraPositionWithTarget/> mut best_camera_position;
+	var f32 mut best_camera_position_score= 0.0f; // Greater is better.
+
+	var BBox3f camera_bbox{ .min( -8.0f, -8.0f, -8.0f ), .max( 8.0f, 8.0f, 8.0f ) };
+
+	foreach( &camera_positon : candidate_positons )
+	{
+		// Require some free space around camera positon.
+		if( TestBBoxMapIntersection( map_data, camera_positon.position, camera_bbox ) )
+		{
+			continue;
+		}
+
+		var Vec3f vec_to_target= camera_positon.target - camera_positon.position;
+
+		var f32 vec_to_target_length= vec_to_target.Length();
+		if( vec_to_target_length == 0.0f )
+		{
+			continue;
+		}
+
+		var f32 azimuth= ust::atan2( -vec_to_target.x, vec_to_target.y );
+		var f32 elevation= ust::atan2( vec_to_target.z, vec_to_target.xy().Length() );
+
+		var Mat4f rotation_matrix= Mat4f::MakeRotationX( elevation ) * Mat4f::MakeRotationZ( azimuth );
+
+		var f32 mut all_rays_sum_score= 0.0f;
+
+		// Cast rays in frustum slightly less than 90 degrees wide.
+		// Sum distances of all rays.
+		// Assume distance for rays hitting nothing or back-faces to be zero.
+		// Doing so we prefer positions with the most overall view distance.
+
+		for( var i32 mut dx= -7; dx <= 7; ++dx )
+		{
+			for( var i32 mut dz= -7; dz <= 7; ++dz )
+			{
+				var Vec3f trace_vec= Vec3f( f32(dx) / 8.0f, 1.0f, f32(dz) / 8.0f ) * rotation_matrix;
+
+				var f32 constexpr c_trace_length= 16384.0f;
+
+				var f32 mut ray_score= 0.0f;
+
+				if_var( trace_result :
+						LineTrace(
+							map_data,
+							game_state.broken_quad_bits,
+							game_state.dynamic_cluster_colliders,
+							camera_positon.position,
+							trace_vec * c_trace_length ) )
+				{
+					if( trace_result.distance > 0.0f && trace_result.distance < 1.0f )
+					{
+						ray_score= trace_result.distance;
+					}
+
+					// Set score to zero if we hit a back-face.
+					// Doing so we reduce score for positions outside actual map bounds.
+					if( CalculateQuadNormal( quads[ size_type( trace_result.quad_index ) ] ).Dot( trace_vec ) >= 0.0f )
+					{
+						ray_score= 0.0f;
+					}
+				}
+
+				all_rays_sum_score+= ray_score;
+			}
+		}
+
+		if( all_rays_sum_score > best_camera_position_score )
+		{
+			best_camera_position_score= all_rays_sum_score;
+			best_camera_position= camera_positon;
+		}
+	}
+
+	return best_camera_position;
+}
+
+struct CameraPositionWithTarget
+{
+	Vec3f position;
+	Vec3f target;
+}
+
+} // namespace PM
