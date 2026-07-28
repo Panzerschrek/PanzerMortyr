@@ -120,7 +120,6 @@ Improvements:
 * More active sounds are supported compared to the original game.
 * Music tracks can be played directly from WAV files stored in the game data directory, no CD or CD emulation is necessary.
 
-
 Changes:
 
 * Due to improved sound quality some sounds sound slightly differently compared to the original game.
@@ -145,3 +144,4 @@ Changes:
 * Console in PanzerMortyr has its own set of commands, supports changing settings, has auto-completion.
 * Executable icon is different. The original one or one looking similar can't be used, since it's likely copyrighted.
 * The intro cinematic is played not on game startup, but on starting a new campaign.
+* The original game plays a couple of prerecorded demos on startup. PanzerMortyr just loads the last played map instead and places a camera somewhere inside it.

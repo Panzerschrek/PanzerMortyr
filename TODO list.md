@@ -27,7 +27,6 @@ Gameplay investigation:
 
 * Investigate how enemies spot the player - their field of view, view distance, spot chance, etc.
 * Investigate what some unknown fileds of entity description format mean, especially ones which affect state transitions.
-* Investigate how different entity parameters affect their behavior.
 * Investigate misfire behavior.
 * Investigate how many armor points enemies have, how their armor protects them and how many armor points they can pick-up.
 * Investigate where maximum amount of current armor (not inventory armor) is specified.
@@ -48,6 +47,8 @@ PanzerMortyr general:
 * Allow taking screenshots by pressing some key (like F11 or F12, maybe PrintScreen), so that no external tool is needed for taking screenshots.
 * Make necessary changes to support working with data of the beta version of the original game.
 * Draw loading screen when transitioning to the next level and when loading audio data and world drawing data for it.
+* Consider selecting one of several possible camera positions for the spectator mode (on game startup) randomly, not always only the best position.
+* Consider adding slight camera rotations for the spectator mode.
 
 PanzerMortyr game logic:
 
@@ -66,7 +67,6 @@ PanzerMortyr game logic:
 * Consider performing proper player to entity visibility check while doing entity state transition based on "w_zasiegu_widocznosci" property.
 * Consider disabling all or at least some weapons of the player if weapon shot start position is in water or other liquid. The original game allow shooting in water, but PanzerMortyr probably shouldn't allow this.
 * Consider extinguishing damaging flames on entities located inside liquids.
-* Consider reducing brightness of Volkssturm smoking lights - they are way to bright.
 * Perform camera rotation upon player's death as the original game does. It seems to be a full circle azimuth rotation and a rotation to some fixed elevation. Sometimes it's even a 180 degree flip.
 * Consider disabling burning effect for non-enemy entities. It doesn't look well for things made of iron or other non-burnable materials.
 * Consider optimizing global navigation graph calculation even more - to reduce map loading time.
@@ -115,16 +115,16 @@ PanzerMortyr menus and HUD:
 * Implement some stub page for parental lock menu.
 * Consider allowing specifying custom window resolution for windowed mode on video settings page.
 * Allow setting gamma and brightness via menu.
-* Show low health and armor numbers in HUD using red color.
+* Show low health and armor numbers in HUD using red color and blinking.
 * Consider displaying in HUD amounts of tools in inventory, at least important ones - health, ammo.
 * Consider drawing active tools at some edge (left or right) of the screen.
 * Allow configuring crosshair kind, investigate what kinds of crosshairs are available in the original game.
 * Consider displaying some sort of a progress bar while going close to the map exit trigger - as RtCW does.
 * Consider displaying some screen with map stats (completion time, killed enemies) at the end of a map - as Quake does.
+* Create polish version of the extra string table (hardcoded).
 
 PanzerMortyr sound:
 
-* Play player's out-of-ammo sounds (if the original game does this).
 * Consider implementing occlusion-based sound volume attenuation (reduce volume of a sound located behind a wall or in some other room).
 * Allow selecting audio device via settings.
 * Tune volume attenuation params and volumes of various game sounds.
