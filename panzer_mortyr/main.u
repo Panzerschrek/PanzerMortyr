@@ -142,18 +142,10 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 		game.EnterSpectatorModeForLastPlayedMap( audio_processor );
 	}
 
-	var InputState mut input_state
-	{
-		.keyboard_state[ false ... ],
-		.key_presses[ false ... ],
-		.mouse_buttons_state= 0u,
-		.mouse_button_presses= 0u,
-		.mouse_motion[ 0, 0 ]
-	};
+	var InputState mut input_state;
 
 	var PerformanceCounter mut performance_counter;
 	var PerformanceCounter::TimePoint mut prev_frame_start_time_point= performance_counter.GetCurrentTime();
-
 
 	loop label main_loop
 	{
@@ -164,6 +156,11 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 
 		input_state.Reset();
 		input_state.UpdateKeyboardAndMouseState();
+
+		var bool mouse_enabled=
+			settings_ptr.lock_imut().deref().in_mouse_enabled && !console.IsActive() && !menu.IsActive();
+
+		unsafe( SDL_SetRelativeMouseMode( SDL_bool( ( mouse_enabled ? 1 : 0 ) ) ) );
 
 		var SDL_Event mut event= zero_init;
 		while( unsafe( SDL_PollEvent( $<(event) ) ) != 0 )
@@ -275,10 +272,7 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 						}
 						else
 						{
-							if( size_type( keyboard_event.keysym.scancode ) < typeinfo</ InputState::KeysState />.element_count )
-							{
-								input_state.key_presses[ size_type( keyboard_event.keysym.scancode ) ]= true;
-							}
+							input_state.AddKeyPress( keyboard_event.keysym.scancode );
 						}
 					}
 				},
@@ -308,22 +302,15 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 				SDL_MOUSEMOTION ->
 				{
 					auto& mouse_motion_event= unsafe( cast_ref_unsafe</SDL_MouseMotionEvent/>( event ) );
-					// Use += to accumulate multiple motion events.
-					input_state.mouse_motion[0]+= mouse_motion_event.xrel;
-					input_state.mouse_motion[1]+= mouse_motion_event.yrel;
+
+					if( mouse_enabled )
+					{
+						input_state.AddMouseMotion(
+							ust::make_array( mouse_motion_event.xrel, mouse_motion_event.yrel ) );
+					}
 				},
 				default -> {},
 			}
-		}
-
-		var bool mouse_enabled=
-			settings_ptr.lock_imut().deref().in_mouse_enabled && !console.IsActive() && !menu.IsActive();
-
-		unsafe( SDL_SetRelativeMouseMode( SDL_bool( ( mouse_enabled ? 1 : 0 ) ) ) );
-
-		if( !mouse_enabled )
-		{
-			input_state.mouse_motion= ust::make_array( 0, 0 );
 		}
 
 		if( console.IsActive() || menu.IsActive() || menu_or_console_was_active )
