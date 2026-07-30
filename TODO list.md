@@ -52,7 +52,6 @@ PanzerMortyr general:
 
 PanzerMortyr game logic:
 
-* Implement flies animation (used only for single dog enemy on map 19).
 * Ensure all entity properties affecting state transitions are implemented.
 * Consider implement armor seeking/pick-up behavior for enemies.
 * Break glass quads and quads with breakable materials while applying spash damage. The original game doesn't do this and it doesn't look right.
