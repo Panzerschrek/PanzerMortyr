@@ -625,12 +625,7 @@ fn ProcessGameLogicStep(
 
 	ProcessProjectileHitEventsLogicStep( global_data, map_data, game_state );
 
-	ProcessDamagingFlamesLogicStep(
-		global_data,
-		game_state.damaging_flames,
-		game_state.random,
-		game_state.entities,
-		game_state.player );
+	ProcessDamagingFlamesLogicStep( global_data, map_data, game_state );
 
 	ProcessProjectileHitSmokeEmittersLogicStep( game_state );
 
@@ -4886,12 +4881,7 @@ fn AlarmAnimalTriggersByNearbyEvent(
 	}
 }
 
-fn ProcessDamagingFlamesLogicStep(
-	GameGlobalData& global_data,
-	DamagingFlamesContainer &mut damaging_flames,
-	PseudoRandomGenerator &mut rand,
-	ust::array_view_mut</ ust::optional</EntityState /> /> entities,
-	PlayerState &mut player )
+fn ProcessDamagingFlamesLogicStep( GameGlobalData& global_data, GameMapData& map_data, GameState &mut game_state )
 {
 	/*
 		In the original game damaging flames work in the following way:
@@ -4907,13 +4897,67 @@ fn ProcessDamagingFlamesLogicStep(
 
 	var GameParams& game_params= global_data.game_params.deref();
 
+	auto &mut rand= game_state.random;
+	auto &mut player= game_state.player;
+	auto &mut entities= game_state.entities;
+	auto &colliders= game_state.colliders;
+
 	var u32 damage_step_mask= game_params.fire_damage[0];
 	var u32 base_flame_damage= game_params.fire_damage[1];
 	var u32 constexpr c_flame_damage_divisor= 16u;
 
-	damaging_flames.Retain(
+	game_state.damaging_flames.Retain(
 		lambda[&]( DamagingFlame &mut damaging_flame ) : bool
 		{
+			// First check if this damaging flame is attached to an entity located at least partially in liquid.
+			// If it's so, extinguish this flame.
+
+			var u32 mut entity_collider_index= ~0u;
+			if( damaging_flame.entity_index == c_player_entity_index )
+			{
+				entity_collider_index= player.collider_index;
+			}
+			else if( size_type( damaging_flame.entity_index ) < entities.size() )
+			{
+				if_var( &entity : entities[ size_type( damaging_flame.entity_index ) ] )
+				{
+					entity_collider_index= entity.collider_index;
+				}
+			}
+
+			if( entity_collider_index != ~0u && size_type( entity_collider_index ) < colliders.size() )
+			{
+				var BBox3f& collider_bbox= colliders[ size_type( entity_collider_index ) ].bbox;
+				var bool mut in_liquid= false;
+
+				auto clusters= map_data.zvox_data.deref().clusters.range();
+
+				VisitBoundingBoxesHierarchyForBBox(
+					map_data.room_clusters_hierarchy.deref(),
+					collider_bbox,
+					lambda[&]( ClusterIndexInHierarchy c )
+					{
+						var ZvoxCluster& cluster= clusters[ size_type(c) ];
+
+						if( cluster.contents == ZvoxCluster::c_contents_water |
+							cluster.contents == ZvoxCluster::c_contents_acid |
+							cluster.contents == ZvoxCluster::c_contents_lava )
+						{
+							if( CreateClusterBBox( cluster ).Instersects( collider_bbox ) )
+							{
+								in_liquid= true;
+							}
+						}
+					} );
+
+				if( in_liquid )
+				{
+					return false; // Need to extinguish damaging flame for entity located at least partially in liquid.
+				}
+			}
+
+			// Deal actual flame damage if it's time to do so.
+
 			if( ( damaging_flame.age_steps & damage_step_mask ) == 0u )
 			{
 				var u32 damage= ( base_flame_damage + rand.Next() % c_flame_damage_divisor ) / c_flame_damage_divisor;

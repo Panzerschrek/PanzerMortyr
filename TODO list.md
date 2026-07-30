@@ -66,7 +66,6 @@ PanzerMortyr game logic:
 * Adjust rotation angles for grenade projectiles, so that they look nicely.
 * Consider performing proper player to entity visibility check while doing entity state transition based on "w_zasiegu_widocznosci" property.
 * Consider disabling all or at least some weapons of the player if weapon shot start position is in water or other liquid. The original game allow shooting in water, but PanzerMortyr probably shouldn't allow this.
-* Consider extinguishing damaging flames on entities located inside liquids.
 * Perform camera rotation upon player's death as the original game does. It seems to be a full circle azimuth rotation and a rotation to some fixed elevation. Sometimes it's even a 180 degree flip.
 * Consider disabling burning effect for non-enemy entities. It doesn't look well for things made of iron or other non-burnable materials.
 * Consider optimizing global navigation graph calculation even more - to reduce map loading time.
