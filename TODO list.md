@@ -36,7 +36,6 @@ Gameplay investigation:
 
 PanzerMortyr general:
 
-* Allow using mouse wheel up and down events for controls.
 * Add controls for selecting next and previous weapon (from available weapons).
 * Consider embedding git revision into the game executable and showing it somewhere in the game.
 * Consider performing even more advanced game data search - with more hardcoded paths, Windows registry fetches, etc.
@@ -122,6 +121,7 @@ PanzerMortyr menus and HUD:
 * Consider displaying some sort of a progress bar while going close to the map exit trigger - as RtCW does.
 * Consider displaying some screen with map stats (completion time, killed enemies) at the end of a map - as Quake does.
 * Create polish version of the extra string table (hardcoded).
+* Consider allowing navigating menu using mouse left/right button clicks and mouse wheel.
 
 PanzerMortyr sound:
 
