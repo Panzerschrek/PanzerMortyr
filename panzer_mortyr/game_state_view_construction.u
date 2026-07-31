@@ -1564,14 +1564,21 @@ fn ConstructWorldDrawingInfo(
 		// Process fullscreen effects.
 		// Apply effect for damaging flames first and override it later with pain effect if necessary.
 
+		var [ f32, 4 ] mut fullscreen_blend_color[ 0.0f, 0.0f, 0.0f, 0.0f ];
+
 		if( num_player_damaging_flames > 0u )
 		{
-			var u8 alpha(
+			var f32 alpha=
 				ust::min(
 				255.0f,
 				f32( num_player_damaging_flames * 16u ) *
-					CalculatePsedudoRandomFireLightSourceModulation( total_game_time_steps ) ) );
-			drawing_info.fullscreen_blend_color= ust::make_array( 224u8, 180u8, 10u8, alpha );
+					CalculatePsedudoRandomFireLightSourceModulation( total_game_time_steps ) /
+					255.0f );
+
+			fullscreen_blend_color=
+				MixAlphaBlendedColors(
+					fullscreen_blend_color,
+					ust::make_array( 224.0f / 255.0f, 180.0f / 255.0f, 10.0f / 255.0f, alpha ) );
 		}
 
 		{
@@ -1584,15 +1591,23 @@ fn ConstructWorldDrawingInfo(
 			}
 
 			// Scale pain value somewhat to achieve the result alpha, but limit it.
-			var u8 alpha( ust::min( 240.0f, f32( pain ) * 8.0f ) );
+			var f32 alpha= ust::min( 240.0f, f32( pain ) * 8.0f ) / 255.0f;
 			if( u32( alpha ) * 4u >= u32( drawing_info.fullscreen_blend_color[3] ) )
 			{
-				// Pain causes red effect (255, 0, 0). But if blood is disabled, replace it with some gray color.
-				drawing_info.fullscreen_blend_color=
+				fullscreen_blend_color=
+				MixAlphaBlendedColors(
+					fullscreen_blend_color,
+					// Pain causes red effect (255, 0, 0). But if blood is disabled, replace it with some gray color.
 					( settings.g_blood_enabled
-						? ust::make_array( 255u8, 0u8, 0u8, alpha )
-						: ust::make_array( 80u8, 80u8, 80u8, alpha ) );
+						? ust::make_array( 255.0f / 255.0f,  0.0f / 255.0f,  0.0f / 255.0f, alpha )
+						: ust::make_array(  80.0f / 255.0f, 80.0f / 255.0f, 80.0f / 255.0f, alpha ) ) );
 			}
+		}
+
+		for( auto mut i= 0s; i < 4s; ++i )
+		{
+			drawing_info.fullscreen_blend_color[i]=
+				u8( ust::max( 0.0f, ust::min( fullscreen_blend_color[i] * 255.0f, 255.0f ) ) );
 		}
 
 		var ZvoxData& zvox_data= map_data.zvox_data.deref();
@@ -2464,6 +2479,30 @@ fn CalculatePsedudoRandomFireLightSourceModulation( f32 modulation_phase ) : f32
 		0.25f * ust::sin( modulation_phase * 0.5f ) +
 		0.125f * ust::sin( modulation_phase * c_half_sqrt_2 ) +
 		0.08f * ust::sin( modulation_phase * ( 0.5f * c_sqrt_3 ) );
+}
+
+type AlphaBlendedColor= [ f32, 4 ];
+
+fn MixAlphaBlendedColors( AlphaBlendedColor& dst, AlphaBlendedColor& src ) : AlphaBlendedColor
+{
+	if( dst[3] == 0.0f )
+	{
+		return src;
+	}
+	if( src[3] == 0.0f )
+	{
+		return dst;
+	}
+
+	var f32 new_alpha= 1.0f - ( 1.0f - dst[3] ) * ( 1.0f - src[3] );
+
+	var [ f32, 4 ] mut result[ 0.0f, 0.0f, 0.0f, new_alpha ];
+	for( auto mut i= 0s; i < 3s; ++i )
+	{
+		result[i]= ( dst[i] * dst[3] * ( 1.0f - src[3] ) + src[i] * src[3] ) / new_alpha;
+	}
+
+	return result;
 }
 
 var u32 constexpr c_flame_color_index= 4u;
