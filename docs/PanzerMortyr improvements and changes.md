@@ -10,6 +10,7 @@ Improvements:
 * Support for windowed mode.
 * Support for any possible screen resolution.
 * Vsync can be turned on and off.
+* Gamma and brightness can be tweaked.
 * 32-bit color.
 * Trilinear and anisotropic texture filtering.
 * Optional nearest texture filtering.

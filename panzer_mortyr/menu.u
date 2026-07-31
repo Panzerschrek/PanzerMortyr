@@ -521,6 +521,32 @@ fn nodiscard Menu::ProcessKeyPress( mut this, SDL_Keysym& key_sym, AudioProcesso
 						},
 						2u -> { SelectPreviousVideoMode(); play_menu_sound(); },
 						3u -> { ToggleBooleanSetting</ "r_vsync" />( settings_ ); play_menu_sound(); },
+						4u ->
+						{
+							with( mut lock : settings_.lock_mut() )
+							{
+								var f32 &mut gamma= lock.deref().r_gamma;
+
+								gamma=
+									ust::max(
+										c_min_gamma, ( ust::floor( gamma / c_gamma_step ) - 1.0f ) * c_gamma_step );
+							}
+							play_menu_sound();
+						},
+						5u ->
+						{
+							with( mut lock : settings_.lock_mut() )
+							{
+								var f32 &mut brightness_scale= lock.deref().r_brightness_scale;
+
+								brightness_scale=
+									ust::max(
+										c_min_brightness_scale,
+										( ust::floor( brightness_scale / c_brightness_scale_step ) - 1.0f ) *
+											c_brightness_scale_step );
+							}
+							play_menu_sound();
+						},
 						default -> {},
 					}
 				},
@@ -575,10 +601,15 @@ fn nodiscard Menu::ProcessKeyPress( mut this, SDL_Keysym& key_sym, AudioProcesso
 						1u -> { ToggleBooleanSetting</ "r_mirrors_enabled" />( settings_ ); play_menu_sound(); },
 						2u ->
 						{
+							with( mut lock : settings_.lock_mut() )
 							{
-								auto mut lock= settings_.lock_mut();
 								var f32 &mut mirror_alpha= lock.deref().r_mirror_alpha;
-								mirror_alpha= ( ust::max( ust::floor( mirror_alpha * 16.0f ), 1.0f ) - 1.0f ) / 16.0f;
+
+								mirror_alpha=
+									ust::max(
+										c_min_mirror_alpha,
+										( ust::floor( mirror_alpha / c_mirror_alpha_step ) - 1.0f ) *
+											c_mirror_alpha_step );
 							}
 							play_menu_sound();
 						},
@@ -686,6 +717,32 @@ fn nodiscard Menu::ProcessKeyPress( mut this, SDL_Keysym& key_sym, AudioProcesso
 						},
 						2u -> { SelectNextVideoMode(); play_menu_sound(); },
 						3u -> { ToggleBooleanSetting</ "r_vsync" />( settings_ ); play_menu_sound(); },
+						4u ->
+						{
+							with( mut lock : settings_.lock_mut() )
+							{
+								var f32 &mut gamma= lock.deref().r_gamma;
+
+								gamma=
+									ust::min(
+										c_max_gamma, ( ust::floor( gamma / c_gamma_step ) + 1.0f ) * c_gamma_step );
+							}
+							play_menu_sound();
+						},
+						5u ->
+						{
+							with( mut lock : settings_.lock_mut() )
+							{
+								var f32 &mut brightness_scale= lock.deref().r_brightness_scale;
+
+								brightness_scale=
+									ust::min(
+										c_max_brightness_scale,
+										( ust::floor( brightness_scale / c_brightness_scale_step ) + 1.0f ) *
+											c_brightness_scale_step );
+							}
+							play_menu_sound();
+						},
 						default -> {},
 					}
 				},
@@ -740,10 +797,15 @@ fn nodiscard Menu::ProcessKeyPress( mut this, SDL_Keysym& key_sym, AudioProcesso
 						1u -> { ToggleBooleanSetting</ "r_mirrors_enabled" />( settings_ ); play_menu_sound(); },
 						2u ->
 						{
+							with( mut lock : settings_.lock_mut() )
 							{
-								auto mut lock= settings_.lock_mut();
 								var f32 &mut mirror_alpha= lock.deref().r_mirror_alpha;
-								mirror_alpha= ( ust::min( ust::floor( mirror_alpha * 16.0f ), 15.0f ) + 1.0f ) / 16.0f;
+
+								mirror_alpha=
+									ust::min(
+										c_max_mirror_alpha,
+										( ust::floor( mirror_alpha / c_mirror_alpha_step ) + 1.0f ) *
+											c_mirror_alpha_step );
 							}
 							play_menu_sound();
 						},
@@ -1382,7 +1444,7 @@ fn Menu::Draw( mut this, ImageDrawer &mut image_drawer, TextDrawer &mut text_dra
 
 			var u32 video_settings_rows_spacing= TextDrawer::c_glyph_height * 3u / 2u;
 
-			var i32 cursor_offset_x= offset_x + i32(  24u * scale );
+			var i32 cursor_offset_x= offset_x + i32(  16u * scale );
 			var i32 cursor_offset_y= offset_y + i32( 156u * scale );
 
 			image_drawer.DrawImage(
@@ -1398,48 +1460,45 @@ fn Menu::Draw( mut this, ImageDrawer &mut image_drawer, TextDrawer &mut text_dra
 			var i32 texts_offset_x= cursor_offset_x + i32( 18u * scale );
 			var i32 texts_offset_y= cursor_offset_y + i32( 1u * scale );
 
+			var i32 texts_offset_column1_x= cursor_offset_x + i32( 148u * scale );
+
+			auto settings_lock= settings_.lock_imut();
+			var Settings& settings= settings_lock.deref();
+
+			text_drawer.AddText(
+				texts_offset_x,
+				texts_offset_y,
+				FetchStringFromExtraTable( ExtraStringTableKey::Fullscreen ),
+				text_settings );
+
+			text_drawer.AddText(
+				texts_offset_column1_x,
+				texts_offset_y,
+				FetchStringFromTable(
+					string_table, ( settings.r_fullscreen ? StringTableKey::On : StringTableKey::Off ) ),
+				text_settings );
+
+			text_drawer.AddText(
+				texts_offset_x,
+				texts_offset_y - i32( 1u * video_settings_rows_spacing * scale ),
+				FetchStringFromExtraTable( ExtraStringTableKey::Display ),
+				text_settings );
+
+			text_drawer.AddText(
+				texts_offset_column1_x,
+				texts_offset_y - i32( 1u * video_settings_rows_spacing * scale ),
+				ust::make_array( char8( u32('0') + settings.r_display_index ) ),
+				text_settings );
+
+			text_drawer.AddText(
+				texts_offset_x,
+				texts_offset_y - i32( 2u * video_settings_rows_spacing * scale ),
+				FetchStringFromExtraTable( ExtraStringTableKey::Mode ),
+				text_settings );
+
 			{
-				var ust::string_view8 fullscreen_str= FetchStringFromExtraTable( ExtraStringTableKey::Fullscreen );
-
-				var ust::string_view8 state_str=
-					FetchStringFromTable(
-						string_table,
-						( settings_.lock_imut().deref().r_fullscreen ? StringTableKey::On : StringTableKey::Off ) );
-
-				scoped_array char8 fullscreen_state_str[ fullscreen_str.size() + state_str.size() ](
-					fullscreen_str.iter().chain( state_str.iter() ) );
-
-				text_drawer.AddText( texts_offset_x, texts_offset_y, fullscreen_state_str, text_settings );
-			}
-			{
-				var ust::string_view8 display_str= FetchStringFromExtraTable( ExtraStringTableKey::Display );
-
-				var [ char8, 1 ] display_index[ ( u32('0') + settings_.lock_imut().deref().r_display_index ) ];
-				var ust::string_view8 display_index_str= display_index;
-
-				scoped_array char8 display_state_str[ display_str.size() + display_index_str.size() ](
-					display_str.iter().chain( display_index_str.iter() ) );
-
-				text_drawer.AddText(
-					texts_offset_x,
-					texts_offset_y - i32( 1u * video_settings_rows_spacing * scale ),
-					display_state_str,
-					text_settings );
-			}
-			{
-				var [ char8, 64 ] mut str= zero_init; // Assume it's enough chars.
+				var [ char8, 16 ] mut str= zero_init; // Assume it's enough chars.
 				var size_type mut str_size= 0s;
-
-				var ust::string_view8 mode_str= FetchStringFromExtraTable( ExtraStringTableKey::Mode );
-
-				foreach( c : mode_str )
-				{
-					str[ str_size ]= c;
-					++str_size;
-				}
-
-				auto settings_lock= settings_.lock_imut();
-				var Settings& settings= settings_lock.deref();
 
 				if( settings.r_screen_width == 0u | settings.r_screen_height == 0u )
 				{
@@ -1481,26 +1540,91 @@ fn Menu::Draw( mut this, ImageDrawer &mut image_drawer, TextDrawer &mut text_dra
 				}
 
 				text_drawer.AddText(
-					texts_offset_x,
+					texts_offset_column1_x,
 					texts_offset_y - i32( 2u * video_settings_rows_spacing * scale ),
 					str,
 					text_settings );
 			}
+
+			text_drawer.AddText(
+				texts_offset_x,
+				texts_offset_y - i32( 3u * video_settings_rows_spacing * scale ),
+				FetchStringFromExtraTable( ExtraStringTableKey::VerticalSynchronization ),
+				text_settings );
+
+			text_drawer.AddText(
+				texts_offset_column1_x,
+				texts_offset_y - i32( 3u * video_settings_rows_spacing * scale ),
+				FetchStringFromTable( string_table, ( settings.r_vsync ? StringTableKey::On : StringTableKey::Off ) ),
+				text_settings );
+
+			text_drawer.AddText(
+				texts_offset_x,
+				texts_offset_y - i32( 4u * video_settings_rows_spacing * scale ),
+				FetchStringFromExtraTable( ExtraStringTableKey::Gamma ),
+				text_settings );
+
 			{
-				var ust::string_view8 vsync_str= FetchStringFromExtraTable( ExtraStringTableKey::VerticalSynchronization );
+				var size_type num_slider_steps( 1.0f + ( c_max_gamma - c_min_gamma ) / c_gamma_step );
+				var [ char8, num_slider_steps + 6s ] mut slider_text[ '-' ... ];
 
-				var ust::string_view8 state_str=
-					FetchStringFromTable(
-						string_table,
-						( settings_.lock_imut().deref().r_vsync ? StringTableKey::On : StringTableKey::Off ) );
+				var i32 slder_position=
+					ust::max(
+						0,
+						ust::min(
+							i32( ust::floor( ( settings.r_gamma - c_min_gamma ) / c_gamma_step ) ),
+							i32( num_slider_steps - 1s ) ) );
 
-				scoped_array char8 vsync_state_str[ vsync_str.size() + state_str.size() ](
-					vsync_str.iter().chain( state_str.iter() ) );
+				slider_text[ u32( slder_position ) ]= 'I';
+
+				var u32 digits( settings.r_gamma * 1000.0f );
+				slider_text[ num_slider_steps + 0s ]= ' ';
+				slider_text[ num_slider_steps + 1s ]= char8( u32('0') + digits / 1000u % 10u );
+				slider_text[ num_slider_steps + 2s ]= '.';
+				slider_text[ num_slider_steps + 3s ]= char8( u32('0') + digits /  100u % 10u );
+				slider_text[ num_slider_steps + 4s ]= char8( u32('0') + digits /   10u % 10u );
+				slider_text[ num_slider_steps + 5s ]= char8( u32('0') + digits /    1u % 10u );
 
 				text_drawer.AddText(
-					texts_offset_x,
-					texts_offset_y - i32( 3u * video_settings_rows_spacing * scale ),
-					vsync_state_str,
+					texts_offset_column1_x,
+					texts_offset_y - i32( 4u * video_settings_rows_spacing * scale ),
+					slider_text,
+					text_settings );
+			}
+
+			text_drawer.AddText(
+				texts_offset_x,
+				texts_offset_y - i32( 5u * video_settings_rows_spacing * scale ),
+				FetchStringFromExtraTable( ExtraStringTableKey::WorldBrightness ),
+				text_settings );
+
+			{
+				var size_type num_slider_steps(
+					1.0f + ( c_max_brightness_scale - c_min_brightness_scale ) / c_brightness_scale_step );
+				var [ char8, num_slider_steps + 6s ] mut slider_text[ '-' ... ];
+
+				var i32 slider_position=
+					ust::max(
+						0,
+						ust::min(
+							i32( ust::floor(
+								( settings.r_brightness_scale - c_min_brightness_scale ) / c_brightness_scale_step ) ),
+							i32( num_slider_steps - 1s ) ) );
+
+				slider_text[ u32( slider_position ) ]= 'I';
+
+				var u32 digits( settings.r_brightness_scale * 1000.0f );
+				slider_text[ num_slider_steps + 0s ]= ' ';
+				slider_text[ num_slider_steps + 1s ]= char8( u32('0') + digits / 1000u % 10u );
+				slider_text[ num_slider_steps + 2s ]= '.';
+				slider_text[ num_slider_steps + 3s ]= char8( u32('0') + digits /  100u % 10u );
+				slider_text[ num_slider_steps + 4s ]= char8( u32('0') + digits /   10u % 10u );
+				slider_text[ num_slider_steps + 5s ]= char8( u32('0') + digits /    1u % 10u );
+
+				text_drawer.AddText(
+					texts_offset_column1_x,
+					texts_offset_y - i32( 5u * video_settings_rows_spacing * scale ),
+					slider_text,
 					text_settings );
 			}
 
@@ -1703,8 +1827,26 @@ fn Menu::Draw( mut this, ImageDrawer &mut image_drawer, TextDrawer &mut text_dra
 				text_settings );
 
 			{
-				var [ char8, 16 ] mut slider_text[ '-' ... ];
-				slider_text[ size_type( ust::max( 1, ust::min( 15, i32( settings.r_mirror_alpha * 16.0f ) ) ) ) ]= 'I';
+				var size_type num_slider_steps( 1.0f + ( c_max_mirror_alpha - c_min_mirror_alpha ) / c_mirror_alpha_step );
+				var [ char8, num_slider_steps + 7s ] mut slider_text[ '-' ... ];
+
+				var i32 slider_position=
+					ust::max(
+						0,
+						ust::min(
+							i32( ust::floor( ( settings.r_mirror_alpha - c_min_mirror_alpha ) / c_mirror_alpha_step ) ),
+							i32( num_slider_steps - 1s ) ) );
+
+				slider_text[ u32( slider_position ) ]= 'I';
+
+				var u32 digits( settings.r_mirror_alpha * 10000.0f );
+				slider_text[ num_slider_steps + 0s ]= ' ';
+				slider_text[ num_slider_steps + 1s ]= char8( u32('0') + digits / 10000u % 10u );
+				slider_text[ num_slider_steps + 2s ]= '.';
+				slider_text[ num_slider_steps + 3s ]= char8( u32('0') + digits /  1000u % 10u );
+				slider_text[ num_slider_steps + 4s ]= char8( u32('0') + digits /   100u % 10u );
+				slider_text[ num_slider_steps + 5s ]= char8( u32('0') + digits /    10u % 10u );
+				slider_text[ num_slider_steps + 6s ]= char8( u32('0') + digits /     1u % 10u );
 
 				text_drawer.AddText(
 					texts_offset_column1_x,
@@ -2102,6 +2244,18 @@ var u32 c_num_quit_messages= 8u;
 
 var u32 c_num_visible_key_binding_rows= 10u;
 
+var f32 c_min_gamma= 0.25f;
+var f32 c_max_gamma= 2.0f;
+var f32 c_gamma_step= 0.125f;
+
+var f32 c_min_brightness_scale= 0.5f;
+var f32 c_max_brightness_scale= 2.5f;
+var f32 c_brightness_scale_step= 0.125f;
+
+var f32 c_min_mirror_alpha= 0.0625f;
+var f32 c_max_mirror_alpha= 0.9375f;
+var f32 c_mirror_alpha_step= 0.0625f;
+
 // This table contains names of the settings structure fields and indices for corrisponding string table entries.
 // It's used for drawing key bindings menu page.
 // If compilation fails somewhere here, someone changed the settings structure and thus this table should be fixed.
@@ -2186,7 +2340,7 @@ var u32
 	options= 8u,
 	controls= 4u,
 	key_bindings( typeinfo</ typeof(c_key_binding_rows) />.element_count ),
-	video_settings= 4u,
+	video_settings= 6u,
 	sound_settings= 7u,
 	extra_options= 14u;
 } // namespace PageNumRows
