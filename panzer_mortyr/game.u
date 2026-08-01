@@ -43,6 +43,7 @@ fn Game::StartNewGame( mut this, u32 skill, AudioProcessor &mut audio_processor 
 fn Game::TeleportToMap( mut this, u32 map_index, u32 skill, AudioProcessor &mut audio_processor )
 {
 	PerformMapTransition( map_index, skill, ust::null_optional_ref, audio_processor );
+	PerformInitialGameStateUpdatesOnMapEntering();
 
 	is_in_spectator_mode_= false;
 }
@@ -883,6 +884,48 @@ fn LoadGlobalData( CachingGameResourcesLoaderPtr& caching_game_resources_loader_
 		.sounds_description= caching_game_resources_loader.LoadSoundsDescription(),
 		.string_table= caching_game_resources_loader.LoadStringTable(),
 	};
+}
+
+fn Game::PerformInitialGameStateUpdatesOnMapEntering( mut this )
+{
+	// This function runs several game state updates on map entering.
+	// It's needed so that entitites placed slightly above the floor have some time to fall down.
+	// It's also needed for the player, since player spawns are often placed above the ground too.
+
+	if( map_data_.empty() | game_state_.empty() )
+	{
+		return;
+	}
+
+	var GameMapData& map_data= map_data_.try_deref();
+	var GameState &mut game_state= game_state_.try_deref().current;
+
+	// Use no actual player input for initial game state updates, use an empty stub instead.
+	var PlayerInput empty_player_input
+	{
+		.azimuth= camera_controller_.GetAzimuth(),
+		.elevation= camera_controller_.GetElevation(),
+		.move_wish_vector= Vec3f::MakeZero(),
+		.jump_requested= false,
+		.crouching_requested= false,
+		.running_requested= false,
+		.shot_requested= false,
+		.kick_requested= false,
+	};
+
+	// Turn-on invisibility so that enemies can't see the player.
+	game_state.player.invisibility= true;
+
+	// 0.4 seconds seems to be enough for the most entities placed slightly above the floor level to fall down.
+	var size_type num_update_steps( c_steps_per_second * 0.4f );
+
+	for( auto mut i= 0s; i < num_update_steps; ++i )
+	{
+		ProcessGameLogicStep(
+			global_data_, map_data, empty_player_input, game_state, global_navigation_graph_route_searcher_ );
+	}
+
+	game_state.player.invisibility= false;
 }
 
 fn CreateNoteVolumesList( ust::array_view_imut</ZvoxCluster/> clusters ) : ust::vector</NoteVolume/>
