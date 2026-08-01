@@ -50,6 +50,8 @@ You need to call the *vcvarsall.bat* script provided with your *MSVC* installati
 Also make sure that *CMake* and *Ninja* are accessible via the `PATH` environment variable.
 Then you need to run the Ü build system in the same console window or build script, so that it sees the environment prepared on the steps described above.
 
+For x86_64 (or maybe even x86 builds) don't forget to use `--target-cpu skylake` option, so that the Ü compiler can better optimize result code by using newer CPU instructions.
+
 
 ### Building the result package
 
