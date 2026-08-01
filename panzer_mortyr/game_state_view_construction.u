@@ -1566,47 +1566,68 @@ fn ConstructWorldDrawingInfo(
 
 		var [ f32, 4 ] mut fullscreen_blend_color[ 0.0f, 0.0f, 0.0f, 0.0f ];
 
-		if( num_player_damaging_flames > 0u )
 		{
-			var f32 alpha=
-				ust::min(
-					1.0f,
-					f32( num_player_damaging_flames ) / 16.0f *
-						CalculatePsedudoRandomFireLightSourceModulation( total_game_time_steps ) );
+			auto mix_fullscreen_blending_color=
+				lambda[&]( [ f32, 4 ]& src )
+				{
+					var f32 old_alpha= fullscreen_blend_color[3];
+					var f32 input_alpha= src[3];
+					var f32 new_alpha= old_alpha + src[3] - old_alpha * input_alpha;
 
-			MixAlphaBlendedColors( fullscreen_blend_color, ust::make_array( 0.85f, 0.7f, 0.04f, alpha ) );
-		}
+					if( new_alpha > 0.0f )
+					{
+						for( auto mut i= 0s; i < 3s; ++i )
+						{
+							fullscreen_blend_color[i]=
+								( fullscreen_blend_color[i] * old_alpha * ( 1.0f - input_alpha ) + src[i] * input_alpha ) /
+								new_alpha;
+						}
+					}
 
-		if( game_state.player.tools_state.acid_protection_suit_is_active )
-		{
-			MixAlphaBlendedColors( fullscreen_blend_color, ust::make_array( 0.4f, 0.4f, 1.0f, 0.3f ) );
-		}
+					fullscreen_blend_color[3]= new_alpha;
+				};
 
-		if( game_state.player.tools_state.night_vision_is_active |
-			game_state.player.tools_state.infrared_vision_is_active )
-		{
-			// Slightly darken the screen if night vision or infrared vision are active.
-			MixAlphaBlendedColors( fullscreen_blend_color, ust::make_array( 0.0f, 0.0f, 0.0f, 0.25f ) );
-		}
-
-		{
-			// Perform pain interpolation using current and previous state.
-			// Some delay is fine, but miss-predicting pain isn't allowed, so, don't use predicted state for pain.
-			var f32 mut pain= game_state.player.pain;
-			if_var( &previous_game_state : previous_game_state_opt )
+			if( num_player_damaging_flames > 0u )
 			{
-				pain= MixScalar( previous_game_state.player.pain, pain, time_steps_fraction );
+				var f32 alpha=
+					ust::min(
+						1.0f,
+						f32( num_player_damaging_flames ) / 16.0f *
+							CalculatePsedudoRandomFireLightSourceModulation( total_game_time_steps ) );
+
+				mix_fullscreen_blending_color( ust::make_array( 0.85f, 0.7f, 0.04f, alpha ) );
 			}
 
-			// Scale pain value somewhat to achieve the result alpha, but limit it.
-			var f32 alpha= ust::min( 0.95f, f32( pain ) / 32.0f );
+			if( game_state.player.tools_state.acid_protection_suit_is_active )
+			{
+				mix_fullscreen_blending_color( ust::make_array( 0.4f, 0.4f, 1.0f, 0.3f ) );
+			}
 
-			MixAlphaBlendedColors(
-				fullscreen_blend_color,
-				// Pain causes red effect (1, 0, 0). But if blood is disabled, replace it with some gray color.
-				( settings.g_blood_enabled
-					? ust::make_array( 1.0f, 0.0f, 0.0f, alpha )
-					: ust::make_array( 0.3f, 0.3f, 0.3f, alpha ) ) );
+			if( game_state.player.tools_state.night_vision_is_active |
+				game_state.player.tools_state.infrared_vision_is_active )
+			{
+				// Slightly darken the screen if night vision or infrared vision are active.
+				mix_fullscreen_blending_color( ust::make_array( 0.0f, 0.0f, 0.0f, 0.25f ) );
+			}
+
+			{
+				// Perform pain interpolation using current and previous state.
+				// Some delay is fine, but miss-predicting pain isn't allowed, so, don't use predicted state for pain.
+				var f32 mut pain= game_state.player.pain;
+				if_var( &previous_game_state : previous_game_state_opt )
+				{
+					pain= MixScalar( previous_game_state.player.pain, pain, time_steps_fraction );
+				}
+
+				// Scale pain value somewhat to achieve the result alpha, but limit it.
+				var f32 alpha= ust::min( 0.95f, f32( pain ) / 32.0f );
+
+				mix_fullscreen_blending_color(
+					// Pain causes red effect (1, 0, 0). But if blood is disabled, replace it with some gray color.
+					( settings.g_blood_enabled
+						? ust::make_array( 1.0f, 0.0f, 0.0f, alpha )
+						: ust::make_array( 0.3f, 0.3f, 0.3f, alpha ) ) );
+			}
 		}
 
 		for( auto mut i= 0s; i < 4s; ++i )
@@ -2484,23 +2505,6 @@ fn CalculatePsedudoRandomFireLightSourceModulation( f32 modulation_phase ) : f32
 		0.25f * ust::sin( modulation_phase * 0.5f ) +
 		0.125f * ust::sin( modulation_phase * c_half_sqrt_2 ) +
 		0.08f * ust::sin( modulation_phase * ( 0.5f * c_sqrt_3 ) );
-}
-
-type AlphaBlendedColor= [ f32, 4 ];
-
-fn MixAlphaBlendedColors( AlphaBlendedColor &mut dst, AlphaBlendedColor& src )
-{
-	var f32 new_alpha= dst[3] + src[3] - dst[3] * src[3];
-
-	if( new_alpha > 0.0f )
-	{
-		for( auto mut i= 0s; i < 3s; ++i )
-		{
-			dst[i]= ( dst[i] * dst[3] * ( 1.0f - src[3] ) + src[i] * src[3] ) / new_alpha;
-		}
-	}
-
-	dst[3]= new_alpha;
 }
 
 var u32 constexpr c_flame_color_index= 4u;
