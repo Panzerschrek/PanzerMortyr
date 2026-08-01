@@ -45,7 +45,6 @@ PanzerMortyr general:
 * Consider implementing autosaves - create an autosave upon entering a level, upon picking-up a key, etc. Allow loading such saves from the load menu.
 * Consider preventing saving or disabling save menu if no game is active.
 * Allow taking screenshots by pressing some key (like F11 or F12, maybe PrintScreen), so that no external tool is needed for taking screenshots.
-* Make necessary changes to support working with data of the beta version of the original game.
 * Draw loading screen when transitioning to the next level and when loading audio data and world drawing data for it.
 * Consider selecting one of several possible camera positions for the spectator mode (on game startup) randomly, not always only the best position.
 * Consider adding slight camera rotations for the spectator mode.
