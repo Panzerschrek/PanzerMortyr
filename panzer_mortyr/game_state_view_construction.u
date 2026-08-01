@@ -1562,37 +1562,78 @@ fn ConstructWorldDrawingInfo(
 		}
 
 		// Process fullscreen effects.
-		// Apply effect for damaging flames first and override it later with pain effect if necessary.
+		// Use the order of effects from outer to inner - burning, acid protection suit, infrared/night vision, pain.
 
-		if( num_player_damaging_flames > 0u )
+		var [ f32, 4 ] mut fullscreen_blend_color[ 0.0f, 0.0f, 0.0f, 0.0f ];
+
 		{
-			var u8 alpha(
-				ust::min(
-				255.0f,
-				f32( num_player_damaging_flames * 16u ) *
-					CalculatePsedudoRandomFireLightSourceModulation( total_game_time_steps ) ) );
-			drawing_info.fullscreen_blend_color= ust::make_array( 224u8, 180u8, 10u8, alpha );
+			auto mix_fullscreen_blending_color=
+				lambda[&]( [ f32, 4 ]& src )
+				{
+					var f32 old_alpha= fullscreen_blend_color[3];
+					var f32 input_alpha= src[3];
+					var f32 new_alpha= old_alpha + input_alpha - old_alpha * input_alpha;
+
+					if( new_alpha > 0.0f )
+					{
+						for( auto mut i= 0s; i < 3s; ++i )
+						{
+							fullscreen_blend_color[i]=
+								( fullscreen_blend_color[i] * old_alpha * ( 1.0f - input_alpha ) + src[i] * input_alpha ) /
+								new_alpha;
+						}
+					}
+
+					fullscreen_blend_color[3]= new_alpha;
+				};
+
+			if( num_player_damaging_flames > 0u )
+			{
+				var f32 alpha=
+					ust::min(
+						1.0f,
+						f32( num_player_damaging_flames ) / 16.0f *
+							CalculatePsedudoRandomFireLightSourceModulation( total_game_time_steps ) );
+
+				mix_fullscreen_blending_color( ust::make_array( 0.85f, 0.7f, 0.04f, alpha ) );
+			}
+
+			if( game_state.player.tools_state.acid_protection_suit_is_active )
+			{
+				mix_fullscreen_blending_color( ust::make_array( 0.4f, 0.4f, 1.0f, 0.3f ) );
+			}
+
+			if( game_state.player.tools_state.night_vision_is_active |
+				game_state.player.tools_state.infrared_vision_is_active )
+			{
+				// Slightly darken the screen if night vision or infrared vision are active.
+				mix_fullscreen_blending_color( ust::make_array( 0.0f, 0.0f, 0.0f, 0.25f ) );
+			}
+
+			{
+				// Perform pain interpolation using current and previous state.
+				// Some delay is fine, but miss-predicting pain isn't allowed, so, don't use predicted state for pain.
+				var f32 mut pain= game_state.player.pain;
+				if_var( &previous_game_state : previous_game_state_opt )
+				{
+					pain= MixScalar( previous_game_state.player.pain, pain, time_steps_fraction );
+				}
+
+				// Scale pain value somewhat to achieve the result alpha, but limit it.
+				var f32 alpha= ust::min( 0.95f, f32( pain ) / 32.0f );
+
+				mix_fullscreen_blending_color(
+					// Pain causes red effect (1, 0, 0). But if blood is disabled, replace it with some gray color.
+					( settings.g_blood_enabled
+						? ust::make_array( 1.0f, 0.0f, 0.0f, alpha )
+						: ust::make_array( 0.3f, 0.3f, 0.3f, alpha ) ) );
+			}
 		}
 
+		for( auto mut i= 0s; i < 4s; ++i )
 		{
-			// Perform pain interpolation using current and previous state.
-			// Some delay is fine, but miss-predicting pain isn't allowed, so, don't use predicted state for pain.
-			var f32 mut pain= game_state.player.pain;
-			if_var( &previous_game_state : previous_game_state_opt )
-			{
-				pain= MixScalar( previous_game_state.player.pain, pain, time_steps_fraction );
-			}
-
-			// Scale pain value somewhat to achieve the result alpha, but limit it.
-			var u8 alpha( ust::min( 240.0f, f32( pain ) * 8.0f ) );
-			if( u32( alpha ) * 4u >= u32( drawing_info.fullscreen_blend_color[3] ) )
-			{
-				// Pain causes red effect (255, 0, 0). But if blood is disabled, replace it with some gray color.
-				drawing_info.fullscreen_blend_color=
-					( settings.g_blood_enabled
-						? ust::make_array( 255u8, 0u8, 0u8, alpha )
-						: ust::make_array( 80u8, 80u8, 80u8, alpha ) );
-			}
+			drawing_info.fullscreen_blend_color[i]=
+				u8( ust::max( 0.0f, ust::min( fullscreen_blend_color[i] * 255.0f, 255.0f ) ) );
 		}
 
 		var ZvoxData& zvox_data= map_data.zvox_data.deref();

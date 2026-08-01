@@ -93,9 +93,6 @@ PanzerMortyr rendering:
 * Consider optimizing calculating light from point light sources for models - avoid enumerating all lights.
 * Consider drawing blob shadows under models (as some sort of decal?).
 * Consider drawing map polygons with detail textures (generate such textures somehow).
-* Consider drawing some sort of fullscreen frame-like image of the acid protection suit mask if this powerup is active.
-* Consider colorizing the whole image while the acid protection suit is active.
-* Consider drawing some extra effects for the night vision mode, like fullscreen radial brightness gradient, thermal noise or something similar.
 * Consider optimizing dynamic lighting even more by using stencil test for them.
 * Consider limiting the number of active dynamic light sources - to avoid huge performance drops.
 * Consider applying dynamic light to glass and water quads.
