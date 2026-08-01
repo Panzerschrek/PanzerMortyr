@@ -172,3 +172,39 @@ HUD:
 * For each active tool its corresponding icon should be displayed above the armor icon.
 * For each active tool its remaining amount should be displayed next to its icon.
 
+World rendering:
+
+* Map geometry should be shown properly with textures and static lighting.
+* Animated textures (like traffic lights on map 4) should work properly.
+* Underwater map geometry should have animated caustics texture applied to it.
+* Liquid surfaces should be semitransparent.
+* Textures on liquid surfaces should be seamless.
+* Some texture coordinates periodic animation should be applied to liquid textures.
+* Glass should be semitransparent.
+* Broken glass/stained glass quads shouldn't be displayed.
+* Dynamic clusters (doors, elevators, buttons) should be displayed properly where they are.
+* Decals should be displayed properly - clipped when needed and with alpha-test.
+* Decals shouldn't be applied to breakable geometry.
+* Decals should be applied to geometry of dynamic clusters.
+* Water circles should be displayed on surfaces with wet materials where it's raining.
+* Snow and rain should work properly. There should be no snow/rain inside buildings, only outside.
+* Sky should be displayed properly, with colored gradient, with one of two scrolling layers of clouds (when needed), with stars and moon/sun (if needed).
+* Models of entities and other game objects should be drawn properly, including smooth animation.
+* Injured enemies should be draw covered with blood.
+* Burning effect for models should work - with animated flames covering the entire model.
+* Light shafts should be displayed where needed.
+* Torch billboards and light coronas should be present.
+* Various billboards for explosions, flames, smoke trails and other game effects should be displayed properly.
+* Semitransparent geometry should be sorted from back to front (their blending order should be correct).
+* Dynamic lights should be applied to the world (except liquids and glass), dynamic clusters, models, decals, but not to billboards, rain/snow, water circles.
+* Mirror floors should work properly - reflect all the world and blend this reflection with their own texture.
+* Dynamic lights should be applied to mirror floors.
+* Global fog on maps where it's enabled should be applied properly to all geometry except sky and first person weapon.
+* Local fog volumes should work properly and use additive blending.
+* Fog should be applied to semitransparent geometry too.
+* Night vision effect should make the world brighter and paint it in green.
+* Infrared vision effect should paint the world in red. Models except first person weapon models should have constant orange color and no textures.
+* Fullscreen color blending (for pain and burning effects) should be displayed properly.
+* Rejection of invisible map geometry and dynamic objects (models, billboards) located within them should work properly. See *r_show_stats* setting, when such stats are enabled, only a fraction of total map clusters should be drawn in any given moment. Only models located in visible map parts should be drawn.
+* Frustum culling for models should work properly - models displayed behind the back shouldn't be draw at all.
+* World brightness setting should be applied properly and affect equally brightness of all kinds of geometry.
