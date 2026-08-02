@@ -29,7 +29,6 @@ Gameplay investigation:
 * Investigate what some unknown fileds of entity description format mean, especially ones which affect state transitions.
 * Investigate misfire behavior.
 * Investigate how many armor points enemies have, how their armor protects them and how many armor points they can pick-up.
-* Investigate where maximum amount of current armor (not inventory armor) is specified.
 * Investigate what kinds of entities are affected by gravity (what in an entity description turns gravity on and off).
 * Investigate what "zarowka" entity property is and whether it's actually used.
 * Investigate what "ponowny_atak" entity property means, how it affects enemies and what is its default value.
