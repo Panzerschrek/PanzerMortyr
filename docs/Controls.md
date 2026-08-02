@@ -60,6 +60,10 @@ Mortyr.exe contains following hardcoded english strings:
 * walk/run
 * kick
 * attack
+* Auto size
+* low
+* medium
+* high
 
 The same executable contains also polish version of the same strings:
 
@@ -84,3 +88,7 @@ The same executable contains also polish version of the same strings:
 * chod/bieg
 * kopniak
 * atak
+* Rozmiar automatyczny
+* niska
+* srednia
+* wysoka
