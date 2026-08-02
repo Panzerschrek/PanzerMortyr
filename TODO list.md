@@ -39,6 +39,7 @@ PanzerMortyr general:
 * Consider embedding git revision into the game executable and showing it somewhere in the game.
 * Consider performing even more advanced game data search - with more hardcoded paths, Windows registry fetches, etc.
 * Ensure PanzerMortyr works properly on Wayland-based systems.
+* Support russian version of the original game (published by 1С).
 * Consider writing console messages into a file - to simplify troubleshooting.
 * Consider optimizing code performing serialization/deserialization (for game saving) - read/write scalars and arrays of scalars as byte arrays.
 * Consider implementing autosaves - create an autosave upon entering a level, upon picking-up a key, etc. Allow loading such saves from the load menu.
@@ -112,7 +113,6 @@ PanzerMortyr menus and HUD:
 * Allow configuring crosshair kind, investigate what kinds of crosshairs are available in the original game.
 * Consider displaying some sort of a progress bar while going close to the map exit trigger - as RtCW does.
 * Consider displaying some screen with map stats (completion time, killed enemies) at the end of a map - as Quake does.
-* Create polish version of the extra string table (hardcoded).
 * Consider allowing navigating menu using mouse left/right button clicks and mouse wheel.
 
 PanzerMortyr sound:
