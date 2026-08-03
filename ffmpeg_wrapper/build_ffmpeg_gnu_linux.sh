@@ -3,6 +3,8 @@
 # First param ($1) of this script is expected to be a path to the FFmpeg source directory.
 # Second param ($2) of this script is expected to be a path to the build directory.
 
+script_file="$0"
+script_dir="${script_file%/*}"
 echo "Building FFmpeg located in \"$1\" using build directory \"$2\"" &&\
 mkdir -p $2 &&\
 cd $2 &&\
@@ -12,4 +14,4 @@ $1/configure --disable-x86asm --enable-static --disable-shared --disable-debug -
 make &&\
 cd .. &&\
 # Combine all needed static libraries into single shared library. Use custom name for it, since it's not a general FFmpeg library, but only a version with stuff we need.
-gcc -shared -o panzer_mortyr_ffmpeg.so -Wl,--whole-archive $2/libavformat/libavformat.a $2/libavcodec/libavcodec.a $2/libavutil/libavutil.a $2/libswscale/libswscale.a -Wl,--no-whole-archive -Wl,-lm -Wl,-s -Wl,-soname,panzer_mortyr_ffmpeg.so
+gcc -shared -o panzer_mortyr_ffmpeg.so -Wl,--whole-archive $2/libavformat/libavformat.a $2/libavcodec/libavcodec.a $2/libavutil/libavutil.a $2/libswscale/libswscale.a -Wl,--no-whole-archive -Wl,-lm -Wl,-s -Wl,-soname,panzer_mortyr_ffmpeg.so -Wl,--version-script=$script_dir/ffmpeg.exmap
