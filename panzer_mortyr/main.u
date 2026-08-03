@@ -71,7 +71,7 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 	var Game mut game( settings_ptr, caching_game_resources_loader_ptr, console_out_ptr );
 
 	var AbstractDrawers mut drawers= CreateDrawers( settings_ptr, caching_game_resources_loader_ptr, console_out_ptr );
-	var AbstractWindow &mut window= drawers.window.deref();
+	var ust::shared_ptr_mut</AbstractWindow/>& window_ptr= drawers.window;
 	var AbstractImageDrawer &mut image_drawer= drawers.image_drawer.deref();
 	var AbstractHudDrawer &mut hud_drawer= drawers.hud_drawer.deref();
 	var AbstractTextDrawer &mut text_drawer= drawers.text_drawer.deref();
@@ -80,11 +80,16 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 
 	image_drawer.PreloadImage( c_background_image_file_name, ust::null_optional_ref );
 
-	var Console mut console( settings_ptr, console_out_ptr, window.GetViewportSize() );
+	var Console mut console( settings_ptr, console_out_ptr, window_ptr.lock_imut().deref().GetViewportSize() );
 
-	var Menu mut menu( settings_ptr, caching_game_resources_loader_ptr, window.GetViewportSize(), console_out_ptr );
+	var Menu mut menu(
+		settings_ptr,
+		caching_game_resources_loader_ptr,
+		 window_ptr.lock_imut().deref().GetViewportSize(),
+		 console_out_ptr );
 
-	var GameEventNotificationDrawer mut game_event_notification_drawer( window.GetViewportSize() );
+	var GameEventNotificationDrawer mut game_event_notification_drawer(
+		window_ptr.lock_imut().deref().GetViewportSize() );
 
 	var AudioProcessor mut audio_processor( console_out_ptr, settings_ptr, caching_game_resources_loader_ptr );
 
@@ -98,9 +103,12 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 	}
 	else if( command_line_options.new_game )
 	{
-		PlayIntroCinematic( caching_game_resources_loader_ptr, video_player, window, audio_processor );
+		with( mut lock : window_ptr.lock_mut() )
+		{
+			PlayIntroCinematic( caching_game_resources_loader_ptr, video_player, lock.deref(), audio_processor );
+		}
 
-		DrawLoadingScreen( window, image_drawer );
+		DrawLoadingScreen( window_ptr, image_drawer );
 
 		game.StartNewGame( command_line_options.skill.deref_or( c_default_skill ), audio_processor );
 
@@ -111,10 +119,13 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 		// Play startup cinematics if has no command-line options starting the game.
 		if( settings_ptr.lock_imut().deref().r_startup_cinematics_enabled )
 		{
-			PlayStartupCinematics( caching_game_resources_loader_ptr, video_player, window, audio_processor );
+			with( mut lock : window_ptr.lock_mut() )
+			{
+				PlayStartupCinematics( caching_game_resources_loader_ptr, video_player, lock.deref(), audio_processor );
+			}
 		}
 
-		DrawLoadingScreen( window, image_drawer );
+		DrawLoadingScreen( window_ptr, image_drawer );
 
 		// Enter spectator mode.
 		// In this mode we show some map in menu background, but with no player control.
@@ -184,7 +195,7 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 								{
 									.game= game,
 									.audio_processor= audio_processor,
-									.window= window,
+									.window= window_ptr,
 									.video_player= video_player,
 									.caching_game_resources_loader_ptr= caching_game_resources_loader_ptr,
 									.image_drawer= image_drawer,
@@ -218,7 +229,7 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 								.game= game,
 								.console_out_ptr= console_out_ptr,
 								.audio_processor= audio_processor,
-								.window= window,
+								.window= window_ptr,
 								.video_player= video_player,
 								.caching_game_resources_loader_ptr= caching_game_resources_loader_ptr,
 								.image_drawer= image_drawer,
@@ -239,7 +250,7 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 								{
 									.game= game,
 									.audio_processor= audio_processor,
-									.window= window,
+									.window= window_ptr,
 									.video_player= video_player,
 									.caching_game_resources_loader_ptr= caching_game_resources_loader_ptr,
 									.image_drawer= image_drawer,
@@ -352,12 +363,16 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 				Game::UpdateOutcome::Continue -> {},
 				Game::UpdateOutcome::GameEnd ->
 				{
-					PlayOutroCinematic( caching_game_resources_loader_ptr, video_player, window, audio_processor );
+					with( mut lock : window_ptr.lock_mut() )
+					{
+						PlayOutroCinematic(
+							caching_game_resources_loader_ptr, video_player, lock.deref(), audio_processor );
+					}
 
 					// Show main menu. TODO - maybe show credits?
 					menu.Activate();
 
-					DrawLoadingScreen( window, image_drawer );
+					DrawLoadingScreen( window_ptr, image_drawer );
 
 					// Enter spectator mode (show some map in menu background).
 					game.EnterSpectatorModeForLastPlayedMap( audio_processor );
@@ -372,7 +387,7 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 
 		menu.Update( time_delta_s );
 
-		auto viewport_size= window.GetViewportSize();
+		auto viewport_size= window_ptr.lock_imut().deref().GetViewportSize();
 
 		{
 			var WorldDrawingInfo world_drawing_info= game.GetWorldDrawingInfo();
@@ -442,7 +457,10 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 
 		text_drawer.DrawTexts();
 
-		window.SwapWindow();
+		with( mut lock : window_ptr.lock_mut() )
+		{
+			lock.deref().SwapWindow();
+		}
 
 		{
 			var PerformanceCounter::TimePoint cur_frame_end_time_point= performance_counter.GetCurrentTime();
@@ -475,7 +493,10 @@ struct HostCommandProcessor
 
 	fn process_new_game( mut this, ust::iterator</ WordsIterator /> mut args  )
 	{
-		PlayIntroCinematic( caching_game_resources_loader_ptr, video_player, window , audio_processor );
+		with( mut lock : window.lock_mut() )
+		{
+			PlayIntroCinematic( caching_game_resources_loader_ptr, video_player, lock.deref(), audio_processor );
+		}
 
 		DrawLoadingScreen( window, image_drawer );
 
@@ -596,10 +617,10 @@ struct HostCommandProcessor
 	Game &mut @('a') game;
 	ConsoleOutPtr& @('b') console_out_ptr;
 	AudioProcessor &mut @('c') audio_processor;
-	AbstractWindow &mut @('d') window;
-	AbstractVideoPlayer &mut @('e') video_player;
-	CachingGameResourcesLoaderPtr & @('f') caching_game_resources_loader_ptr;
-	AbstractImageDrawer &mut @('g') image_drawer;
+	ust::shared_ptr_mut</AbstractWindow/> window;
+	AbstractVideoPlayer &mut @('d') video_player;
+	CachingGameResourcesLoaderPtr & @('e') caching_game_resources_loader_ptr;
+	AbstractImageDrawer &mut @('f') image_drawer;
 }
 
 struct MenuCommandProcessor
@@ -611,7 +632,10 @@ struct MenuCommandProcessor
 
 	op()( this, Menu::CommandNewGame& c )
 	{
-		PlayIntroCinematic( caching_game_resources_loader_ptr, video_player, window, audio_processor );
+		with( mut lock : window.lock_mut() )
+		{
+			PlayIntroCinematic( caching_game_resources_loader_ptr, video_player, lock.deref(), audio_processor );
+		}
 
 		DrawLoadingScreen( window, image_drawer );
 
@@ -630,7 +654,8 @@ struct MenuCommandProcessor
 		{
 			// Save savegame screenshot if managed to save a game.
 			// This screenshot will be later shown on save and load menu pages.
-			MakeSavegameScreenshot( console_out, window, game, world_drawer, hud_drawer, c.slot_name );
+			auto mut lock= window.lock_mut();
+			MakeSavegameScreenshot( console_out, lock.deref(), game, world_drawer, hud_drawer, c.slot_name );
 		}
 	}
 
@@ -643,13 +668,13 @@ struct MenuCommandProcessor
 	bool quit_requested= false;
 	Game &mut @('a') game;
 	AudioProcessor &mut @('b') audio_processor;
-	AbstractWindow &mut @('c') window;
-	AbstractVideoPlayer &mut @('d') video_player;
-	CachingGameResourcesLoaderPtr & @('e') caching_game_resources_loader_ptr;
-	AbstractImageDrawer &mut @('f') image_drawer;
+	ust::shared_ptr_mut</AbstractWindow/> window;
+	AbstractVideoPlayer &mut @('c') video_player;
+	CachingGameResourcesLoaderPtr & @('d') caching_game_resources_loader_ptr;
+	AbstractImageDrawer &mut @('e') image_drawer;
 	ConsoleOutPtr console_out;
-	AbstractWorldDrawer &mut @('g') world_drawer;
-	AbstractHudDrawer &mut @('h') hud_drawer;
+	AbstractWorldDrawer &mut @('f') world_drawer;
+	AbstractHudDrawer &mut @('g') hud_drawer;
 }
 
 fn MakeSavegameScreenshot(
