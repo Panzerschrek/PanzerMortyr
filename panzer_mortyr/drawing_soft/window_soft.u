@@ -1,0 +1,160 @@
+import "/string_conversions.iu"
+import "../message_box.iu"
+import "../window_common.iu"
+import "window_soft.iu"
+
+namespace PM
+{
+
+fn WindowSoft::constructor( SettingsPtr mut settings, ConsoleOutPtr& console_out )
+	(
+		viewport_size_=
+			lambda[&]() : [ u32, 2 ]
+			{
+				auto lock= settings.lock_imut();
+				var Settings& s= lock.deref();
+
+				// If these values aren't correct, they will be fixed later anyway.
+				return ust::make_array( s.r_screen_width, s.r_screen_height );
+			} (),
+		settings_= move(settings),
+		window_= zero_init /* set later */,
+		surface_= zero_init /* set later */,
+		surface_locked_= false,
+		prev_gamma_= ReadGamma( settings_ ),
+	)
+{
+	if( unsafe( SDL_Init( SDL_INIT_VIDEO ) ) != 0 )
+	{
+		ConsoleOutAddTextLine( console_out, "SDL video init failed!" );
+		ShowFatalErrorMessageBox( "SDL video init failed!" );
+		halt;
+	}
+
+	var Uint32 mut window_flags( 0 );
+
+	var u32 display_index= GetAndActualizeDisplayIndex( settings_, console_out );
+
+	if( settings_.lock_imut().deref().r_fullscreen )
+	{
+		SelectFullscreenMode( viewport_size_, display_index, console_out );
+		window_flags|= Uint32( SDL_WINDOW_FULLSCREEN );
+	}
+	else
+	{
+		SelectWindowedMode( viewport_size_, display_index, console_out );
+	}
+
+	ConsoleOutAddTextLine(
+		console_out,
+		ust::concat(
+			"Creating a window with size ",
+			ust::to_string8( viewport_size_[0] ),
+			"x",
+			ust::to_string8( viewport_size_[1] ),
+			"." ) );
+
+	window_=
+		unsafe( SDL_CreateWindow(
+			$<( cast_mut( c_window_caption_nt[0] ) ),
+			SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
+			i32(viewport_size_[0]), i32(viewport_size_[1]),
+			window_flags ) );
+
+	if( ust::is_nullptr( window_ ) )
+	{
+		ConsoleOutAddTextLine( console_out, "Failed to create window!" );
+		halt;
+	}
+
+	surface_= unsafe( SDL_GetWindowSurface( window_ ) );
+
+	if( ust::is_nullptr( surface_ ) )
+	{
+		ConsoleOutAddTextLine( console_out, "Failed to get window surface!" );
+		halt;
+	}
+
+	unsafe( SetWindowGamma( window_, prev_gamma_ ) );
+}
+
+fn WindowSoft::destructor()
+{
+	unsafe( SDL_DestroyWindow( window_ ) );
+}
+
+fn WindowSoft::GetSurface( mut this ) : Color32ImageView @( ust::reference_notation::return_inner_references::param0 )
+{
+	unsafe
+	{
+		// Lock surface before accessing its pixels.
+		if( !surface_locked_ && MustLockSurface( surface_ ) )
+		{
+			SDL_LockSurface( surface_ );
+			surface_locked_= true;
+		}
+
+		var SDL_Surface& surface= $>(surface_);
+
+		var u32 stride= u32( surface.pitch ) / u32( typeinfo</Color32/>.size_of );
+
+		return Color32ImageView
+		{
+			.size[ ( $>(surface_).w ), ( $>(surface_).h ) ],
+			.stride= stride,
+			.pixels( ust::byte_ptr_cast</Color32/>( surface.pixels ), size_type( stride * u32( surface.h ) ) )
+		};
+	}
+}
+
+fn WindowSoft::GetViewportSize( this ) : [ u32, 2 ]
+{
+	return viewport_size_;
+}
+
+fn WindowSoft::SwapWindow( mut this )
+{
+	// Unlock surface before updating it.
+	if( surface_locked_ && unsafe( MustLockSurface( surface_ ) ) )
+	{
+		unsafe( SDL_UnlockSurface( surface_ ) );
+		surface_locked_= false;
+	}
+
+	unsafe( SDL_UpdateWindowSurface( window_ ) );
+
+	// Update gamma each frame if necessary (if gamma settings was changed).
+	UpdateGamma();
+}
+
+fn WindowSoft::MakeScreenshot( mut this ) : ImageData
+{
+	// TODO
+	return ImageData{ .size[ 0u, 0u ] };
+}
+
+fn WindowSoft::Fill( mut this, RGBAColor& color )
+{
+	var Color32 c= Color32FromComponents( color );
+	foreach( &mut pixel : GetSurface().pixels )
+	{
+		pixel= c;
+	}
+}
+
+fn WindowSoft::UpdateGamma( mut this )
+{
+	var f32 gamma= ReadGamma( settings_ );
+	if( gamma != prev_gamma_ )
+	{
+		prev_gamma_= gamma;
+		unsafe( SetWindowGamma( window_, gamma ) );
+	}
+}
+
+fn MustLockSurface( $(SDL_Surface) surface ) unsafe : bool
+{
+	return unsafe( ( $>(surface).flags & u32(SDL_RLEACCEL) ) != 0u );
+}
+
+} // namespace PM

@@ -108,7 +108,7 @@ PanzerMortyr OpenGL rendering:
 
 PanzerMortyr software rendering:
 
-* Allow creating a window with no OpenGL context (for software rendering).
+* Implement code taking screenshots (needed for savegames).
 * Implement texts drawing.
 * Implement images drawing.
 * Implement HUD drawing.
