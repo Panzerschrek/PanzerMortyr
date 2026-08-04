@@ -20,6 +20,7 @@ fn WindowSoft::constructor( SettingsPtr mut settings, ConsoleOutPtr& console_out
 		settings_= move(settings),
 		window_= zero_init /* set later */,
 		surface_= zero_init /* set later */,
+		surface_locked_= false,
 	)
 {
 	if( unsafe( SDL_Init( SDL_INIT_VIDEO ) ) != 0 )
@@ -81,6 +82,30 @@ fn WindowSoft::destructor()
 	unsafe( SDL_DestroyWindow( window_ ) );
 }
 
+fn WindowSoft::GetSurface( mut this ) : Color32ImageView @( ust::reference_notation::return_inner_references::param0 )
+{
+	unsafe
+	{
+		// Lock surface before accessing its pixels.
+		if( !surface_locked_ && MustLockSurface( surface_ ) )
+		{
+			SDL_LockSurface( surface_ );
+			surface_locked_= true;
+		}
+
+		var SDL_Surface& surface= $>(surface_);
+
+		var u32 stride= u32( surface.pitch ) / u32( typeinfo</Color32/>.size_of );
+
+		return Color32ImageView
+		{
+			.size[ ( $>(surface_).w ), ( $>(surface_).h ) ],
+			.stride= stride,
+			.pixels( ust::byte_ptr_cast</Color32/>( surface.pixels ), size_type( stride * u32( surface.h ) ) )
+		};
+	}
+}
+
 fn WindowSoft::GetViewportSize( this ) : [ u32, 2 ]
 {
 	return viewport_size_;
@@ -88,6 +113,13 @@ fn WindowSoft::GetViewportSize( this ) : [ u32, 2 ]
 
 fn WindowSoft::SwapWindow( mut this )
 {
+	// Unlock surface before updating int.
+	if( surface_locked_ && unsafe( MustLockSurface( surface_ ) ) )
+	{
+		unsafe( SDL_UnlockSurface( surface_ ) );
+		surface_locked_= false;
+	}
+
 	unsafe( SDL_UpdateWindowSurface( window_ ) );
 }
 
@@ -99,49 +131,16 @@ fn WindowSoft::MakeScreenshot( mut this ) : ImageData
 
 fn WindowSoft::Fill( mut this, RGBAColor& color )
 {
-	var bool must_lock_surface= unsafe( ( $>(surface_).flags & u32(SDL_RLEACCEL) ) != 0u );
-
-	if( must_lock_surface )
-	{
-		unsafe( SDL_LockSurface( surface_ ) );
-	}
-
-	unsafe
-	{
-		var SDL_Surface& surface= $>(surface_);
-
-		var u32 pitch= u32( surface.pitch ) / u32( typeinfo</Color32/>.size_of );
-
-		var ust::array_view_mut</Color32/> surface_data(
-			ust::byte_ptr_cast</Color32/>( surface.pixels ),
-			size_type( pitch * u32( surface.h ) ) );
-
-		safe( FillBufferWithColor( surface_data, Color32FromComponents( color ) ) );
-	}
-
-	if( must_lock_surface )
-	{
-		unsafe( SDL_UnlockSurface( surface_ ) );
-	}
-}
-
-// Type representing 32-bit color in native components order.
-// Use 32-bit integer to force 4-byte aligment,
-// which can give some performance benefits over an approach with an array of 4 bytes.
-type Color32= u32;
-
-fn Color32FromComponents( RGBAColor& c ) : Color32
-{
-	// Assume bbbbbbbbggggggggrrrrrrrraaaaaaaa order.
-	return ( u32( c[0] ) << 16u ) | ( u32( c[1] ) <<  8u ) | ( u32( c[2] ) <<  0u ) | ( u32( c[3] ) << 24u );
-}
-
-fn FillBufferWithColor( ust::array_view_mut</Color32/> buffer, Color32 c )
-{
-	foreach( &mut pixel : buffer )
+	var Color32 c= Color32FromComponents( color );
+	foreach( &mut pixel : GetSurface().pixels )
 	{
 		pixel= c;
 	}
+}
+
+fn MustLockSurface( $(SDL_Surface) surface ) unsafe : bool
+{
+	return unsafe( ( $>(surface).flags & u32(SDL_RLEACCEL) ) != 0u );
 }
 
 } // namespace PM
