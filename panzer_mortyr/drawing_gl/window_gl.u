@@ -2,6 +2,7 @@ import "/math.iu"
 import "/stdout.iu"
 import "/string_conversions.iu"
 import "../message_box.iu"
+import "../window_common.iu"
 import "gl_functions.iu"
 import "window_gl.iu"
 
@@ -50,122 +51,18 @@ fn WindowGL::constructor( SettingsPtr mut settings, ConsoleOutPtr& console_out )
 		SDL_GL_SetAttribute( SDL_GL_CONTEXT_PROFILE_MASK, i32( SDL_GL_CONTEXT_PROFILE_CORE ) );
 	}
 
-	auto SDL_WINDOWPOS_CENTERED= 0x2FFF0000;
-
 	var Uint32 mut window_flags( SDL_WINDOW_OPENGL );
 
-	var i32 num_displays= unsafe( SDL_GetNumVideoDisplays() );
-	if( num_displays < 0 )
-	{
-		ConsoleOutAddTextLine( console_out, "Can't get number of displays!" );
-	}
-	if( num_displays == 0 )
-	{
-		ConsoleOutAddTextLine( console_out, "Has zero displays!" );
-	}
-
-	var u32 mut display_index= settings_.lock_imut().deref().r_display_index;
-
-	if( i32( display_index ) >= num_displays )
-	{
-		ConsoleOutAddTextLine( console_out, "Specified display index is out of bounds. Use display #0." );
-
-		display_index= 0u;
-		auto mut lock= settings_.lock_mut();
-		lock.deref().r_display_index= 0u;
-	}
-
-	var [ u32, 2 ] constexpr c_min_viewport_size[ 320u, 200u ];
+	var u32 display_index= GetAndActualizeDisplayIndex( settings_, console_out );
 
 	if( settings_.lock_imut().deref().r_fullscreen )
 	{
-		if( viewport_size_[0] < c_min_viewport_size[0] || viewport_size_[1] < c_min_viewport_size[1] )
-		{
-			// Viewport size is less than minimum (or is even zero) - set window size to desktop display size.
-
-			var SDL_DisplayMode mut display_mode= zero_init;
-			unsafe( SDL_GetDesktopDisplayMode( i32( display_index ), $<( display_mode ) ) );
-
-			if( display_mode.w > 0 & display_mode.h > 0 )
-			{
-				viewport_size_[0]= u32( display_mode.w );
-				viewport_size_[1]= u32( display_mode.h );
-			}
-		}
-		else
-		{
-			var SDL_DisplayMode mut requested_mode
-			{
-				.format( SDL_PIXELFORMAT_UNKNOWN ), // Zero means desktop pixel format.
-				.w( ust::max( viewport_size_[0], c_min_viewport_size[0] ) ),
-				.h( ust::max( viewport_size_[1], c_min_viewport_size[1] ) ),
-				.refresh_rate= 0, // Zero means desktop refresh rate.
-				.driverdata= zero_init,
-			};
-
-			var SDL_DisplayMode mut closest_mode= zero_init;
-
-			auto call_res=
-				unsafe( SDL_GetClosestDisplayMode( i32( display_index ), $<( requested_mode ), $<( closest_mode ) ) );
-
-			if( ust::is_nullptr( call_res ) )
-			{
-				ConsoleOutAddTextLine( console_out, "Failed to find closest video mode!" );
-			}
-			else if( closest_mode.w <= 0 | closest_mode.h <= 0 )
-			{
-				ConsoleOutAddTextLine( console_out, "Closest video mode has zero size!" );
-			}
-			else
-			{
-				viewport_size_[0]= u32( closest_mode.w );
-				viewport_size_[1]= u32( closest_mode.h );
-			}
-		}
-
+		SelectFullscreenMode( viewport_size_, display_index, console_out );
 		window_flags|= Uint32( SDL_WINDOW_FULLSCREEN );
 	}
 	else
 	{
-		// In windowed mode ensure window size is less than usable display area size.
-
-		var SDL_Rect mut display_bounds= zero_init;
-		if( unsafe( SDL_GetDisplayUsableBounds( i32( display_index ), $<(display_bounds) ) ) == 0 )
-		{
-			ConsoleOutAddTextLine(
-				console_out,
-				ust::concat(
-					"Usable display bounds are ",
-					ust::to_string8( display_bounds.w ),
-					"x",
-					ust::to_string8( display_bounds.h ),
-					"." ) );
-
-			// HACK!
-			// SDL_GetDisplayUsableBounds returns "usable" borders.
-			// But these borders aren't actually usable for placing a window inside them,
-			// since window decorations are not taken into account.
-			// So, just assume that we require some extra pixels for these decorations and reduce obtained display bounds.
-			display_bounds.w -= 4; // Assume 2 pixels side borders.
-			display_bounds.h -= 40; // Assume 2 pixels for lower border and 38 pixels for upper border.
-
-			if( viewport_size_[0] < c_min_viewport_size[0] || viewport_size_[1] < c_min_viewport_size[1] )
-			{
-				// "auto" mode - use maximum allowed size.
-				viewport_size_[0]= u32( display_bounds.w );
-				viewport_size_[1]= u32( display_bounds.h );
-			}
-			else
-			{
-				ust::min_assign( viewport_size_[0], u32( display_bounds.w ) );
-				ust::min_assign( viewport_size_[1], u32( display_bounds.h ) );
-			}
-		}
-		else
-		{
-			ConsoleOutAddTextLine( console_out, "Failed to get display usable bounds!" );
-			viewport_size_= c_min_viewport_size;
-		}
+		SelectWindowedMode( viewport_size_, display_index, console_out );
 	}
 
 	ConsoleOutAddTextLine(
@@ -179,7 +76,7 @@ fn WindowGL::constructor( SettingsPtr mut settings, ConsoleOutPtr& console_out )
 
 	window_=
 		unsafe( SDL_CreateWindow(
-			$<( cast_mut( "panzer_mortyr\0"[0] ) ), // TODO - set proper caption.
+			$<( cast_mut( c_window_caption_nt[0] ) ),
 			SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
 			i32(viewport_size_[0]), i32(viewport_size_[1]),
 			window_flags ) );
