@@ -87,21 +87,58 @@ PanzerMortyr multiplayer game logic:
 PanzerMortyr rendering:
 
 * Apply additional tessellation for tessellated polygons in order to perform smoother light values interpolation (naively triangulating them doesn't produce good result always).
-* Add support for MSAA (with proper support of fullscreen effects like fog).
 * Somehow distort/colorize the whole image while swimming in water. Maybe even add or alter global fog if camera is in water volume.
 * Consider optimizing calculating light from point light sources for models - avoid enumerating all lights.
 * Consider drawing blob shadows under models (as some sort of decal?).
-* Consider drawing map polygons with detail textures (generate such textures somehow).
-* Consider optimizing dynamic lighting even more by using stencil test for them.
 * Consider limiting the number of active dynamic light sources - to avoid huge performance drops.
 * Consider applying dynamic light to glass and water quads.
-* Consider optimizing drawing snow/rain - reject snow/rain particles for non-visible clusters and clusters located far away.
-* Consider drawing bullet and muzzle-flash billboards elongated along their rotation axis - as the original game seems to do.
 * Allow turning global fog for snow/rain off.
 * Allow turning breaking glass particles off.
 * Modyfy pixels of alpha-tested textures having zero alpha, so that their color is equal to average color of adjacent pixels with non-zero alpha. This is needed to avoid black borders on alpha-tested billboards and decals.
 * Allow switching to a fullscreen mode with refresh rate change.
 * Implement visual effect specific for omni protection item (multiplayer-only power-up).
+
+PanzerMortyr OpenGL rendering:
+
+* Add support for MSAA (with proper support of fullscreen effects like fog).
+* Consider drawing map polygons with detail textures (generate such textures somehow).
+* Consider optimizing dynamic lighting even more by using stencil test for them.
+* Consider optimizing drawing snow/rain - reject snow/rain particles for non-visible clusters and clusters located far away.
+* Fall-back to software rendering if failed to create OpenGL context.
+
+PanzerMortyr software rendering:
+
+* Allow creating a window with no OpenGL context (for software rendering).
+* Implement texts drawing.
+* Implement images drawing.
+* Implement HUD drawing.
+* Draw map geometry.
+* Draw dynamic clusters.
+* Draw highlighted clusters.
+* Draw map quads with animated textures properly.
+* Draw breakable map quads properly (don't draw broken ones).
+* Draw glass geometry.
+* Draw liquids.
+* Draw light shafts.
+* Draw models.
+* Draw billboards.
+* Draw decals.
+* Draw snow.
+* Draw rain.
+* Draw water circles.
+* Draw caustics.
+* Draw global fog.
+* Draw local fog.
+* Apply dynamic lighting to the wolrd, models, decals.
+* Draw sky (with clouds).
+* Draw sun/moon.
+* Draw stars.
+* Draw mirrors.
+* Draw models covered with blood.
+* Draw burning models.
+* Implement night vision mode.
+* Implement infrared vision mode.
+* Draw fullscreen blending effect (for pain, burning and other similar effects).
 
 PanzerMortyr menus and HUD:
 
