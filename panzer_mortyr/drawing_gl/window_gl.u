@@ -1,14 +1,14 @@
 import "/math.iu"
 import "/stdout.iu"
 import "/string_conversions.iu"
+import "../message_box.iu"
 import "gl_functions.iu"
-import "message_box.iu"
-import "opengl_window.iu"
+import "window_gl.iu"
 
 namespace PM
 {
 
-fn OpenGLWindow::constructor( SettingsPtr mut settings, ConsoleOutPtr& console_out )
+fn WindowGL::constructor( SettingsPtr mut settings, ConsoleOutPtr& console_out )
 	(
 		viewport_size_=
 			lambda[&]() : [ u32, 2 ]
@@ -226,18 +226,18 @@ fn OpenGLWindow::constructor( SettingsPtr mut settings, ConsoleOutPtr& console_o
 	unsafe( SetWindowGamma( window_, prev_gamma_ ) );
 }
 
-fn OpenGLWindow::destructor()
+fn WindowGL::destructor()
 {
 	unsafe( SDL_GL_DeleteContext( gl_context_ ) );
 	unsafe( SDL_DestroyWindow( window_ ) );
 }
 
-fn OpenGLWindow::GetViewportSize( this ) : [ u32, 2 ]
+fn WindowGL::GetViewportSize( this ) : [ u32, 2 ]
 {
 	return viewport_size_;
 }
 
-fn OpenGLWindow::SwapWindow( mut this )
+fn WindowGL::SwapWindow( mut this )
 {
 	unsafe( SDL_GL_SwapWindow( window_ ) );
 
@@ -248,7 +248,36 @@ fn OpenGLWindow::SwapWindow( mut this )
 	UpdateGamma();
 }
 
-fn OpenGLWindow::UpdateVsync( mut this )
+fn WindowGL::MakeScreenshot( mut this ) : ImageData
+{
+	var ImageData mut image_data
+	{
+		.size= viewport_size_,
+		.pixels( size_type( viewport_size_[0] * viewport_size_[1] ), ust::make_zeroed</RGBAColor/>() ),
+	};
+
+	unsafe( glReadPixels(
+		0, 0,
+		GLsizei( image_data.size[0] ), GLsizei( image_data.size[1] ),
+		GLenum( GL_RGBA ),
+		GLenum( GL_UNSIGNED_BYTE ),
+		image_data.pixels.range().to_byte8_range().data() ) );
+
+	return image_data;
+}
+
+fn WindowGL::Fill( mut this, RGBAColor& color )
+{
+	unsafe( glClearColor(
+		f32( color[0] ) / 255.0f,
+		f32( color[1] ) / 255.0f,
+		f32( color[2] ) / 255.0f,
+		f32( color[3] ) / 255.0f ) );
+
+	unsafe( glClear( GLbitfield( GL_COLOR_BUFFER_BIT ) ) );
+}
+
+fn WindowGL::UpdateVsync( mut this )
 {
 	var bool vsync= settings_.lock_imut().deref().r_vsync;
 	if( vsync != prev_vsync_ )
@@ -258,7 +287,7 @@ fn OpenGLWindow::UpdateVsync( mut this )
 	}
 }
 
-fn OpenGLWindow::UpdateGamma( mut this )
+fn WindowGL::UpdateGamma( mut this )
 {
 	var f32 gamma= ReadGamma( settings_ );
 	if( gamma != prev_gamma_ )

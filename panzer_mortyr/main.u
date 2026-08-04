@@ -7,17 +7,14 @@ import "cinematics.iu"
 import "command_line_options.iu"
 import "console.iu"
 import "crosshair_drawer.iu"
+import "drawers_factory.iu"
 import "game.iu"
 import "game_event_notification_drawer.iu"
-import "gl_functions.iu"
-import "hud_drawer.iu"
+import "loading_screen.iu"
 import "menu.iu"
 import "message_box.iu"
-import "opengl_window.iu"
 import "performance_counter.iu"
 import "savegame_screenshot.iu"
-import "video_player.iu"
-import "world_drawer.iu"
 
 pretty_main
 {
@@ -72,35 +69,28 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 
 	var Game mut game( settings_ptr, caching_game_resources_loader_ptr, console_out_ptr );
 
-	var OpenGLWindow mut window( settings_ptr, console_out_ptr );
-
-	// Create classes requiring OpenGL context after OpenGL window creation.
-
-	var ImageDrawer mut image_drawer( window.GetViewportSize(), game_filesystem_ptr, settings_ptr );
-
-	// Draw loading screen as soon as possible.
-	image_drawer.PreloadImage( c_loading_image_file_name, ust::null_optional_ref );
-	DrawLoadingScreen( window, image_drawer );
+	var AbstractDrawers mut drawers= CreateDrawers( settings_ptr, caching_game_resources_loader_ptr, console_out_ptr );
+	var ust::shared_ptr_mut</AbstractWindow/>& window_ptr= drawers.window;
+	var AbstractImageDrawer &mut image_drawer= drawers.image_drawer.deref();
+	var AbstractHudDrawer &mut hud_drawer= drawers.hud_drawer.deref();
+	var AbstractTextDrawer &mut text_drawer= drawers.text_drawer.deref();
+	var AbstractWorldDrawer &mut world_drawer= drawers.world_drawer.deref();
+	var AbstractVideoPlayer &mut video_player= drawers.video_player.deref();
 
 	image_drawer.PreloadImage( c_background_image_file_name, ust::null_optional_ref );
 
-	var Console mut console( settings_ptr, console_out_ptr, window.GetViewportSize() );
+	var Console mut console( settings_ptr, console_out_ptr, window_ptr.lock_imut().deref().GetViewportSize() );
 
-	var Menu mut menu( settings_ptr, caching_game_resources_loader_ptr, window.GetViewportSize(), console_out_ptr );
+	var Menu mut menu(
+		settings_ptr,
+		caching_game_resources_loader_ptr,
+		window_ptr.lock_imut().deref().GetViewportSize(),
+		console_out_ptr );
 
-	var HudDrawer mut hud_drawer(
-		window.GetViewportSize(), game_filesystem_ptr, console_out_ptr, settings_ptr.lock_imut().deref() );
-
-	var GameEventNotificationDrawer mut game_event_notification_drawer( window.GetViewportSize() );
-
-	var TextDrawer mut text_drawer( window.GetViewportSize(), game_filesystem_ptr, console_out_ptr );
-
-	var WorldDrawer mut world_drawer(
-		settings_ptr, caching_game_resources_loader_ptr, console_out_ptr, GLCapabilities::Create() );
+	var GameEventNotificationDrawer mut game_event_notification_drawer(
+		window_ptr.lock_imut().deref().GetViewportSize() );
 
 	var AudioProcessor mut audio_processor( console_out_ptr, settings_ptr, caching_game_resources_loader_ptr );
-
-	var VideoPlayer mut video_player( console_out_ptr );
 
 	ConsoleOutAddTextLine( console_out_ptr, "PanzerMortyr initialized!" );
 
@@ -112,9 +102,9 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 	}
 	else if( command_line_options.new_game )
 	{
-		PlayIntroCinematic( caching_game_resources_loader_ptr, video_player, window, audio_processor );
+		PlayIntroCinematic( caching_game_resources_loader_ptr, video_player, audio_processor );
 
-		DrawLoadingScreen( window, image_drawer );
+		DrawLoadingScreen( window_ptr, image_drawer );
 
 		game.StartNewGame( command_line_options.skill.deref_or( c_default_skill ), audio_processor );
 
@@ -125,10 +115,10 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 		// Play startup cinematics if has no command-line options starting the game.
 		if( settings_ptr.lock_imut().deref().r_startup_cinematics_enabled )
 		{
-			PlayStartupCinematics( caching_game_resources_loader_ptr, video_player, window, audio_processor );
+			PlayStartupCinematics( caching_game_resources_loader_ptr, video_player, audio_processor );
 		}
 
-		DrawLoadingScreen( window, image_drawer );
+		DrawLoadingScreen( window_ptr, image_drawer );
 
 		// Enter spectator mode.
 		// In this mode we show some map in menu background, but with no player control.
@@ -198,7 +188,7 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 								{
 									.game= game,
 									.audio_processor= audio_processor,
-									.window= window,
+									.window= window_ptr,
 									.video_player= video_player,
 									.caching_game_resources_loader_ptr= caching_game_resources_loader_ptr,
 									.image_drawer= image_drawer,
@@ -232,7 +222,7 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 								.game= game,
 								.console_out_ptr= console_out_ptr,
 								.audio_processor= audio_processor,
-								.window= window,
+								.window= window_ptr,
 								.video_player= video_player,
 								.caching_game_resources_loader_ptr= caching_game_resources_loader_ptr,
 								.image_drawer= image_drawer,
@@ -253,7 +243,7 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 								{
 									.game= game,
 									.audio_processor= audio_processor,
-									.window= window,
+									.window= window_ptr,
 									.video_player= video_player,
 									.caching_game_resources_loader_ptr= caching_game_resources_loader_ptr,
 									.image_drawer= image_drawer,
@@ -366,12 +356,12 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 				Game::UpdateOutcome::Continue -> {},
 				Game::UpdateOutcome::GameEnd ->
 				{
-					PlayOutroCinematic( caching_game_resources_loader_ptr, video_player, window, audio_processor );
+					PlayOutroCinematic( caching_game_resources_loader_ptr, video_player, audio_processor );
 
 					// Show main menu. TODO - maybe show credits?
 					menu.Activate();
 
-					DrawLoadingScreen( window, image_drawer );
+					DrawLoadingScreen( window_ptr, image_drawer );
 
 					// Enter spectator mode (show some map in menu background).
 					game.EnterSpectatorModeForLastPlayedMap( audio_processor );
@@ -386,7 +376,7 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 
 		menu.Update( time_delta_s );
 
-		auto viewport_size= window.GetViewportSize();
+		auto viewport_size= window_ptr.lock_imut().deref().GetViewportSize();
 
 		{
 			var WorldDrawingInfo world_drawing_info= game.GetWorldDrawingInfo();
@@ -456,7 +446,10 @@ fn Main( ust::array_view_imut</ust::string_view8/> args ) : i32
 
 		text_drawer.DrawTexts();
 
-		window.SwapWindow();
+		with( mut lock : window_ptr.lock_mut() )
+		{
+			lock.deref().SwapWindow();
+		}
 
 		{
 			var PerformanceCounter::TimePoint cur_frame_end_time_point= performance_counter.GetCurrentTime();
@@ -489,7 +482,7 @@ struct HostCommandProcessor
 
 	fn process_new_game( mut this, ust::iterator</ WordsIterator /> mut args  )
 	{
-		PlayIntroCinematic( caching_game_resources_loader_ptr, video_player, window , audio_processor );
+		PlayIntroCinematic( caching_game_resources_loader_ptr, video_player, audio_processor );
 
 		DrawLoadingScreen( window, image_drawer );
 
@@ -610,10 +603,10 @@ struct HostCommandProcessor
 	Game &mut @('a') game;
 	ConsoleOutPtr& @('b') console_out_ptr;
 	AudioProcessor &mut @('c') audio_processor;
-	OpenGLWindow &mut @('d') window;
-	VideoPlayer &mut @('e') video_player;
-	CachingGameResourcesLoaderPtr & @('f') caching_game_resources_loader_ptr;
-	ImageDrawer &mut @('g') image_drawer;
+	ust::shared_ptr_mut</AbstractWindow/> window;
+	AbstractVideoPlayer &mut @('d') video_player;
+	CachingGameResourcesLoaderPtr & @('e') caching_game_resources_loader_ptr;
+	AbstractImageDrawer &mut @('f') image_drawer;
 }
 
 struct MenuCommandProcessor
@@ -625,7 +618,7 @@ struct MenuCommandProcessor
 
 	op()( this, Menu::CommandNewGame& c )
 	{
-		PlayIntroCinematic( caching_game_resources_loader_ptr, video_player, window, audio_processor );
+		PlayIntroCinematic( caching_game_resources_loader_ptr, video_player, audio_processor );
 
 		DrawLoadingScreen( window, image_drawer );
 
@@ -644,7 +637,8 @@ struct MenuCommandProcessor
 		{
 			// Save savegame screenshot if managed to save a game.
 			// This screenshot will be later shown on save and load menu pages.
-			MakeSavegameScreenshot( console_out, window, game, world_drawer, hud_drawer, c.slot_name );
+			auto mut lock= window.lock_mut();
+			MakeSavegameScreenshot( console_out, lock.deref(), game, world_drawer, hud_drawer, c.slot_name );
 		}
 	}
 
@@ -657,21 +651,21 @@ struct MenuCommandProcessor
 	bool quit_requested= false;
 	Game &mut @('a') game;
 	AudioProcessor &mut @('b') audio_processor;
-	OpenGLWindow &mut @('c') window;
-	VideoPlayer &mut @('d') video_player;
-	CachingGameResourcesLoaderPtr & @('e') caching_game_resources_loader_ptr;
-	ImageDrawer &mut @('f') image_drawer;
+	ust::shared_ptr_mut</AbstractWindow/> window;
+	AbstractVideoPlayer &mut @('c') video_player;
+	CachingGameResourcesLoaderPtr & @('d') caching_game_resources_loader_ptr;
+	AbstractImageDrawer &mut @('e') image_drawer;
 	ConsoleOutPtr console_out;
-	WorldDrawer &mut @('g') world_drawer;
-	HudDrawer &mut @('h') hud_drawer;
+	AbstractWorldDrawer &mut @('f') world_drawer;
+	AbstractHudDrawer &mut @('g') hud_drawer;
 }
 
 fn MakeSavegameScreenshot(
 	ConsoleOutPtr& console_out,
-	OpenGLWindow& window,
+	AbstractWindow &mut window,
 	Game& game,
-	WorldDrawer &mut world_drawer,
-	HudDrawer &mut hud_drawer,
+	AbstractWorldDrawer &mut world_drawer,
+	AbstractHudDrawer &mut hud_drawer,
 	SaveSlotName& save_slot_name )
 {
 	var [ u32, 2 ] viewport_size= window.GetViewportSize();
@@ -691,55 +685,10 @@ fn MakeSavegameScreenshot(
 		hud_drawer.Draw( hud_drawing_info );
 	}
 
-	SaveSavegameScreenshot( MakeScreenshot( window ), save_slot_name, console_out );
+	SaveSavegameScreenshot( window.MakeScreenshot(), save_slot_name, console_out );
 }
 
-fn MakeScreenshot( OpenGLWindow& window ) : ImageData
-{
-	var [ u32, 2 ] viewport_size= window.GetViewportSize();
-
-	var ImageData mut screen_image_data
-	{
-		.size= viewport_size,
-		.pixels( size_type( viewport_size[0] * viewport_size[1] ), ust::make_zeroed</RGBAColor/>() ),
-	};
-
-	unsafe( glReadPixels(
-		0, 0,
-		GLsizei( screen_image_data.size[0] ), GLsizei( screen_image_data.size[1] ),
-		GLenum( GL_RGBA ),
-		GLenum( GL_UNSIGNED_BYTE ),
-		screen_image_data.pixels.range().to_byte8_range().data() ) );
-
-	return screen_image_data;
-}
-
-// TODO - consider moving this function into a separate file.
-fn DrawLoadingScreen( OpenGLWindow & mut window, ImageDrawer &mut image_drawer )
-{
-	unsafe( glClearColor( 0.0f, 0.0f, 0.0f, 0.0f ) );
-	unsafe( glClear( GLbitfield( GL_COLOR_BUFFER_BIT ) ) );
-
-	if_var( &image_size : image_drawer.GetImageSize( c_loading_image_file_name ) )
-	{
-		var [ u32, 2 ] viewport_size= window.GetViewportSize();
-		var f32 scale=
-			ust::max(
-				1.0f,
-				ust::min(
-					f32( viewport_size[0] ) / f32( image_size[0] ),
-					f32( viewport_size[1] ) / f32( image_size[1] ) ) * 0.5f );
-
-		var f32 x= f32( viewport_size[0] ) * 0.5f - f32( image_size[0] ) * 0.5f * scale;
-		var f32 y= f32( viewport_size[1] ) * 0.5f - f32( image_size[1] ) * 0.5f * scale;
-
-		image_drawer.DrawImage( c_loading_image_file_name, i32(x), i32(y), scale );
-	}
-
-	window.SwapWindow();
-}
-
-fn DrawWorldDrawingStats( TextDrawer &mut text_drawer, [ u32, 2 ] viewport_size, WorldDrawingStats& stats )
+fn DrawWorldDrawingStats( AbstractTextDrawer &mut text_drawer, [ u32, 2 ] viewport_size, WorldDrawingStats& stats )
 {
 	var ust::string8 mut text;
 
@@ -796,16 +745,16 @@ fn DrawWorldDrawingStats( TextDrawer &mut text_drawer, [ u32, 2 ] viewport_size,
 
 	text_drawer.AddText(
 		0,
-		i32( viewport_size[1] - TextDrawer::c_glyph_height ),
+		i32( viewport_size[1] - AbstractTextDrawer::c_glyph_height ),
 		text,
-		TextDrawer::Settings
+		AbstractTextDrawer::Settings
 		{
 			.monospace= true,
 			.background_color[ 0u8, 0u8, 0u8, 96u8 ],
 		} );
 }
 
-fn DrawAudioStats( TextDrawer &mut text_drawer, AudioProcessor::Stats& stats )
+fn DrawAudioStats( AbstractTextDrawer &mut text_drawer, AudioProcessor::Stats& stats )
 {
 	var ust::string8 mut text;
 
@@ -827,16 +776,16 @@ fn DrawAudioStats( TextDrawer &mut text_drawer, AudioProcessor::Stats& stats )
 
 	text_drawer.AddText(
 		0,
-		i32( 3u * TextDrawer::c_glyph_height ),
+		i32( 3u * AbstractTextDrawer::c_glyph_height ),
 		text,
-		TextDrawer::Settings
+		AbstractTextDrawer::Settings
 		{
 			.monospace= true,
 			.background_color[ 0u8, 0u8, 0u8, 96u8 ],
 		} );
 }
 
-fn DrawProductName( TextDrawer &mut text_drawer, [ u32, 2 ] viewport_size )
+fn DrawProductName( AbstractTextDrawer &mut text_drawer, [ u32, 2 ] viewport_size )
 {
 	// Display that this is PanzerMortyr and not the original game.
 	// Also mention that it uses SDL2.
@@ -846,7 +795,7 @@ fn DrawProductName( TextDrawer &mut text_drawer, [ u32, 2 ] viewport_size )
 		i32( viewport_size[0] - 144u ),
 		i32(0),
 		"PanzerMortyr (built with SDL2)",
-		TextDrawer::Settings
+		AbstractTextDrawer::Settings
 		{
 			.monospace= false,
 			.foreground_color[ 220u8, 220u8, 220u8, 255u8 ],
@@ -855,7 +804,7 @@ fn DrawProductName( TextDrawer &mut text_drawer, [ u32, 2 ] viewport_size )
 		} );
 }
 
-fn DrawFPS( TextDrawer &mut text_drawer, [ u32, 2 ] viewport_size, PerformanceCounter& performance_counter )
+fn DrawFPS( AbstractTextDrawer &mut text_drawer, [ u32, 2 ] viewport_size, PerformanceCounter& performance_counter )
 {
 	var f32 average_frame_duration_s= performance_counter.GetAverageDurationS();
 	var f32 fps= 1.0f / average_frame_duration_s;
@@ -884,10 +833,10 @@ fn DrawFPS( TextDrawer &mut text_drawer, [ u32, 2 ] viewport_size, PerformanceCo
 	];
 
 	text_drawer.AddText(
-		i32( viewport_size[0] - TextDrawer::c_max_glyph_width * 9u ),
-		i32( viewport_size[1] - TextDrawer::c_glyph_height ),
+		i32( viewport_size[0] - AbstractTextDrawer::c_max_glyph_width * 9u ),
+		i32( viewport_size[1] - AbstractTextDrawer::c_glyph_height ),
 		text,
-		TextDrawer::Settings
+		AbstractTextDrawer::Settings
 		{
 			.monospace= true,
 			.background_color[ 0u8, 0u8, 0u8, 96u8 ],
@@ -908,6 +857,5 @@ fn GetMaxFPS( SettingsPtr& settings_ptr ) : u32
 var u32 c_default_skill= 1u;
 
 var ResourceString& c_background_image_file_name= "BGR.BMP\0\0\0\0\0";
-var ResourceString& c_loading_image_file_name= "MENU_W.BMP\0\0";
 
 } // namespace PM
