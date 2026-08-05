@@ -11,6 +11,7 @@ fn TextDrawerSoft::constructor(
 		viewport_size_= window.lock_imut().deref().GetViewportSize(),
 		window_= move(window),
 		font_data_= LoadFontData( game_filesystem_ptr, console_out ),
+		glyphs_data16_= CreateGlyphsData16( font_data_ ),
 		code_point_to_glyph_position_map_=
 			BuildCodePointToGlyphPositionMap( LoadFontTable( game_filesystem_ptr, console_out ) ),
 	)
@@ -82,14 +83,16 @@ fn TextDrawerSoft::DrawTexts( mut this )
 			var i32 x_begin= ust::max( 0, glyph_to_draw.x );
 			var i32 y_begin= ust::max( 0, glyph_to_draw.y );
 			var i32 x_end= ust::min( glyph_to_draw.x + i32( glyph_to_draw.width ), i32( surface.size[0] ) );
-			var i32 y_end= ust::min( glyph_to_draw.y + i32( 7u * glyph_to_draw.scale ), i32( surface.size[1] ) );
+			var i32 y_end= ust::min( glyph_to_draw.y + i32( 8u * glyph_to_draw.scale ), i32( surface.size[1] ) );
 
-			var FontData::Glyph& glyph= font_data_.glyphs[ size_type( glyph_to_draw.glyph_index ) ];
+			var GlyphData16& glyph= glyphs_data16_[ size_type( glyph_to_draw.glyph_index ) ];
+
+			var [ Color32, 2 ] colors[ glyph_to_draw.background_color, glyph_to_draw.foreground_color ];
 
 			for( auto mut y= y_begin; y < y_end; ++y )
 			{
 				var u32 v= u32( y - y_begin ) / glyph_to_draw.scale;
-				var u8 line_byte= glyph.pixels[ v ];
+				var u16 glyph_line= glyph[v];
 
 				var size_type line_start( u32(y) * surface.stride );
 				var size_type line_end( ( u32(y) + 1u ) * surface.stride );
@@ -99,10 +102,7 @@ fn TextDrawerSoft::DrawTexts( mut this )
 				{
 					var u32 u= u32( x - x_begin ) / glyph_to_draw.scale;
 
-					var Color32 c=
-						( ( ( u32( line_byte ) & ( 1u << ( u ^ 7u ) ) ) != 0u )
-							? glyph_to_draw.foreground_color
-							: glyph_to_draw.background_color );
+					var Color32 c= colors[ ( u32( glyph_line ) >> ( u * 2u ) ) & 1u ];
 
 					line[ size_type(x) ]= c;
 				}
@@ -111,6 +111,29 @@ fn TextDrawerSoft::DrawTexts( mut this )
 	}
 
 	glyphs_to_draw_.clear();
+}
+
+fn TextDrawerSoft::CreateGlyphsData16( FontData& font_data ) : GlyphsData16
+{
+	var GlyphsData16 mut out_glyphs;
+
+	foreach( &glyph : font_data.glyphs )
+	{
+		var GlyphData16 mut glyph_data= zero_init;
+		for( auto mut y= 0s; y < 7s; ++y )
+		{
+			var u32 mut line= 0u;
+			for( auto mut x= 0s; x < 8s; ++x )
+			{
+				line|= ( ( u32( glyph.pixels[y] ) >> ( x ^ 7s ) ) & 1u ) << ( x * 2s );
+			}
+			glyph_data[y]= u16(line);
+		}
+
+		out_glyphs.push_back( glyph_data );
+	}
+
+	return out_glyphs;
 }
 
 } // namespace PM
