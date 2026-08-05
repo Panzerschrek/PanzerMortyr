@@ -1,0 +1,127 @@
+import "/enum_string_conversions.iu"
+import "text_drawer_common.iu"
+
+namespace PM
+{
+
+fn LoadFontData( GameFilesystemPtr& game_filesystem_ptr, ConsoleOutPtr& console_out ) : FontData
+{
+	auto mut lock= game_filesystem_ptr.lock_mut();
+
+	result_match( lock.deref().LoadFileToByte8Vector( c_font_data_file_name ) )
+	{
+		Ok( file_contents ) ->
+		{
+			var FontData mut font_data
+			{
+				.glyphs(
+					file_contents.size() / typeinfo</FontData::Glyph/>.size_of, ust::make_zeroed</FontData::Glyph/>() )
+			};
+
+			font_data.glyphs.range().to_byte8_range().copy_from( file_contents.range() );
+
+			return font_data;
+		},
+		Err( e ) ->
+		{
+			ConsoleOutAddTextLine( console_out, ust::concat( "Failed to load font file! Error: ", ust::enum_to_string(e) ) );
+			return FontData();
+		},
+	}
+}
+
+fn LoadFontTable( GameFilesystemPtr& game_filesystem_ptr, ConsoleOutPtr& console_out ) : FontTable
+{
+	auto mut lock= game_filesystem_ptr.lock_mut();
+
+	result_match( lock.deref().LoadFileToString( c_font_table_file_name ) )
+	{
+		Ok( file_contents ) ->
+		{
+			if( file_contents.size() != typeinfo</FontTable/>.size_of )
+			{
+				ConsoleOutAddTextLine( console_out, "Unexpected size of the font table file!" );
+				return ust::make_zeroed</FontTable/>();
+			}
+
+			var FontTable mut table= zero_init;
+			ust::single_element_array_view( table ).to_byte8_range().copy_from( file_contents.range().to_byte8_range() );
+			return table;
+		},
+		Err( e ) ->
+		{
+			ConsoleOutAddTextLine( console_out, ust::concat( "Failed to load font table file! Error: ", ust::enum_to_string(e) ) );
+			return ust::make_zeroed</FontTable/>();
+		},
+	}
+}
+
+// The original game uses this code-page known as Mazovia.
+// See https://pl.wikipedia.org/wiki/Mazovia_(kod)#Tablica_kod%C3%B3w_(wersja_CP790).
+var[ char32, 256 ] CP790=
+	"\u0000\u0001\u0002\u0003\u0004\u0005\u0006\u0007\u0008\u0009\u000A\u000B\u000C\u000D\u000E\u000F"u32 +
+	"\u0010\u0011\u0012\u0013\u0014\u0015\u0016\u0017\u0018\u0019\u001A\u001B\u001C\u001D\u001E\u001F"u32 +
+	" !\"#$%&'()*+,-./"u32 +
+	"0123456789:;<=>?"u32 +
+	"@ABCDEFGHIJKLMNO"u32 +
+	"PQRSTUVWXYZ[\\]^_"u32 +
+	"`abcdefghijklmno"u32 +
+	"pqrstuvwxyz{|}~\u007F"u32 +
+	"ÇüéâäàąçêëèïîćÄĄ"u32 +
+	"ĘęłôöĆûùŚÖÜ¢Ł¥śƒ"u32 +
+	"ŹŻóÓńŃźż¿⌐¬½¼¡«»"u32 +
+	"░▒▓│┤╡╢╖╕╣║╗╝╜╛┐"u32 +
+	"└┴┬├─┼╞╟╚╔╩╦╠═╬╧"u32 +
+	"╨╤╥╙╘╒╓╫╪┘┌█▄▌▐▀"u32 +
+	"αßΓπΣσµτΦΘΩδ∞φε∩"u32 +
+	"≡±≥≤⌠⌡÷≈°∙·√ⁿ²■\u00A0"u32;
+
+static_assert( typeinfo</ typeof(CP790) />.element_count == typeinfo</FontTable/>.element_count );
+
+fn BuildCodePointToGlyphPositionMap( FontTable& font_table ) : ust::hash_map</char32, u32/>
+{
+	var ust::hash_map</char32, u32/> mut map;
+
+	for( auto mut i= 0s; i < typeinfo</FontTable/>.element_count; ++i )
+	{
+		// Ignore zeros.
+		var u32 index( font_table[i] );
+		if( index == 0u )
+		{
+			continue;
+		}
+
+		map.insert_new( CP790[i], index );
+	}
+
+	// Hardcode 'A' and 'a' to be the first char.
+	map.insert_new( 'A'c32, 0u );
+	map.insert_new( 'a'c32, 0u );
+
+	// Hardcode some symbols missing in the original font.
+	var [ [ char32, 2 ], 6 ] hardcode_table
+	[
+		[ '_'c32, '-'c32 ],
+		[ '|'c32, 'I'c32 ],
+		[ '['c32, '('c32 ],
+		[ ']'c32, ')'c32 ],
+		[ '{'c32, '('c32 ],
+		[ '}'c32, ')'c32 ],
+	];
+
+	foreach( pair : hardcode_table )
+	{
+		if( !map.exists( pair[0] ) )
+		{
+			var u32 pos= cast_imut(map).find( pair[1] ).deref_or( ~0u );
+			if( pos != ~0u )
+			{
+				map.insert_new( pair[0], pos );
+			}
+		}
+	}
+
+	return map;
+}
+
+} // namespace PM

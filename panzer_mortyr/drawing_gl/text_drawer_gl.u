@@ -1,6 +1,6 @@
-import "/enum_string_conversions.iu"
 import "/scoped_array.iu"
 import "/utf.iu"
+import "../text_drawer_common.iu"
 import "buffer_utils.iu"
 import "gl_functions.iu"
 import "gl_state.iu"
@@ -96,7 +96,7 @@ fn TextDrawerGL::AddText( mut this, i32 x, i32 y, ust::string_view8 mut text, Se
 			continue;
 		}
 
-		var size_type mut glyph_index= 0s;
+		var u32 mut glyph_index= 0u;
 		if_var( p : code_point_to_glyph_position_map_.find( code_point ) )
 		{
 			glyph_index= p;
@@ -115,9 +115,10 @@ fn TextDrawerGL::AddText( mut this, i32 x, i32 y, ust::string_view8 mut text, Se
 		var [ TextVertex, 4 ] &mut dst_glyph= buffered_glyphs_[ num_buffered_glyphs_ ];
 		++num_buffered_glyphs_;
 
-		var f32 tc_y= f32( font_data_.glyphs.size() - 1s - glyph_index ) * glyph_tc_height;
+		var f32 tc_y= f32( font_data_.glyphs.size() - 1s - size_type( glyph_index ) ) * glyph_tc_height;
 
-		var u32 glyph_pixel_width= ( settings.monospace ? c_max_glyph_width : u32( font_data_.glyphs[ glyph_index ].width ) );
+		var u32 glyph_pixel_width=
+			( settings.monospace ? c_max_glyph_width : u32( font_data_.glyphs[ size_type( glyph_index ) ].width ) );
 
 		var f32 glyph_width_f= f32( glyph_pixel_width ) * glyph_base_width;
 		var f32 glyph_tc_width= f32( glyph_pixel_width ) / 8.0f;
@@ -202,125 +203,6 @@ fn CreateTextVertexBuffer( size_type num_quads ) : BufferObject
 		BufferObject::CreateUninitializedDynamicDrawBuffer(
 			GLenum( GL_ARRAY_BUFFER ),
 			num_quads * 4s * typeinfo</TextVertex/>.size_of );
-}
-
-fn LoadFontData( GameFilesystemPtr& game_filesystem_ptr, ConsoleOutPtr& console_out ) : FontData
-{
-	auto mut lock= game_filesystem_ptr.lock_mut();
-
-	result_match( lock.deref().LoadFileToString( c_font_data_file_name ) )
-	{
-		Ok( file_contents ) ->
-		{
-			var FontData mut font_data
-			{
-				.glyphs( file_contents.size() / typeinfo</FontData::Glyph/>.size_of, ust::make_zeroed</FontData::Glyph/>() )
-			};
-
-			font_data.glyphs.range().to_byte8_range().copy_from( file_contents.range().to_byte8_range() );
-
-			return font_data;
-		},
-		Err( e ) ->
-		{
-			ConsoleOutAddTextLine( console_out, ust::concat( "Failed to load font file! Error: ", ust::enum_to_string(e) ) );
-			return FontData();
-		},
-	}
-}
-
-fn LoadFontTable( GameFilesystemPtr& game_filesystem_ptr, ConsoleOutPtr& console_out ) : FontTable
-{
-	auto mut lock= game_filesystem_ptr.lock_mut();
-
-	result_match( lock.deref().LoadFileToString( c_font_table_file_name ) )
-	{
-		Ok( file_contents ) ->
-		{
-			if( file_contents.size() != typeinfo</FontTable/>.size_of )
-			{
-				ConsoleOutAddTextLine( console_out, "Unexpected size of the font table file!" );
-				return ust::make_zeroed</FontTable/>();
-			}
-
-			var FontTable mut table= zero_init;
-			ust::single_element_array_view( table ).to_byte8_range().copy_from( file_contents.range().to_byte8_range() );
-			return table;
-		},
-		Err( e ) ->
-		{
-			ConsoleOutAddTextLine( console_out, ust::concat( "Failed to load font table file! Error: ", ust::enum_to_string(e) ) );
-			return ust::make_zeroed</FontTable/>();
-		},
-	}
-}
-
-// The original game uses this code-page known as Mazovia.
-// See https://pl.wikipedia.org/wiki/Mazovia_(kod)#Tablica_kod%C3%B3w_(wersja_CP790).
-var[ char32, 256 ] CP790=
-	"\u0000\u0001\u0002\u0003\u0004\u0005\u0006\u0007\u0008\u0009\u000A\u000B\u000C\u000D\u000E\u000F"u32 +
-	"\u0010\u0011\u0012\u0013\u0014\u0015\u0016\u0017\u0018\u0019\u001A\u001B\u001C\u001D\u001E\u001F"u32 +
-	" !\"#$%&'()*+,-./"u32 +
-	"0123456789:;<=>?"u32 +
-	"@ABCDEFGHIJKLMNO"u32 +
-	"PQRSTUVWXYZ[\\]^_"u32 +
-	"`abcdefghijklmno"u32 +
-	"pqrstuvwxyz{|}~\u007F"u32 +
-	"ÇüéâäàąçêëèïîćÄĄ"u32 +
-	"ĘęłôöĆûùŚÖÜ¢Ł¥śƒ"u32 +
-	"ŹŻóÓńŃźż¿⌐¬½¼¡«»"u32 +
-	"░▒▓│┤╡╢╖╕╣║╗╝╜╛┐"u32 +
-	"└┴┬├─┼╞╟╚╔╩╦╠═╬╧"u32 +
-	"╨╤╥╙╘╒╓╫╪┘┌█▄▌▐▀"u32 +
-	"αßΓπΣσµτΦΘΩδ∞φε∩"u32 +
-	"≡±≥≤⌠⌡÷≈°∙·√ⁿ²■\u00A0"u32;
-
-static_assert( typeinfo</ typeof(CP790) />.element_count == typeinfo</FontTable/>.element_count );
-
-fn BuildCodePointToGlyphPositionMap( FontTable& font_table ) : ust::hash_map</char32, size_type/>
-{
-	var ust::hash_map</char32, size_type/> mut map;
-
-	for( auto mut i= 0s; i < typeinfo</FontTable/>.element_count; ++i )
-	{
-		// Ignore zeros.
-		var size_type index( font_table[i] );
-		if( index == 0s )
-		{
-			continue;
-		}
-
-		map.insert_new( CP790[i], index );
-	}
-
-	// Hardcode 'A' and 'a' to be the first char.
-	map.insert_new( 'A'c32, 0s );
-	map.insert_new( 'a'c32, 0s );
-
-	// Hardcode some symbols missing in the original font.
-	var [ [ char32, 2 ], 6 ] hardcode_table
-	[
-		[ '_'c32, '-'c32 ],
-		[ '|'c32, 'I'c32 ],
-		[ '['c32, '('c32 ],
-		[ ']'c32, ')'c32 ],
-		[ '{'c32, '('c32 ],
-		[ '}'c32, ')'c32 ],
-	];
-
-	foreach( pair : hardcode_table )
-	{
-		if( !map.exists( pair[0] ) )
-		{
-			var size_type pos= cast_imut(map).find( pair[1] ).deref_or( ~0s );
-			if( pos != ~0s )
-			{
-				map.insert_new( pair[0], pos );
-			}
-		}
-	}
-
-	return map;
 }
 
 fn CreateFontTexture( FontData& font_data ) : Texture
