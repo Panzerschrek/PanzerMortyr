@@ -1,20 +1,79 @@
+import "../image_loading.iu"
 import "image_drawer_soft.iu"
 
 namespace PM
 {
 
+fn ImageDrawerSoft::constructor(
+	ust::shared_ptr_mut</WindowSoft/> mut window, GameFilesystemPtr mut game_filesystem_ptr )
+	( window_= move(window), game_filesystem_ptr_= move(game_filesystem_ptr) )
+{
+}
+
 fn ImageDrawerSoft::PreloadImage(
 	mut this, ResourceString& image_file_name, ust::optional_ref_imut</ [ u8, 3 ] /> transparent_color )
 {
-	// TODO
-	ust::ignore_unused( image_file_name );
-	ust::ignore_unused( transparent_color );
+	if( images_.exists( image_file_name ) )
+	{
+		return;
+	}
+
+	auto mut lock= game_filesystem_ptr_.lock_mut();
+
+	result_match( lock.deref().LoadFile( image_file_name, LoadImageBMP ) )
+	{
+		Ok( mut image_data ) ->
+		{
+			var bool mut has_alpha= false;
+			if_var( &c : transparent_color )
+			{
+				// Make transparent color black and for other colors set alpha to 255.
+				foreach( &mut pixel : image_data.pixels )
+				{
+					if( pixel[0] == c[0] & pixel[1] == c[1] & pixel[2] == c[2] )
+					{
+						pixel= ust::make_array( 0u8, 0u8, 0u8, 0u8 );
+						has_alpha= true;
+					}
+					else
+					{
+						pixel[3]= 255u8;
+					}
+				}
+			}
+			else
+			{
+				// Always set alpha to 255.
+				foreach( &mut pixel : image_data.pixels )
+				{
+					pixel[3]= 255u8;
+				}
+			}
+
+
+			images_.insert_new( image_file_name, ImageExt{ .data= move( image_data ), .has_alpha= has_alpha } );
+		},
+		Err(e) ->
+		{
+			// TODO - print error message?
+			ust::ignore_unused(e);
+
+			// Save a stub to avoid loading it again.
+			images_.insert_new( image_file_name, ust::optional</ImageExt/>() );
+		}
+	}
 }
 
 fn ImageDrawerSoft::GetImageSize( this, ResourceString& image_file_name ) : ust::optional</ [ u32, 2 ] />
 {
-	// TODO
-	ust::ignore_unused( image_file_name );
+	if_var( & image_opt : images_.find( image_file_name ) )
+	{
+		if_var( & image : image_opt )
+		{
+			return image.data.size;
+		}
+	}
+
 	return ust::null_optional;
 }
 
