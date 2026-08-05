@@ -86,7 +86,13 @@ fn TextDrawerSoft::DrawTexts( mut this )
 
 			var GlyphData16& glyph= font_data16_.glyphs[ size_type( glyph_to_draw.glyph_index ) ];
 
-			var [ Color32, 2 ] colors[ glyph_to_draw.background_color, glyph_to_draw.foreground_color ];
+			var [ Color32, 4 ] colors
+			[
+				glyph_to_draw.background_color,
+				glyph_to_draw.foreground_color,
+				Color32Average( glyph_to_draw.background_color, glyph_to_draw.foreground_color ),
+				Color32(0),
+			];
 
 			for( auto mut y= y_begin; y < y_end; ++y )
 			{
@@ -101,7 +107,7 @@ fn TextDrawerSoft::DrawTexts( mut this )
 				{
 					var u32 u= u32( x - x_begin ) / glyph_to_draw.scale;
 
-					var Color32 c= colors[ ( u32( glyph_line ) >> ( u * 2u ) ) & 1u ];
+					var Color32 c= colors[ ( u32( glyph_line ) >> ( u * 2u ) ) & 3u ];
 
 					line[ size_type(x) ]= c;
 				}
@@ -116,29 +122,48 @@ fn TextDrawerSoft::CreateFontData16( FontData& font_data ) : FontData16
 {
 	return FontData16
 	{
-		.glyphs=
-			ust::make_vector_from_mapped_range(
-				font_data.glyphs.range(),
-				lambda( FontData::Glyph& glyph ) : GlyphData16
-				{
-					var GlyphData16 mut glyph_data= zero_init;
-					for( auto mut y= 0s; y < 7s; ++y )
-					{
-						var u32 in_line( glyph.pixels[y] );
-						var u32 mut out_line= 0u;
-						for( auto mut x= 0s; x < 8s; ++x )
-						{
-							out_line|= ( ( in_line >> ( x ^ 7s ) ) & 1u ) << ( x * 2s );
-						}
-						glyph_data[y]= u16(out_line);
-					}
-
-					return glyph_data;
-				} ),
+		.glyphs= ust::make_vector_from_mapped_range( font_data.glyphs.range(), CreateGlyphData16 ),
 		.widths=
 			ust::make_vector_from_mapped_range(
 				font_data.glyphs.range(), lambda( FontData::Glyph& glyph ) : u8 { return glyph.width; } ),
 	};
+}
+
+fn TextDrawerSoft::CreateGlyphData16( FontData::Glyph& glyph ) : GlyphData16
+{
+	var GlyphData16 mut glyph_data= zero_init;
+
+	for( auto mut y= 0s; y < 7s; ++y )
+	{
+		var u32 in_line( glyph.pixels[y] );
+		var u32 mut out_line= 0u;
+
+		for( auto mut x= 0s; x < 8s; ++x )
+		{
+			out_line|= ( ( in_line >> ( x ^ 7s ) ) & 1u ) << ( x * 2s );
+		}
+
+		glyph_data[y]= u16(out_line);
+	}
+
+	// Make shadows.
+	for( auto mut y= 1s; y < 8s; ++y )
+	{
+		var u32 in_line( glyph_data[ y - 1s ] );
+		var u32 mut out_line( glyph_data[y] );
+
+		for( auto mut x= 1s; x < 8s; ++x )
+		{
+			if( ( ( in_line >> ( ( x - 1s ) * 2s ) ) & 3u ) == 1u && ( ( out_line >> ( x * 2s ) ) & 3u ) == 0u )
+			{
+				out_line |= 2u << ( x * 2s );
+			}
+		}
+
+		glyph_data[y]= u16( out_line );
+	}
+
+	return glyph_data;
 }
 
 } // namespace PM
