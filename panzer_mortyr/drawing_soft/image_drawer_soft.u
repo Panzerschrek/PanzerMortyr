@@ -240,7 +240,7 @@ fn ImageDrawerSoft::DrawImage(
 					u %= image_size[0];
 				}
 
-				var RGBAColor src_components= image_pixels_line[ size_type( u % image_size[0] ) ];
+				var RGBAColor src_components= image_pixels_line[ size_type( u ) ];
 
 				var RGBAColor dst_components= Color32ToComponents( pixel );
 
@@ -302,12 +302,15 @@ fn ImageDrawerSoft::DrawFullImage( Color32ImageView surface, ImageExt& image, i3
 	auto image_size= image.data.size;
 	auto image_pixels= image.data.pixels.range();
 
+	var u32 dst_size_x( ust::round( f32( image_size[0] ) * scale ) );
+	var u32 dst_size_y( ust::round( f32( image_size[1] ) * scale ) );
+
 	var i32 y_end_initial= i32( surface.size[1] ) - y;
-	var i32 y_begin_initial= y_end_initial - i32( ust::round( f32( image_size[1] ) * scale ) );
+	var i32 y_begin_initial= y_end_initial - i32( dst_size_y );
 
 	var u32 x_begin( ust::max( 0, x ) );
 	var u32 y_begin( ust::max( 0, y_begin_initial ) );
-	var u32 x_end( ust::min( x + i32( ust::round( f32( image_size[0] ) * scale ) ), i32( surface.size[0] ) ) );
+	var u32 x_end( ust::min( x + i32( dst_size_x ), i32( surface.size[0] ) ) );
 	var u32 y_end( ust::min( y_end_initial, i32( surface.size[1] ) ) );
 
 	if( ( x_begin >= x_end ) | ( y_begin >= y_end ) )
@@ -319,68 +322,48 @@ fn ImageDrawerSoft::DrawFullImage( Color32ImageView surface, ImageExt& image, i3
 
 	var u32 fill_size_x= x_end - x_begin;
 	var u32 fill_size_y= y_end - y_begin;
-	var i32 tc_x_start= i32( x_begin ) - x;
 
-	var i32 mut tc_y= i32(y_begin) - y_begin_initial;
+	// Since division result is rounded down, we are sure that result texture coordinates are in range [ 0, size ).
+	var u32 tc_x_step_fixed16= ( image_size[0] << 16 ) / dst_size_x;
+	var u32 tc_y_step_fixed16= ( image_size[1] << 16 ) / dst_size_y;
 
-	var i32 inv_scale_fixed16( 65536.0f / scale );
+	var u32 tc_x_start_fixed16= u32( i32( x_begin ) - x ) * tc_x_step_fixed16;
+	var u32 mut tc_y_fixed16= u32( i32(y_begin) - y_begin_initial ) * tc_y_step_fixed16;
 
 	if( alpha == 255u8 && !image.has_alpha )
 	{
 		// A case where no alpha-blending is necessary.
 
-		for( var u32 mut dy= 0u; dy < fill_size_y; ++dy )
+		for( var u32 mut dy= 0u; dy < fill_size_y; ++dy, tc_y_fixed16+= tc_y_step_fixed16 )
 		{
-			var u32 v= ( u32( tc_y * inv_scale_fixed16 ) >> 16 );
-
-			auto image_pixels_line= image_pixels.subrange_start( size_type( ( v % image_size[1] ) * image_size[0] ) );
+			auto image_pixels_line= image_pixels.subrange_start( size_type( ( tc_y_fixed16 >> 16 ) * image_size[0] ) );
 
 			auto dst_line= dst_region.subrange(
 				size_type( dy * surface.stride ), size_type( dy * surface.stride + fill_size_x ) );
 
-			var i32 mut tc_x= tc_x_start;
+			var u32 mut tc_x_fixed16= tc_x_start_fixed16;
 
 			foreach( &mut pixel : dst_line )
 			{
-				var u32 mut u= ( u32( tc_x * inv_scale_fixed16 ) >> 16 );
-				// We expect that texture coordinates are generally in range. Only if it's not the case, use modulo.
-				if( u >= image_size[0] )
-				{
-					u %= image_size[0];
-				}
-
-				var RGBAColor c= image_pixels_line[ size_type( u ) ];
-				pixel= Color32FromComponents( c );
-
-				++tc_x;
+				pixel= Color32FromComponents( image_pixels_line[ size_type( tc_x_fixed16 >> 16 ) ] );
+				tc_x_fixed16+= tc_x_step_fixed16;
 			}
-
-			++tc_y;
 		}
 	}
 	else
 	{
-		for( var u32 mut dy= 0u; dy < fill_size_y; ++dy )
+		for( var u32 mut dy= 0u; dy < fill_size_y; ++dy, tc_y_fixed16+= tc_y_step_fixed16 )
 		{
-			var u32 v= ( u32( tc_y * inv_scale_fixed16 ) >> 16 );
-
-			auto image_pixels_line= image_pixels.subrange_start( size_type( ( v % image_size[1] ) * image_size[0] ) );
+			auto image_pixels_line= image_pixels.subrange_start( size_type( ( tc_y_fixed16 >> 16 ) * image_size[0] ) );
 
 			auto dst_line= dst_region.subrange(
 				size_type( dy * surface.stride ), size_type( dy * surface.stride + fill_size_x ) );
 
-			var i32 mut tc_x= tc_x_start;
+			var u32 mut tc_x_fixed16= tc_x_start_fixed16;
 
 			foreach( &mut pixel : dst_line )
 			{
-				var u32 mut u= ( u32( tc_x * inv_scale_fixed16 ) >> 16 );
-				// We expect that texture coordinates are generally in range. Only if it's not the case, use modulo.
-				if( u >= image_size[0] )
-				{
-					u %= image_size[0];
-				}
-
-				var RGBAColor src_components= image_pixels_line[ size_type( u % image_size[0] ) ];
+				var RGBAColor src_components= image_pixels_line[ size_type( tc_x_fixed16 >> 16 ) ];
 
 				var RGBAColor dst_components= Color32ToComponents( pixel );
 
@@ -400,10 +383,8 @@ fn ImageDrawerSoft::DrawFullImage( Color32ImageView surface, ImageExt& image, i3
 
 				pixel= Color32FromComponents( color_mixed );
 
-				++tc_x;
+				tc_x_fixed16+= tc_x_step_fixed16;
 			}
-
-			++tc_y;
 		}
 	}
 }
