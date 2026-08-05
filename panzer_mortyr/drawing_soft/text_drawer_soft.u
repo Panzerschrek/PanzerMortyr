@@ -19,6 +19,8 @@ fn TextDrawerSoft::constructor(
 
 fn TextDrawerSoft::AddText( mut this, i32 x, i32 y, ust::string_view8 mut text, Settings& settings )
 {
+	// Do the same thing TextDrawerGL does - accumulate glyphs first and draw them later.
+
 	var Color32 foreground_color= Color32FromComponents( settings.foreground_color );
 	var Color32 background_color= Color32FromComponents( settings.background_color );
 	var u8 scale( settings.scale );
@@ -26,6 +28,7 @@ fn TextDrawerSoft::AddText( mut this, i32 x, i32 y, ust::string_view8 mut text, 
 	var i32
 		initial_x= x,
 		mut current_x= initial_x,
+		// Flip Y coordinates, since in software mode the top line has 0 Y coordinate, not the bottom line.
 		mut current_y= i32( viewport_size_[1] ) - y - i32( c_glyph_height * settings.scale );
 
 	loop
@@ -53,9 +56,6 @@ fn TextDrawerSoft::AddText( mut this, i32 x, i32 y, ust::string_view8 mut text, 
 			glyph_index= code_point_to_glyph_position_map_[ '?'c32 ];
 		}
 
-		var u32 glyph_pixel_width=
-			( settings.monospace ? c_max_glyph_width : u32( font_data16_.widths[ size_type( glyph_index ) ] ) );
-
 		glyphs_to_draw_.push_back(
 			GlyphToDraw
 			{
@@ -67,160 +67,163 @@ fn TextDrawerSoft::AddText( mut this, i32 x, i32 y, ust::string_view8 mut text, 
 				.background_color= background_color,
 			} );
 
+		var u32 glyph_pixel_width=
+			( settings.monospace ? c_max_glyph_width : u32( font_data16_.widths[ size_type( glyph_index ) ] ) );
+
 		current_x+= i32( glyph_pixel_width * settings.scale );
 	}
 }
 
 fn TextDrawerSoft::DrawTexts( mut this )
 {
-	with( mut lock : window_.lock_mut() )
+	auto mut window_lock= window_.lock_mut();
+	var Color32ImageView surface= window_lock.deref().GetSurface();
+
+	foreach( &glyph_to_draw : glyphs_to_draw_ )
 	{
-		var Color32ImageView surface= lock.deref().GetSurface();
+		var GlyphData16& glyph= font_data16_.glyphs[ size_type( glyph_to_draw.glyph_index ) ];
+		var u32 glyph_width( font_data16_.widths[ size_type( glyph_to_draw.glyph_index ) ] );
 
-		foreach( &glyph_to_draw : glyphs_to_draw_ )
+		var [ Color32, 4 ] colors
+		[
+			glyph_to_draw.background_color,
+			glyph_to_draw.foreground_color,
+			Color32Average( glyph_to_draw.background_color, glyph_to_draw.foreground_color ),
+			Color32(0),
+		];
+
+		var u32 scale( glyph_to_draw.scale );
+
+		var i32 x_begin( glyph_to_draw.x );
+		var i32 y_begin( glyph_to_draw.y );
+		var i32 x_end= i32( glyph_to_draw.x ) + i32( glyph_width * scale );
+		var i32 y_end= i32( glyph_to_draw.y ) + i32( 8u * scale );
+
+		if( ( x_begin >= 0 ) &
+			( y_begin >= 0 ) &
+			( x_end <= i32( surface.size[0] ) ) &
+			( y_end <= i32( surface.size[1] ) ) )
 		{
-			var GlyphData16& glyph= font_data16_.glyphs[ size_type( glyph_to_draw.glyph_index ) ];
-			var u32 glyph_width( font_data16_.widths[ size_type( glyph_to_draw.glyph_index ) ] );
+			// The most typical case - this glyph is fully within screen boundaries.
+			// Use faster approach for drawing it.
+			// Iterate over glyph texels and fill destination pixels with them.
 
-			var [ Color32, 4 ] colors
-			[
-				glyph_to_draw.background_color,
-				glyph_to_draw.foreground_color,
-				Color32Average( glyph_to_draw.background_color, glyph_to_draw.foreground_color ),
-				Color32(0),
-			];
+			var u32 stride= surface.stride;
 
-			var u32 scale( glyph_to_draw.scale );
+			auto dst_region=
+				surface.pixels.subrange_start( size_type( x_begin ) + size_type( y_begin ) * size_type( stride ) );
 
-			var i32 x_begin( glyph_to_draw.x );
-			var i32 y_begin( glyph_to_draw.y );
-			var i32 x_end= i32( glyph_to_draw.x ) + i32( glyph_width * scale );
-			var i32 y_end= i32( glyph_to_draw.y ) + i32( 8u * scale );
-
-			if( ( x_begin >= 0 ) &
-				( y_begin >= 0 ) &
-				( x_end <= i32( surface.size[0] ) ) &
-				( y_end <= i32( surface.size[1] ) ) )
+			if( scale == 1u )
 			{
-				// The most typical case - this glyph is fully within screen boundaries.
-				// Use faster approach for drawing it.
-
-				var u32 stride= surface.stride;
-
-				auto dst_region=
-					surface.pixels.subrange_start( size_type( x_begin ) + size_type( y_begin ) * size_type( stride ) );
-
-				if( scale == 1u )
+				for( var u32 mut glyph_v= 0u; glyph_v < c_glyph_height; ++glyph_v )
 				{
-					for( var u32 mut glyph_v= 0u; glyph_v < c_glyph_height; ++glyph_v )
+					var u32 glyph_line( glyph[ glyph_v ] );
+
+					auto dst_line= dst_region.subrange_start( size_type( glyph_v * stride ) );
+
+					for( var u32 mut glyph_u= 0u; glyph_u < glyph_width; ++glyph_u )
 					{
-						var u32 glyph_line( glyph[ glyph_v ] );
-
-						auto dst_line= dst_region.subrange_start( size_type( glyph_v * stride ) );
-
-						for( var u32 mut glyph_u= 0u; glyph_u < glyph_width; ++glyph_u )
-						{
-							var Color32 c= colors[ ( glyph_line >> ( glyph_u * 2u ) ) & 3u ];
-							Color32AlphaBlend( dst_line[ size_type( glyph_u ) ], c );
-						}
+						var Color32 c= colors[ ( glyph_line >> ( glyph_u * 2u ) ) & 3u ];
+						Color32AlphaBlend( dst_line[ size_type( glyph_u ) ], c );
 					}
 				}
-				else if( scale == 2u )
+			}
+			else if( scale == 2u )
+			{
+				for( var u32 mut glyph_v= 0u; glyph_v < c_glyph_height; ++glyph_v )
 				{
-					for( var u32 mut glyph_v= 0u; glyph_v < c_glyph_height; ++glyph_v )
+					var u32 glyph_line( glyph[ glyph_v ] );
+
+					auto dst_line_start= dst_region.subrange_start( size_type( glyph_v * ( 2u * stride ) ) );
+
+					for( var u32 mut glyph_u= 0u; glyph_u < glyph_width; ++glyph_u )
 					{
-						var u32 glyph_line( glyph[ glyph_v ] );
+						var Color32 c= colors[ ( glyph_line >> ( glyph_u * 2u ) ) & 3u ];
 
-						auto dst_line_start= dst_region.subrange_start( size_type( glyph_v * ( 2u * stride ) ) );
+						auto dst_column= dst_line_start.subrange_start( size_type( glyph_u * 2u ) );
 
-						for( var u32 mut glyph_u= 0u; glyph_u < glyph_width; ++glyph_u )
-						{
-							var Color32 c= colors[ ( glyph_line >> ( glyph_u * 2u ) ) & 3u ];
-
-							auto dst_column= dst_line_start.subrange_start( size_type( glyph_u * 2u ) );
-
-							Color32AlphaBlend( dst_column[ 0s ], c );
-							Color32AlphaBlend( dst_column[ 1s ], c );
-							Color32AlphaBlend( dst_column[ size_type(stride) + 0s ], c );
-							Color32AlphaBlend( dst_column[ size_type(stride) + 1s ], c );
-						}
+						Color32AlphaBlend( dst_column[ 0s ], c );
+						Color32AlphaBlend( dst_column[ 1s ], c );
+						Color32AlphaBlend( dst_column[ size_type(stride) + 0s ], c );
+						Color32AlphaBlend( dst_column[ size_type(stride) + 1s ], c );
 					}
 				}
-				else if( scale == 3u )
+			}
+			else if( scale == 3u )
+			{
+				for( var u32 mut glyph_v= 0u; glyph_v < c_glyph_height; ++glyph_v )
 				{
-					for( var u32 mut glyph_v= 0u; glyph_v < c_glyph_height; ++glyph_v )
+					var u32 glyph_line( glyph[ glyph_v ] );
+
+					auto dst_line_start= dst_region.subrange_start( size_type( glyph_v * ( 3u * stride ) ) );
+
+					for( var u32 mut glyph_u= 0u; glyph_u < glyph_width; ++glyph_u )
 					{
-						var u32 glyph_line( glyph[ glyph_v ] );
+						var Color32 c= colors[ ( glyph_line >> ( glyph_u * 2u ) ) & 3u ];
 
-						auto dst_line_start= dst_region.subrange_start( size_type( glyph_v * ( 3u * stride ) ) );
+						auto dst_column= dst_line_start.subrange_start( size_type( glyph_u * 3u ) );
 
-						for( var u32 mut glyph_u= 0u; glyph_u < glyph_width; ++glyph_u )
-						{
-							var Color32 c= colors[ ( glyph_line >> ( glyph_u * 2u ) ) & 3u ];
-
-							auto dst_column= dst_line_start.subrange_start( size_type( glyph_u * 3u ) );
-
-							Color32AlphaBlend( dst_column[ size_type(stride) * 0s + 0s ], c );
-							Color32AlphaBlend( dst_column[ size_type(stride) * 0s + 1s ], c );
-							Color32AlphaBlend( dst_column[ size_type(stride) * 0s + 2s ], c );
-							Color32AlphaBlend( dst_column[ size_type(stride) * 1s + 0s ], c );
-							Color32AlphaBlend( dst_column[ size_type(stride) * 1s + 1s ], c );
-							Color32AlphaBlend( dst_column[ size_type(stride) * 1s + 2s ], c );
-							Color32AlphaBlend( dst_column[ size_type(stride) * 2s + 0s ], c );
-							Color32AlphaBlend( dst_column[ size_type(stride) * 2s + 1s ], c );
-							Color32AlphaBlend( dst_column[ size_type(stride) * 2s + 2s ], c );
-						}
-					}
-				}
-				else
-				{
-					for( var u32 mut glyph_v= 0u; glyph_v < c_glyph_height; ++glyph_v )
-					{
-						var u32 glyph_line( glyph[ glyph_v ] );
-
-						auto dst_line_start= dst_region.subrange_start( size_type( glyph_v * ( scale * stride ) ) );
-
-						for( var u32 mut glyph_u= 0u; glyph_u < glyph_width; ++glyph_u )
-						{
-							var Color32 c= colors[ ( glyph_line >> ( glyph_u * 2u ) ) & 3u ];
-
-							auto dst_column= dst_line_start.subrange_start( size_type( glyph_u * scale ) );
-
-							for( auto mut dy= 0u; dy < scale; ++dy )
-							{
-								foreach( &mut pixel : dst_column.subrange(
-										size_type( dy * stride ), size_type( dy * stride + scale ) ) )
-								{
-									Color32AlphaBlend( pixel, c );
-								}
-							}
-						}
+						Color32AlphaBlend( dst_column[ size_type(stride) * 0s + 0s ], c );
+						Color32AlphaBlend( dst_column[ size_type(stride) * 0s + 1s ], c );
+						Color32AlphaBlend( dst_column[ size_type(stride) * 0s + 2s ], c );
+						Color32AlphaBlend( dst_column[ size_type(stride) * 1s + 0s ], c );
+						Color32AlphaBlend( dst_column[ size_type(stride) * 1s + 1s ], c );
+						Color32AlphaBlend( dst_column[ size_type(stride) * 1s + 2s ], c );
+						Color32AlphaBlend( dst_column[ size_type(stride) * 2s + 0s ], c );
+						Color32AlphaBlend( dst_column[ size_type(stride) * 2s + 1s ], c );
+						Color32AlphaBlend( dst_column[ size_type(stride) * 2s + 2s ], c );
 					}
 				}
 			}
 			else
 			{
-				// Slower case.
-
-				var i32 x_begin_clamped= ust::max( 0, x_begin );
-				var i32 y_begin_clamped= ust::max( 0, y_begin );
-				var i32 x_end_clamped= ust::min( x_end, i32( surface.size[0] ) );
-				var i32 y_end_clamped= ust::min( y_end, i32( surface.size[1] ) );
-
-				for( auto mut y= y_begin_clamped; y < y_end_clamped; ++y )
+				for( var u32 mut glyph_v= 0u; glyph_v < c_glyph_height; ++glyph_v )
 				{
-					var u32 v= u32( y - y_begin ) / scale;
-					var u16 glyph_line= glyph[v];
+					var u32 glyph_line( glyph[ glyph_v ] );
 
-					var size_type line_start( u32(y) * surface.stride );
-					var size_type line_end( ( u32(y) + 1u ) * surface.stride );
-					auto line= surface.pixels.subrange( line_start, line_end );
+					auto dst_line_start= dst_region.subrange_start( size_type( glyph_v * ( scale * stride ) ) );
 
-					for( auto mut x= x_begin_clamped; x < x_end_clamped; ++x )
+					for( var u32 mut glyph_u= 0u; glyph_u < glyph_width; ++glyph_u )
 					{
-						var u32 u= u32( x - x_begin ) / scale;
-						Color32AlphaBlend( line[ size_type(x) ], colors[ ( u32( glyph_line ) >> ( u * 2u ) ) & 3u ] );
+						var Color32 c= colors[ ( glyph_line >> ( glyph_u * 2u ) ) & 3u ];
+
+						auto dst_column= dst_line_start.subrange_start( size_type( glyph_u * scale ) );
+
+						for( auto mut dy= 0u; dy < scale; ++dy )
+						{
+							foreach( &mut pixel : dst_column.subrange(
+									size_type( dy * stride ), size_type( dy * stride + scale ) ) )
+							{
+								Color32AlphaBlend( pixel, c );
+							}
+						}
 					}
+				}
+			}
+		}
+		else
+		{
+			// Slower case with glyph lying somewhere at a border.
+			// Iterate over destination pixels and perform lookups from the glyph bitmap for each of them.
+
+			var i32 x_begin_clamped= ust::max( 0, x_begin );
+			var i32 y_begin_clamped= ust::max( 0, y_begin );
+			var i32 x_end_clamped= ust::min( x_end, i32( surface.size[0] ) );
+			var i32 y_end_clamped= ust::min( y_end, i32( surface.size[1] ) );
+
+			for( auto mut y= y_begin_clamped; y < y_end_clamped; ++y )
+			{
+				var u32 v= u32( y - y_begin ) / scale;
+				var u32 glyph_line( glyph[v] );
+
+				var size_type line_start( u32(y) * surface.stride );
+				var size_type line_end( ( u32(y) + 1u ) * surface.stride );
+				auto line= surface.pixels.subrange( line_start, line_end );
+
+				for( auto mut x= x_begin_clamped; x < x_end_clamped; ++x )
+				{
+					var u32 u= u32( x - x_begin ) / scale;
+					Color32AlphaBlend( line[ size_type(x) ], colors[ ( glyph_line >> ( u * 2u ) ) & 3u ] );
 				}
 			}
 		}
