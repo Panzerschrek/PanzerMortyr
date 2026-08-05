@@ -90,6 +90,11 @@ fn ImageDrawerSoft::GetImageSize( this, ResourceString& image_file_name ) : ust:
 
 fn ImageDrawerSoft::DrawImage( mut this, ResourceString& image_file_name, i32 x, i32 y, f32 scale )
 {
+	DrawImage( image_file_name, x, y, scale, 255u8 );
+}
+
+fn ImageDrawerSoft::DrawImage( mut this, ResourceString& image_file_name, i32 x, i32 y, f32 scale, u8 alpha )
+{
 	auto image_ref_opt= images_.find( image_file_name );
 	if( image_ref_opt.empty() )
 	{
@@ -119,33 +124,64 @@ fn ImageDrawerSoft::DrawImage( mut this, ResourceString& image_file_name, i32 x,
 	var u32 x_end( ust::min( x + i32( ust::round( f32( image.data.size[0] ) * scale ) ), i32( surface.size[0] ) ) );
 	var u32 y_end( ust::min( y_end_initial, i32( surface.size[1] ) ) );
 
-	for( var u32 mut dst_y= y_begin; dst_y < y_end; ++dst_y )
+	if( alpha == 255u8 && !image.has_alpha )
 	{
-		var u32 v( f32( i32(dst_y) - i32(y_begin_initial) ) / scale );
+		// A case where no alpha-blending is necessary.
 
-		auto image_pixels_line= image_pixels.subrange_start( size_type( ( v % image_size[1] ) * image_size[0] ) );
-
-		auto dst_line= surface.pixels.subrange_start( size_type( dst_y * surface.stride ) );
-
-		for( var u32 mut dst_x= x_begin; dst_x < x_end; ++dst_x )
+		for( var u32 mut dst_y= y_begin; dst_y < y_end; ++dst_y )
 		{
-			var u32 u( f32( i32(dst_x) - i32(x) ) / scale );
+			var u32 v( f32( i32(dst_y) - i32(y_begin_initial) ) / scale );
 
-			var RGBAColor c= image_pixels_line[ size_type( u % image_size[0] ) ];
-			dst_line[ size_type( dst_x  ) ]= Color32FromComponents( c );
-			// TODO - use alpha-test if necessary.
+			auto image_pixels_line= image_pixels.subrange_start( size_type( ( v % image_size[1] ) * image_size[0] ) );
+
+			auto dst_line= surface.pixels.subrange_start( size_type( dst_y * surface.stride ) );
+
+			for( var u32 mut dst_x= x_begin; dst_x < x_end; ++dst_x )
+			{
+				var u32 u( f32( i32(dst_x) - i32(x) ) / scale );
+
+				var RGBAColor c= image_pixels_line[ size_type( u % image_size[0] ) ];
+				dst_line[ size_type( dst_x ) ]= Color32FromComponents( c );
+			}
 		}
 	}
-}
+	else
+	{
+		for( var u32 mut dst_y= y_begin; dst_y < y_end; ++dst_y )
+		{
+			var u32 v( f32( i32(dst_y) - i32(y_begin_initial) ) / scale );
 
-fn ImageDrawerSoft::DrawImage( mut this, ResourceString& image_file_name, i32 x, i32 y, f32 scale, u8 alpha )
-{
-	// TODO
-	ust::ignore_unused( image_file_name );
-	ust::ignore_unused( x );
-	ust::ignore_unused( y );
-	ust::ignore_unused( scale );
-	ust::ignore_unused( alpha );
+			auto image_pixels_line= image_pixels.subrange_start( size_type( ( v % image_size[1] ) * image_size[0] ) );
+
+			auto dst_line= surface.pixels.subrange_start( size_type( dst_y * surface.stride ) );
+
+			for( var u32 mut dst_x= x_begin; dst_x < x_end; ++dst_x )
+			{
+				var u32 u( f32( i32(dst_x) - i32(x) ) / scale );
+
+				var RGBAColor src_components= image_pixels_line[ size_type( u % image_size[0] ) ];
+
+				var Color32 &mut dst= dst_line[ size_type( dst_x ) ];
+				var RGBAColor dst_components= Color32ToComponents( dst );
+
+				var u32 alpha_combined= u32(alpha) * u32( src_components[3] ) / 255u;
+				var u32 one_minus_alpha_combined= 255u - alpha_combined;
+				var RGBAColor color_mixed
+				[
+					( ( u32( src_components[0] ) * alpha_combined +
+						u32( dst_components[0] ) * one_minus_alpha_combined ) / 255u ),
+					( ( u32( src_components[1] ) * alpha_combined +
+						u32( dst_components[1] ) * one_minus_alpha_combined ) / 255u ),
+					( ( u32( src_components[2] ) * alpha_combined +
+						u32( dst_components[2] ) * one_minus_alpha_combined ) / 255u ),
+					( ( u32( src_components[3] ) * alpha_combined +
+						u32( dst_components[3] ) * one_minus_alpha_combined ) / 255u ),
+				];
+
+				dst= Color32FromComponents( color_mixed );
+			}
+		}
+	}
 }
 
 fn ImageDrawerSoft::DrawImage(
