@@ -162,52 +162,87 @@ fn ImageDrawerSoft::DrawImage(
 	var i32 y_end_initial= i32( surface.size[1] ) - y;
 	var i32 y_begin_initial= y_end_initial - i32( ust::round( f32( tc_size_y ) * scale ) );
 
-	var u32 tc_offset_y_corrected= image_size[1] * 1024u - tc_size_y - tc_offset_y;
+	var u32 tc_offset_x_corrected= tc_offset_x % image_size[0];
+	var u32 tc_offset_y_corrected= ( image_size[1] * 1024u - tc_size_y - tc_offset_y ) % image_size[1];
 
 	var u32 x_begin( ust::max( 0, x ) );
 	var u32 y_begin( ust::max( 0, y_begin_initial ) );
 	var u32 x_end( ust::min( x + i32( ust::round( f32( tc_size_x ) * scale ) ), i32( surface.size[0] ) ) );
 	var u32 y_end( ust::min( y_end_initial, i32( surface.size[1] ) ) );
 
+	if( ( x_begin >= x_end ) | ( y_begin >= y_end ) )
+	{
+		return;
+	}
+
+	auto dst_region= surface.pixels.subrange_start( size_type( x_begin + y_begin * surface.stride ) );
+
+	var u32 fill_size_x= x_end - x_begin;
+	var u32 fill_size_y= y_end - y_begin;
+	var i32 tc_x_start= i32( x_begin ) - x;
+
+	var i32 mut tc_y= i32(y_begin) - y_begin_initial;
+
+	var i32 inv_scale_fixed16( 65536.0f / scale );
+
 	if( alpha == 255u8 && !image.has_alpha )
 	{
 		// A case where no alpha-blending is necessary.
 
-		for( var u32 mut dst_y= y_begin; dst_y < y_end; ++dst_y )
+		for( var u32 mut dy= 0u; dy < fill_size_y; ++dy )
 		{
-			var u32 v= u32( f32( i32(dst_y) - i32(y_begin_initial) ) / scale ) + tc_offset_y_corrected;
+			var u32 v= ( u32( tc_y * inv_scale_fixed16 ) >> 16 ) + tc_offset_y_corrected;
 
 			auto image_pixels_line= image_pixels.subrange_start( size_type( ( v % image_size[1] ) * image_size[0] ) );
 
-			auto dst_line= surface.pixels.subrange_start( size_type( dst_y * surface.stride ) );
+			auto dst_line= dst_region.subrange(
+				size_type( dy * surface.stride ), size_type( dy * surface.stride + fill_size_x ) );
 
-			for( var u32 mut dst_x= x_begin; dst_x < x_end; ++dst_x )
+			var i32 mut tc_x= tc_x_start;
+
+			foreach( &mut pixel : dst_line )
 			{
-				var u32 u= u32( f32( i32(dst_x) - i32(x) ) / scale ) + tc_offset_x;
+				var u32 mut u= ( u32( tc_x * inv_scale_fixed16 ) >> 16 ) + tc_offset_x_corrected;
+				// We expect that texture coordinates are generally in range. Only if it's not the case, use modulo.
+				if( u >= image_size[0] )
+				{
+					u %= image_size[0];
+				}
 
-				var RGBAColor c= image_pixels_line[ size_type( u % image_size[0] ) ];
-				dst_line[ size_type( dst_x ) ]= Color32FromComponents( c );
+				var RGBAColor c= image_pixels_line[ size_type( u ) ];
+				pixel= Color32FromComponents( c );
+
+				++tc_x;
 			}
+
+			++tc_y;
 		}
 	}
 	else
 	{
-		for( var u32 mut dst_y= y_begin; dst_y < y_end; ++dst_y )
+		for( var u32 mut dy= 0u; dy < fill_size_y; ++dy )
 		{
-			var u32 v= u32( f32( i32(dst_y) - i32(y_begin_initial) ) / scale ) + tc_offset_y_corrected;
+			var u32 v= ( u32( tc_y * inv_scale_fixed16 ) >> 16 ) + tc_offset_y_corrected;
 
 			auto image_pixels_line= image_pixels.subrange_start( size_type( ( v % image_size[1] ) * image_size[0] ) );
 
-			auto dst_line= surface.pixels.subrange_start( size_type( dst_y * surface.stride ) );
+			auto dst_line= dst_region.subrange(
+				size_type( dy * surface.stride ), size_type( dy * surface.stride + fill_size_x ) );
 
-			for( var u32 mut dst_x= x_begin; dst_x < x_end; ++dst_x )
+			var i32 mut tc_x= tc_x_start;
+
+			foreach( &mut pixel : dst_line )
 			{
-				var u32 u= u32( f32( i32(dst_x) - i32(x) ) / scale ) + tc_offset_x;
+				var u32 mut u= ( u32( tc_x * inv_scale_fixed16 ) >> 16 ) + tc_offset_x_corrected;
+				// We expect that texture coordinates are generally in range. Only if it's not the case, use modulo.
+				if( u >= image_size[0] )
+				{
+					u %= image_size[0];
+				}
 
 				var RGBAColor src_components= image_pixels_line[ size_type( u % image_size[0] ) ];
 
-				var Color32 &mut dst= dst_line[ size_type( dst_x ) ];
-				var RGBAColor dst_components= Color32ToComponents( dst );
+				var RGBAColor dst_components= Color32ToComponents( pixel );
 
 				var u32 alpha_combined= u32(alpha) * u32( src_components[3] ) / 255u;
 				var u32 one_minus_alpha_combined= 255u - alpha_combined;
@@ -223,8 +258,12 @@ fn ImageDrawerSoft::DrawImage(
 						u32( dst_components[3] ) * one_minus_alpha_combined ) / 255u ),
 				];
 
-				dst= Color32FromComponents( color_mixed );
+				pixel= Color32FromComponents( color_mixed );
+
+				++tc_x;
 			}
+
+			++tc_y;
 		}
 	}
 }
