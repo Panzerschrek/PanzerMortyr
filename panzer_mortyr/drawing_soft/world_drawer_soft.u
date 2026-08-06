@@ -1,16 +1,48 @@
+import "/string_conversions.iu"
 import "world_drawer_soft.iu"
 
 namespace PM
 {
 
-fn WorldDrawerSoft::constructor( ust::shared_ptr_mut</WindowSoft/> mut window )
-	( window_= move(window) )
+fn WorldDrawerSoft::constructor(
+	ust::shared_ptr_mut</WindowSoft/> mut window,
+	SettingsImutPtr mut settings,
+	CachingGameResourcesLoaderPtr mut caching_game_resources_loader,
+	ConsoleOutPtr mut console_out )
+	(
+		window_= move(window),
+		settings_= move(settings),
+		game_params_=
+			lambda[&]() : GameResourcePtr</GameParams/>
+			{
+				auto mut lock= caching_game_resources_loader.lock_mut();
+				return lock.deref().LoadGameParams();
+			}(),
+		maps_description_=
+			lambda[&]() : GameResourcePtr</MapsDescription/>
+			{
+				auto mut lock= caching_game_resources_loader.lock_mut();
+				return lock.deref().LoadMapsDescription();
+			}(),
+		materials_description_=
+			lambda[&]() : GameResourcePtr</MaterialsDescription/>
+			{
+				auto mut lock= caching_game_resources_loader.lock_mut();
+				return lock.deref().LoadMaterialsDescription();
+			}(),
+		caching_game_resources_loader_ptr_= move(caching_game_resources_loader),
+		console_out_= move(console_out),
+		map_index_= 0u,
+	)
 {
 }
 
 fn WorldDrawerSoft::Draw(
 	mut this, WorldDrawingInfo& drawing_info, WorldDrawingViewportInfo& viewport_info ) : WorldDrawingStats
 {
+	// Ensure we have actual map data.
+	SetMap( drawing_info.map_index );
+
 	// For now just fill the screen with some color.
 	with( mut lock : window_.lock_mut() )
 	{
@@ -20,12 +52,98 @@ fn WorldDrawerSoft::Draw(
 		}
 	}
 
-	// TODO
-	ust::ignore_unused( drawing_info );
+	// TODO - use it.
 	ust::ignore_unused( viewport_info );
 
 	var WorldDrawingStats stats= zero_init;
 	return stats;
+}
+
+
+fn WorldDrawerSoft::SetMap( mut this, u32 map_index )
+{
+	// Check if we need to reload map first.
+	if( map_index == map_index_ )
+	{
+		return;
+	}
+	// Need to load map data.
+
+	// Set map index in any case - it may be necessary in order to avoid reloading map data constantly if failed to load it once.
+	map_index_= map_index;
+
+	// Reset previous map data first - to free used memory before allocating new memory for new map.
+	map_data_.reset();
+
+	if( map_index == 0u )
+	{
+		ConsoleOutAddTextLine( console_out_, "Can't load map 0!" );
+		return;
+	}
+
+	auto mut lock= caching_game_resources_loader_ptr_.lock_mut();
+	var CachingGameResourcesLoader &mut caching_game_resources_loader= lock.deref();
+
+	var MapsDescription& maps_description= maps_description_.deref();
+
+	if( size_type( map_index ) >= maps_description.maps.size() )
+	{
+		ConsoleOutAddTextLine( console_out_, ust::concat( "Map with index ", ust::to_string8( map_index ), " not found!" ) );
+		return;
+	}
+
+	var MapsDescription::MapDescription& map_description= maps_description.maps[ size_type( map_index ) ];
+
+	var MaterialsDescription::Block& materials_block= materials_description_.deref().blocks[ map_description.materials_block ]; // Halts if not found.
+
+	var GameResourcePtr</MaterialsProperties/> materials_properties_ptr= caching_game_resources_loader.LoadMaterialsProperties();
+
+	var GameResourceNullablePtr</ZmapData/> zmap_data_nullable_ptr= caching_game_resources_loader.LoadZmapFile( map_index );
+	var GameResourceNullablePtr</ZvoxData/> zvox_data_nullable_ptr= caching_game_resources_loader.LoadZvoxFile( map_index );
+	var GameResourceNullablePtr</ZmapLamData/> zmap_lam_data_nullable_ptr= caching_game_resources_loader.LoadZmapLamFile( map_index );
+	var GameResourceNullablePtr</ZmapLemData/> mut zmap_lem_data_nullable_ptr= caching_game_resources_loader.LoadZmapLemFile( map_index );
+	var GameResourceNullablePtr</RoomClustersHierarchy/> room_clusters_hierarchy_nullable_ptr= caching_game_resources_loader.LoadRoomClustersHierarchy( map_index );
+	var GameResourceNullablePtr</QuadsHierarchy/> quads_hierarchy_nullable_ptr= caching_game_resources_loader.LoadQuadsHierarchy( map_index );
+
+	if( zmap_lem_data_nullable_ptr.empty() && ! zvox_data_nullable_ptr.empty() )
+	{
+		// HACK! In beta version ZMAP.LEM files are missing, create a stub.
+		zmap_lem_data_nullable_ptr.reset(
+			ZmapLemData
+			{
+				.clusters_sky_light_data(
+					zvox_data_nullable_ptr.try_deref().clusters.size(),
+					ust::make_zeroed</ZmapLemClusterSkyLightData/> () ),
+			} );
+	}
+
+	if( zmap_data_nullable_ptr.empty() ||
+		zvox_data_nullable_ptr.empty() ||
+		zmap_lam_data_nullable_ptr.empty() ||
+		zmap_lem_data_nullable_ptr.empty() ||
+		room_clusters_hierarchy_nullable_ptr.empty() ||
+		quads_hierarchy_nullable_ptr.empty() )
+	{
+		return;
+	}
+
+	var GameResourcePtr</ZmapData/> zmap_data_ptr= zmap_data_nullable_ptr.try_to_non_nullable();
+	var GameResourcePtr</ZvoxData/> zvox_data_ptr= zvox_data_nullable_ptr.try_to_non_nullable();
+	var GameResourcePtr</ZmapLamData/> zmap_lam_data_ptr= zmap_lam_data_nullable_ptr.try_to_non_nullable();
+	var GameResourcePtr</ZmapLemData/> zmap_lem_data_ptr= zmap_lem_data_nullable_ptr.try_to_non_nullable();
+	var GameResourcePtr</RoomClustersHierarchy/> room_clusters_hierarchy_ptr= room_clusters_hierarchy_nullable_ptr.try_to_non_nullable();
+	var GameResourcePtr</QuadsHierarchy/> quads_hierarchy_ptr= quads_hierarchy_nullable_ptr.try_to_non_nullable();
+
+	ust::ignore_unused( materials_block ); // TODO - use it.
+
+	map_data_.reset(
+		MapDrawDataSoft
+		{
+			.zmap_data= zmap_data_ptr,
+			.zvox_data= zvox_data_ptr,
+			.zmap_lam_data= zmap_lam_data_ptr,
+			.zmap_lem_data= zmap_lem_data_ptr,
+		} );
 }
 
 } // namespace PM
