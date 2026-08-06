@@ -179,11 +179,12 @@ fn ImageDrawerSoft::DrawImage(
 
 	var u32 fill_size_x= x_end - x_begin;
 	var u32 fill_size_y= y_end - y_begin;
-	var i32 tc_x_start= i32( x_begin ) - x;
 
-	var i32 mut tc_y= i32(y_begin) - y_begin_initial;
+	var u32 tc_step_fixed16( 65536.0f / scale );
+	var u32 tc_x_start_fixed16= u32( i32( x_begin ) - x ) * tc_step_fixed16 + ( tc_offset_x_corrected << 16 );
+	var u32 mut tc_y_fixed16= u32( i32(y_begin) - y_begin_initial ) * tc_step_fixed16 + ( tc_offset_y_corrected << 16 );
 
-	var i32 inv_scale_fixed16( 65536.0f / scale );
+	var u32 image_width_fixed16= image_size[0] << 16;
 
 	if( alpha == 255u8 && !image.has_alpha )
 	{
@@ -191,56 +192,50 @@ fn ImageDrawerSoft::DrawImage(
 
 		for( var u32 mut dy= 0u; dy < fill_size_y; ++dy )
 		{
-			var u32 v= ( u32( tc_y * inv_scale_fixed16 ) >> 16 ) + tc_offset_y_corrected;
-
-			auto image_pixels_line= image_pixels.subrange_start( size_type( ( v % image_size[1] ) * image_size[0] ) );
+			auto image_pixels_line= image_pixels.subrange_start(
+				size_type( ( ( tc_y_fixed16 >> 16 ) % image_size[1] ) * image_size[0] ) );
 
 			auto dst_line= dst_region.subrange(
 				size_type( dy * surface.stride ), size_type( dy * surface.stride + fill_size_x ) );
 
-			var i32 mut tc_x= tc_x_start;
+			var u32 mut tc_x_fixed16= tc_x_start_fixed16;
 
 			foreach( &mut pixel : dst_line )
 			{
-				var u32 mut u= ( u32( tc_x * inv_scale_fixed16 ) >> 16 ) + tc_offset_x_corrected;
-				// We expect that texture coordinates are generally in range. Only if it's not the case, use modulo.
-				if( u >= image_size[0] )
+				if( tc_x_fixed16 >= image_width_fixed16 )
 				{
-					u %= image_size[0];
+					tc_x_fixed16 %= image_width_fixed16;
 				}
 
-				var RGBAColor c= image_pixels_line[ size_type( u ) ];
+				var RGBAColor c= image_pixels_line[ size_type( tc_x_fixed16 >> 16 ) ];
 				pixel= Color32FromComponents( c );
 
-				++tc_x;
+				tc_x_fixed16 += tc_step_fixed16;
 			}
 
-			++tc_y;
+			tc_y_fixed16 += tc_step_fixed16;
 		}
 	}
 	else
 	{
 		for( var u32 mut dy= 0u; dy < fill_size_y; ++dy )
 		{
-			var u32 v= ( u32( tc_y * inv_scale_fixed16 ) >> 16 ) + tc_offset_y_corrected;
-
-			auto image_pixels_line= image_pixels.subrange_start( size_type( ( v % image_size[1] ) * image_size[0] ) );
+			auto image_pixels_line= image_pixels.subrange_start(
+				size_type( ( ( tc_y_fixed16 >> 16 ) % image_size[1] ) * image_size[0] ) );
 
 			auto dst_line= dst_region.subrange(
 				size_type( dy * surface.stride ), size_type( dy * surface.stride + fill_size_x ) );
 
-			var i32 mut tc_x= tc_x_start;
+			var u32 mut tc_x_fixed16= tc_x_start_fixed16;
 
 			foreach( &mut pixel : dst_line )
 			{
-				var u32 mut u= ( u32( tc_x * inv_scale_fixed16 ) >> 16 ) + tc_offset_x_corrected;
-				// We expect that texture coordinates are generally in range. Only if it's not the case, use modulo.
-				if( u >= image_size[0] )
+				if( tc_x_fixed16 >= image_width_fixed16 )
 				{
-					u %= image_size[0];
+					tc_x_fixed16 %= image_width_fixed16;
 				}
 
-				var RGBAColor src_components= image_pixels_line[ size_type( u ) ];
+				var RGBAColor src_components= image_pixels_line[ size_type( tc_x_fixed16 >> 16 ) ];
 
 				var RGBAColor dst_components= Color32ToComponents( pixel );
 
@@ -260,10 +255,10 @@ fn ImageDrawerSoft::DrawImage(
 
 				pixel= Color32FromComponents( color_mixed );
 
-				++tc_x;
+				tc_x_fixed16 += tc_step_fixed16;
 			}
 
-			++tc_y;
+			tc_y_fixed16 += tc_step_fixed16;
 		}
 	}
 }
