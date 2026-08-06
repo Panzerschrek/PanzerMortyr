@@ -3,4 +3,4 @@
 :: Set environment variables for MSVC compier, linker and other tools. It's needed for building C dependencies.
 call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" amd64_x86
 :: Run Ü build system.
-"compiler_windows/bin/u.._build_system1.exe" build --target-triple i686-pc-windows-msvc
+"compiler_windows/bin/u.._build_system1.exe" build --target-triple i686-pc-windows-msvc  --host-sysroot "C:/Program Files/Microsoft Visual Studio/2022/Professional/VC/Tools/MSVC/17.14.36510/"
