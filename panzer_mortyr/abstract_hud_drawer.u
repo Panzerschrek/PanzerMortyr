@@ -1,4 +1,5 @@
-import "/minmax.iu"
+import "/enum_string_conversions.iu"
+import "image_loading.iu"
 import "abstract_hud_drawer.iu"
 
 namespace PM
@@ -150,6 +151,53 @@ fn AbstractHudDrawer::Draw( mut this, HudDrawingInfo& drawing_info )
 	}
 
 	FlushDrawQuads();
+}
+
+fn AbstractHudDrawer::LoadAndPrepareHudImage(
+	GameFilesystemPtr& game_filesystem_ptr, ConsoleOutPtr& console_out ) : ust::optional</ ImageData />
+{
+	auto mut lock= game_filesystem_ptr.lock_mut();
+	var GameFilesystem &mut game_filesystem= lock.deref();
+
+	result_match( game_filesystem.LoadFile( "PANEL.BMP\0\0\0", LoadImageBMP ) )
+	{
+		Ok( mut image_data ) ->
+		{
+			// Copy number icons into the last row, where there is some free space. Make them red.
+			var u32 tile_row_height= image_data.size[1] / c_num_tiles_y;
+			for( auto mut dy= 0u; dy < tile_row_height; ++dy )
+			{
+				var u32 src_offset= image_data.size[0] * ( dy + tile_row_height * ( c_num_tiles_y - 1u ) );
+				var u32 dst_offset= image_data.size[0] * dy;
+
+				for( auto mut x= 0u; x < image_data.size[0]; ++x )
+				{
+					var RGBAColor mut c= image_data.pixels[ size_type( x + src_offset ) ];
+					c[1]= 0u8;
+					c[2]= 0u8;
+					image_data.pixels[ size_type( x + dst_offset ) ]= c;
+				}
+			}
+
+			// The original image has no alpha-channel.
+			// Synthesize some alpha based on brightness.
+			foreach( &mut pixel : image_data.pixels )
+			{
+				var u8 brightness= ust::max( cast_imut(pixel)[0], ust::max( cast_imut(pixel)[1], cast_imut(pixel)[2] ) );
+				var u32 darkness= 255u - u32(brightness);
+				var u8 alpha( 255u - darkness * darkness / 255u );
+				pixel[3]= alpha;
+			}
+
+			return image_data;
+		},
+		Err(e) ->
+		{
+			ConsoleOutAddTextLine(
+				console_out, ust::concat( "Failed to read image file! Error: ", ust::enum_to_string(e), "!" ) );
+			return ust::null_optional;
+		}
+	}
 }
 
 fn AbstractHudDrawer::AddDecimalNumber( mut this, i32 mut right_x, i32 y, u32 mut num, bool alternative_color )
