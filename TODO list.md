@@ -109,7 +109,6 @@ PanzerMortyr OpenGL rendering:
 PanzerMortyr software rendering:
 
 * Implement code taking screenshots (needed for savegames).
-* Implement images drawing.
 * Implement HUD drawing.
 * Draw map geometry.
 * Draw dynamic clusters.

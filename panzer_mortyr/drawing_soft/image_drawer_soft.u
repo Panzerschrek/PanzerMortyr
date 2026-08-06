@@ -1,40 +1,122 @@
+import "/math.iu"
+import "../image_loading.iu"
 import "image_drawer_soft.iu"
 
 namespace PM
 {
 
+fn ImageDrawerSoft::constructor(
+	ust::shared_ptr_mut</WindowSoft/> mut window, GameFilesystemPtr mut game_filesystem_ptr )
+	(
+		window_= move(window),
+		game_filesystem_ptr_= move(game_filesystem_ptr),
+		temp_image_{ .data{ .size[ 0u, 0u ] }, .has_alpha= false }
+	)
+{
+}
+
 fn ImageDrawerSoft::PreloadImage(
 	mut this, ResourceString& image_file_name, ust::optional_ref_imut</ [ u8, 3 ] /> transparent_color )
 {
-	// TODO
-	ust::ignore_unused( image_file_name );
-	ust::ignore_unused( transparent_color );
+	if( images_.exists( image_file_name ) )
+	{
+		return;
+	}
+
+	auto mut lock= game_filesystem_ptr_.lock_mut();
+
+	result_match( lock.deref().LoadFile( image_file_name, LoadImageBMP ) )
+	{
+		Ok( mut image_data ) ->
+		{
+			var bool mut has_alpha= false;
+			if_var( &c : transparent_color )
+			{
+				// Make transparent color black and for other colors set alpha to 255.
+				foreach( &mut pixel : image_data.pixels )
+				{
+					if( pixel[0] == c[0] & pixel[1] == c[1] & pixel[2] == c[2] )
+					{
+						pixel= ust::make_array( 0u8, 0u8, 0u8, 0u8 );
+						has_alpha= true;
+					}
+					else
+					{
+						pixel[3]= 255u8;
+					}
+				}
+			}
+			else
+			{
+				// Always set alpha to 255.
+				foreach( &mut pixel : image_data.pixels )
+				{
+					pixel[3]= 255u8;
+				}
+			}
+
+			// Flip image vertically. It's needed, since destination buffer is in top to bottom lines order.
+			for( auto mut y= 0u; y < image_data.size[1] / 2u; ++y )
+			{
+				var u32 offset0= y * image_data.size[0];
+				var u32 offset1= ( image_data.size[1] - 1u - y ) * image_data.size[0];
+				for( auto mut x= 0u; x < image_data.size[0]; ++x )
+				{
+					image_data.pixels.swap( size_type( offset0 + x ), size_type( offset1 + x ) );
+				}
+			}
+
+			images_.insert_new( image_file_name, ImageExt{ .data= move( image_data ), .has_alpha= has_alpha } );
+		},
+		Err(e) ->
+		{
+			// TODO - print error message?
+			ust::ignore_unused(e);
+
+			// Save a stub to avoid loading it again.
+			images_.insert_new( image_file_name, ust::optional</ImageExt/>() );
+		}
+	}
 }
 
 fn ImageDrawerSoft::GetImageSize( this, ResourceString& image_file_name ) : ust::optional</ [ u32, 2 ] />
 {
-	// TODO
-	ust::ignore_unused( image_file_name );
+	if_var( & image_opt : images_.find( image_file_name ) )
+	{
+		if_var( & image : image_opt )
+		{
+			return image.data.size;
+		}
+	}
+
 	return ust::null_optional;
 }
 
 fn ImageDrawerSoft::DrawImage( mut this, ResourceString& image_file_name, i32 x, i32 y, f32 scale )
 {
-	// TODO
-	ust::ignore_unused( image_file_name );
-	ust::ignore_unused( x );
-	ust::ignore_unused( y );
-	ust::ignore_unused( scale );
+	DrawImage( image_file_name, x, y, scale, 255u8 );
 }
 
 fn ImageDrawerSoft::DrawImage( mut this, ResourceString& image_file_name, i32 x, i32 y, f32 scale, u8 alpha )
 {
-	// TODO
-	ust::ignore_unused( image_file_name );
-	ust::ignore_unused( x );
-	ust::ignore_unused( y );
-	ust::ignore_unused( scale );
-	ust::ignore_unused( alpha );
+	auto image_ref_opt= images_.find( image_file_name );
+	if( image_ref_opt.empty() )
+	{
+		return;
+	}
+
+	var ust::optional</ImageExt/>& image_opt= image_ref_opt.try_deref();
+	if( image_opt.empty() )
+	{
+		return;
+	}
+
+	var ImageExt& image= image_opt.try_deref();
+
+	auto mut window_lock= window_.lock_mut();
+	var Color32ImageView surface= window_lock.deref().GetSurface();
+
+	DrawFullImage( surface, image, x, y, scale, alpha );
 }
 
 fn ImageDrawerSoft::DrawImage(
@@ -45,15 +127,7 @@ fn ImageDrawerSoft::DrawImage(
 	u32 tc_offset_x, u32 tc_offset_y,
 	u32 tc_size_x, u32 tc_size_y )
 {
-	// TODO
-	ust::ignore_unused( image_file_name );
-	ust::ignore_unused( x );
-	ust::ignore_unused( y );
-	ust::ignore_unused( scale );
-	ust::ignore_unused( tc_offset_x );
-	ust::ignore_unused( tc_offset_y );
-	ust::ignore_unused( tc_size_x );
-	ust::ignore_unused( tc_size_y );
+	DrawImage( image_file_name, x, y, scale, tc_offset_x, tc_offset_y, tc_size_x, tc_size_y, 255u8 );
 }
 
 fn ImageDrawerSoft::DrawImage(
@@ -65,25 +139,244 @@ fn ImageDrawerSoft::DrawImage(
 	u32 tc_size_x, u32 tc_size_y,
 	u8 alpha )
 {
-	// TODO
-	ust::ignore_unused( image_file_name );
-	ust::ignore_unused( x );
-	ust::ignore_unused( y );
-	ust::ignore_unused( scale );
-	ust::ignore_unused( tc_offset_x );
-	ust::ignore_unused( tc_offset_y );
-	ust::ignore_unused( tc_size_x );
-	ust::ignore_unused( tc_size_y );
-	ust::ignore_unused( alpha );
+	auto image_ref_opt= images_.find( image_file_name );
+	if( image_ref_opt.empty() )
+	{
+		return;
+	}
+
+	var ust::optional</ImageExt/>& image_opt= image_ref_opt.try_deref();
+	if( image_opt.empty() )
+	{
+		return;
+	}
+
+	var ImageExt& image= image_opt.try_deref();
+
+	auto image_size= image.data.size;
+	auto image_pixels= image.data.pixels.range();
+
+	auto mut window_lock= window_.lock_mut();
+	var Color32ImageView surface= window_lock.deref().GetSurface();
+
+	var i32 y_end_initial= i32( surface.size[1] ) - y;
+	var i32 y_begin_initial= y_end_initial - i32( ust::round( f32( tc_size_y ) * scale ) );
+
+	var u32 x_begin( ust::max( 0, x ) );
+	var u32 y_begin( ust::max( 0, y_begin_initial ) );
+	var u32 x_end( ust::min( x + i32( ust::round( f32( tc_size_x ) * scale ) ), i32( surface.size[0] ) ) );
+	var u32 y_end( ust::min( y_end_initial, i32( surface.size[1] ) ) );
+
+	if( ( x_begin >= x_end ) | ( y_begin >= y_end ) )
+	{
+		return;
+	}
+
+	auto dst_region= surface.pixels.subrange_start( size_type( x_begin + y_begin * surface.stride ) );
+
+	var u32 fill_size_x= x_end - x_begin;
+	var u32 fill_size_y= y_end - y_begin;
+
+	var u32 tc_offset_x_corrected= tc_offset_x % image_size[0];
+	var u32 tc_offset_y_corrected= ( ( image_size[1] << 10 ) - tc_size_y - tc_offset_y ) % image_size[1];
+
+	var u32 tc_step_fixed16( 65536.0f / scale );
+	var u32 tc_x_start_fixed16= u32( i32( x_begin ) - x ) * tc_step_fixed16 + ( tc_offset_x_corrected << 16 );
+	var u32 mut tc_y_fixed16= u32( i32(y_begin) - y_begin_initial ) * tc_step_fixed16 + ( tc_offset_y_corrected << 16 );
+
+	var u32 image_width_fixed16= image_size[0] << 16;
+
+	if( alpha == 255u8 && !image.has_alpha )
+	{
+		// A case where no alpha-blending is necessary.
+
+		for( var u32 mut dy= 0u; dy < fill_size_y; ++dy, tc_y_fixed16 += tc_step_fixed16 )
+		{
+			auto image_pixels_line= image_pixels.subrange_start(
+				size_type( ( ( tc_y_fixed16 >> 16 ) % image_size[1] ) * image_size[0] ) );
+
+			auto dst_line= dst_region.subrange(
+				size_type( dy * surface.stride ), size_type( dy * surface.stride + fill_size_x ) );
+
+			var u32 mut tc_x_fixed16= tc_x_start_fixed16;
+
+			foreach( &mut pixel : dst_line )
+			{
+				if( tc_x_fixed16 >= image_width_fixed16 )
+				{
+					tc_x_fixed16 %= image_width_fixed16;
+				}
+
+				pixel= Color32FromComponents( image_pixels_line[ size_type( tc_x_fixed16 >> 16 ) ] );
+
+				tc_x_fixed16 += tc_step_fixed16;
+			}
+		}
+	}
+	else
+	{
+		for( var u32 mut dy= 0u; dy < fill_size_y; ++dy, tc_y_fixed16 += tc_step_fixed16 )
+		{
+			auto image_pixels_line= image_pixels.subrange_start(
+				size_type( ( ( tc_y_fixed16 >> 16 ) % image_size[1] ) * image_size[0] ) );
+
+			auto dst_line= dst_region.subrange(
+				size_type( dy * surface.stride ), size_type( dy * surface.stride + fill_size_x ) );
+
+			var u32 mut tc_x_fixed16= tc_x_start_fixed16;
+
+			foreach( &mut pixel : dst_line )
+			{
+				if( tc_x_fixed16 >= image_width_fixed16 )
+				{
+					tc_x_fixed16 %= image_width_fixed16;
+				}
+
+				var RGBAColor src_components= image_pixels_line[ size_type( tc_x_fixed16 >> 16 ) ];
+
+				var RGBAColor dst_components= Color32ToComponents( pixel );
+
+				var u32 alpha_combined= u32(alpha) * u32( src_components[3] ) / 255u;
+				var u32 one_minus_alpha_combined= 255u - alpha_combined;
+				var RGBAColor color_mixed
+				[
+					( ( u32( src_components[0] ) * alpha_combined +
+						u32( dst_components[0] ) * one_minus_alpha_combined ) / 255u ),
+					( ( u32( src_components[1] ) * alpha_combined +
+						u32( dst_components[1] ) * one_minus_alpha_combined ) / 255u ),
+					( ( u32( src_components[2] ) * alpha_combined +
+						u32( dst_components[2] ) * one_minus_alpha_combined ) / 255u ),
+					( ( u32( src_components[3] ) * alpha_combined +
+						u32( dst_components[3] ) * one_minus_alpha_combined ) / 255u ),
+				];
+
+				pixel= Color32FromComponents( color_mixed );
+
+				tc_x_fixed16 += tc_step_fixed16;
+			}
+		}
+	}
 }
 
 fn ImageDrawerSoft::UploadAndDrawImage( mut this, ImageData& image_data, i32 x, i32 y, f32 scale )
 {
-	// TODO
-	ust::ignore_unused( image_data );
-	ust::ignore_unused( x );
-	ust::ignore_unused( y );
-	ust::ignore_unused( scale );
+	// Copy given image into an internal image, since we need to flip it.
+
+	temp_image_.has_alpha= false;
+	temp_image_.data.size= image_data.size;
+	temp_image_.data.pixels.resize( image_data.pixels.size(), ust::make_zeroed</RGBAColor/>() );
+
+	for( auto mut y= 0u; y < image_data.size[1]; ++y )
+	{
+		auto src_line=
+			image_data.pixels.range().subrange(
+				size_type( y * image_data.size[0] ), size_type( ( y + 1u ) * image_data.size[0] ) );
+
+		auto dst_y= image_data.size[1] - 1u - y;
+
+		auto dst_line=
+			temp_image_.data.pixels.range().subrange(
+				size_type( dst_y * image_data.size[0] ), size_type( ( dst_y + 1u ) * image_data.size[0] ) );
+
+		dst_line.copy_from( src_line );
+	}
+
+	auto mut window_lock= window_.lock_mut();
+	var Color32ImageView surface= window_lock.deref().GetSurface();
+
+	DrawFullImage( surface, temp_image_, x, y, scale, 255u8 );
+}
+
+fn ImageDrawerSoft::DrawFullImage( Color32ImageView surface, ImageExt& image, i32 x, i32 y, f32 scale, u8 alpha )
+{
+	auto image_size= image.data.size;
+	auto image_pixels= image.data.pixels.range();
+
+	var u32 dst_size_x( ust::round( f32( image_size[0] ) * scale ) );
+	var u32 dst_size_y( ust::round( f32( image_size[1] ) * scale ) );
+
+	var i32 y_end_initial= i32( surface.size[1] ) - y;
+	var i32 y_begin_initial= y_end_initial - i32( dst_size_y );
+
+	var u32 x_begin( ust::max( 0, x ) );
+	var u32 y_begin( ust::max( 0, y_begin_initial ) );
+	var u32 x_end( ust::min( x + i32( dst_size_x ), i32( surface.size[0] ) ) );
+	var u32 y_end( ust::min( y_end_initial, i32( surface.size[1] ) ) );
+
+	if( ( x_begin >= x_end ) | ( y_begin >= y_end ) )
+	{
+		return;
+	}
+
+	auto dst_region= surface.pixels.subrange_start( size_type( x_begin + y_begin * surface.stride ) );
+
+	var u32 fill_size_x= x_end - x_begin;
+	var u32 fill_size_y= y_end - y_begin;
+
+	// Since division result is rounded down, we are sure that result texture coordinates are in range [ 0, size ).
+	var u32 tc_x_step_fixed16= ( image_size[0] << 16 ) / dst_size_x;
+	var u32 tc_y_step_fixed16= ( image_size[1] << 16 ) / dst_size_y;
+
+	var u32 tc_x_start_fixed16= u32( i32( x_begin ) - x ) * tc_x_step_fixed16;
+	var u32 mut tc_y_fixed16= u32( i32(y_begin) - y_begin_initial ) * tc_y_step_fixed16;
+
+	if( alpha == 255u8 && !image.has_alpha )
+	{
+		// A case where no alpha-blending is necessary.
+
+		for( var u32 mut dy= 0u; dy < fill_size_y; ++dy, tc_y_fixed16+= tc_y_step_fixed16 )
+		{
+			auto image_pixels_line= image_pixels.subrange_start( size_type( ( tc_y_fixed16 >> 16 ) * image_size[0] ) );
+
+			auto dst_line= dst_region.subrange(
+				size_type( dy * surface.stride ), size_type( dy * surface.stride + fill_size_x ) );
+
+			var u32 mut tc_x_fixed16= tc_x_start_fixed16;
+
+			foreach( &mut pixel : dst_line )
+			{
+				pixel= Color32FromComponents( image_pixels_line[ size_type( tc_x_fixed16 >> 16 ) ] );
+				tc_x_fixed16+= tc_x_step_fixed16;
+			}
+		}
+	}
+	else
+	{
+		for( var u32 mut dy= 0u; dy < fill_size_y; ++dy, tc_y_fixed16+= tc_y_step_fixed16 )
+		{
+			auto image_pixels_line= image_pixels.subrange_start( size_type( ( tc_y_fixed16 >> 16 ) * image_size[0] ) );
+
+			auto dst_line= dst_region.subrange(
+				size_type( dy * surface.stride ), size_type( dy * surface.stride + fill_size_x ) );
+
+			var u32 mut tc_x_fixed16= tc_x_start_fixed16;
+
+			foreach( &mut pixel : dst_line )
+			{
+				var RGBAColor src_components= image_pixels_line[ size_type( tc_x_fixed16 >> 16 ) ];
+
+				var RGBAColor dst_components= Color32ToComponents( pixel );
+
+				var u32 alpha_combined= u32(alpha) * u32( src_components[3] ) / 255u;
+				var u32 one_minus_alpha_combined= 255u - alpha_combined;
+				var RGBAColor color_mixed
+				[
+					( ( u32( src_components[0] ) * alpha_combined +
+						u32( dst_components[0] ) * one_minus_alpha_combined ) / 255u ),
+					( ( u32( src_components[1] ) * alpha_combined +
+						u32( dst_components[1] ) * one_minus_alpha_combined ) / 255u ),
+					( ( u32( src_components[2] ) * alpha_combined +
+						u32( dst_components[2] ) * one_minus_alpha_combined ) / 255u ),
+					( ( u32( src_components[3] ) * alpha_combined +
+						u32( dst_components[3] ) * one_minus_alpha_combined ) / 255u ),
+				];
+
+				pixel= Color32FromComponents( color_mixed );
+
+				tc_x_fixed16+= tc_x_step_fixed16;
+			}
+		}
+	}
 }
 
 } // namespace PM
