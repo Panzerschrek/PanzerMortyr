@@ -51,144 +51,6 @@ fn HudDrawerGL::constructor(
 		ust::nullptr</byte8/>() + GetStructFieldOffset</ HudVertex, "tex_coordinates" />() ) );
 }
 
-fn HudDrawerGL::Draw( mut this, HudDrawingInfo& drawing_info )
-{
-	var bool blinking_numbers_are_turned_off= drawing_info.game_time_s % 1.0f <= 0.5f;
-
-	var i32 padding_bottom= 4 * i32(scale_);
-	var i32 incon_number_half_padding= 1 * i32(scale_);
-
-	// Health and armor icons are located in 1 / 4 width from screen edges and 1 / 4 width from weapon icon.
-	var i32 symmetric_icons_offset_x( viewport_size_[0] / 4u );
-
-	{
-		var i32 offset_x= symmetric_icons_offset_x;
-
-		AddTileQuad( offset_x + incon_number_half_padding, padding_bottom, c_health_icon_index );
-
-		if( !drawing_info.health_is_low || !blinking_numbers_are_turned_off ) // Low health is blinking.
-		{
-			AddDecimalNumber(
-				offset_x - incon_number_half_padding,
-				padding_bottom,
-				u32( drawing_info.health ),
-				drawing_info.health_is_low );
-		}
-
-		if( drawing_info.character_icon_index != HudDrawingInfo::IconIndex(0) )
-		{
-			var i32 offset_y( scale_ * c_tile_height );
-
-			AddTileQuad( offset_x + incon_number_half_padding, offset_y + padding_bottom, drawing_info.character_icon_index );
-		}
-	}
-	{
-		var i32 offset_x( viewport_size_[0] / 2u );
-
-		AddTileQuad( offset_x + incon_number_half_padding, padding_bottom, drawing_info.weapon_icon_index );
-
-		if( drawing_info.ammo >= 0i16 &&
-			( !drawing_info.ammo_is_low || !blinking_numbers_are_turned_off )  /* Low ammo is blinking. */ )
-		{
-			AddDecimalNumber(
-				offset_x - incon_number_half_padding,
-				padding_bottom,
-				u32( drawing_info.ammo ),
-				drawing_info.ammo_is_low );
-		}
-	}
-	{
-		var i32 offset_x= i32( viewport_size_[0] ) - symmetric_icons_offset_x;
-
-		AddTileQuad( offset_x + incon_number_half_padding, padding_bottom, c_armor_icon_index );
-
-		// Low armor is NOT blinking.
-		AddDecimalNumber(
-			offset_x - incon_number_half_padding,
-			padding_bottom,
-			u32( drawing_info.armor ),
-			drawing_info.armor_is_low );
-
-		// PanzerMortyr change - draw active tool(s) above armor,
-		// since place above selected tool is used for showing other inventory items.
-		// TODO - maybe display active tools at some edge of the screen?
-		for( auto mut i= 0u; i < u32( drawing_info.num_active_tools ); ++i )
-		{
-			var HudDrawingInfo::ActiveTool& active_tool= drawing_info.active_tools[i];
-
-			var i32 offset_y( scale_ * c_tile_height * ( i + 1u ) );
-
-			AddTileQuad( offset_x + incon_number_half_padding, offset_y + padding_bottom, active_tool.icon_index );
-
-			AddDecimalNumber( offset_x - incon_number_half_padding, offset_y + padding_bottom, u32( active_tool.amount ), false );
-		}
-	}
-
-	if(
-		drawing_info.num_inventory_tool_icons > 0u8 &&
-		drawing_info.selected_inventory_tool_icon_index < drawing_info.num_inventory_tool_icons )
-	{
-		// This scaling constant was experimentally-found by measuring offsets on original game screenshots with different resolution.
-		var i32 offset_x( viewport_size_[0] * 17u / 20u );
-
-		AddTileQuad(
-			offset_x,
-			padding_bottom,
-			drawing_info.inventory_tool_icons[ drawing_info.selected_inventory_tool_icon_index ] );
-
-		var u32 num_other_icons= u32( drawing_info.num_inventory_tool_icons ) - 1u;
-		var u32 num_next_icons= num_other_icons / 2u;
-		var u32 num_previous_icons= num_other_icons - num_next_icons;
-
-		var i32 offset_x_side_delta( scale_ * ( c_tile_width / 2u + 6u ) );
-
-		if( offset_x + offset_x_side_delta + i32( c_tile_width * scale_ * 2u ) <= i32( viewport_size_[0] ) )
-		{
-			// Draw the whole inventory only if has enough place.
-
-			for( auto mut i= 0u; i < num_previous_icons; ++i )
-			{
-				var i32 offset_y= padding_bottom + i32( scale_ * c_tile_height * ( i + 1u ) );
-
-				var u32 slot=
-					( u32( drawing_info.num_inventory_tool_icons ) * 3u + u32( drawing_info.selected_inventory_tool_icon_index ) - i - 1u )
-					% u32( drawing_info.num_inventory_tool_icons );
-
-				AddTileQuad( offset_x - offset_x_side_delta, offset_y, drawing_info.inventory_tool_icons[ slot ] );
-			}
-
-			for( auto mut i= 0u; i < num_next_icons; ++i )
-			{
-				var i32 offset_y= padding_bottom + i32( scale_ * c_tile_height * ( i + 1u ) );
-
-				var u32 slot=
-					( u32( drawing_info.selected_inventory_tool_icon_index ) + i + 1u )
-					% u32( drawing_info.num_inventory_tool_icons );
-
-				AddTileQuad( offset_x + offset_x_side_delta, offset_y, drawing_info.inventory_tool_icons[ slot ] );
-			}
-		}
-	}
-
-	// PanzerMortyr addition - show available keys.
-	{
-		var i32 offset_x= i32( viewport_size_[0] - scale_ * c_tile_width );
-		var i32 step_y= i32( scale_ * c_tile_width );
-		var i32 offset_y= padding_bottom + step_y * 2;
-
-		for( auto mut i= 0u; i < 3u; ++i )
-		{
-			var HudDrawingInfo::IconIndex icon_index= drawing_info.key_icon_indices[i];
-			if( icon_index != HudDrawingInfo::IconIndex(0) )
-			{
-				AddTileQuad( offset_x, offset_y + step_y * i32(i), icon_index );
-			}
-		}
-	}
-
-	FlushDrawQuads();
-}
-
 fn HudDrawerGL::AddTileQuad( mut this, i32 x, i32 y, HudDrawingInfo::IconIndex tile_index )
 {
 	debug_assert( x >= 0 );
@@ -329,31 +191,8 @@ fn HudDrawerGL::FlushDrawQuads( mut this )
 		ust::nullptr</byte8/>() ) );
 }
 
-fn HudDrawerGL::AddDecimalNumber( mut this, i32 mut right_x, i32 y, u32 mut num, bool alternative_color )
-{
-	loop
-	{
-		var u32 digit= num % 10u;
-		num/= 10u;
-		right_x-= i32( scale_ * c_digit_width );
-		AddDigitQuad( right_x, y, digit, alternative_color );
 
-		if( num == 0u )
-		{
-			break;
-		}
-	}
-}
-
-fn CreateHudVertexBuffer( size_type num_quads ) : BufferObject
-{
-	return
-		BufferObject::CreateUninitializedDynamicDrawBuffer(
-			GLenum( GL_ARRAY_BUFFER ),
-			num_quads * 4s * typeinfo</HudVertex/>.size_of );
-}
-
-fn LoadHudTextureAtlas(
+fn HudDrawerGL::LoadHudTextureAtlas(
 	GameFilesystemPtr& game_filesystem_ptr, ConsoleOutPtr& console_out, Settings& settings ) : Texture
 {
 	var Texture texture= Texture::Create( GLenum( GL_TEXTURE_2D ) );
@@ -424,15 +263,13 @@ fn LoadHudTextureAtlas(
 	return texture;
 }
 
-var u32 constexpr c_num_tiles_x= 8u, constexpr c_num_tiles_y= 8u;
-var u32 constexpr c_tile_width= 32u, constexpr c_tile_height= 32u;
-var f32 constexpr c_tile_tc_width= 1.0f / f32( c_num_tiles_x ), constexpr c_tile_tc_height= 1.0f / f32( c_num_tiles_y );
-
-var u32 constexpr c_num_digits_x= 16u, c_num_digits_y= 8u;
-var u32 constexpr c_digit_width= 16u, constexpr c_digit_height= 32u;
-var f32 constexpr c_digit_tc_width= 1.0f / f32( c_num_digits_x ), constexpr c_digit_tc_height= 1.0f / f32( c_num_digits_y );
-
-var HudDrawingInfo::IconIndex constexpr c_health_icon_index(8), constexpr c_armor_icon_index(9);
+fn CreateHudVertexBuffer( size_type num_quads ) : BufferObject
+{
+	return
+		BufferObject::CreateUninitializedDynamicDrawBuffer(
+			GLenum( GL_ARRAY_BUFFER ),
+			num_quads * 4s * typeinfo</HudVertex/>.size_of );
+}
 
 var GLState g_hud_drawing_gl_state
 {
