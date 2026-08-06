@@ -1,13 +1,264 @@
-import "/helpers.iu"
+import "/assert.iu"
 import "hud_drawer_soft.iu"
 
 namespace PM
 {
 
-fn HudDrawerSoft::Draw( mut this, HudDrawingInfo& drawing_info )
+fn HudDrawerSoft::constructor(
+	ust::shared_ptr_mut</WindowSoft/> mut window, GameFilesystemPtr& game_filesystem_ptr, ConsoleOutPtr& console_out )
+	(
+		base( window.lock_imut().deref().GetViewportSize() ),
+		window_= move(window),
+		tiles_= MakeTiles( LoadAndPrepareHudImage( game_filesystem_ptr, console_out ).as_ref() ),
+	)
 {
-	// TODO
-	ust::ignore_unused( drawing_info );
+}
+
+fn HudDrawerSoft::AddTileQuad( mut this, i32 x, i32 y, HudDrawingInfo::IconIndex tile_index )
+{
+	debug_assert( x >= 0 );
+	debug_assert( y >= 0 );
+	debug_assert( u32( x ) + c_tile_width  * scale_ <= viewport_size_[0] );
+	debug_assert( u32( y ) + c_tile_height * scale_ <= viewport_size_[1] );
+
+	tile_quads_.push_back(
+		TileQuad
+		{
+			.x= x,
+			.y= i32( viewport_size_[1] ) - y - i32( c_tile_height * scale_ ),
+			.icon_index= tile_index
+		} );
+}
+
+fn HudDrawerSoft::AddDigitQuad( mut this, i32 x, i32 y, u32 digit_index, bool alternative_color )
+{
+	debug_assert( x >= 0 );
+	debug_assert( y >= 0 );
+	debug_assert( u32( x ) + c_digit_width  * scale_ <= viewport_size_[0] );
+	debug_assert( u32( y ) + c_digit_height * scale_ <= viewport_size_[1] );
+
+	digit_quads_.push_back(
+		DigitQuad
+		{
+			.x= x,
+			.y= i32( viewport_size_[1] ) - y - i32( c_digit_height * scale_ ),
+			.digit_index= digit_index,
+			.alternative_color= alternative_color
+		} );
+}
+
+fn HudDrawerSoft::FlushDrawQuads( mut this )
+{
+	auto mut window_lock= window_.lock_mut();
+	var Color32ImageView surface= window_lock.deref().GetSurface();
+
+	foreach( &tile_quad : tile_quads_ )
+	{
+		var TileData& tile= tiles_[ tile_quad.icon_index ];
+
+		auto dst_region=
+			surface.pixels.subrange_start( size_type( u32( tile_quad.x ) + u32( tile_quad.y ) * surface.stride ) );
+
+		if( scale_ == 1u )
+		{
+			for( var u32 mut tile_y= 0u; tile_y < c_tile_height; ++tile_y )
+			{
+				foreach( pair :
+						dst_region.subrange_start( size_type( tile_y * surface.stride ) )
+						.iter().zip( ust::array_view_imut</Color32/>( tile[ tile_y ] ).iter() ) )
+				{
+					Color32PremultipliedAlphaBlend( pair.first, Color32ToComponents( pair.second ) );
+				}
+			}
+		}
+		else if( scale_ == 2u )
+		{
+			for( var u32 mut tile_y= 0u; tile_y < c_tile_height; ++tile_y )
+			{
+				var [ Color32, c_tile_width ]& tile_row= tile[ tile_y ];
+
+				auto dst_tile_line= dst_region.subrange_start( size_type( tile_y * 2u * surface.stride ) );
+
+				for( var u32 mut tile_x= 0u; tile_x < c_tile_width; ++tile_x )
+				{
+					var RGBAColor color_components= Color32ToComponents( tile_row[ tile_x ] );
+
+					auto dst_line= dst_tile_line.subrange_start( size_type( tile_x * 2u ) );
+
+					Color32PremultipliedAlphaBlend( dst_line[ 0s ], color_components );
+					Color32PremultipliedAlphaBlend( dst_line[ 1s ], color_components );
+					Color32PremultipliedAlphaBlend( dst_line[ size_type( surface.stride ) + 0s ], color_components );
+					Color32PremultipliedAlphaBlend( dst_line[ size_type( surface.stride ) + 1s ], color_components );
+				}
+			}
+		}
+		else
+		{
+			for( var u32 mut tile_y= 0u; tile_y < c_tile_height; ++tile_y )
+			{
+				var [ Color32, c_tile_width ]& tile_row= tile[ tile_y ];
+
+				auto dst_tile_line= dst_region.subrange_start( size_type( tile_y * scale_ * surface.stride ) );
+				for( var u32 mut tile_x= 0u; tile_x < c_tile_width; ++tile_x )
+				{
+					var RGBAColor color_components= Color32ToComponents( tile_row[ tile_x ] );
+					for( var u32 mut dy= 0u; dy < scale_; ++dy )
+					{
+						auto dst_line= dst_tile_line.subrange_start( size_type( dy * surface.stride ) );
+						for( var u32 mut dx= 0u; dx < scale_; ++dx )
+						{
+							Color32PremultipliedAlphaBlend(
+								dst_line[ size_type( tile_x * scale_ + dx ) ], color_components );
+						}
+					}
+				}
+			}
+		}
+	}
+
+	tile_quads_.clear();
+
+	foreach( &digit_quad : digit_quads_ )
+	{
+		var u32 constexpr alternative_color_tiles_offset= c_num_tiles_x * ( c_num_tiles_y - 1u );
+		var u32 constexpr actual_digit_tile_height= c_digit_height / 2u;
+
+		var TileData& tile=
+			tiles_[
+				( digit_quad.digit_index >> 1 ) +
+				( digit_quad.alternative_color ? alternative_color_tiles_offset : 0u ) ];
+
+		var u32 tile_x_offset= ( digit_quad.digit_index & 1u ) * c_digit_width;
+
+		auto dst_region=
+			surface.pixels.subrange_start( size_type( u32( digit_quad.x ) + u32( digit_quad.y ) * surface.stride ) );
+
+		if( scale_ == 1u )
+		{
+			for( var u32 mut tile_y= 0u; tile_y < actual_digit_tile_height; ++tile_y )
+			{
+				var [ Color32, c_tile_width ]& tile_row= tile[ tile_y ];
+
+				foreach( pair :
+						dst_region.subrange_start( size_type( tile_y * surface.stride ) ).iter().zip(
+							ust::array_view_imut</Color32/>( tile_row ).subrange(
+								size_type( tile_x_offset ), size_type( tile_x_offset + c_digit_width ) ).iter() ) )
+				{
+					Color32PremultipliedAlphaBlend( pair.first, Color32ToComponents( pair.second ) );
+				}
+			}
+		}
+		else if( scale_ == 2u )
+		{
+			for( var u32 mut tile_y= 0u; tile_y < actual_digit_tile_height; ++tile_y )
+			{
+				var [ Color32, c_tile_width ]& tile_row= tile[ tile_y ];
+
+				auto dst_tile_line= dst_region.subrange_start( size_type( tile_y * 2u * surface.stride ) );
+				for( var u32 mut tile_x= 0u; tile_x < c_digit_width; ++tile_x )
+				{
+					var RGBAColor color_components= Color32ToComponents( tile_row[ tile_x_offset + tile_x ] );
+
+					auto dst_line= dst_tile_line.subrange_start( size_type( tile_x * 2u ) );
+
+					Color32PremultipliedAlphaBlend( dst_line[ 0s ], color_components );
+					Color32PremultipliedAlphaBlend( dst_line[ 1s ], color_components );
+					Color32PremultipliedAlphaBlend( dst_line[ size_type( surface.stride ) + 0s ], color_components );
+					Color32PremultipliedAlphaBlend( dst_line[ size_type( surface.stride ) + 1s ], color_components );
+				}
+			}
+		}
+		else
+		{
+			for( var u32 mut tile_y= 0u; tile_y < actual_digit_tile_height; ++tile_y )
+			{
+				var [ Color32, c_tile_width ]& tile_row= tile[ tile_y ];
+
+				auto dst_tile_line= dst_region.subrange_start( size_type( tile_y * scale_ * surface.stride ) );
+				for( var u32 mut tile_x= 0u; tile_x < c_digit_width; ++tile_x )
+				{
+					var RGBAColor color_components= Color32ToComponents( tile_row[ tile_x_offset + tile_x ] );
+					for( var u32 mut dy= 0u; dy < scale_; ++dy )
+					{
+						auto dst_line= dst_tile_line.subrange_start( size_type( dy * surface.stride ) );
+						for( var u32 mut dx= 0u; dx < scale_; ++dx )
+						{
+							Color32PremultipliedAlphaBlend(
+								dst_line[ size_type( tile_x * scale_ + dx ) ], color_components );
+						}
+					}
+				}
+			}
+		}
+	}
+
+	digit_quads_.clear();
+}
+
+fn HudDrawerSoft::MakeTiles( ust::optional_ref_imut</ImageData/> image_data_opt ) : Tiles
+{
+	var Tiles mut tiles= zero_init;
+
+	if( image_data_opt.empty() )
+	{
+		return tiles;
+	}
+
+	var ImageData& image_data= image_data_opt.try_deref();
+
+	if( image_data.size != ust::make_array( c_num_tiles_x * c_tile_width, c_num_digits_y * c_tile_height ) )
+	{
+		// Some strange size. We expect some specific size.
+		return tiles;
+	}
+
+	var u32 constexpr atlas_width = c_tile_width  * c_num_tiles_x;
+	var u32 constexpr atlas_height= c_tile_height * c_num_tiles_y;
+
+	for( auto mut tile_y= 0u; tile_y < c_num_tiles_y; ++tile_y )
+	{
+		var u32 scr_y_offset= tile_y * c_tile_height;
+
+		var u32 dst_tile_offset= tile_y * c_num_tiles_x;
+
+		for( auto mut tile_x= 0u; tile_x < c_num_tiles_x; ++tile_x )
+		{
+			var u32 scr_x_offset= tile_x * c_tile_width;
+
+			var TileData &mut dst_tile= tiles[ tile_x + dst_tile_offset ];
+
+			for( auto mut dy= 0u; dy < c_tile_height; ++dy )
+			{
+				var u32 src_y= atlas_height - 1u - ( scr_y_offset + dy );
+				var u32 src_offset= src_y * atlas_width + scr_x_offset;
+
+				foreach( pair :
+					ust::array_view_mut</Color32/>( dst_tile[dy] ).iter().zip(
+						image_data.pixels.range().subrange_start( size_type( src_offset ) ).iter() ) )
+				{
+					pair.first= Color32FromComponents( pair.second );
+				}
+			}
+		}
+	}
+
+	return tiles;
+}
+
+fn Color32PremultipliedAlphaBlend( Color32 &mut dst, RGBAColor& src_components )
+{
+	var RGBAColor dst_components= Color32ToComponents( dst );
+
+	var u32 one_minus_alpha= u32( ( src_components[3] ) ) ^ 255u;
+	var RGBAColor color_mixed
+	[
+		( ust::min( 255u, u32( src_components[0] ) + u32( dst_components[0] ) * one_minus_alpha / 255u ) ),
+		( ust::min( 255u, u32( src_components[1] ) + u32( dst_components[1] ) * one_minus_alpha / 255u ) ),
+		( ust::min( 255u, u32( src_components[2] ) + u32( dst_components[2] ) * one_minus_alpha / 255u ) ),
+		(0), // Don't care about destination alpha.
+	];
+
+	dst= Color32FromComponents( color_mixed );
 }
 
 } // namespace PM
