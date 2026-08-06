@@ -1,5 +1,6 @@
 import "/string_conversions.iu"
 import "../camera_utils.iu"
+import "../map_quad_utils.iu"
 import "world_drawer_soft.iu"
 
 namespace PM
@@ -41,9 +42,6 @@ fn WorldDrawerSoft::constructor(
 fn WorldDrawerSoft::Draw(
 	mut this, WorldDrawingInfo& drawing_info, WorldDrawingViewportInfo& viewport_info ) : WorldDrawingStats
 {
-	// TODO - use it.
-	ust::ignore_unused( viewport_info );
-
 	// Ensure we have actual map data.
 	SetMap( drawing_info.map_index );
 
@@ -57,6 +55,15 @@ fn WorldDrawerSoft::Draw(
 		pixel= Color32FromComponents( ust::make_array( 32u8, 16u8, 8u8, 255u8 ) );
 	}
 
+	var WorldDrawingStats stats= zero_init;
+
+
+	if( map_data_.empty() )
+	{
+		return stats;
+	}
+
+	var MapDrawDataSoft& map_data= map_data_.try_deref();
 
 	var Mat4f rotation_matrix=
 		CalculateCameraRotationMatrix( drawing_info.camera_params.azimuth, drawing_info.camera_params.elevation );
@@ -70,7 +77,54 @@ fn WorldDrawerSoft::Draw(
 
 	var Mat4f view_matrix= translation_matrix * rotation_and_projection_matrix;
 
-	var WorldDrawingStats stats= zero_init;
+	auto quads= map_data.zmap_data.deref().quads.range();
+	auto clusters= map_data.zvox_data.deref().clusters.range();
+
+	var ZmapLamData& zmap_lam_data= map_data.zmap_lam_data.deref();
+
+	foreach( &cluster : clusters )
+	{
+		temp_vertices_.clear();
+		temp_indices_.clear();
+
+		for( auto mut q= size_type( cluster.c.first_quad_index );
+			q < size_type( cluster.c.first_quad_index ) + size_type( cluster.num_quads );
+			++q )
+		{
+			if( q < zmap_lam_data.tessellated_quads.size() && zmap_lam_data.tessellated_quads[q].vertex_count > 0u )
+			{
+				CreateTessellatedQuadGeometry(
+					zmap_lam_data,
+					cluster,
+					q,
+					0.0f, // TODO - provide texture id.
+					0s,
+					temp_vertices_,
+					temp_indices_ );
+			}
+		}
+
+		foreach( &v : temp_vertices_ )
+		{
+			var Vec3f vertex_projected= Vec3f( v.position ) * view_matrix;
+			if( vertex_projected.z <= c_z_near )
+			{
+				continue;
+			}
+
+			var Vec2f point= vertex_projected.xy() / vertex_projected.z;
+
+			// TODO - encode this transformation into the projection matrix.
+			var i32 x( ( point.x * 0.5f + 0.5f ) * f32( surface.size[0] ) );
+			var i32 y( ( 0.5f - point.y * 0.5f ) * f32( surface.size[1] ) );
+
+			if( x >= 0 && y >= 0 && x < i32( surface.size[0] ) && y < i32( surface.size[1] ) )
+			{
+				surface.pixels[ size_type( u32( x ) + u32( y ) * surface.stride ) ]= Color32( 0xFFFFFFFFu );
+			}
+		}
+	}
+
 	return stats;
 }
 
