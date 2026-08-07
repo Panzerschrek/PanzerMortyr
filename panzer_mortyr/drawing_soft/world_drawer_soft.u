@@ -177,16 +177,6 @@ fn WorldDrawerSoft::Draw(
 				[ quantize( v2.x / v2.z ), quantize( v2.y / v2.z ) ],
 			];
 
-			{
-				// Perform back face culling.
-				var Vec2f edge0= Vec2f( vertices_projected[1] ) - Vec2f( vertices_projected[0] );
-				var Vec2f edge1= Vec2f( vertices_projected[2] ) - Vec2f( vertices_projected[1] );
-				if( edge0.x * edge1.y - edge0.y * edge1.x < 0.0f )
-				{
-					continue;
-				}
-			}
-
 			foreach( &v : vertices_projected )
 			{
 				if( !( v[0] >= 0.0f && v[1] >= 0.0f && v[0] < f32( surface.size[0] ) && v[1] < f32( surface.size[1] ) ) )
@@ -208,24 +198,43 @@ fn WorldDrawerSoft::Draw(
 				cast_imut(temp_vertices_)[ size_type( indices[2] ) ].light,
 			];
 
-			var Mat3f vertices_matrix
-			{
-				.values
-				[
-					[ vertices_projected[0][0], vertices_projected[1][0], vertices_projected[2][0] ],
-					[ vertices_projected[0][1], vertices_projected[1][1], vertices_projected[2][1] ],
-					[ 1.0f, 1.0f, 1.0f ],
-				]
-			};
+			var f32 det=
+				vertices_projected[0][0] * ( vertices_projected[1][1] - vertices_projected[2][1] ) -
+				vertices_projected[1][0] * ( vertices_projected[0][1] - vertices_projected[2][1] ) +
+				vertices_projected[2][0] * ( vertices_projected[0][1] - vertices_projected[1][1] );
 
-			// TODO - optimize calculation of  this matrix, since its lower row is zero,
-			var ust::optional</Mat3f/> vertices_matrix_inverse_opt= vertices_matrix.Inverse();
-			if( vertices_matrix_inverse_opt.empty() )
+			if( det <= 0.0f ) // This check serves as back face culling.
 			{
 				continue;
 			}
 
-			var Mat3f& vertices_matrix_inverse= vertices_matrix_inverse_opt.try_deref();
+			var f32 inv_det= 1.0f / det;
+
+			// This matrix is an inverse of projected vertices matrix:
+			//  [ x0, x1, x2 ],
+			//  [ y0, y1, y2 ],
+			//  [  1,  1,  1 ],
+			var Mat3f equations_matrix
+			{
+				.values
+				[
+					[
+						inv_det * ( vertices_projected[1][1] - vertices_projected[2][1] ),
+						inv_det * ( vertices_projected[2][0] - vertices_projected[1][0] ),
+						inv_det * ( vertices_projected[1][0] * vertices_projected[2][1] - vertices_projected[2][0] * vertices_projected[1][1] )
+					],
+					[
+						inv_det * ( vertices_projected[2][1] - vertices_projected[0][1] ),
+						inv_det * ( vertices_projected[0][0] - vertices_projected[2][0] ),
+						inv_det * ( vertices_projected[2][0] * vertices_projected[0][1] - vertices_projected[0][0] * vertices_projected[2][1] ),
+					],
+					[
+						inv_det * ( vertices_projected[0][1] - vertices_projected[1][1] ),
+						inv_det * ( vertices_projected[1][0] - vertices_projected[0][0] ),
+						inv_det * ( vertices_projected[0][0] * vertices_projected[1][1] - vertices_projected[1][0] * vertices_projected[0][1] ),
+					],
+				],
+			};
 
 			var [ Vec3f, 4 ] mut color_equations[ Vec3f::MakeZero() ... ];
 
@@ -235,10 +244,10 @@ fn WorldDrawerSoft::Draw(
 					f32( vertex_colors[0][component] ),
 					f32( vertex_colors[1][component] ),
 					f32( vertex_colors[2][component] ) );
-				color_equations[ component ]= vertex_color_components * vertices_matrix_inverse;
+				color_equations[ component ]= vertex_color_components * equations_matrix;
 			}
 
-			var Vec3f depth_equation= Vec3f( 1.0f / v0.z, 1.0f / v1.z, 1.0f / v2.z ) * vertices_matrix_inverse;
+			var Vec3f depth_equation= Vec3f( 1.0f / v0.z, 1.0f / v1.z, 1.0f / v2.z ) * equations_matrix;
 
 			// Perform triangle rasterization.
 
