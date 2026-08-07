@@ -197,14 +197,53 @@ fn WorldDrawerSoft::Draw(
 			ust::min_assign( min_y, vertices_projected[2][1] );
 			ust::max_assign( max_y, vertices_projected[2][1] );
 
-			var ust::default_hasher mut hasher;
-			ust::apply_value_to_hasher( hasher, t );
-			var Color32 color( hasher.get() );
+			var [ RGBAColor, 3 ] mut vertex_colors= zero_init;
+			for( auto mut i= 0s; i < 3s; ++i )
+			{
+				var ust::default_hasher mut hasher;
+				ust::apply_value_to_hasher( hasher, indices[i] );
+				vertex_colors[i]=  Color32ToComponents( Color32( hasher.get() ) );
+			}
+
+			var Mat3f vertices_matrix
+			{
+				.values
+				[
+					[ vertices_projected[0][0], vertices_projected[1][0], vertices_projected[2][0] ],
+					[ vertices_projected[0][1], vertices_projected[1][1], vertices_projected[2][1] ],
+					[ 1.0f, 1.0f, 1.0f ],
+				]
+			};
+
+			// TODO - optimize calculation of  this matrix, since its lower row is zero,
+			var ust::optional</Mat3f/> vertices_matrix_inverse_opt= vertices_matrix.Inverse();
+			if( vertices_matrix_inverse_opt.empty() )
+			{
+				continue;
+			}
+
+			var Mat3f& vertices_matrix_inverse= vertices_matrix_inverse_opt.try_deref();
+
+			var [ Vec3f, 4 ] mut color_equations[ Vec3f::MakeZero() ... ];
+
+			for( auto mut component= 0s; component < 4s; ++component )
+			{
+				var Vec3f vertex_color_components(
+					f32( vertex_colors[0][component] ),
+					f32( vertex_colors[1][component] ),
+					f32( vertex_colors[2][component] ) );
+				color_equations[ component ]= vertex_color_components * vertices_matrix_inverse;
+			}
 
 			// Perform triangle rasterization.
 
 			var i32 min_y_i= ust::max( 0, i32( ust::round( min_y ) ) );
 			var i32 max_y_i= ust::min( i32( ust::round( max_y ) ), i32( surface.size[1] ) );
+
+			if( min_y_i >= max_y_i )
+			{
+				continue; // This triangle is too thin - it doesn't fill even a single line.
+			}
 
 			var f32 min_y_center= f32( min_y_i ) + 0.5f;  // We perform rasterization for centers of pixels.
 
@@ -276,11 +315,35 @@ fn WorldDrawerSoft::Draw(
 
 				if( min_x_i < max_x_i )
 				{
+					var [ f32, 4 ] mut pixel_color= zero_init;
+					var f32 first_pixel_center_x= f32( min_x_i ) + 0.5f;
+					var f32 first_pixel_center_y= f32( y ) + 0.5f;
+					for( auto mut component= 0s; component < 4s; ++component )
+					{
+						var Vec3f& component_equation= color_equations[ component ];
+						pixel_color[component]=
+							component_equation.x * first_pixel_center_x +
+							component_equation.y * first_pixel_center_y +
+							component_equation.z;
+					}
+
 					var size_type offset( u32(y) * surface.stride );
 					foreach( &mut pixel :
 							surface.pixels.subrange( offset + size_type( min_x_i ), offset + size_type( max_x_i ) ) )
 					{
-						pixel= color;
+						var RGBAColor pixel_color_comonents
+						[
+							( ust::max( 0.0f, ust::min( pixel_color[0], 255.0f ) ) ),
+							( ust::max( 0.0f, ust::min( pixel_color[1], 255.0f ) ) ),
+							( ust::max( 0.0f, ust::min( pixel_color[2], 255.0f ) ) ),
+							( ust::max( 0.0f, ust::min( pixel_color[3], 255.0f ) ) ),
+						];
+						pixel= Color32FromComponents( pixel_color_comonents );
+
+						for( auto mut component= 0s; component < 4s; ++component )
+						{
+							pixel_color[component]+= color_equations[ component ].x;
+						}
 					}
 				}
 
