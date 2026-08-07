@@ -187,62 +187,75 @@ fn WorldDrawerSoft::Draw(
 			ust::apply_value_to_hasher( hasher, t );
 			var Color32 color( hasher.get() );
 
-			var [ [ f32, 2 ], 3 ] edges
-			[
-				[ vertices_projected[1][0] - vertices_projected[0][0], vertices_projected[1][1] - vertices_projected[0][1] ],
-				[ vertices_projected[2][0] - vertices_projected[1][0], vertices_projected[2][1] - vertices_projected[1][1] ],
-				[ vertices_projected[0][0] - vertices_projected[2][0], vertices_projected[0][1] - vertices_projected[2][1] ],
-			];
-
-
 			// Perform triangle rasterization.
 
 			var i32 min_y_i= ust::max( 0, i32( ust::round( min_y ) ) );
 			var i32 max_y_i= ust::min( i32( ust::round( max_y ) ), i32( surface.size[1] ) );
 
-			var [ f32, 3 ] mut edge_steps= zero_init;
-			var [ f32, 3 ] mut edges_x= zero_init;
-
 			var f32 min_y_center= f32( min_y_i ) + 0.5f;  // We perform rasterization for centers of pixels.
 
-			for( auto mut e= 0s; e < 3s; ++e )
+			var f32 surface_size_x( surface.size[0] );
+
+			// A triangle has up to two edges on each side, but usually it's one and two.
+			// For simplicity assume that we always have two edges on both sides.
+			// This simplifies code a bit and allows avoiding extra branching.
+			var [ f32, 2 ] mut edges_min_x[ 0.0f ... ];
+			var [ f32, 2 ] mut edges_max_x[ surface_size_x ... ];
+			var [ f32, 2 ] mut edges_min_step_x[ 0.0f ... ];
+			var [ f32, 2 ] mut edges_max_step_x[ 0.0f ... ];
+
 			{
-				var f32 &mut edge_step= edge_steps[e];
-				var f32 &mut edge_x= edges_x[e];
+				var [ [ f32, 2 ], 3 ] edges
+				[
+					[
+						vertices_projected[1][0] - vertices_projected[0][0],
+						vertices_projected[1][1] - vertices_projected[0][1],
+					],
+					[
+						vertices_projected[2][0] - vertices_projected[1][0],
+						vertices_projected[2][1] - vertices_projected[1][1],
+					],
+					[
+						vertices_projected[0][0] - vertices_projected[2][0],
+						vertices_projected[0][1] - vertices_projected[2][1],
+					],
+				];
 
-				var [ f32, 2 ]& edge= edges[e];
-
-				edge_step= ( ( edge[1] == 0.0f ? 0.0f : edge[0] / edge[1] ) );
-
-				if( edges[e][1] != 0.0f )
+				var size_type mut num_edges_min= 0s, mut nun_edges_max= 0s;
+				for( auto mut e= 0s; e < 3s; ++e )
 				{
-					edge_x= vertices_projected[e][0] + ( min_y_center - vertices_projected[e][1] ) * edge_step;
-				}
-				else
-				{
+					var [ f32, 2 ]& edge= edges[e];
+					var [ f32, 2 ]& vertex_projected=  vertices_projected[e];
+
+					if( edge[1] == 0.0f )
+					{
+						continue;
+					}
+
+					var f32 edge_step= edge[0] / edge[1];
+					var f32 edge_x= vertex_projected[0] + ( min_y_center - vertex_projected[1] ) * edge_step;
+
 					if( edges[e][1] > 0.0f )
 					{
-						edge_x= ust::plus_inf </f32/>();
+						edges_max_x[ nun_edges_max ]= edge_x;
+						edges_max_step_x[ nun_edges_max ]= edge_step;
+						nun_edges_max ^= 1s;
 					}
-					else
+					else if( edges[e][1] < 0.0f )
 					{
-						edge_x= ust::minus_inf</f32/>();
+						edges_min_x[ num_edges_min ]= edge_x;
+						edges_min_step_x[ num_edges_min ]= edge_step;
+						num_edges_min ^= 1s;
 					}
 				}
 			}
 
-			var [ bool, 3 ] edge_is_y_plus[ edges[0][1] > 0.0f, edges[1][1] > 0.0f, edges[2][1] > 0.0f ];
-
-			// TODO - optimize code below even more.
-			// Consider splitting triangles in two parts using middle vertex.
-
 			for( auto mut y= min_y_i; y < max_y_i; ++y )
 			{
-				var f32 mut min_x= 0.0f, mut max_x( surface.size[0] );
-
-				( edge_is_y_plus[0] ? ust::min_assign( max_x, edges_x[0] ) : ust::max_assign( min_x, edges_x[0] ) );
-				( edge_is_y_plus[1] ? ust::min_assign( max_x, edges_x[1] ) : ust::max_assign( min_x, edges_x[1] ) );
-				( edge_is_y_plus[2] ? ust::min_assign( max_x, edges_x[2] ) : ust::max_assign( min_x, edges_x[2] ) );
+				var f32 min_x=
+					ust::max( ust::max( cast_imut(edges_min_x)[0], cast_imut(edges_min_x)[1] ), 0.0f );
+				var f32 max_x=
+					ust::min( ust::min( cast_imut(edges_max_x)[0], cast_imut(edges_max_x)[1] ), surface_size_x );
 
 				var i32 min_x_i= i32( ust::round( min_x ) );
 				var i32 max_x_i= i32( ust::round( max_x ) );
@@ -257,9 +270,10 @@ fn WorldDrawerSoft::Draw(
 					}
 				}
 
-				edges_x[0]+= edge_steps[0];
-				edges_x[1]+= edge_steps[1];
-				edges_x[2]+= edge_steps[2];
+				edges_min_x[0]+= edges_min_step_x[0];
+				edges_min_x[1]+= edges_min_step_x[1];
+				edges_max_x[0]+= edges_max_step_x[0];
+				edges_max_x[1]+= edges_max_step_x[1];
 			}
 		}
 	}
