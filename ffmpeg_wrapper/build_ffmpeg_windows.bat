@@ -18,4 +18,4 @@ cd "%BUILD_DIR%"
 cd ".."
 
 :: Run MSVC linker using cmd, not bash.
-link "%BUILD_DIR%/libavformat/avformat.lib" "%BUILD_DIR%/libavcodec/avcodec.lib" "%BUILD_DIR%/libavutil/avutil.lib" "%BUILD_DIR%/libswscale/swscale.lib" /DEF:"%~dp0/ffmpeg.def" bcrypt.lib /DLL /OUT:panzer_mortyr_ffmpeg.dll /defaultlib:msvcrt
+link "%BUILD_DIR%/libavformat/avformat.lib" "%BUILD_DIR%/libavcodec/avcodec.lib" "%BUILD_DIR%/libavutil/avutil.lib" "%BUILD_DIR%/libswscale/swscale.lib" /DEF:"%~dp0/ffmpeg.def" bcrypt.lib /DLL /OUT:panzer_mortyr_ffmpeg.dll /defaultlib:libcmt
