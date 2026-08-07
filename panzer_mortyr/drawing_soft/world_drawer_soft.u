@@ -152,22 +152,32 @@ fn WorldDrawerSoft::Draw(
 				continue;
 			}
 
-			var [ [ i32, 2 ], 3 ] vertices_projected
+			// Work with floating-point coordinates, but quantize them,
+			// so that we don't work with infinite small delta values.
+			auto quantize= lambda( f32 x ) : f32
+			{
+				// TODO - tune this constant.
+				// Smaller values are generally better, but too small values can lead to artifacts with T-junctions.
+				var f32 constexpr c_quantization_scale= 64.0f;
+				return ust::floor( x * c_quantization_scale ) * ( 1.0f / c_quantization_scale );
+			};
+
+			var [ [ f32, 2 ], 3 ] vertices_projected
 			[
-				[ ( v0.x / v0.z ), ( v0.y / v0.z ) ],
-				[ ( v1.x / v1.z ), ( v1.y / v1.z ) ],
-				[ ( v2.x / v2.z ), ( v2.y / v2.z ) ],
+				[ quantize( v0.x / v0.z ), quantize( v0.y / v0.z ) ],
+				[ quantize( v1.x / v1.z ), quantize( v1.y / v1.z ) ],
+				[ quantize( v2.x / v2.z ), quantize( v2.y / v2.z ) ],
 			];
 
 			foreach( &v : vertices_projected )
 			{
-				if( !( v[0] >= 0 && v[1] >= 0 && v[0] < i32( surface.size[0] ) && v[1] < i32( surface.size[1] ) ) )
+				if( !( v[0] >= 0.0f && v[1] >= 0.0f && v[0] < f32( surface.size[0] ) && v[1] < f32( surface.size[1] ) ) )
 				{
 					continue label trianlges_loop;
 				}
 			}
 
-			var i32 mut min_y= vertices_projected[0][1], mut max_y= vertices_projected[0][1];
+			var f32 mut min_y= vertices_projected[0][1], mut max_y= vertices_projected[0][1];
 			ust::min_assign( min_y, vertices_projected[1][1] );
 			ust::max_assign( max_y, vertices_projected[1][1] );
 			ust::min_assign( min_y, vertices_projected[2][1] );
@@ -177,7 +187,7 @@ fn WorldDrawerSoft::Draw(
 			ust::apply_value_to_hasher( hasher, t );
 			var Color32 color( hasher.get() );
 
-			var [ [ i32, 2 ], 3 ] edges
+			var [ [ f32, 2 ], 3 ] edges
 			[
 				[ vertices_projected[1][0] - vertices_projected[0][0], vertices_projected[1][1] - vertices_projected[0][1] ],
 				[ vertices_projected[2][0] - vertices_projected[1][0], vertices_projected[2][1] - vertices_projected[1][1] ],
@@ -186,14 +196,20 @@ fn WorldDrawerSoft::Draw(
 
 			// Perform triangle rasterization.
 
-			for( auto mut y= min_y; y < max_y; ++y )
+			var i32 min_y_i= ust::max( 0, i32( ust::round( min_y ) ) );
+			var i32 max_y_i= ust::min( i32( ust::round( max_y ) ), i32( surface.size[1] ) );
+
+			for( auto mut y= min_y_i; y < max_y_i; ++y )
 			{
-				var i32 mut min_x= i32( 0 ), mut max_x= i32( surface.size[0] );
+				var f32 mut min_x= 0.0f, mut max_x( surface.size[0] );
 
-				if( edges[0][1] != 0 )
+				var f32 y_center= f32(y) + 0.5f; // We perform rasterization for centers of pixels.
+
+				if( edges[0][1] != 0.0f )
 				{
-					var i32 x= vertices_projected[0][0] + ( y - vertices_projected[0][1] ) * edges[0][0] / edges[0][1];
-					if( edges[0][1] > 0 )
+					var f32 x=
+						vertices_projected[0][0] + ( y_center - vertices_projected[0][1] ) * edges[0][0] / edges[0][1];
+					if( edges[0][1] > 0.0f )
 					{
 						ust::min_assign( max_x, x );
 					}
@@ -202,10 +218,11 @@ fn WorldDrawerSoft::Draw(
 						ust::max_assign( min_x, x );
 					}
 				}
-				if( edges[1][1] != 0 )
+				if( edges[1][1] != 0.0f )
 				{
-					var i32 x= vertices_projected[1][0] + ( y - vertices_projected[1][1] ) * edges[1][0] / edges[1][1];
-					if( edges[1][1] > 0 )
+					var f32 x=
+						vertices_projected[1][0] + ( y_center - vertices_projected[1][1] ) * edges[1][0] / edges[1][1];
+					if( edges[1][1] > 0.0f )
 					{
 						ust::min_assign( max_x, x );
 					}
@@ -214,10 +231,11 @@ fn WorldDrawerSoft::Draw(
 						ust::max_assign( min_x, x );
 					}
 				}
-				if( edges[2][1] != 0 )
+				if( edges[2][1] != 0.0f )
 				{
-					var i32 x= vertices_projected[2][0] + ( y - vertices_projected[2][1] ) * edges[2][0] / edges[2][1];
-					if( edges[2][1] > 0 )
+					var f32 x=
+						vertices_projected[2][0] + ( y_center - vertices_projected[2][1] ) * edges[2][0] / edges[2][1];
+					if( edges[2][1] > 0.0f )
 					{
 						ust::min_assign( max_x, x );
 					}
@@ -227,9 +245,17 @@ fn WorldDrawerSoft::Draw(
 					}
 				}
 
-				for( var i32 mut x= min_x; x < max_x; ++x )
+				var i32 min_x_i= i32( ust::round( min_x ) );
+				var i32 max_x_i= i32( ust::round( max_x ) );
+
+				if( min_x_i < max_x_i )
 				{
-					surface.pixels[ size_type( u32( x ) + u32( y ) * surface.stride ) ]= color;
+					var size_type offset( u32(y) * surface.stride );
+					foreach( &mut pixel :
+							surface.pixels.subrange( offset + size_type( min_x_i ), offset + size_type( max_x_i ) ) )
+					{
+						pixel= color;
+					}
 				}
 			}
 		}
