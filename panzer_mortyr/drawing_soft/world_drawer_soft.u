@@ -177,6 +177,8 @@ fn WorldDrawerSoft::Draw(
 				[ quantize( v2.x / v2.z ), quantize( v2.y / v2.z ) ],
 			];
 
+			// For now reject triangles out of the screen border.
+			// TODO - avoid doing this and use frustum planes clipping instead.
 			foreach( &v : vertices_projected )
 			{
 				if( !( v[0] >= 0.0f && v[1] >= 0.0f && v[0] < f32( surface.size[0] ) && v[1] < f32( surface.size[1] ) ) )
@@ -185,18 +187,7 @@ fn WorldDrawerSoft::Draw(
 				}
 			}
 
-			var f32 mut min_y= vertices_projected[0][1], mut max_y= vertices_projected[0][1];
-			ust::min_assign( min_y, vertices_projected[1][1] );
-			ust::max_assign( max_y, vertices_projected[1][1] );
-			ust::min_assign( min_y, vertices_projected[2][1] );
-			ust::max_assign( max_y, vertices_projected[2][1] );
-
-			var [ RGBAColor, 3 ] mut vertex_colors
-			[
-				cast_imut(temp_vertices_)[ size_type( indices[0] ) ].light,
-				cast_imut(temp_vertices_)[ size_type( indices[1] ) ].light,
-				cast_imut(temp_vertices_)[ size_type( indices[2] ) ].light,
-			];
+			// Calculate equations for vertex attributes interpolation.
 
 			var f32 det=
 				vertices_projected[0][0] * ( vertices_projected[1][1] - vertices_projected[2][1] ) -
@@ -238,18 +229,32 @@ fn WorldDrawerSoft::Draw(
 
 			var [ Vec3f, 4 ] mut color_equations[ Vec3f::MakeZero() ... ];
 
-			for( auto mut component= 0s; component < 4s; ++component )
 			{
-				var Vec3f vertex_color_components(
-					f32( vertex_colors[0][component] ),
-					f32( vertex_colors[1][component] ),
-					f32( vertex_colors[2][component] ) );
-				color_equations[ component ]= vertex_color_components * equations_matrix;
+				var [ RGBAColor, 3 ] mut vertex_colors
+				[
+					cast_imut(temp_vertices_)[ size_type( indices[0] ) ].light,
+					cast_imut(temp_vertices_)[ size_type( indices[1] ) ].light,
+					cast_imut(temp_vertices_)[ size_type( indices[2] ) ].light,
+				];
+
+				for( auto mut component= 0s; component < 4s; ++component )
+				{
+					var Vec3f vertex_color_components(
+						f32( vertex_colors[0][component] ),
+						f32( vertex_colors[1][component] ),
+						f32( vertex_colors[2][component] ) );
+					color_equations[ component ]= vertex_color_components * equations_matrix;
+				}
 			}
 
 			var Vec3f depth_equation= Vec3f( 1.0f / v0.z, 1.0f / v1.z, 1.0f / v2.z ) * equations_matrix;
 
 			// Perform triangle rasterization.
+
+			var f32 min_y=
+				ust::min( ust::min( vertices_projected[0][1], vertices_projected[1][1] ), vertices_projected[2][1] );
+			var f32 max_y=
+				ust::max( ust::max( vertices_projected[0][1], vertices_projected[1][1] ), vertices_projected[2][1] );
 
 			var i32 min_y_i= ust::max( 0, i32( ust::round( min_y ) ) );
 			var i32 max_y_i= ust::min( i32( ust::round( max_y ) ), i32( surface.size[1] ) );
@@ -259,7 +264,7 @@ fn WorldDrawerSoft::Draw(
 				continue; // This triangle is too thin - it doesn't fill even a single line.
 			}
 
-			var f32 min_y_center= f32( min_y_i ) + 0.5f;  // We perform rasterization for centers of pixels.
+			var f32 min_y_center= f32( min_y_i ) + 0.5f; // We perform rasterization for centers of pixels.
 
 			var f32 surface_size_x( surface.size[0] );
 
@@ -292,7 +297,7 @@ fn WorldDrawerSoft::Draw(
 				for( auto mut e= 0s; e < 3s; ++e )
 				{
 					var [ f32, 2 ]& edge= edges[e];
-					var [ f32, 2 ]& vertex_projected=  vertices_projected[e];
+					var [ f32, 2 ]& vertex_projected= vertices_projected[e];
 
 					if( edge[1] == 0.0f )
 					{
@@ -330,8 +335,11 @@ fn WorldDrawerSoft::Draw(
 				if( min_x_i < max_x_i )
 				{
 					var [ f32, 4 ] mut pixel_color= zero_init;
+
+					// We perform rasterization for centers of pixels, so, add 0.5.
 					var f32 first_pixel_center_x= f32( min_x_i ) + 0.5f;
 					var f32 first_pixel_center_y= f32( y ) + 0.5f;
+
 					for( auto mut component= 0s; component < 4s; ++component )
 					{
 						var Vec3f& component_equation= color_equations[ component ];
@@ -350,6 +358,7 @@ fn WorldDrawerSoft::Draw(
 
 					auto dst_colors= surface.pixels.subrange( offset + size_type( min_x_i ), offset + size_type( max_x_i ) );
 					auto dst_depth= depth_buffer.subrange( offset + size_type( min_x_i ), offset + size_type( max_x_i ) );
+
 					foreach( pair : dst_depth.iter().zip( dst_colors.iter() ) )
 					{
 						if( pixel_depth >= pair.first )
