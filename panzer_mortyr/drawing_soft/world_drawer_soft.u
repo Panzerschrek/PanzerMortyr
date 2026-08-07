@@ -57,11 +57,15 @@ fn WorldDrawerSoft::Draw(
 
 	var WorldDrawingStats stats= zero_init;
 
-
 	if( map_data_.empty() )
 	{
 		return stats;
 	}
+
+	// Prepare and clear depth buffer.
+	depth_buffer_.clear();
+	depth_buffer_.resize( size_type( surface.size[1] * surface.stride ), 0.0f );
+	var ust::array_view_mut</f32/> depth_buffer= depth_buffer_;
 
 	var MapDrawDataSoft& map_data= map_data_.try_deref();
 
@@ -234,6 +238,8 @@ fn WorldDrawerSoft::Draw(
 				color_equations[ component ]= vertex_color_components * vertices_matrix_inverse;
 			}
 
+			var Vec3f depth_equation= Vec3f( 1.0f / v0.z, 1.0f / v1.z, 1.0f / v2.z ) * vertices_matrix_inverse;
+
 			// Perform triangle rasterization.
 
 			var i32 min_y_i= ust::max( 0, i32( ust::round( min_y ) ) );
@@ -326,23 +332,38 @@ fn WorldDrawerSoft::Draw(
 							component_equation.z;
 					}
 
+					var f32 mut pixel_depth=
+						depth_equation.x * first_pixel_center_x +
+						depth_equation.y * first_pixel_center_y +
+						depth_equation.z;
+
 					var size_type offset( u32(y) * surface.stride );
-					foreach( &mut pixel :
-							surface.pixels.subrange( offset + size_type( min_x_i ), offset + size_type( max_x_i ) ) )
+
+					auto dst_colors= surface.pixels.subrange( offset + size_type( min_x_i ), offset + size_type( max_x_i ) );
+					auto dst_depth= depth_buffer.subrange( offset + size_type( min_x_i ), offset + size_type( max_x_i ) );
+					foreach( pair : dst_depth.iter().zip( dst_colors.iter() ) )
 					{
-						var RGBAColor pixel_color_comonents
-						[
-							( ust::max( 0.0f, ust::min( pixel_color[0], 255.0f ) ) ),
-							( ust::max( 0.0f, ust::min( pixel_color[1], 255.0f ) ) ),
-							( ust::max( 0.0f, ust::min( pixel_color[2], 255.0f ) ) ),
-							( ust::max( 0.0f, ust::min( pixel_color[3], 255.0f ) ) ),
-						];
-						pixel= Color32FromComponents( pixel_color_comonents );
+						if( pixel_depth >= pair.first )
+						{
+							pair.first= pixel_depth;
+
+							var RGBAColor pixel_color_comonents
+							[
+								( ust::max( 0.0f, ust::min( pixel_color[0], 255.0f ) ) ),
+								( ust::max( 0.0f, ust::min( pixel_color[1], 255.0f ) ) ),
+								( ust::max( 0.0f, ust::min( pixel_color[2], 255.0f ) ) ),
+								( ust::max( 0.0f, ust::min( pixel_color[3], 255.0f ) ) ),
+							];
+
+							pair.second= Color32FromComponents( pixel_color_comonents );
+						}
 
 						for( auto mut component= 0s; component < 4s; ++component )
 						{
 							pixel_color[component]+= color_equations[ component ].x;
 						}
+
+						pixel_depth+= depth_equation.x;
 					}
 				}
 
