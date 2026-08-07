@@ -145,251 +145,13 @@ fn WorldDrawerSoft::Draw(
 			pair.first= view_matrix_transposed * Vec3f( pair.second.position );
 		}
 
-		var ust::array_view_imut</Vec3f/> transformed_vertices_view_imut= transformed_vertices_view;
-
-		for( auto mut t= 0s; t + 3s <= temp_indices_.size(); t+= 3s ) label trianlges_loop
+		for( auto mut t= 0s; t + 3s <= temp_indices_.size(); t+= 3s )
 		{
 			var [ u16, 3 ] indices[ temp_indices_[ t + 0s ], temp_indices_[ t + 1s ], temp_indices_[ t + 2s ] ];
 
-			var Vec3f& v0= transformed_vertices_view_imut[ size_type( indices[0] ) ];
-			var Vec3f& v1= transformed_vertices_view_imut[ size_type( indices[1] ) ];
-			var Vec3f& v2= transformed_vertices_view_imut[ size_type( indices[2] ) ];
+			// TODO - clip triangle by frustum planes here, possible producing more than one result triangle.
 
-			if( v0.z <= c_z_near || v1.z <= c_z_near || v2.z <= c_z_near )
-			{
-				continue;
-			}
-
-			// Work with floating-point coordinates, but quantize them,
-			// so that we don't work with infinite small delta values.
-			auto quantize= lambda( f32 x ) : f32
-			{
-				// TODO - tune this constant.
-				// Smaller values are generally better, but too small values can lead to artifacts with T-junctions.
-				var f32 constexpr c_quantization_scale= 64.0f;
-				return ust::floor( x * c_quantization_scale ) * ( 1.0f / c_quantization_scale );
-			};
-
-			var [ [ f32, 2 ], 3 ] vertices_projected
-			[
-				[ quantize( v0.x / v0.z ), quantize( v0.y / v0.z ) ],
-				[ quantize( v1.x / v1.z ), quantize( v1.y / v1.z ) ],
-				[ quantize( v2.x / v2.z ), quantize( v2.y / v2.z ) ],
-			];
-
-			// For now reject triangles out of the screen border.
-			// TODO - avoid doing this and use frustum planes clipping instead.
-			foreach( &v : vertices_projected )
-			{
-				if( !( v[0] >= 0.0f && v[1] >= 0.0f && v[0] < f32( surface.size[0] ) && v[1] < f32( surface.size[1] ) ) )
-				{
-					continue label trianlges_loop;
-				}
-			}
-
-			// Calculate equations for vertex attributes interpolation.
-
-			var f32 det=
-				vertices_projected[0][0] * ( vertices_projected[1][1] - vertices_projected[2][1] ) -
-				vertices_projected[1][0] * ( vertices_projected[0][1] - vertices_projected[2][1] ) +
-				vertices_projected[2][0] * ( vertices_projected[0][1] - vertices_projected[1][1] );
-
-			if( det <= 0.0f ) // This check serves as back face culling.
-			{
-				continue;
-			}
-
-			var f32 inv_det= 1.0f / det;
-
-			// This matrix is an inverse of projected vertices matrix:
-			//  [ x0, x1, x2 ],
-			//  [ y0, y1, y2 ],
-			//  [  1,  1,  1 ],
-			var Mat3f equations_matrix
-			{
-				.values
-				[
-					[
-						inv_det * ( vertices_projected[1][1] - vertices_projected[2][1] ),
-						inv_det * ( vertices_projected[2][0] - vertices_projected[1][0] ),
-						inv_det * ( vertices_projected[1][0] * vertices_projected[2][1] - vertices_projected[2][0] * vertices_projected[1][1] )
-					],
-					[
-						inv_det * ( vertices_projected[2][1] - vertices_projected[0][1] ),
-						inv_det * ( vertices_projected[0][0] - vertices_projected[2][0] ),
-						inv_det * ( vertices_projected[2][0] * vertices_projected[0][1] - vertices_projected[0][0] * vertices_projected[2][1] ),
-					],
-					[
-						inv_det * ( vertices_projected[0][1] - vertices_projected[1][1] ),
-						inv_det * ( vertices_projected[1][0] - vertices_projected[0][0] ),
-						inv_det * ( vertices_projected[0][0] * vertices_projected[1][1] - vertices_projected[1][0] * vertices_projected[0][1] ),
-					],
-				],
-			};
-
-			var [ Vec3f, 4 ] mut color_equations[ Vec3f::MakeZero() ... ];
-
-			{
-				var [ RGBAColor, 3 ] mut vertex_colors
-				[
-					cast_imut(temp_vertices_)[ size_type( indices[0] ) ].light,
-					cast_imut(temp_vertices_)[ size_type( indices[1] ) ].light,
-					cast_imut(temp_vertices_)[ size_type( indices[2] ) ].light,
-				];
-
-				for( auto mut component= 0s; component < 4s; ++component )
-				{
-					var Vec3f vertex_color_components(
-						f32( vertex_colors[0][component] ),
-						f32( vertex_colors[1][component] ),
-						f32( vertex_colors[2][component] ) );
-					color_equations[ component ]= vertex_color_components * equations_matrix;
-				}
-			}
-
-			var Vec3f depth_equation= Vec3f( 1.0f / v0.z, 1.0f / v1.z, 1.0f / v2.z ) * equations_matrix;
-
-			// Perform triangle rasterization.
-
-			var f32 min_y=
-				ust::min( ust::min( vertices_projected[0][1], vertices_projected[1][1] ), vertices_projected[2][1] );
-			var f32 max_y=
-				ust::max( ust::max( vertices_projected[0][1], vertices_projected[1][1] ), vertices_projected[2][1] );
-
-			var i32 min_y_i= ust::max( 0, i32( ust::round( min_y ) ) );
-			var i32 max_y_i= ust::min( i32( ust::round( max_y ) ), i32( surface.size[1] ) );
-
-			if( min_y_i >= max_y_i )
-			{
-				continue; // This triangle is too thin - it doesn't fill even a single line.
-			}
-
-			var f32 min_y_center= f32( min_y_i ) + 0.5f; // We perform rasterization for centers of pixels.
-
-			var f32 surface_size_x( surface.size[0] );
-
-			// A triangle has up to two edges on each side, but usually it's one and two.
-			// For simplicity assume that we always have two edges on both sides.
-			// This simplifies code a bit and allows avoiding extra branching.
-			var [ f32, 2 ] mut edges_min_x[ 0.0f ... ];
-			var [ f32, 2 ] mut edges_max_x[ surface_size_x ... ];
-			var [ f32, 2 ] mut edges_min_step_x[ 0.0f ... ];
-			var [ f32, 2 ] mut edges_max_step_x[ 0.0f ... ];
-
-			{
-				var [ [ f32, 2 ], 3 ] edges
-				[
-					[
-						vertices_projected[1][0] - vertices_projected[0][0],
-						vertices_projected[1][1] - vertices_projected[0][1],
-					],
-					[
-						vertices_projected[2][0] - vertices_projected[1][0],
-						vertices_projected[2][1] - vertices_projected[1][1],
-					],
-					[
-						vertices_projected[0][0] - vertices_projected[2][0],
-						vertices_projected[0][1] - vertices_projected[2][1],
-					],
-				];
-
-				var size_type mut num_edges_min= 0s, mut nun_edges_max= 0s;
-				for( auto mut e= 0s; e < 3s; ++e )
-				{
-					var [ f32, 2 ]& edge= edges[e];
-					var [ f32, 2 ]& vertex_projected= vertices_projected[e];
-
-					if( edge[1] == 0.0f )
-					{
-						continue;
-					}
-
-					var f32 edge_step= edge[0] / edge[1];
-					var f32 edge_x= vertex_projected[0] + ( min_y_center - vertex_projected[1] ) * edge_step;
-
-					if( edges[e][1] > 0.0f )
-					{
-						edges_max_x[ nun_edges_max ]= edge_x;
-						edges_max_step_x[ nun_edges_max ]= edge_step;
-						nun_edges_max ^= 1s;
-					}
-					else if( edges[e][1] < 0.0f )
-					{
-						edges_min_x[ num_edges_min ]= edge_x;
-						edges_min_step_x[ num_edges_min ]= edge_step;
-						num_edges_min ^= 1s;
-					}
-				}
-			}
-
-			for( auto mut y= min_y_i; y < max_y_i; ++y )
-			{
-				var f32 min_x=
-					ust::max( ust::max( cast_imut(edges_min_x)[0], cast_imut(edges_min_x)[1] ), 0.0f );
-				var f32 max_x=
-					ust::min( ust::min( cast_imut(edges_max_x)[0], cast_imut(edges_max_x)[1] ), surface_size_x );
-
-				var i32 min_x_i= i32( ust::round( min_x ) );
-				var i32 max_x_i= i32( ust::round( max_x ) );
-
-				if( min_x_i < max_x_i )
-				{
-					var [ f32, 4 ] mut pixel_color= zero_init;
-
-					// We perform rasterization for centers of pixels, so, add 0.5.
-					var f32 first_pixel_center_x= f32( min_x_i ) + 0.5f;
-					var f32 first_pixel_center_y= f32( y ) + 0.5f;
-
-					for( auto mut component= 0s; component < 4s; ++component )
-					{
-						var Vec3f& component_equation= color_equations[ component ];
-						pixel_color[component]=
-							component_equation.x * first_pixel_center_x +
-							component_equation.y * first_pixel_center_y +
-							component_equation.z;
-					}
-
-					var f32 mut pixel_depth=
-						depth_equation.x * first_pixel_center_x +
-						depth_equation.y * first_pixel_center_y +
-						depth_equation.z;
-
-					var size_type offset( u32(y) * surface.stride );
-
-					auto dst_colors= surface.pixels.subrange( offset + size_type( min_x_i ), offset + size_type( max_x_i ) );
-					auto dst_depth= depth_buffer.subrange( offset + size_type( min_x_i ), offset + size_type( max_x_i ) );
-
-					foreach( pair : dst_depth.iter().zip( dst_colors.iter() ) )
-					{
-						if( pixel_depth >= pair.first )
-						{
-							pair.first= pixel_depth;
-
-							var RGBAColor pixel_color_comonents
-							[
-								( ust::max( 0.0f, ust::min( pixel_color[0], 255.0f ) ) ),
-								( ust::max( 0.0f, ust::min( pixel_color[1], 255.0f ) ) ),
-								( ust::max( 0.0f, ust::min( pixel_color[2], 255.0f ) ) ),
-								( ust::max( 0.0f, ust::min( pixel_color[3], 255.0f ) ) ),
-							];
-
-							pair.second= Color32FromComponents( pixel_color_comonents );
-						}
-
-						for( auto mut component= 0s; component < 4s; ++component )
-						{
-							pixel_color[component]+= color_equations[ component ].x;
-						}
-
-						pixel_depth+= depth_equation.x;
-					}
-				}
-
-				edges_min_x[0]+= edges_min_step_x[0];
-				edges_min_x[1]+= edges_min_step_x[1];
-				edges_max_x[0]+= edges_max_step_x[0];
-				edges_max_x[1]+= edges_max_step_x[1];
-			}
+			RasterizeTrianlge( surface, depth_buffer, temp_vertices_, transformed_vertices_view, indices );
 		}
 	}
 
@@ -480,6 +242,257 @@ fn WorldDrawerSoft::SetMap( mut this, u32 map_index )
 			.zmap_lam_data= zmap_lam_data_ptr,
 			.zmap_lem_data= zmap_lem_data_ptr,
 		} );
+}
+
+fn RasterizeTrianlge(
+	Color32ImageView surface,
+	ust::array_view_mut</f32/> depth_buffer,
+	ust::array_view_imut</MapVertex/> vertices,
+	ust::array_view_imut</Vec3f/> vertex_positions,
+	[ u16, 3 ]& indices )
+{
+	// TODO - consider reading ranges for pixels/depth buffer into local variables. This may improve performance a bit.
+
+	var Vec3f& v0= vertex_positions[ size_type( indices[0] ) ];
+	var Vec3f& v1= vertex_positions[ size_type( indices[1] ) ];
+	var Vec3f& v2= vertex_positions[ size_type( indices[2] ) ];
+
+	// TODO - remove this check, perform proper Z near plane clipping prior to this.
+	if( v0.z <= c_z_near || v1.z <= c_z_near || v2.z <= c_z_near )
+	{
+		return;
+	}
+
+	// Work with floating-point coordinates, but quantize them,
+	// so that we don't work with infinite small delta values.
+	auto quantize= lambda( f32 x ) : f32
+	{
+		// TODO - tune this constant.
+		// Smaller values are generally better, but too small values can lead to artifacts with T-junctions.
+		var f32 constexpr c_quantization_scale= 64.0f;
+		return ust::floor( x * c_quantization_scale ) * ( 1.0f / c_quantization_scale );
+	};
+
+	var [ [ f32, 2 ], 3 ] vertices_projected
+	[
+		[ quantize( v0.x / v0.z ), quantize( v0.y / v0.z ) ],
+		[ quantize( v1.x / v1.z ), quantize( v1.y / v1.z ) ],
+		[ quantize( v2.x / v2.z ), quantize( v2.y / v2.z ) ],
+	];
+
+	// For now reject triangles out of the screen border.
+	// TODO - avoid doing this and use frustum planes clipping instead.
+	foreach( &v : vertices_projected )
+	{
+		if( !( v[0] >= 0.0f && v[1] >= 0.0f && v[0] < f32( surface.size[0] ) && v[1] < f32( surface.size[1] ) ) )
+		{
+			return;
+		}
+	}
+
+	// Calculate equations for vertex attributes interpolation.
+
+	var f32 det=
+		vertices_projected[0][0] * ( vertices_projected[1][1] - vertices_projected[2][1] ) -
+		vertices_projected[1][0] * ( vertices_projected[0][1] - vertices_projected[2][1] ) +
+		vertices_projected[2][0] * ( vertices_projected[0][1] - vertices_projected[1][1] );
+
+	if( det <= 0.0f ) // This check serves as back face culling.
+	{
+		return;
+	}
+
+	var f32 inv_det= 1.0f / det;
+
+	// This matrix is an inverse of projected vertices matrix:
+	//  [ x0, x1, x2 ],
+	//  [ y0, y1, y2 ],
+	//  [  1,  1,  1 ],
+	var Mat3f equations_matrix
+	{
+		.values
+		[
+			[
+				inv_det * ( vertices_projected[1][1] - vertices_projected[2][1] ),
+				inv_det * ( vertices_projected[2][0] - vertices_projected[1][0] ),
+				inv_det * ( vertices_projected[1][0] * vertices_projected[2][1] - vertices_projected[2][0] * vertices_projected[1][1] )
+			],
+			[
+				inv_det * ( vertices_projected[2][1] - vertices_projected[0][1] ),
+				inv_det * ( vertices_projected[0][0] - vertices_projected[2][0] ),
+				inv_det * ( vertices_projected[2][0] * vertices_projected[0][1] - vertices_projected[0][0] * vertices_projected[2][1] ),
+			],
+			[
+				inv_det * ( vertices_projected[0][1] - vertices_projected[1][1] ),
+				inv_det * ( vertices_projected[1][0] - vertices_projected[0][0] ),
+				inv_det * ( vertices_projected[0][0] * vertices_projected[1][1] - vertices_projected[1][0] * vertices_projected[0][1] ),
+			],
+		],
+	};
+
+	var [ Vec3f, 4 ] mut color_equations[ Vec3f::MakeZero() ... ];
+
+	{
+		var [ RGBAColor, 3 ] mut vertex_colors
+		[
+			vertices[ size_type( indices[0] ) ].light,
+			vertices[ size_type( indices[1] ) ].light,
+			vertices[ size_type( indices[2] ) ].light,
+		];
+
+		for( auto mut component= 0s; component < 4s; ++component )
+		{
+			var Vec3f vertex_color_components(
+				f32( vertex_colors[0][component] ),
+				f32( vertex_colors[1][component] ),
+				f32( vertex_colors[2][component] ) );
+			color_equations[ component ]= vertex_color_components * equations_matrix;
+		}
+	}
+
+	var Vec3f depth_equation= Vec3f( 1.0f / v0.z, 1.0f / v1.z, 1.0f / v2.z ) * equations_matrix;
+
+	// Perform triangle rasterization.
+
+	var f32 min_y=
+		ust::min( ust::min( vertices_projected[0][1], vertices_projected[1][1] ), vertices_projected[2][1] );
+	var f32 max_y=
+		ust::max( ust::max( vertices_projected[0][1], vertices_projected[1][1] ), vertices_projected[2][1] );
+
+	var i32 min_y_i= ust::max( 0, i32( ust::round( min_y ) ) );
+	var i32 max_y_i= ust::min( i32( ust::round( max_y ) ), i32( surface.size[1] ) );
+
+	if( min_y_i >= max_y_i )
+	{
+		return; // This triangle is too thin - it doesn't fill even a single line.
+	}
+
+	var f32 min_y_center= f32( min_y_i ) + 0.5f; // We perform rasterization for centers of pixels.
+
+	var f32 surface_size_x( surface.size[0] );
+
+	// A triangle has up to two edges on each side, but usually it's one and two.
+	// For simplicity assume that we always have two edges on both sides.
+	// This simplifies code a bit and allows avoiding extra branching.
+	var [ f32, 2 ] mut edges_min_x[ 0.0f ... ];
+	var [ f32, 2 ] mut edges_max_x[ surface_size_x ... ];
+	var [ f32, 2 ] mut edges_min_step_x[ 0.0f ... ];
+	var [ f32, 2 ] mut edges_max_step_x[ 0.0f ... ];
+
+	{
+		var [ [ f32, 2 ], 3 ] edges
+		[
+			[
+				vertices_projected[1][0] - vertices_projected[0][0],
+				vertices_projected[1][1] - vertices_projected[0][1],
+			],
+			[
+				vertices_projected[2][0] - vertices_projected[1][0],
+				vertices_projected[2][1] - vertices_projected[1][1],
+			],
+			[
+				vertices_projected[0][0] - vertices_projected[2][0],
+				vertices_projected[0][1] - vertices_projected[2][1],
+			],
+		];
+
+		var size_type mut num_edges_min= 0s, mut nun_edges_max= 0s;
+		for( auto mut e= 0s; e < 3s; ++e )
+		{
+			var [ f32, 2 ]& edge= edges[e];
+			var [ f32, 2 ]& vertex_projected= vertices_projected[e];
+
+			if( edge[1] == 0.0f )
+			{
+				continue;
+			}
+
+			var f32 edge_step= edge[0] / edge[1];
+			var f32 edge_x= vertex_projected[0] + ( min_y_center - vertex_projected[1] ) * edge_step;
+
+			if( edges[e][1] > 0.0f )
+			{
+				edges_max_x[ nun_edges_max ]= edge_x;
+				edges_max_step_x[ nun_edges_max ]= edge_step;
+				nun_edges_max ^= 1s;
+			}
+			else if( edges[e][1] < 0.0f )
+			{
+				edges_min_x[ num_edges_min ]= edge_x;
+				edges_min_step_x[ num_edges_min ]= edge_step;
+				num_edges_min ^= 1s;
+			}
+		}
+	}
+
+	for( auto mut y= min_y_i; y < max_y_i; ++y )
+	{
+		var f32 min_x=
+			ust::max( ust::max( cast_imut(edges_min_x)[0], cast_imut(edges_min_x)[1] ), 0.0f );
+		var f32 max_x=
+			ust::min( ust::min( cast_imut(edges_max_x)[0], cast_imut(edges_max_x)[1] ), surface_size_x );
+
+		var i32 min_x_i= i32( ust::round( min_x ) );
+		var i32 max_x_i= i32( ust::round( max_x ) );
+
+		if( min_x_i < max_x_i )
+		{
+			var [ f32, 4 ] mut pixel_color= zero_init;
+
+			// We perform rasterization for centers of pixels, so, add 0.5.
+			var f32 first_pixel_center_x= f32( min_x_i ) + 0.5f;
+			var f32 first_pixel_center_y= f32( y ) + 0.5f;
+
+			for( auto mut component= 0s; component < 4s; ++component )
+			{
+				var Vec3f& component_equation= color_equations[ component ];
+				pixel_color[component]=
+					component_equation.x * first_pixel_center_x +
+					component_equation.y * first_pixel_center_y +
+					component_equation.z;
+			}
+
+			var f32 mut pixel_depth=
+				depth_equation.x * first_pixel_center_x +
+				depth_equation.y * first_pixel_center_y +
+				depth_equation.z;
+
+			var size_type offset( u32(y) * surface.stride );
+
+			auto dst_colors= surface.pixels.subrange( offset + size_type( min_x_i ), offset + size_type( max_x_i ) );
+			auto dst_depth= depth_buffer.subrange( offset + size_type( min_x_i ), offset + size_type( max_x_i ) );
+
+			foreach( pair : dst_depth.iter().zip( dst_colors.iter() ) )
+			{
+				if( pixel_depth >= pair.first )
+				{
+					pair.first= pixel_depth;
+
+					var RGBAColor pixel_color_comonents
+					[
+						( ust::max( 0.0f, ust::min( pixel_color[0], 255.0f ) ) ),
+						( ust::max( 0.0f, ust::min( pixel_color[1], 255.0f ) ) ),
+						( ust::max( 0.0f, ust::min( pixel_color[2], 255.0f ) ) ),
+						( ust::max( 0.0f, ust::min( pixel_color[3], 255.0f ) ) ),
+					];
+
+					pair.second= Color32FromComponents( pixel_color_comonents );
+				}
+
+				for( auto mut component= 0s; component < 4s; ++component )
+				{
+					pixel_color[component]+= color_equations[ component ].x;
+				}
+
+				pixel_depth+= depth_equation.x;
+			}
+		}
+
+		edges_min_x[0]+= edges_min_step_x[0];
+		edges_min_x[1]+= edges_min_step_x[1];
+		edges_max_x[0]+= edges_max_step_x[0];
+		edges_max_x[1]+= edges_max_step_x[1];
+	}
 }
 
 } // namespace PM
