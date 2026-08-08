@@ -109,9 +109,18 @@ PanzerMortyr OpenGL rendering:
 PanzerMortyr software rendering:
 
 * Implement code taking screenshots (needed for savegames).
-* Draw map geometry.
+* Implement near Z plane culling for triangles.
+* Implement triangle culling by frustum side planes.
+* Implement drawing of triangles with textures.
+* Implement slicing of triangles by several planes parallel to near Z plane in order to approximate perspective correction.
+* Try speding-up rasterization code by using fixed-point arithmetic.
+* Try seeding-up rasterization code by using depth buffer in u32 or even u16 format.
+* Try speding-up rasterization by correcting color and depth equations, so that it's not need to clamp interpolated color and depth values.
+* Draw only room clusters and their subclusters visible for the given camera position (use MapVisibilityCalculator).
+* Perform frustum culling for subclusters of visible room clusters.
 * Draw dynamic clusters.
 * Draw highlighted clusters.
+* Draw map quads with caustics.
 * Draw map quads with animated textures properly.
 * Draw breakable map quads properly (don't draw broken ones).
 * Draw glass geometry.
