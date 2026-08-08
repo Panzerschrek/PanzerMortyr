@@ -160,7 +160,7 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 		{
 			var [ u16, 3 ] indices[ temp_indices_[ t + 0s ], temp_indices_[ t + 1s ], temp_indices_[ t + 2s ] ];
 
-			var Color32WorldTexture& texture= map_data.textures[
+			var Color32WorldTextureWithMips& texture= map_data.textures[
 				size_type( temp_vertices_[ size_type( indices[0] ) ].tex_coordinates[2] ) ];
 
 			// TODO - clip triangle by frustum planes here, possible producing more than one result triangle.
@@ -266,7 +266,7 @@ fn RasterizeTrianlge(
 	ust::array_view_imut</MapVertex/> vertices,
 	ust::array_view_imut</Vec3f/> vertex_positions,
 	[ u16, 3 ]& indices,
-	Color32WorldTexture& texture )
+	Color32WorldTextureWithMips& texture )
 {
 	// TODO - consider reading ranges for pixels/depth buffer into local variables. This may improve performance a bit.
 
@@ -377,8 +377,8 @@ fn RasterizeTrianlge(
 
 	var [ i32, 2 ] constexpr texture_size
 	[
-		( typeinfo</ typeof(texture) />.element_type.element_count ),
-		( typeinfo</ typeof(texture) />.element_count ),
+		( typeinfo</ typeof(texture[0]) />.element_type.element_count ),
+		( typeinfo</ typeof(texture[0]) />.element_count ),
 	];
 
 	var [ Vec3f, 2 ] tex_coord_equations
@@ -519,7 +519,7 @@ fn RasterizeTrianlge(
 
 					var u32 u( i32( ust::floor( pixel_tex_coord[0] ) ) & ( texture_size[0] - 1 ) );
 					var u32 v( i32( ust::floor( pixel_tex_coord[1] ) ) & ( texture_size[1] - 1 ) );
-					var RGBAColor texture_value= Color32ToComponents( texture[v][u] );
+					var RGBAColor texture_value= Color32ToComponents( texture[0][v][u] );
 
 					var RGBAColor pixel_color_comonents
 					[
@@ -554,12 +554,13 @@ fn RasterizeTrianlge(
 fn LoadMapTextures(
 	MaterialsDescription::Block& materials_block,
 	GameFilesystemPtr& game_filesystem_ptr,
-	ConsoleOutPtr& console_out ) : ust::vector</ Color32WorldTexture />
+	ConsoleOutPtr& console_out ) : ust::vector</ Color32WorldTextureWithMips />
 {
-	static_assert( typeinfo</ Color32WorldTexture />.element_count == size_type( MaterialsDescription::c_texture_size ) );
-	static_assert( typeinfo</ Color32WorldTexture />.element_type.element_count == size_type( MaterialsDescription::c_texture_size ) );
+	auto& Mip0Typeinfo= typeinfo</ Color32WorldTextureWithMips />.elements_list[0].type;
+	static_assert( Mip0Typeinfo.element_count == size_type( MaterialsDescription::c_texture_size ) );
+	static_assert( Mip0Typeinfo.element_type.element_count == size_type( MaterialsDescription::c_texture_size ) );
 
-	var ust::vector</ Color32WorldTexture /> mut result_textures;
+	var ust::vector</ Color32WorldTextureWithMips /> mut result_textures;
 
 	var size_type num_extra_textures= 2s;
 	var size_type num_subtile_layers= 8s;
@@ -570,7 +571,7 @@ fn LoadMapTextures(
 		size_type( MaterialsDescription::c_texture_file_num_tiles_x * MaterialsDescription::c_texture_file_num_tiles_y );
 
 	// It's suboptimal to zero all texture data before rewriting it, but hopefully it's not so coslty (it's just a memset).
-	result_textures.resize( num_layers, ust::make_zeroed</ Color32WorldTexture />() );
+	result_textures.resize( num_layers, ust::make_zeroed</ Color32WorldTextureWithMips />() );
 
 	auto mut lock= game_filesystem_ptr.lock_mut();
 	var GameFilesystem &mut game_filesystem= lock.deref();
@@ -601,7 +602,7 @@ fn LoadMapTextures(
 							tile_y * MaterialsDescription::c_texture_file_num_tiles_x +
 							tile_x;
 
-						var Color32WorldTexture &mut dst_texture= result_textures[ size_type( dst_layer ) ];
+						var Color32WorldTextureWithMips &mut dst_texture= result_textures[ size_type( dst_layer ) ];
 
 						for( auto mut y= 0u; y < MaterialsDescription::c_texture_size; ++y )
 						{
@@ -610,13 +611,15 @@ fn LoadMapTextures(
 							auto src_line= image_data.pixels.range().subrange_start(
 								size_type( src_offset_x + ( src_offset_y + MaterialsDescription::c_texture_size - 1u - y ) * image_data.size[0] ) );
 
-							var ust::array_view_mut</Color32/> dst_line( dst_texture[y] );
+							var ust::array_view_mut</Color32/> dst_line( dst_texture[0][y] );
 
 							foreach( pair : dst_line.iter().zip( src_line.iter() ) )
 							{
 								pair.first= Color32FromComponents( pair.second );
 							}
 						}
+
+						// TODO - generate mips here.
 					}
 				}
 			},
