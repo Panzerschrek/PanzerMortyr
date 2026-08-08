@@ -257,7 +257,7 @@ fn RasterizeTrianlge(
 	var Vec3f& v1= vertex_positions[ size_type( indices[1] ) ];
 	var Vec3f& v2= vertex_positions[ size_type( indices[2] ) ];
 
-	// TODO - remove this check, perform proper Z near plane clipping prior to this.
+	// TODO - remove this check, perform proper Z near plane clipping prior to rasterization.
 	if( v0.z <= c_z_near || v1.z <= c_z_near || v2.z <= c_z_near )
 	{
 		return;
@@ -280,7 +280,7 @@ fn RasterizeTrianlge(
 		[ quantize( v2.x / v2.z ), quantize( v2.y / v2.z ) ],
 	];
 
-	// For now reject triangles out of the screen border.
+	// For now reject triangles lying at least partially outside screen.
 	// TODO - avoid doing this and use frustum planes clipping instead.
 	foreach( &v : vertices_projected )
 	{
@@ -330,6 +330,7 @@ fn RasterizeTrianlge(
 		],
 	};
 
+	// TODO - don't care about alpha if don't need to do so.
 	var [ Vec3f, 4 ] mut color_equations[ Vec3f::MakeZero() ... ];
 
 	{
@@ -367,8 +368,6 @@ fn RasterizeTrianlge(
 		return; // This triangle is too thin - it doesn't fill even a single line.
 	}
 
-	var f32 min_y_center= f32( min_y_i ) + 0.5f; // We perform rasterization for centers of pixels.
-
 	var f32 surface_size_x( surface.size[0] );
 
 	// A triangle has up to two edges on each side, but usually it's one and two.
@@ -396,7 +395,10 @@ fn RasterizeTrianlge(
 			],
 		];
 
+		var f32 min_y_center= f32( min_y_i ) + 0.5f; // We perform rasterization for centers of pixels.
+
 		var size_type mut num_edges_min= 0s, mut nun_edges_max= 0s;
+
 		for( auto mut e= 0s; e < 3s; ++e )
 		{
 			var [ f32, 2 ]& edge= edges[e];
@@ -404,19 +406,19 @@ fn RasterizeTrianlge(
 
 			if( edge[1] == 0.0f )
 			{
-				continue;
+				continue; // This edge is parallel to X axis and thus can be ignored.
 			}
 
 			var f32 edge_step= edge[0] / edge[1];
 			var f32 edge_x= vertex_projected[0] + ( min_y_center - vertex_projected[1] ) * edge_step;
 
-			if( edges[e][1] > 0.0f )
+			if( edge[1] > 0.0f )
 			{
 				edges_max_x[ nun_edges_max ]= edge_x;
 				edges_max_step_x[ nun_edges_max ]= edge_step;
 				nun_edges_max ^= 1s;
 			}
-			else if( edges[e][1] < 0.0f )
+			else // if( edge[1] < 0.0f )
 			{
 				edges_min_x[ num_edges_min ]= edge_x;
 				edges_min_step_x[ num_edges_min ]= edge_step;
@@ -437,30 +439,31 @@ fn RasterizeTrianlge(
 
 		if( min_x_i < max_x_i )
 		{
+			// We perform rasterization for centers of pixels, so, add 0.5.
+			var [ f32, 2 ] first_pixel_center[ f32( min_x_i ) + 0.5f, f32( y ) + 0.5f ];
+
 			var [ f32, 4 ] mut pixel_color= zero_init;
 
-			// We perform rasterization for centers of pixels, so, add 0.5.
-			var f32 first_pixel_center_x= f32( min_x_i ) + 0.5f;
-			var f32 first_pixel_center_y= f32( y ) + 0.5f;
-
-			for( auto mut component= 0s; component < 4s; ++component )
+			for( auto mut component= 0s; component < 4s; ++component ) // TODO - consider not caring about alpha.
 			{
 				var Vec3f& component_equation= color_equations[ component ];
-				pixel_color[component]=
-					component_equation.x * first_pixel_center_x +
-					component_equation.y * first_pixel_center_y +
+				pixel_color[ component ]=
+					component_equation.x * first_pixel_center[0] +
+					component_equation.y * first_pixel_center[1] +
 					component_equation.z;
 			}
 
 			var f32 mut pixel_depth=
-				depth_equation.x * first_pixel_center_x +
-				depth_equation.y * first_pixel_center_y +
+				depth_equation.x * first_pixel_center[0] +
+				depth_equation.y * first_pixel_center[1] +
 				depth_equation.z;
 
 			var size_type offset( u32(y) * surface.stride );
+			var size_type offset_start= offset + size_type( min_x_i );
+			var size_type offset_end= offset + size_type( max_x_i );
 
-			auto dst_colors= surface.pixels.subrange( offset + size_type( min_x_i ), offset + size_type( max_x_i ) );
-			auto dst_depth= depth_buffer.subrange( offset + size_type( min_x_i ), offset + size_type( max_x_i ) );
+			auto dst_colors= surface.pixels.subrange( offset_start, offset_end );
+			auto dst_depth= depth_buffer.subrange( offset_start, offset_end );
 
 			foreach( pair : dst_depth.iter().zip( dst_colors.iter() ) )
 			{
@@ -473,7 +476,7 @@ fn RasterizeTrianlge(
 						( ust::max( 0.0f, ust::min( pixel_color[0], 255.0f ) ) ),
 						( ust::max( 0.0f, ust::min( pixel_color[1], 255.0f ) ) ),
 						( ust::max( 0.0f, ust::min( pixel_color[2], 255.0f ) ) ),
-						( ust::max( 0.0f, ust::min( pixel_color[3], 255.0f ) ) ),
+						( ust::max( 0.0f, ust::min( pixel_color[3], 255.0f ) ) ), // TODO - consider not caring about alpha.
 					];
 
 					pair.second= Color32FromComponents( pixel_color_comonents );
@@ -481,7 +484,7 @@ fn RasterizeTrianlge(
 
 				for( auto mut component= 0s; component < 4s; ++component )
 				{
-					pixel_color[component]+= color_equations[ component ].x;
+					pixel_color[ component ]+= color_equations[ component ].x;
 				}
 
 				pixel_depth+= depth_equation.x;
