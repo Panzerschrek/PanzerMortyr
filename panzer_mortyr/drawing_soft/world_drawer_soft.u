@@ -116,6 +116,12 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 			q < size_type( cluster.c.first_quad_index ) + size_type( cluster.num_quads );
 			++q )
 		{
+			var ZmapQuad& quad= quads[q];
+			if( size_type( quad.texture_id ) >= map_data.textures.size() )
+			{
+				continue;
+			}
+
 			if( q < zmap_lam_data.tessellated_quads.size() && zmap_lam_data.tessellated_quads[q].vertex_count > 0u )
 			{
 				var size_type base_vertex_index= temp_vertices_.size();
@@ -124,7 +130,7 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 					zmap_lam_data,
 					cluster,
 					q,
-					0.0f, // TODO - provide texture id.
+					f32( quad.texture_id ),
 					base_vertex_index,
 					temp_vertices_,
 					temp_indices_ );
@@ -154,9 +160,12 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 		{
 			var [ u16, 3 ] indices[ temp_indices_[ t + 0s ], temp_indices_[ t + 1s ], temp_indices_[ t + 2s ] ];
 
+			var Color32WorldTexture& texture= map_data.textures[
+				size_type( temp_vertices_[ size_type( indices[0] ) ].tex_coordinates[2] ) ];
+
 			// TODO - clip triangle by frustum planes here, possible producing more than one result triangle.
 
-			RasterizeTrianlge( surface, depth_buffer, temp_vertices_, transformed_vertices_view, indices );
+			RasterizeTrianlge( surface, depth_buffer, temp_vertices_, transformed_vertices_view, indices, texture );
 		}
 	}
 
@@ -256,7 +265,8 @@ fn RasterizeTrianlge(
 	ust::array_view_mut</f32/> depth_buffer,
 	ust::array_view_imut</MapVertex/> vertices,
 	ust::array_view_imut</Vec3f/> vertex_positions,
-	[ u16, 3 ]& indices )
+	[ u16, 3 ]& indices,
+	Color32WorldTexture& texture )
 {
 	// TODO - consider reading ranges for pixels/depth buffer into local variables. This may improve performance a bit.
 
@@ -357,6 +367,19 @@ fn RasterizeTrianlge(
 			color_equations[ component ]= vertex_color_components * equations_matrix;
 		}
 	}
+
+	var [ [ f32, 3 ], 3 ] mut tex_coords
+	[
+		vertices[ size_type( indices[0] ) ].tex_coordinates,
+		vertices[ size_type( indices[1] ) ].tex_coordinates,
+		vertices[ size_type( indices[2] ) ].tex_coordinates,
+	];
+
+	var [ Vec3f, 2 ] tex_coord_equations
+	[
+		Vec3f( tex_coords[0][0], tex_coords[1][0], tex_coords[2][0] ) * equations_matrix,
+		Vec3f( tex_coords[0][1], tex_coords[1][1], tex_coords[2][1] ) * equations_matrix,
+	];
 
 	var Vec3f depth_equation= Vec3f( 1.0f / v0.z, 1.0f / v1.z, 1.0f / v2.z ) * equations_matrix;
 
@@ -460,6 +483,16 @@ fn RasterizeTrianlge(
 					component_equation.z;
 			}
 
+			var [ f32, 2 ] mut pixel_tex_coord
+			[
+				tex_coord_equations[0].x * first_pixel_center[0] +
+					tex_coord_equations[0].y * first_pixel_center[1] +
+					tex_coord_equations[0].z,
+				tex_coord_equations[1].x * first_pixel_center[0] +
+					tex_coord_equations[1].y * first_pixel_center[1] +
+					tex_coord_equations[1].z,
+			];
+
 			var f32 mut pixel_depth=
 				depth_equation.x * first_pixel_center[0] +
 				depth_equation.y * first_pixel_center[1] +
@@ -487,12 +520,19 @@ fn RasterizeTrianlge(
 					];
 
 					pair.second= Color32FromComponents( pixel_color_comonents );
+
+					var u32 u( i32( ust::floor( pixel_tex_coord[0] * 128.0f ) ) & 127 );
+					var u32 v( i32( ust::floor( pixel_tex_coord[1] * 128.0f ) ) & 127 );
+					pair.second= texture[v][u];
 				}
 
 				for( auto mut component= 0s; component < 4s; ++component )
 				{
 					pixel_color[ component ]+= color_equations[ component ].x;
 				}
+
+				pixel_tex_coord[0]+= tex_coord_equations[0].x;
+				pixel_tex_coord[1]+= tex_coord_equations[1].x;
 
 				pixel_depth+= depth_equation.x;
 			}
