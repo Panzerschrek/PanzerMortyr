@@ -1,31 +1,501 @@
+import "/string_conversions.iu"
+import "../camera_utils.iu"
+import "../map_quad_utils.iu"
 import "world_drawer_soft.iu"
 
 namespace PM
 {
 
-fn WorldDrawerSoft::constructor( ust::shared_ptr_mut</WindowSoft/> mut window )
-	( window_= move(window) )
+fn WorldDrawerSoft::constructor(
+	ust::shared_ptr_mut</WindowSoft/> mut window,
+	SettingsImutPtr mut settings,
+	CachingGameResourcesLoaderPtr mut caching_game_resources_loader,
+	ConsoleOutPtr mut console_out )
+	(
+		window_= move(window),
+		settings_= move(settings),
+		game_params_=
+			lambda[&]() : GameResourcePtr</GameParams/>
+			{
+				auto mut lock= caching_game_resources_loader.lock_mut();
+				return lock.deref().LoadGameParams();
+			}(),
+		maps_description_=
+			lambda[&]() : GameResourcePtr</MapsDescription/>
+			{
+				auto mut lock= caching_game_resources_loader.lock_mut();
+				return lock.deref().LoadMapsDescription();
+			}(),
+		materials_description_=
+			lambda[&]() : GameResourcePtr</MaterialsDescription/>
+			{
+				auto mut lock= caching_game_resources_loader.lock_mut();
+				return lock.deref().LoadMaterialsDescription();
+			}(),
+		caching_game_resources_loader_ptr_= move(caching_game_resources_loader),
+		console_out_= move(console_out),
+		map_index_= 0u,
+	)
 {
 }
 
 fn WorldDrawerSoft::Draw(
 	mut this, WorldDrawingInfo& drawing_info, WorldDrawingViewportInfo& viewport_info ) : WorldDrawingStats
 {
+	// Ensure we have actual map data.
+	SetMap( drawing_info.map_index );
+
+	auto mut window_lock= window_.lock_mut();
+	var Color32ImageView surface= window_lock.deref().GetSurface();
+
 	// For now just fill the screen with some color.
-	with( mut lock : window_.lock_mut() )
+	// TODO - remove it after proper sky drawing is implemented.
+	foreach( &mut pixel : surface.pixels )
 	{
-		foreach( &mut pixel : lock.deref().GetSurface().pixels )
+		pixel= Color32FromComponents( ust::make_array( 32u8, 16u8, 8u8, 255u8 ) );
+	}
+
+	var WorldDrawingStats stats= zero_init;
+
+	if( map_data_.empty() )
+	{
+		return stats;
+	}
+
+	// Prepare and clear depth buffer.
+	depth_buffer_.clear();
+	depth_buffer_.resize( size_type( surface.size[1] * surface.stride ), 0.0f );
+	var ust::array_view_mut</f32/> depth_buffer= depth_buffer_;
+
+	var MapDrawDataSoft& map_data= map_data_.try_deref();
+
+	var Mat4f rotation_matrix=
+		CalculateCameraRotationMatrix( drawing_info.camera_params.azimuth, drawing_info.camera_params.elevation );
+
+	var Mat4f camera_projection_matrix=
+		Mat4f::MakePerspective( viewport_info.view_aspect, drawing_info.camera_params.fov_x, c_z_near, c_z_far );
+
+	var Mat4f rotation_and_projection_matrix= rotation_matrix * camera_projection_matrix;
+
+	var Mat4f translation_matrix= Mat4f::MakeTranslation( -drawing_info.camera_params.position );
+
+	// Maps normalized -1 to 1 coordinates to 0 to size coordinates and flips vertically.
+	var Mat4f viewport_transformation_matrix
+	{
+		.values
+		[
+			[ 0.5f * f32( surface.size[0] ),                           0.0f, 0.0f, 0.0f ],
+			[                          0.0f, -0.5f * f32( surface.size[1] ), 0.0f, 0.0f ],
+			[ 0.5f * f32( surface.size[0] ),  0.5f * f32( surface.size[1] ), 1.0f, 0.0f ],
+			[                          0.0f,                           0.0f, 0.0f, 1.0f ],
+		],
+	};
+
+	var Mat4f view_matrix= translation_matrix * rotation_and_projection_matrix * viewport_transformation_matrix;
+
+	var Mat4f view_matrix_transposed= view_matrix.Transpose();
+
+	auto quads= map_data.zmap_data.deref().quads.range();
+	auto clusters= map_data.zvox_data.deref().clusters.range();
+
+	var ZmapLamData& zmap_lam_data= map_data.zmap_lam_data.deref();
+
+	foreach( &cluster : clusters )
+	{
+		temp_vertices_.clear();
+		temp_indices_.clear();
+
+		// Get geometry for this cluster.
+
+		for( auto mut q= size_type( cluster.c.first_quad_index );
+			q < size_type( cluster.c.first_quad_index ) + size_type( cluster.num_quads );
+			++q )
 		{
-			pixel= Color32FromComponents( ust::make_array( 32u8, 16u8, 8u8, 255u8 ) );
+			if( q < zmap_lam_data.tessellated_quads.size() && zmap_lam_data.tessellated_quads[q].vertex_count > 0u )
+			{
+				var size_type base_vertex_index= temp_vertices_.size();
+
+				CreateTessellatedQuadGeometry(
+					zmap_lam_data,
+					cluster,
+					q,
+					0.0f, // TODO - provide texture id.
+					base_vertex_index,
+					temp_vertices_,
+					temp_indices_ );
+			}
+		}
+
+		// Transform vertices.
+		// Do this in separate loop to be order to read transformed vertices for more than one triangle.
+
+		if( transformed_vertices_.size() < temp_vertices_.size() )
+		{
+			// Resize only down.
+			transformed_vertices_.resize( temp_vertices_.size(), Vec3f::MakeZero() );
+		}
+
+		auto transformed_vertices_view= transformed_vertices_.range().subrange_end( temp_indices_.size() );
+
+		foreach( pair : transformed_vertices_view.iter().zip( temp_vertices_.iter() ) )
+		{
+			// Perform transposed matrix by vector multiplication.
+			// Hope that it's faster.
+			// TODO - test that it really gives performance benefits.
+			pair.first= view_matrix_transposed * Vec3f( pair.second.position );
+		}
+
+		for( auto mut t= 0s; t + 3s <= temp_indices_.size(); t+= 3s )
+		{
+			var [ u16, 3 ] indices[ temp_indices_[ t + 0s ], temp_indices_[ t + 1s ], temp_indices_[ t + 2s ] ];
+
+			// TODO - clip triangle by frustum planes here, possible producing more than one result triangle.
+
+			RasterizeTrianlge( surface, depth_buffer, temp_vertices_, transformed_vertices_view, indices );
 		}
 	}
 
-	// TODO
-	ust::ignore_unused( drawing_info );
-	ust::ignore_unused( viewport_info );
-
-	var WorldDrawingStats stats= zero_init;
 	return stats;
+}
+
+fn WorldDrawerSoft::SetMap( mut this, u32 map_index )
+{
+	// Check if we need to reload map first.
+	if( map_index == map_index_ )
+	{
+		return;
+	}
+	// Need to load map data.
+
+	// Set map index in any case - it may be necessary in order to avoid reloading map data constantly if failed to load it once.
+	map_index_= map_index;
+
+	// Reset previous map data first - to free used memory before allocating new memory for new map.
+	map_data_.reset();
+
+	if( map_index == 0u )
+	{
+		ConsoleOutAddTextLine( console_out_, "Can't load map 0!" );
+		return;
+	}
+
+	auto mut lock= caching_game_resources_loader_ptr_.lock_mut();
+	var CachingGameResourcesLoader &mut caching_game_resources_loader= lock.deref();
+
+	var MapsDescription& maps_description= maps_description_.deref();
+
+	if( size_type( map_index ) >= maps_description.maps.size() )
+	{
+		ConsoleOutAddTextLine( console_out_, ust::concat( "Map with index ", ust::to_string8( map_index ), " not found!" ) );
+		return;
+	}
+
+	var MapsDescription::MapDescription& map_description= maps_description.maps[ size_type( map_index ) ];
+
+	var MaterialsDescription::Block& materials_block= materials_description_.deref().blocks[ map_description.materials_block ]; // Halts if not found.
+
+	var GameResourcePtr</MaterialsProperties/> materials_properties_ptr= caching_game_resources_loader.LoadMaterialsProperties();
+
+	var GameResourceNullablePtr</ZmapData/> zmap_data_nullable_ptr= caching_game_resources_loader.LoadZmapFile( map_index );
+	var GameResourceNullablePtr</ZvoxData/> zvox_data_nullable_ptr= caching_game_resources_loader.LoadZvoxFile( map_index );
+	var GameResourceNullablePtr</ZmapLamData/> zmap_lam_data_nullable_ptr= caching_game_resources_loader.LoadZmapLamFile( map_index );
+	var GameResourceNullablePtr</ZmapLemData/> mut zmap_lem_data_nullable_ptr= caching_game_resources_loader.LoadZmapLemFile( map_index );
+	var GameResourceNullablePtr</RoomClustersHierarchy/> room_clusters_hierarchy_nullable_ptr= caching_game_resources_loader.LoadRoomClustersHierarchy( map_index );
+	var GameResourceNullablePtr</QuadsHierarchy/> quads_hierarchy_nullable_ptr= caching_game_resources_loader.LoadQuadsHierarchy( map_index );
+
+	if( zmap_lem_data_nullable_ptr.empty() && ! zvox_data_nullable_ptr.empty() )
+	{
+		// HACK! In beta version ZMAP.LEM files are missing, create a stub.
+		zmap_lem_data_nullable_ptr.reset(
+			ZmapLemData
+			{
+				.clusters_sky_light_data(
+					zvox_data_nullable_ptr.try_deref().clusters.size(),
+					ust::make_zeroed</ZmapLemClusterSkyLightData/> () ),
+			} );
+	}
+
+	if( zmap_data_nullable_ptr.empty() ||
+		zvox_data_nullable_ptr.empty() ||
+		zmap_lam_data_nullable_ptr.empty() ||
+		zmap_lem_data_nullable_ptr.empty() ||
+		room_clusters_hierarchy_nullable_ptr.empty() ||
+		quads_hierarchy_nullable_ptr.empty() )
+	{
+		return;
+	}
+
+	var GameResourcePtr</ZmapData/> zmap_data_ptr= zmap_data_nullable_ptr.try_to_non_nullable();
+	var GameResourcePtr</ZvoxData/> zvox_data_ptr= zvox_data_nullable_ptr.try_to_non_nullable();
+	var GameResourcePtr</ZmapLamData/> zmap_lam_data_ptr= zmap_lam_data_nullable_ptr.try_to_non_nullable();
+	var GameResourcePtr</ZmapLemData/> zmap_lem_data_ptr= zmap_lem_data_nullable_ptr.try_to_non_nullable();
+	var GameResourcePtr</RoomClustersHierarchy/> room_clusters_hierarchy_ptr= room_clusters_hierarchy_nullable_ptr.try_to_non_nullable();
+	var GameResourcePtr</QuadsHierarchy/> quads_hierarchy_ptr= quads_hierarchy_nullable_ptr.try_to_non_nullable();
+
+	ust::ignore_unused( materials_block ); // TODO - use it.
+
+	map_data_.reset(
+		MapDrawDataSoft
+		{
+			.zmap_data= zmap_data_ptr,
+			.zvox_data= zvox_data_ptr,
+			.zmap_lam_data= zmap_lam_data_ptr,
+			.zmap_lem_data= zmap_lem_data_ptr,
+		} );
+}
+
+fn RasterizeTrianlge(
+	Color32ImageView surface,
+	ust::array_view_mut</f32/> depth_buffer,
+	ust::array_view_imut</MapVertex/> vertices,
+	ust::array_view_imut</Vec3f/> vertex_positions,
+	[ u16, 3 ]& indices )
+{
+	// TODO - consider reading ranges for pixels/depth buffer into local variables. This may improve performance a bit.
+
+	var Vec3f& v0= vertex_positions[ size_type( indices[0] ) ];
+	var Vec3f& v1= vertex_positions[ size_type( indices[1] ) ];
+	var Vec3f& v2= vertex_positions[ size_type( indices[2] ) ];
+
+	// TODO - remove this check, perform proper Z near plane clipping prior to rasterization.
+	if( v0.z <= c_z_near || v1.z <= c_z_near || v2.z <= c_z_near )
+	{
+		return;
+	}
+
+	// Work with floating-point coordinates, but quantize them,
+	// so that we don't work with infinite small delta values.
+	auto quantize= lambda( f32 x ) : f32
+	{
+		// TODO - tune this constant.
+		// Smaller values are generally better, but too small values can lead to artifacts with T-junctions.
+		var f32 constexpr c_quantization_scale= 64.0f;
+		return ust::floor( x * c_quantization_scale ) * ( 1.0f / c_quantization_scale );
+	};
+
+	var [ [ f32, 2 ], 3 ] vertices_projected
+	[
+		[ quantize( v0.x / v0.z ), quantize( v0.y / v0.z ) ],
+		[ quantize( v1.x / v1.z ), quantize( v1.y / v1.z ) ],
+		[ quantize( v2.x / v2.z ), quantize( v2.y / v2.z ) ],
+	];
+
+	// For now reject triangles lying at least partially outside screen.
+	// TODO - avoid doing this and use frustum planes clipping instead.
+	foreach( &v : vertices_projected )
+	{
+		if( !( v[0] >= 0.0f && v[1] >= 0.0f && v[0] < f32( surface.size[0] ) && v[1] < f32( surface.size[1] ) ) )
+		{
+			return;
+		}
+	}
+
+	// Calculate equations for vertex attributes interpolation.
+
+	var f32 det=
+		vertices_projected[0][0] * ( vertices_projected[1][1] - vertices_projected[2][1] ) -
+		vertices_projected[1][0] * ( vertices_projected[0][1] - vertices_projected[2][1] ) +
+		vertices_projected[2][0] * ( vertices_projected[0][1] - vertices_projected[1][1] );
+
+	if( det <= 0.0f ) // This check serves as back face culling.
+	{
+		return;
+	}
+
+	var f32 inv_det= 1.0f / det;
+
+	// This matrix is an inverse of projected vertices matrix:
+	//  [ x0, x1, x2 ],
+	//  [ y0, y1, y2 ],
+	//  [  1,  1,  1 ],
+	var Mat3f equations_matrix
+	{
+		.values
+		[
+			[
+				inv_det * ( vertices_projected[1][1] - vertices_projected[2][1] ),
+				inv_det * ( vertices_projected[2][0] - vertices_projected[1][0] ),
+				inv_det * ( vertices_projected[1][0] * vertices_projected[2][1] - vertices_projected[2][0] * vertices_projected[1][1] )
+			],
+			[
+				inv_det * ( vertices_projected[2][1] - vertices_projected[0][1] ),
+				inv_det * ( vertices_projected[0][0] - vertices_projected[2][0] ),
+				inv_det * ( vertices_projected[2][0] * vertices_projected[0][1] - vertices_projected[0][0] * vertices_projected[2][1] ),
+			],
+			[
+				inv_det * ( vertices_projected[0][1] - vertices_projected[1][1] ),
+				inv_det * ( vertices_projected[1][0] - vertices_projected[0][0] ),
+				inv_det * ( vertices_projected[0][0] * vertices_projected[1][1] - vertices_projected[1][0] * vertices_projected[0][1] ),
+			],
+		],
+	};
+
+	// TODO - don't care about alpha if don't need to do so.
+	var [ Vec3f, 4 ] mut color_equations[ Vec3f::MakeZero() ... ];
+
+	{
+		var [ RGBAColor, 3 ] mut vertex_colors
+		[
+			vertices[ size_type( indices[0] ) ].light,
+			vertices[ size_type( indices[1] ) ].light,
+			vertices[ size_type( indices[2] ) ].light,
+		];
+
+		for( auto mut component= 0s; component < 4s; ++component )
+		{
+			var Vec3f vertex_color_components(
+				f32( vertex_colors[0][component] ),
+				f32( vertex_colors[1][component] ),
+				f32( vertex_colors[2][component] ) );
+			color_equations[ component ]= vertex_color_components * equations_matrix;
+		}
+	}
+
+	var Vec3f depth_equation= Vec3f( 1.0f / v0.z, 1.0f / v1.z, 1.0f / v2.z ) * equations_matrix;
+
+	// Perform triangle rasterization.
+
+	var f32 min_y=
+		ust::min( ust::min( vertices_projected[0][1], vertices_projected[1][1] ), vertices_projected[2][1] );
+	var f32 max_y=
+		ust::max( ust::max( vertices_projected[0][1], vertices_projected[1][1] ), vertices_projected[2][1] );
+
+	var i32 min_y_i= ust::max( 0, i32( ust::round( min_y ) ) );
+	var i32 max_y_i= ust::min( i32( ust::round( max_y ) ), i32( surface.size[1] ) );
+
+	if( min_y_i >= max_y_i )
+	{
+		return; // This triangle is too thin - it doesn't fill even a single line.
+	}
+
+	var f32 surface_size_x( surface.size[0] );
+
+	// A triangle has up to two edges on each side, but usually it's one and two.
+	// For simplicity assume that we always have two edges on both sides.
+	// This simplifies code a bit and allows avoiding extra branching.
+	var [ f32, 2 ] mut edges_min_x[ 0.0f ... ];
+	var [ f32, 2 ] mut edges_max_x[ surface_size_x ... ];
+	var [ f32, 2 ] mut edges_min_step_x[ 0.0f ... ];
+	var [ f32, 2 ] mut edges_max_step_x[ 0.0f ... ];
+
+	{
+		var [ [ f32, 2 ], 3 ] edges
+		[
+			[
+				vertices_projected[1][0] - vertices_projected[0][0],
+				vertices_projected[1][1] - vertices_projected[0][1],
+			],
+			[
+				vertices_projected[2][0] - vertices_projected[1][0],
+				vertices_projected[2][1] - vertices_projected[1][1],
+			],
+			[
+				vertices_projected[0][0] - vertices_projected[2][0],
+				vertices_projected[0][1] - vertices_projected[2][1],
+			],
+		];
+
+		var f32 min_y_center= f32( min_y_i ) + 0.5f; // We perform rasterization for centers of pixels.
+
+		var size_type mut num_edges_min= 0s, mut nun_edges_max= 0s;
+
+		for( auto mut e= 0s; e < 3s; ++e )
+		{
+			var [ f32, 2 ]& edge= edges[e];
+			var [ f32, 2 ]& vertex_projected= vertices_projected[e];
+
+			if( edge[1] == 0.0f )
+			{
+				continue; // This edge is parallel to X axis and thus can be ignored.
+			}
+
+			var f32 edge_step= edge[0] / edge[1];
+			var f32 edge_x= vertex_projected[0] + ( min_y_center - vertex_projected[1] ) * edge_step;
+
+			if( edge[1] > 0.0f )
+			{
+				edges_max_x[ nun_edges_max ]= edge_x;
+				edges_max_step_x[ nun_edges_max ]= edge_step;
+				nun_edges_max ^= 1s;
+			}
+			else // if( edge[1] < 0.0f )
+			{
+				edges_min_x[ num_edges_min ]= edge_x;
+				edges_min_step_x[ num_edges_min ]= edge_step;
+				num_edges_min ^= 1s;
+			}
+		}
+	}
+
+	for( auto mut y= min_y_i; y < max_y_i; ++y )
+	{
+		var f32 min_x=
+			ust::max( ust::max( cast_imut(edges_min_x)[0], cast_imut(edges_min_x)[1] ), 0.0f );
+		var f32 max_x=
+			ust::min( ust::min( cast_imut(edges_max_x)[0], cast_imut(edges_max_x)[1] ), surface_size_x );
+
+		var i32 min_x_i= i32( ust::round( min_x ) );
+		var i32 max_x_i= i32( ust::round( max_x ) );
+
+		if( min_x_i < max_x_i )
+		{
+			// We perform rasterization for centers of pixels, so, add 0.5.
+			var [ f32, 2 ] first_pixel_center[ f32( min_x_i ) + 0.5f, f32( y ) + 0.5f ];
+
+			var [ f32, 4 ] mut pixel_color= zero_init;
+
+			for( auto mut component= 0s; component < 4s; ++component ) // TODO - consider not caring about alpha.
+			{
+				var Vec3f& component_equation= color_equations[ component ];
+				pixel_color[ component ]=
+					component_equation.x * first_pixel_center[0] +
+					component_equation.y * first_pixel_center[1] +
+					component_equation.z;
+			}
+
+			var f32 mut pixel_depth=
+				depth_equation.x * first_pixel_center[0] +
+				depth_equation.y * first_pixel_center[1] +
+				depth_equation.z;
+
+			var size_type offset( u32(y) * surface.stride );
+			var size_type offset_start= offset + size_type( min_x_i );
+			var size_type offset_end= offset + size_type( max_x_i );
+
+			auto dst_colors= surface.pixels.subrange( offset_start, offset_end );
+			auto dst_depth= depth_buffer.subrange( offset_start, offset_end );
+
+			foreach( pair : dst_depth.iter().zip( dst_colors.iter() ) )
+			{
+				if( pixel_depth >= pair.first )
+				{
+					pair.first= pixel_depth;
+
+					var RGBAColor pixel_color_comonents
+					[
+						( ust::max( 0.0f, ust::min( pixel_color[0], 255.0f ) ) ),
+						( ust::max( 0.0f, ust::min( pixel_color[1], 255.0f ) ) ),
+						( ust::max( 0.0f, ust::min( pixel_color[2], 255.0f ) ) ),
+						( ust::max( 0.0f, ust::min( pixel_color[3], 255.0f ) ) ), // TODO - consider not caring about alpha.
+					];
+
+					pair.second= Color32FromComponents( pixel_color_comonents );
+				}
+
+				for( auto mut component= 0s; component < 4s; ++component )
+				{
+					pixel_color[ component ]+= color_equations[ component ].x;
+				}
+
+				pixel_depth+= depth_equation.x;
+			}
+		}
+
+		edges_min_x[0]+= edges_min_step_x[0];
+		edges_min_x[1]+= edges_min_step_x[1];
+		edges_max_x[0]+= edges_max_step_x[0];
+		edges_max_x[1]+= edges_max_step_x[1];
+	}
 }
 
 } // namespace PM
