@@ -60,8 +60,10 @@ This documents describes various interesting facts about the original game.
 * There are models KL0-47.OBB, KL48-63.OBB and KL64-87.OBB with some unused enemy type.
 * There is a model TROOPE2.OBB with some unfinished enemy.
 * There is a model BAZBRON.OBB with unfinished MG-42.
-* There is a model HUSAR.OBB with winged husar armor, which seems to be unused.
+* There is a model UZI.OBB looking similar to the weapon used by male droid enemies.
+* There is a model HUSAR.OBB with winged husar armor decoration, which seems to be unused.
 * There is a model KOMIN.OBB, which seems to be unused.
+* Models STAR.OBB, STARBIG.OBB, NUKE.OBB can't be opened, they presumably use some old format.
 * Game files contain unfinished maps with indices 0, 22, 8000. Trying loading maps 0 or 22 via a console command leads to game crash.
 * Map 0 is a raw version of maps 10 and 33 combined.
 * Map 22 contains elements of maps 1 and 11.
