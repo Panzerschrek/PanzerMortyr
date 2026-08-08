@@ -1,5 +1,7 @@
+import "/enum_string_conversions.iu"
 import "/string_conversions.iu"
 import "../camera_utils.iu"
+import "../image_loading.iu"
 import "../map_quad_utils.iu"
 import "world_drawer_soft.iu"
 
@@ -244,6 +246,8 @@ fn WorldDrawerSoft::SetMap( mut this, u32 map_index )
 			.zvox_data= zvox_data_ptr,
 			.zmap_lam_data= zmap_lam_data_ptr,
 			.zmap_lem_data= zmap_lem_data_ptr,
+			.textures=
+				LoadMapTextures( materials_block, caching_game_resources_loader.GetGameFilesystem(), console_out_ ),
 		} );
 }
 
@@ -499,6 +503,86 @@ fn RasterizeTrianlge(
 		edges_max_x[0]+= edges_max_step_x[0];
 		edges_max_x[1]+= edges_max_step_x[1];
 	}
+}
+
+fn LoadMapTextures(
+	MaterialsDescription::Block& materials_block,
+	GameFilesystemPtr& game_filesystem_ptr,
+	ConsoleOutPtr& console_out ) : ust::vector</ Color32WorldTexture />
+{
+	static_assert( typeinfo</ Color32WorldTexture />.element_count == size_type( MaterialsDescription::c_texture_size ) );
+	static_assert( typeinfo</ Color32WorldTexture />.element_type.element_count == size_type( MaterialsDescription::c_texture_size ) );
+
+	var ust::vector</ Color32WorldTexture /> mut result_textures;
+
+	var size_type num_extra_textures= 2s;
+	var size_type num_subtile_layers= 8s;
+
+	var size_type num_layers=
+		num_subtile_layers +
+		( materials_block.textures.size() + num_extra_textures ) *
+		size_type( MaterialsDescription::c_texture_file_num_tiles_x * MaterialsDescription::c_texture_file_num_tiles_y );
+
+	// It's suboptimal to zero all texture data before rewriting it, but hopefully it's not so coslty (it's just a memset).
+	result_textures.resize( num_layers, ust::make_zeroed</ Color32WorldTexture />() );
+
+	auto mut lock= game_filesystem_ptr.lock_mut();
+	var GameFilesystem &mut game_filesystem= lock.deref();
+
+	for( var size_type mut t= 0s; t < materials_block.textures.size(); ++t )
+	{
+		result_match( game_filesystem.LoadFile( materials_block.textures[t].mips[1], LoadImageBMP ) )
+		{
+			Ok( mut image_data ) ->
+			{
+				if( !(  image_data.size[0] == MaterialsDescription::c_texture_size * MaterialsDescription::c_texture_file_num_tiles_x &&
+						image_data.size[1] == MaterialsDescription::c_texture_size * MaterialsDescription::c_texture_file_num_tiles_y ) )
+				{
+					ConsoleOutAddTextLine( console_out, "Unexpected texture size!" );
+					continue;
+				}
+
+				for( auto mut tile_y= 0u; tile_y < MaterialsDescription::c_texture_file_num_tiles_y; ++tile_y )
+				{
+					var u32 src_offset_y= ( MaterialsDescription::c_texture_file_num_tiles_y - 1u - tile_y ) * MaterialsDescription::c_texture_size;
+
+					for( auto mut tile_x= 0u; tile_x < MaterialsDescription::c_texture_file_num_tiles_x; ++tile_x )
+					{
+						var u32 src_offset_x= tile_x * MaterialsDescription::c_texture_size;
+
+						var u32 dst_layer=
+							u32(t) * ( MaterialsDescription::c_texture_file_num_tiles_x * MaterialsDescription::c_texture_file_num_tiles_y )  +
+							tile_y * MaterialsDescription::c_texture_file_num_tiles_x +
+							tile_x;
+
+						var Color32WorldTexture &mut dst_texture= result_textures[ size_type( dst_layer ) ];
+
+						for( auto mut y= 0u; y < MaterialsDescription::c_texture_size; ++y )
+						{
+							// Perform here vertical flipping while copying data into destination tile.
+
+							auto src_line= image_data.pixels.range().subrange_start(
+								size_type( src_offset_x + ( src_offset_y + MaterialsDescription::c_texture_size - 1u - y ) * image_data.size[0] ) );
+
+							var ust::array_view_mut</Color32/> dst_line( dst_texture[y] );
+
+							foreach( pair : dst_line.iter().zip( src_line.iter() ) )
+							{
+								pair.first= Color32FromComponents( pair.second );
+							}
+						}
+					}
+				}
+			},
+			Err(e) ->
+			{
+				ConsoleOutAddTextLine(
+					console_out, ust::concat( "Failed to read texture file! Error: ", ust::enum_to_string(e), "!" ) );
+			}
+		}
+	}
+
+	return result_textures;
 }
 
 } // namespace PM
