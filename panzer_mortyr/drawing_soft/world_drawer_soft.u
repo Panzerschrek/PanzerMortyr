@@ -381,11 +381,13 @@ fn RasterizeTrianlge(
 		( typeinfo</ typeof(texture[0]) />.element_count ),
 	];
 
-	var [ Vec3f, 2 ] tex_coord_equations
+	var [ Vec3f, 2 ] mut tex_coord_equations
 	[
 		( ( f32( texture_size[0] ) * Vec3f( tex_coords[0][0], tex_coords[1][0], tex_coords[2][0] ) ) * equations_matrix ),
 		( ( f32( texture_size[1] ) * Vec3f( tex_coords[0][1], tex_coords[1][1], tex_coords[2][1] ) ) * equations_matrix ),
 	];
+
+	var i32 target_mip= 3; // TODO - calculate it properly.
 
 	var Vec3f depth_equation= Vec3f( 1.0f / v0.z, 1.0f / v1.z, 1.0f / v2.z ) * equations_matrix;
 
@@ -463,91 +465,120 @@ fn RasterizeTrianlge(
 		}
 	}
 
-	for( auto mut y= min_y_i; y < max_y_i; ++y )
+	var size_type mut texture_mip_index= 0s;
+
+	// Iterate over all mip levels of the given texture, but execute actual rasterization only for one of them.
+	// Since a texture is a tuple of mip levels, individual code is generated for each mip-level.
+	foreach( &texture_mip : texture )
 	{
-		var f32 min_x=
-			ust::max( ust::max( cast_imut(edges_min_x)[0], cast_imut(edges_min_x)[1] ), 0.0f );
-		var f32 max_x=
-			ust::min( ust::min( cast_imut(edges_max_x)[0], cast_imut(edges_max_x)[1] ), surface_size_x );
-
-		var i32 min_x_i= i32( ust::round( min_x ) );
-		var i32 max_x_i= i32( ust::round( max_x ) );
-
-		if( min_x_i < max_x_i )
+		if( texture_mip_index == size_type( target_mip ) )
 		{
-			// We perform rasterization for centers of pixels, so, add 0.5.
-			var [ f32, 2 ] first_pixel_center[ f32( min_x_i ) + 0.5f, f32( y ) + 0.5f ];
-
-			var [ f32, 4 ] mut pixel_color= zero_init;
-
-			for( auto mut component= 0s; component < 4s; ++component ) // TODO - consider not caring about alpha.
-			{
-				var Vec3f& component_equation= color_equations[ component ];
-				pixel_color[ component ]=
-					component_equation.x * first_pixel_center[0] +
-					component_equation.y * first_pixel_center[1] +
-					component_equation.z;
-			}
-
-			var [ f32, 2 ] mut pixel_tex_coord
+			var [ i32, 2 ] constexpr mip_size
 			[
-				tex_coord_equations[0].x * first_pixel_center[0] +
-					tex_coord_equations[0].y * first_pixel_center[1] +
-					tex_coord_equations[0].z,
-				tex_coord_equations[1].x * first_pixel_center[0] +
-					tex_coord_equations[1].y * first_pixel_center[1] +
-					tex_coord_equations[1].z,
+				( typeinfo</ typeof( texture_mip ) />.element_count ),
+				( typeinfo</ typeof( texture_mip ) />.element_count ),
+			];
+			static_assert( ( mip_size[0] & ( mip_size[0] - 1 ) ) == 0 );
+			static_assert( ( mip_size[1] & ( mip_size[1] - 1 ) ) == 0 );
+
+			var[ f32, 2 ] constexpr mip_tc_scale
+			[
+				f32( mip_size[0] ) / f32( texture_size[0] ),
+				f32( mip_size[1] ) / f32( texture_size[1] ),
 			];
 
-			var f32 mut pixel_depth=
-				depth_equation.x * first_pixel_center[0] +
-				depth_equation.y * first_pixel_center[1] +
-				depth_equation.z;
+			tex_coord_equations[0] *= mip_tc_scale[0];
+			tex_coord_equations[1] *= mip_tc_scale[1];
 
-			var size_type offset( u32(y) * surface.stride );
-			var size_type offset_start= offset + size_type( min_x_i );
-			var size_type offset_end= offset + size_type( max_x_i );
-
-			auto dst_colors= surface.pixels.subrange( offset_start, offset_end );
-			auto dst_depth= depth_buffer.subrange( offset_start, offset_end );
-
-			foreach( pair : dst_depth.iter().zip( dst_colors.iter() ) )
+			for( auto mut y= min_y_i; y < max_y_i; ++y )
 			{
-				if( pixel_depth >= pair.first )
+				var f32 min_x=
+					ust::max( ust::max( cast_imut(edges_min_x)[0], cast_imut(edges_min_x)[1] ), 0.0f );
+				var f32 max_x=
+					ust::min( ust::min( cast_imut(edges_max_x)[0], cast_imut(edges_max_x)[1] ), surface_size_x );
+
+				var i32 min_x_i= i32( ust::round( min_x ) );
+				var i32 max_x_i= i32( ust::round( max_x ) );
+
+				if( min_x_i < max_x_i )
 				{
-					pair.first= pixel_depth;
+					// We perform rasterization for centers of pixels, so, add 0.5.
+					var [ f32, 2 ] first_pixel_center[ f32( min_x_i ) + 0.5f, f32( y ) + 0.5f ];
 
-					var u32 u( i32( ust::floor( pixel_tex_coord[0] ) ) & ( texture_size[0] - 1 ) );
-					var u32 v( i32( ust::floor( pixel_tex_coord[1] ) ) & ( texture_size[1] - 1 ) );
-					var RGBAColor texture_value= Color32ToComponents( texture[0][v][u] );
+					var [ f32, 4 ] mut pixel_color= zero_init;
 
-					var RGBAColor pixel_color_comonents
+					for( auto mut component= 0s; component < 4s; ++component ) // TODO - consider not caring about alpha.
+					{
+						var Vec3f& component_equation= color_equations[ component ];
+						pixel_color[ component ]=
+							component_equation.x * first_pixel_center[0] +
+							component_equation.y * first_pixel_center[1] +
+							component_equation.z;
+					}
+
+					var [ f32, 2 ] mut pixel_tex_coord
 					[
-						( ( u32( texture_value[0] ) * u32( ust::max( 0.0f, ust::min( pixel_color[0], 255.0f ) ) ) ) >> 8 ),
-						( ( u32( texture_value[1] ) * u32( ust::max( 0.0f, ust::min( pixel_color[1], 255.0f ) ) ) ) >> 8 ),
-						( ( u32( texture_value[2] ) * u32( ust::max( 0.0f, ust::min( pixel_color[2], 255.0f ) ) ) ) >> 8 ),
-						( ( u32( texture_value[3] ) * u32( ust::max( 0.0f, ust::min( pixel_color[3], 255.0f ) ) ) ) >> 8 ), // TODO - consider not caring about alpha.
+						tex_coord_equations[0].x * first_pixel_center[0] +
+							tex_coord_equations[0].y * first_pixel_center[1] +
+							tex_coord_equations[0].z,
+						tex_coord_equations[1].x * first_pixel_center[0] +
+							tex_coord_equations[1].y * first_pixel_center[1] +
+							tex_coord_equations[1].z,
 					];
 
-					pair.second= Color32FromComponents( pixel_color_comonents );
+					var f32 mut pixel_depth=
+						depth_equation.x * first_pixel_center[0] +
+						depth_equation.y * first_pixel_center[1] +
+						depth_equation.z;
+
+					var size_type offset( u32(y) * surface.stride );
+					var size_type offset_start= offset + size_type( min_x_i );
+					var size_type offset_end= offset + size_type( max_x_i );
+
+					auto dst_colors= surface.pixels.subrange( offset_start, offset_end );
+					auto dst_depth= depth_buffer.subrange( offset_start, offset_end );
+
+					foreach( pair : dst_depth.iter().zip( dst_colors.iter() ) )
+					{
+						if( pixel_depth >= pair.first )
+						{
+							pair.first= pixel_depth;
+
+							var u32 u( i32( ust::floor( pixel_tex_coord[0] ) ) & ( mip_size[0] - 1 ) );
+							var u32 v( i32( ust::floor( pixel_tex_coord[1] ) ) & ( mip_size[1] - 1 ) );
+							var RGBAColor texture_value= Color32ToComponents( texture_mip[v][u] );
+
+							var RGBAColor pixel_color_comonents
+							[
+								( ( u32( texture_value[0] ) * u32( ust::max( 0.0f, ust::min( pixel_color[0], 255.0f ) ) ) ) >> 8 ),
+								( ( u32( texture_value[1] ) * u32( ust::max( 0.0f, ust::min( pixel_color[1], 255.0f ) ) ) ) >> 8 ),
+								( ( u32( texture_value[2] ) * u32( ust::max( 0.0f, ust::min( pixel_color[2], 255.0f ) ) ) ) >> 8 ),
+								( ( u32( texture_value[3] ) * u32( ust::max( 0.0f, ust::min( pixel_color[3], 255.0f ) ) ) ) >> 8 ), // TODO - consider not caring about alpha.
+							];
+
+							pair.second= Color32FromComponents( pixel_color_comonents );
+						}
+
+						for( auto mut component= 0s; component < 4s; ++component )
+						{
+							pixel_color[ component ]+= color_equations[ component ].x;
+						}
+
+						pixel_tex_coord[0]+= tex_coord_equations[0].x;
+						pixel_tex_coord[1]+= tex_coord_equations[1].x;
+
+						pixel_depth+= depth_equation.x;
+					}
 				}
 
-				for( auto mut component= 0s; component < 4s; ++component )
-				{
-					pixel_color[ component ]+= color_equations[ component ].x;
-				}
-
-				pixel_tex_coord[0]+= tex_coord_equations[0].x;
-				pixel_tex_coord[1]+= tex_coord_equations[1].x;
-
-				pixel_depth+= depth_equation.x;
+				edges_min_x[0]+= edges_min_step_x[0];
+				edges_min_x[1]+= edges_min_step_x[1];
+				edges_max_x[0]+= edges_max_step_x[0];
+				edges_max_x[1]+= edges_max_step_x[1];
 			}
 		}
 
-		edges_min_x[0]+= edges_min_step_x[0];
-		edges_min_x[1]+= edges_min_step_x[1];
-		edges_max_x[0]+= edges_max_step_x[0];
-		edges_max_x[1]+= edges_max_step_x[1];
+		++texture_mip_index;
 	}
 }
 
