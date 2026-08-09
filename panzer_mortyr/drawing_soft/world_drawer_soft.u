@@ -1,6 +1,5 @@
 import "/enum_string_conversions.iu"
 import "/string_conversions.iu"
-import "/bit_math.iu"
 import "../camera_utils.iu"
 import "../image_loading.iu"
 import "../map_quad_utils.iu"
@@ -391,7 +390,14 @@ fn RasterizeTrianlge(
 	];
 
 	// Calculate mip-level.
-	// TODO - consider optimizing it even more by avoiding calling "log2" and using some bit-mapth instead.
+	// The approach is pretty straighforward.
+	// First calculate squared magnitude derivatives of texture coordinates along X and Y axis.
+	// Then take the maximum value among them.
+	// Then calculate log2 of such squared value and divide it by two, which is equivalent of taking log2 of square root.
+	// Then clamp to allowed range.
+	//
+	// We don't need calling proper log2, since we need to floor its result to the nearest integer.
+	// So, calculate it by extracting exponent of a floating-point value directly.
 
 	var f32 d_tc_dx_squared=
 		tex_coord_equations[0].x * tex_coord_equations[0].x + tex_coord_equations[1].x * tex_coord_equations[1].x;
@@ -399,12 +405,19 @@ fn RasterizeTrianlge(
 	var f32 d_tc_dy_squared=
 		tex_coord_equations[0].y * tex_coord_equations[0].y + tex_coord_equations[1].y * tex_coord_equations[1].y;
 
-	// log( sqrt(x) ) is equal to 0.5 * log( x ).
-	var f32 tc_scale_log2= 0.5f * ust::log2( ust::max( d_tc_dx_squared, d_tc_dy_squared ) );
+	var f32 max_d_tc_squared= ust::max( d_tc_dx_squared, d_tc_dy_squared );
 
-	var size_type constexpr num_mips= typeinfo</ typeof( texture ) />.element_count;
+	// Calculate integer log2 by extracting exponent from the floating point value.
+	// For values less than one zero is returned.
+	// Since input value is a squared value, it's non-negative and thus we can assume sign bit is always zero.
+	var u32 constexpr c_exponent_shift= 23u;
+	var u32 constexpr c_exponent_bias= 127u;
+	var u32 constexpr c_exponent_bias_shifted= c_exponent_bias << c_exponent_shift;
+	var u32 d_tc_log2= (
+		ust::max( u32( byte32( max_d_tc_squared ) ), c_exponent_bias_shifted ) - c_exponent_bias_shifted ) >>
+		( c_exponent_shift + 1u /* extra one to compensate for squared input value */ );
 
-	var i32 target_mip= ust::max( 0, ust::min( i32( tc_scale_log2 ) /* round down */, i32( num_mips ) - 1 ) );
+	var u32 target_mip= ust::min( d_tc_log2, u32( typeinfo</ typeof( texture ) />.element_count - 1s ) );
 
 	var Vec3f depth_equation= Vec3f( 1.0f / v0.z, 1.0f / v1.z, 1.0f / v2.z ) * equations_matrix;
 
