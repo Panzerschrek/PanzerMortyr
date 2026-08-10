@@ -111,12 +111,15 @@ PanzerMortyr software rendering:
 * Implement code taking screenshots (needed for savegames).
 * Implement near Z plane culling for triangles.
 * Implement triangle culling by frustum side planes.
-* Implement drawing of triangles with textures.
 * Implement slicing of triangles by several planes parallel to near Z plane in order to approximate perspective correction.
-* Try speding-up rasterization code by using fixed-point arithmetic.
+* Try speding-up rasterization code by using fixed-point arithmetic for edges calculation.
+* Try speding-up rasterization code by using fixed-point arithmetic for colors interpolation.
 * Try seeding-up rasterization code by using depth buffer in u32 or even u16 format.
 * Try speding-up rasterization by correcting color and depth equations, so that it's not need to clamp interpolated color and depth values.
+* Prepare alpha of map textures, including special ones (for liquids, atlases).
+* Prepare special textures used by billboards and decals.
 * Draw only room clusters and their subclusters visible for the given camera position (use MapVisibilityCalculator).
+* Consider preparing map quads geometry once at map loading and then reusing it (as WorldDrawerGL does).
 * Perform frustum culling for subclusters of visible room clusters.
 * Draw dynamic clusters.
 * Draw highlighted clusters.
@@ -145,6 +148,7 @@ PanzerMortyr software rendering:
 * Implement night vision mode.
 * Implement infrared vision mode.
 * Draw fullscreen blending effect (for pain, burning and other similar effects).
+* Consider speeding-up software world drawing by performing drawing using multiple threads, when each thread writes into its own framebuffer and the master thread then combines these buffers together.
 
 PanzerMortyr menus and HUD:
 
