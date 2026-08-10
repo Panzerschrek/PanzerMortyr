@@ -385,7 +385,7 @@ fn RasterizeTrianlge(
 		vertices[ size_type( indices[2] ) ].tex_coordinates,
 	];
 
-	var [ Vec3f, 2 ] mut tex_coord_equations
+	var [ Vec3f, 2 ] tex_coord_equations
 	[
 		Vec3f( tex_coords[0][0], tex_coords[1][0], tex_coords[2][0] ) * equations_matrix,
 		Vec3f( tex_coords[0][1], tex_coords[1][1], tex_coords[2][1] ) * equations_matrix,
@@ -511,22 +511,37 @@ fn RasterizeTrianlge(
 				( typeinfo</ typeof(texture[0]) />.element_count ),
 			];
 
-			var [ i32, 2 ] constexpr mip_size
+			var [ u32, 2 ] constexpr mip_size
 			[
 				( typeinfo</ typeof( texture_mip ) />.element_type.element_count ),
 				( typeinfo</ typeof( texture_mip ) />.element_count ),
 			];
-			static_assert( ( mip_size[0] & ( mip_size[0] - 1 ) ) == 0 );
-			static_assert( ( mip_size[1] & ( mip_size[1] - 1 ) ) == 0 );
+			static_assert( ( mip_size[0] & ( mip_size[0] - 1u ) ) == 0u );
+			static_assert( ( mip_size[1] & ( mip_size[1] - 1u ) ) == 0u );
 
 			var[ f32, 2 ] constexpr mip_tc_scale
 			[
-				f32( mip_size[0] ) / f32( mip0_size[0] ),
-				f32( mip_size[1] ) / f32( mip0_size[1] ),
+				65536.0f * f32( mip_size[0] ) / f32( mip0_size[0] ),
+				65536.0f * f32( mip_size[1] ) / f32( mip0_size[1] ),
 			];
 
-			tex_coord_equations[0] *= mip_tc_scale[0];
-			tex_coord_equations[1] *= mip_tc_scale[1];
+			// Perform texture coordinates interpolation using fixed16 format.
+			// It gives good precision with minimum overflow/underflow chance.
+			// For offset component perform f32 -> i64 -> i32 cast to wrap-around instead of producing garbage for large f32 values.
+			// It's fine, since we use tiled power of two textures.
+			var [ [ i32, 3 ], 2 ] tex_coord_equations_fixed16
+			[
+				[
+					     ( tex_coord_equations[0].x * mip_tc_scale[0] ),
+					     ( tex_coord_equations[0].y * mip_tc_scale[0] ),
+					( i64( tex_coord_equations[0].z * mip_tc_scale[0] ) )
+				],
+				[
+					     ( tex_coord_equations[1].x * mip_tc_scale[1] ),
+					     ( tex_coord_equations[1].y * mip_tc_scale[1] ),
+					( i64( tex_coord_equations[1].z * mip_tc_scale[1] ) )
+				]
+			];
 
 			for( auto mut y= min_y_i; y < max_y_i; ++y )
 			{
@@ -542,6 +557,7 @@ fn RasterizeTrianlge(
 				{
 					// We perform rasterization for centers of pixels, so, add 0.5.
 					var [ f32, 2 ] first_pixel_center[ f32( min_x_i ) + 0.5f, f32( y ) + 0.5f ];
+					var [ i32, 2 ] first_pixel_center_fixed1[ min_x_i * 2 + 1, y * 2 + 1 ];
 
 					var [ f32, 4 ] mut pixel_color= zero_init;
 
@@ -554,14 +570,15 @@ fn RasterizeTrianlge(
 							component_equation.z;
 					}
 
-					var [ f32, 2 ] mut pixel_tex_coord
+
+					var [ i32, 2 ] mut pixel_tex_coord_fixed16
 					[
-						tex_coord_equations[0].x * first_pixel_center[0] +
-							tex_coord_equations[0].y * first_pixel_center[1] +
-							tex_coord_equations[0].z,
-						tex_coord_equations[1].x * first_pixel_center[0] +
-							tex_coord_equations[1].y * first_pixel_center[1] +
-							tex_coord_equations[1].z,
+						tex_coord_equations_fixed16[0][2] +
+						( ( tex_coord_equations_fixed16[0][0] * first_pixel_center_fixed1[0] +
+							tex_coord_equations_fixed16[0][1] * first_pixel_center_fixed1[1] ) >> 1 ),
+						tex_coord_equations_fixed16[1][2] +
+						( ( tex_coord_equations_fixed16[1][0] * first_pixel_center_fixed1[0] +
+							tex_coord_equations_fixed16[1][1] * first_pixel_center_fixed1[1] ) >> 1 ),
 					];
 
 					var f32 mut pixel_depth=
@@ -582,8 +599,8 @@ fn RasterizeTrianlge(
 						{
 							pair.first= pixel_depth;
 
-							var u32 u( i32( ust::floor( pixel_tex_coord[0] ) ) & ( mip_size[0] - 1 ) );
-							var u32 v( i32( ust::floor( pixel_tex_coord[1] ) ) & ( mip_size[1] - 1 ) );
+							var u32 u= ( u32( pixel_tex_coord_fixed16[0] ) >> 16 ) & ( mip_size[0] - 1u );
+							var u32 v= ( u32( pixel_tex_coord_fixed16[1] ) >> 16 ) & ( mip_size[1] - 1u );
 							var RGBAColor texture_value= Color32ToComponents( texture_mip[v][u] );
 
 							var RGBAColor pixel_color_comonents
@@ -602,8 +619,9 @@ fn RasterizeTrianlge(
 							pixel_color[ component ]+= color_equations[ component ].x;
 						}
 
-						pixel_tex_coord[0]+= tex_coord_equations[0].x;
-						pixel_tex_coord[1]+= tex_coord_equations[1].x;
+
+						pixel_tex_coord_fixed16[0]+= tex_coord_equations_fixed16[0][0];
+						pixel_tex_coord_fixed16[1]+= tex_coord_equations_fixed16[1][0];
 
 						pixel_depth+= depth_equation.x;
 					}
