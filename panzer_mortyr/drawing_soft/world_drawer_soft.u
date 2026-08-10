@@ -168,12 +168,34 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 		{
 			var [ u16, 3 ] indices[ temp_indices_[ t + 0s ], temp_indices_[ t + 1s ], temp_indices_[ t + 2s ] ];
 
-			var Color32WorldTextureWithMips& texture= map_data.textures[
-				size_type( temp_vertices_[ size_type( indices[0] ) ].tex_coordinates[2] ) ];
+			var MapVertex& v0= cast_imut(temp_vertices_)[ size_type( indices[0] ) ];
+			var MapVertex& v1= cast_imut(temp_vertices_)[ size_type( indices[1] ) ];
+			var MapVertex& v2= cast_imut(temp_vertices_)[ size_type( indices[2] ) ];
+
+			var [ MapVertexF32, 3 ] vertices
+			[
+				{
+					.position= transformed_vertices_view[ size_type( indices[0] ) ],
+					.tex_coord( v0.tex_coordinates[0], v0.tex_coordinates[1] ),
+					.light[ ( v0.light[0] ), ( v0.light[1] ), ( v0.light[2] ), ( v0.light[3] ) ],
+				},
+				{
+					.position= transformed_vertices_view[ size_type( indices[1] ) ],
+					.tex_coord( v1.tex_coordinates[0], v1.tex_coordinates[1] ),
+					.light[ ( v1.light[0] ), ( v1.light[1] ), ( v1.light[2] ), ( v1.light[3] ) ],
+				},
+				{
+					.position= transformed_vertices_view[ size_type( indices[2] ) ],
+					.tex_coord( v2.tex_coordinates[0], v2.tex_coordinates[1] ),
+					.light[ ( v2.light[0] ), ( v2.light[1] ), ( v2.light[2] ), ( v2.light[3] ) ],
+				},
+			];
+
+			var Color32WorldTextureWithMips& texture= map_data.textures[ size_type( v0.tex_coordinates[2] ) ];
 
 			// TODO - clip triangle by frustum planes here, possible producing more than one result triangle.
 
-			RasterizeTrianlge( surface, depth_buffer, temp_vertices_, transformed_vertices_view, indices, texture );
+			RasterizeTrianlge( surface, depth_buffer, vertices[0], vertices[1], vertices[2], texture );
 		}
 	}
 
@@ -271,21 +293,17 @@ fn WorldDrawerSoft::SetMap( mut this, u32 map_index )
 fn RasterizeTrianlge(
 	Color32ImageView surface,
 	ust::array_view_mut</f32/> depth_buffer,
-	ust::array_view_imut</MapVertex/> vertices,
-	ust::array_view_imut</Vec3f/> vertex_positions,
-	[ u16, 3 ]& indices,
+	MapVertexF32& v0,
+	MapVertexF32& v1,
+	MapVertexF32& v2,
 	Color32WorldTextureWithMips& texture )
 {
 	static_assert( typeinfo</ typeof(texture) />.is_tuple );
 
 	// TODO - consider reading ranges for pixels/depth buffer into local variables. This may improve performance a bit.
 
-	var Vec3f& v0= vertex_positions[ size_type( indices[0] ) ];
-	var Vec3f& v1= vertex_positions[ size_type( indices[1] ) ];
-	var Vec3f& v2= vertex_positions[ size_type( indices[2] ) ];
-
 	// TODO - remove this check, perform proper Z near plane clipping prior to rasterization.
-	if( v0.z <= c_z_near || v1.z <= c_z_near || v2.z <= c_z_near )
+	if( v0.position.z <= c_z_near || v1.position.z <= c_z_near || v2.position.z <= c_z_near )
 	{
 		return;
 	}
@@ -302,9 +320,9 @@ fn RasterizeTrianlge(
 
 	var [ [ f32, 2 ], 3 ] vertices_projected
 	[
-		[ quantize( v0.x / v0.z ), quantize( v0.y / v0.z ) ],
-		[ quantize( v1.x / v1.z ), quantize( v1.y / v1.z ) ],
-		[ quantize( v2.x / v2.z ), quantize( v2.y / v2.z ) ],
+		[ quantize( v0.position.x / v0.position.z ), quantize( v0.position.y / v0.position.z ) ],
+		[ quantize( v1.position.x / v1.position.z ), quantize( v1.position.y / v1.position.z ) ],
+		[ quantize( v2.position.x / v2.position.z ), quantize( v2.position.y / v2.position.z ) ],
 	];
 
 	// For now reject triangles lying at least partially outside screen.
@@ -358,37 +376,18 @@ fn RasterizeTrianlge(
 	};
 
 	// TODO - don't care about alpha if don't need to do so.
-	var [ Vec3f, 4 ] mut color_equations[ Vec3f::MakeZero() ... ];
-
-	{
-		var [ RGBAColor, 3 ] mut vertex_colors
-		[
-			vertices[ size_type( indices[0] ) ].light,
-			vertices[ size_type( indices[1] ) ].light,
-			vertices[ size_type( indices[2] ) ].light,
-		];
-
-		for( auto mut component= 0s; component < 4s; ++component )
-		{
-			var Vec3f vertex_color_components(
-				f32( vertex_colors[0][component] ),
-				f32( vertex_colors[1][component] ),
-				f32( vertex_colors[2][component] ) );
-			color_equations[ component ]= vertex_color_components * equations_matrix;
-		}
-	}
-
-	var [ [ f32, 3 ], 3 ] tex_coords
+	var [ Vec3f, 4 ] color_equations
 	[
-		vertices[ size_type( indices[0] ) ].tex_coordinates,
-		vertices[ size_type( indices[1] ) ].tex_coordinates,
-		vertices[ size_type( indices[2] ) ].tex_coordinates,
+		Vec3f( v0.light[0], v1.light[0], v2.light[0] ) * equations_matrix,
+		Vec3f( v0.light[1], v1.light[1], v2.light[1] ) * equations_matrix,
+		Vec3f( v0.light[2], v1.light[2], v2.light[2] ) * equations_matrix,
+		Vec3f( v0.light[3], v1.light[3], v2.light[3] ) * equations_matrix,
 	];
 
 	var [ Vec3f, 2 ] tex_coord_equations
 	[
-		Vec3f( tex_coords[0][0], tex_coords[1][0], tex_coords[2][0] ) * equations_matrix,
-		Vec3f( tex_coords[0][1], tex_coords[1][1], tex_coords[2][1] ) * equations_matrix,
+		Vec3f( v0.tex_coord.x, v1.tex_coord.x, v2.tex_coord.x ) * equations_matrix,
+		Vec3f( v0.tex_coord.y, v1.tex_coord.y, v2.tex_coord.y ) * equations_matrix,
 	];
 
 	// Calculate mip-level.
@@ -421,7 +420,8 @@ fn RasterizeTrianlge(
 
 	var u32 target_mip= ust::min( d_tc_log2, u32( typeinfo</ typeof( texture ) />.element_count - 1s ) );
 
-	var Vec3f depth_equation= Vec3f( 1.0f / v0.z, 1.0f / v1.z, 1.0f / v2.z ) * equations_matrix;
+	var Vec3f depth_equation=
+		Vec3f( 1.0f / v0.position.z, 1.0f / v1.position.z, 1.0f / v2.position.z ) * equations_matrix;
 
 	// Perform triangle rasterization.
 
@@ -636,6 +636,14 @@ fn RasterizeTrianlge(
 
 		++texture_mip_index;
 	}
+}
+
+// This struct has all attributes in F32 format so that it's easy to interpolate them.
+struct MapVertexF32
+{
+	Vec3f position;
+	Vec2f tex_coord;
+	[ f32, 4 ] light;
 }
 
 fn LoadMapTextures(
