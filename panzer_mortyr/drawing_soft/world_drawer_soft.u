@@ -254,12 +254,20 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 
 			var Color32WorldTextureWithMips& texture= map_data.textures[ size_type( v0.tex_coordinates[2] ) ];
 
-			var f32 mut z= c_z_near, mut next_z= z * 2.0f;
-
-			while( z < c_z_far )
+			for( auto mut z_index= 0s;
+				z_index < typeinfo</ typeof(c_z_splicing_values) />.element_count - 1s;
+				++z_index )
 			{
-				var Planef z_clip_plane{ .normal( 0.0f, 0.0f, 1.0f ), .distance= -z };
-				var Planef next_z_clip_plane{ .normal( 0.0f, 0.0f, -1.0f ), .distance= next_z };
+				var Planef z_clip_plane
+				{
+					.normal( 0.0f, 0.0f,  1.0f ),
+					.distance= -c_z_splicing_values[ z_index ],
+				};
+				var Planef next_z_clip_plane
+				{
+					.normal( 0.0f, 0.0f, -1.0f ),
+					.distance= c_z_splicing_values[ z_index + 1s ],
+				};
 
 				var size_type mut num_z_clipped_vertices=
 					ClipPolygon(
@@ -267,32 +275,33 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 						ust::array_view_imut</MapVertexF32/>( vertices_clipped1 ).subrange_end( num_vertices ),
 						vertices_clipped0 );
 
-				if( num_z_clipped_vertices >= 3s )
+				if( num_z_clipped_vertices < 3s )
 				{
-					num_z_clipped_vertices=
-						ClipPolygon(
-							next_z_clip_plane,
-							ust::array_view_imut</MapVertexF32/>( vertices_clipped0 ).subrange_end(
-								num_z_clipped_vertices ),
-							vertices_clipped2 );
-
-					if( num_z_clipped_vertices >= 3s )
-					{
-						for( auto mut i= 2s; i < num_z_clipped_vertices; ++i )
-						{
-							RasterizeTrianlge(
-								surface,
-								depth_buffer,
-								cast_imut(vertices_clipped2)[0],
-								cast_imut(vertices_clipped2)[ i - 1s ],
-								cast_imut(vertices_clipped2)[ i ],
-								texture );
-						}
-					}
+					continue;
 				}
 
-				z= next_z;
-				next_z*= 2.0f;
+				num_z_clipped_vertices=
+					ClipPolygon(
+						next_z_clip_plane,
+						ust::array_view_imut</MapVertexF32/>( vertices_clipped0 ).subrange_end(
+							num_z_clipped_vertices ),
+						vertices_clipped2 );
+
+				if( num_z_clipped_vertices < 3s )
+				{
+					continue;
+				}
+
+				for( auto mut i= 2s; i < num_z_clipped_vertices; ++i )
+				{
+					RasterizeTrianlge(
+						surface,
+						depth_buffer,
+						cast_imut(vertices_clipped2)[0],
+						cast_imut(vertices_clipped2)[ i - 1s ],
+						cast_imut(vertices_clipped2)[ i ],
+						texture );
+				}
 			}
 		}
 	}
@@ -887,5 +896,35 @@ fn CalculateViewSpaceFrusutmSideClipPlanes( [ u32, 2 ]& viewport_size ) : [ Plan
 	];
 	return result_planes;
 }
+
+// Z values for planes using for splicing of triangles parallel to near Z clip plane.
+// Such splicing is used to approximate perspective-correction.
+var [ f32, 21 ] c_z_splicing_values
+[
+	   8.0f,
+	   8.0f * c_sqrt_2,
+	  16.0f,
+	  16.0f * c_sqrt_2,
+	  32.0f,
+	  32.0f * c_sqrt_2,
+	  64.0f,
+	  64.0f * c_sqrt_2,
+	 128.0f,
+	 128.0f * c_sqrt_2,
+	 256.0f,
+	 256.0f * c_sqrt_2,
+	 512.0f,
+	 512.0f * c_sqrt_2,
+	1024.0f,
+	1024.0f * c_sqrt_2,
+	2048.0f,
+	2048.0f * c_sqrt_2,
+	4096.0f,
+	4096.0f * c_sqrt_2,
+	8192.0f,
+];
+
+static_assert( c_z_splicing_values[0] == c_z_near );
+static_assert( c_z_splicing_values[ typeinfo</ typeof(c_z_splicing_values) />.element_count - 1s ] == c_z_far );
 
 } // namespace PM
