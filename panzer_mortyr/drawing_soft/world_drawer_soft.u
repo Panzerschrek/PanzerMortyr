@@ -117,7 +117,10 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 
 	var MapVertexF32 dummy_vertex{ .position= Vec3f::MakeZero(), .tex_coord= Vec2f::MakeZero(), .light[ 0.0f ... ] };
 
-	var [ MapVertexF32, 16 ] mut vertices_clipped0[ dummy_vertex ... ], mut vertices_clipped1[ dummy_vertex ... ];
+	var [ MapVertexF32, 16 ]
+		mut vertices_clipped0[ dummy_vertex ... ],
+		mut vertices_clipped1[ dummy_vertex ... ],
+		mut vertices_clipped2[ dummy_vertex ... ];
 
 	foreach( &cluster : clusters )
 	{
@@ -251,15 +254,45 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 
 			var Color32WorldTextureWithMips& texture= map_data.textures[ size_type( v0.tex_coordinates[2] ) ];
 
-			for( auto mut i= 2s; i < num_vertices; ++i )
+			var f32 mut z= c_z_near, mut next_z= z * 2.0f;
+
+			while( z < c_z_far )
 			{
-				RasterizeTrianlge(
-					surface,
-					depth_buffer,
-					cast_imut(vertices_clipped1)[0],
-					cast_imut(vertices_clipped1)[ i - 1s ],
-					cast_imut(vertices_clipped1)[ i ],
-					texture );
+				var Planef z_clip_plane{ .normal( 0.0f, 0.0f, 1.0f ), .distance= -z };
+				var Planef next_z_clip_plane{ .normal( 0.0f, 0.0f, -1.0f ), .distance= next_z };
+
+				var size_type mut num_z_clipped_vertices=
+					ClipPolygon(
+						z_clip_plane,
+						ust::array_view_imut</MapVertexF32/>( vertices_clipped1 ).subrange_end( num_vertices ),
+						vertices_clipped0 );
+
+				if( num_z_clipped_vertices >= 3s )
+				{
+					num_z_clipped_vertices=
+						ClipPolygon(
+							next_z_clip_plane,
+							ust::array_view_imut</MapVertexF32/>( vertices_clipped0 ).subrange_end(
+								num_z_clipped_vertices ),
+							vertices_clipped2 );
+
+					if( num_z_clipped_vertices >= 3s )
+					{
+						for( auto mut i= 2s; i < num_z_clipped_vertices; ++i )
+						{
+							RasterizeTrianlge(
+								surface,
+								depth_buffer,
+								cast_imut(vertices_clipped2)[0],
+								cast_imut(vertices_clipped2)[ i - 1s ],
+								cast_imut(vertices_clipped2)[ i ],
+								texture );
+						}
+					}
+				}
+
+				z= next_z;
+				next_z*= 2.0f;
 			}
 		}
 	}
