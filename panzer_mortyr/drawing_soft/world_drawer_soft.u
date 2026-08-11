@@ -293,29 +293,28 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 				}
 
 
-				if( false )
+				for( auto mut i= 2s; i < num_z_clipped_vertices; ++i )
 				{
-					for( auto mut i= 2s; i < num_z_clipped_vertices; ++i )
-					{
-						RasterizeTrianlge(
-							surface,
-							depth_buffer,
-							cast_imut(vertices_clipped2)[0],
-							cast_imut(vertices_clipped2)[ i - 1s ],
-							cast_imut(vertices_clipped2)[ i ],
-							texture );
-					}
+					RasterizeTrianlge(
+						surface,
+						depth_buffer,
+						cast_imut(vertices_clipped2)[0],
+						cast_imut(vertices_clipped2)[ i - 1s ],
+						cast_imut(vertices_clipped2)[ i ],
+						texture );
 				}
-				else
+
+				for( auto mut i= 2s; i < num_z_clipped_vertices; ++i )
 				{
-					for( auto mut i= 0s; i < num_z_clipped_vertices; ++i )
-					{
-						RasterizeLine(
-							surface,
-							cast_imut(vertices_clipped2)[ i ],
-							cast_imut(vertices_clipped2)[ ( i + 1s ) % num_z_clipped_vertices ],
-							Color32( 0xFF00FF00u ) );
-					}
+					var MapVertexF32& v0= cast_imut(vertices_clipped2)[0];
+					var MapVertexF32& v1= cast_imut(vertices_clipped2)[ i - 1s ];
+					var MapVertexF32& v2= cast_imut(vertices_clipped2)[ i ];
+
+					var Color32 color( 0x00FF00FFu );
+
+					RasterizeLine( surface, depth_buffer, v0, v1, color );
+					RasterizeLine( surface, depth_buffer, v1, v2, color );
+					RasterizeLine( surface, depth_buffer, v2, v0, color );
 				}
 			}
 		}
@@ -749,7 +748,12 @@ fn RasterizeTrianlge(
 	}
 }
 
-fn RasterizeLine( Color32ImageView surface, MapVertexF32& v0, MapVertexF32& v1, Color32 color )
+fn RasterizeLine(
+	Color32ImageView surface,
+	ust::array_view_mut</f32/> depth_buffer,
+	MapVertexF32& v0,
+	MapVertexF32& v1,
+	Color32 color )
 {
 	// Given vertices should be clipped to Z near prior to this call.
 	debug_assert( v0.position.z >= c_z_near );
@@ -765,10 +769,10 @@ fn RasterizeLine( Color32ImageView surface, MapVertexF32& v0, MapVertexF32& v1, 
 		return ust::floor( x * c_quantization_scale ) * ( 1.0f / c_quantization_scale );
 	};
 
-	var [ [ f32, 2 ], 2 ] mut vertices_projected
+	var [ [ f32, 3 ], 2 ] mut vertices_projected
 	[
-		[ quantize( v0.position.x / v0.position.z ), quantize( v0.position.y / v0.position.z ) ],
-		[ quantize( v1.position.x / v1.position.z ), quantize( v1.position.y / v1.position.z ) ],
+		[ quantize( v0.position.x / v0.position.z ), quantize( v0.position.y / v0.position.z ), 1.0f / v0.position.z ],
+		[ quantize( v1.position.x / v1.position.z ), quantize( v1.position.y / v1.position.z ), 1.0f / v1.position.z ],
 	];
 
 	var f32 mut dx= vertices_projected[1][0] - vertices_projected[0][0];
@@ -779,6 +783,8 @@ fn RasterizeLine( Color32ImageView surface, MapVertexF32& v0, MapVertexF32& v1, 
 		return;
 	}
 
+	var f32 mut d_depth= vertices_projected[1][2] - vertices_projected[0][2];
+
 	var f32 abs_dx= ust::abs( dx );
 	var f32 abs_dy= ust::abs( dy );
 
@@ -786,9 +792,10 @@ fn RasterizeLine( Color32ImageView surface, MapVertexF32& v0, MapVertexF32& v1, 
 	{
 		if( dx < 0.0f )
 		{
-			ust::array_view_mut</ [ f32, 2 ] />( vertices_projected ).swap( 0s, 1s );
+			ust::array_view_mut</ [ f32, 3 ] />( vertices_projected ).swap( 0s, 1s );
 			dx= -dx;
 			dy= -dy;
+			d_depth= -d_depth;
 		}
 
 		var i32 mut x_begin( ust::round( vertices_projected[0][0] ) );
@@ -799,7 +806,13 @@ fn RasterizeLine( Color32ImageView surface, MapVertexF32& v0, MapVertexF32& v1, 
 			var i32 y_i( ust::round( vertices_projected[0][1] + ( 0.5f + f32( x - x_begin ) ) * ( dy / dx ) ) );
 			if( y_i >= 0 && y_i < i32( surface.size[1] ) )
 			{
-				surface.pixels[ size_type( u32(x) + u32(y_i) * surface.stride ) ]= color;
+				var f32 depth= vertices_projected[0][2] + ( 0.5f + f32( x - x_begin ) ) * ( d_depth / dx );
+				var size_type address( u32(x) + u32(y_i) * surface.stride );
+				if( depth >= depth_buffer[ address ] )
+				{
+					depth_buffer[ address ]= depth;
+					surface.pixels[ address ]= color;
+				}
 			}
 		}
 	}
@@ -807,9 +820,10 @@ fn RasterizeLine( Color32ImageView surface, MapVertexF32& v0, MapVertexF32& v1, 
 	{
 		if( dy < 0.0f )
 		{
-			ust::array_view_mut</ [ f32, 2 ] />( vertices_projected ).swap( 0s, 1s );
+			ust::array_view_mut</ [ f32, 3 ] />( vertices_projected ).swap( 0s, 1s );
 			dx= -dx;
 			dy= -dy;
+			d_depth= -d_depth;
 		}
 
 		var i32 mut y_begin( ust::round( vertices_projected[0][1] ) );
@@ -820,7 +834,13 @@ fn RasterizeLine( Color32ImageView surface, MapVertexF32& v0, MapVertexF32& v1, 
 			var i32 x_i( ust::round( vertices_projected[0][0] + ( 0.5f + f32( y - y_begin ) ) * ( dx / dy ) ) );
 			if( x_i >= 0 && x_i < i32( surface.size[0] ) )
 			{
-				surface.pixels[ size_type( u32(x_i) + u32(y) * surface.stride ) ]= color;
+				var f32 depth= vertices_projected[0][2] + ( 0.5f + f32( y - y_begin ) ) * ( d_depth / dy );
+				var size_type address( u32(x_i) + u32(y) * surface.stride );
+				if( depth >= depth_buffer[ address ] )
+				{
+					depth_buffer[ address ]= depth;
+					surface.pixels[ address ]= color;
+				}
 			}
 		}
 	}
