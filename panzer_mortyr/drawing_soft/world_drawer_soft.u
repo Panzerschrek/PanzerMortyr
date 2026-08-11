@@ -1,6 +1,8 @@
+import "/assert.iu"
 import "/enum_string_conversions.iu"
 import "/string_conversions.iu"
 import "../camera_utils.iu"
+import "../clipping.iu"
 import "../image_loading.iu"
 import "../map_quad_utils.iu"
 import "world_drawer_soft.iu"
@@ -164,6 +166,16 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 			pair.first= view_matrix_transposed * Vec3f( pair.second.position );
 		}
 
+		var [ MapVertexF32, 16 ] mut vertices_clipped[
+			MapVertexF32{ .position= Vec3f::MakeZero(), .tex_coord= Vec2f::MakeZero(), .light[ 0.0f ... ] } ... ];
+
+		var Planef near_clip_plane
+		{
+			.normal( 0.0f, 0.0f, 1.0f ),
+			// Move Z near plane a little bit forward so that no actual geometry can lay on it.
+			.distance= ( -1.25f ) * c_z_near
+		};
+
 		for( auto mut t= 0s; t + 3s <= temp_indices_.size(); t+= 3s )
 		{
 			var [ u16, 3 ] indices[ temp_indices_[ t + 0s ], temp_indices_[ t + 1s ], temp_indices_[ t + 2s ] ];
@@ -172,7 +184,7 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 			var MapVertex& v1= cast_imut(temp_vertices_)[ size_type( indices[1] ) ];
 			var MapVertex& v2= cast_imut(temp_vertices_)[ size_type( indices[2] ) ];
 
-			var [ MapVertexF32, 3 ] vertices
+			var [ MapVertexF32, 3 ] initial_vertices
 			[
 				{
 					.position= transformed_vertices_view[ size_type( indices[0] ) ],
@@ -191,11 +203,29 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 				},
 			];
 
+			var size_type num_vertices=
+				ClipPolygon(
+					near_clip_plane, ust::array_view_imut</ MapVertexF32/>( initial_vertices ), vertices_clipped );
+
+			if( num_vertices < 3s )
+			{
+				continue; // Fully clipped.
+			}
+
+			// TODO - clip by frustum side planes too.
+
 			var Color32WorldTextureWithMips& texture= map_data.textures[ size_type( v0.tex_coordinates[2] ) ];
 
-			// TODO - clip triangle by frustum planes here, possible producing more than one result triangle.
-
-			RasterizeTrianlge( surface, depth_buffer, vertices[0], vertices[1], vertices[2], texture );
+			for( auto mut i= 2s; i < num_vertices; ++i )
+			{
+				RasterizeTrianlge(
+					surface,
+					depth_buffer,
+					cast_imut(vertices_clipped)[0],
+					cast_imut(vertices_clipped)[ i - 1s ],
+					cast_imut(vertices_clipped)[ i ],
+					texture );
+			}
 		}
 	}
 
@@ -302,11 +332,10 @@ fn RasterizeTrianlge(
 
 	// TODO - consider reading ranges for pixels/depth buffer into local variables. This may improve performance a bit.
 
-	// TODO - remove this check, perform proper Z near plane clipping prior to rasterization.
-	if( v0.position.z <= c_z_near || v1.position.z <= c_z_near || v2.position.z <= c_z_near )
-	{
-		return;
-	}
+	// Given triangle should be clipped to Z near prior to this call.
+	debug_assert( v0.position.z >= c_z_near );
+	debug_assert( v1.position.z >= c_z_near );
+	debug_assert( v2.position.z >= c_z_near );
 
 	// Work with floating-point coordinates, but quantize them,
 	// so that we don't work with infinite small delta values.
@@ -644,6 +673,27 @@ struct MapVertexF32
 	Vec3f position;
 	Vec2f tex_coord;
 	[ f32, 4 ] light;
+
+	op*( MapVertexF32& v, f32 s ) : MapVertexF32
+	{
+		return MapVertexF32
+		{
+			.position= v.position * s,
+			.tex_coord= v.tex_coord * s,
+			.light[ v.light[0] * s, v.light[1] * s, v.light[2] * s, v.light[3] * s ]
+		};
+	}
+
+	op-( MapVertexF32& l, MapVertexF32& r ) : MapVertexF32
+	{
+		return MapVertexF32
+		{
+			.position= l.position - r.position,
+			.tex_coord= l.tex_coord - r.tex_coord,
+			.light[
+				l.light[0] - r.light[0], l.light[1] - r.light[1], l.light[2] - r.light[2], l.light[3] - r.light[3] ],
+		};
+	}
 }
 
 fn LoadMapTextures(
