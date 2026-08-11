@@ -1,4 +1,5 @@
 import "bounding_boxes_hierarchy_visiting.iu"
+import "clipping.iu"
 import "decals.iu"
 import "mat.iu"
 import "math_constants.iu"
@@ -370,6 +371,24 @@ struct DecalPolygonVertex
 	Vec3f position;
 	Vec3f light;
 	// Store no texture coordinates here - they are calculated later based on position.
+
+	op*( DecalPolygonVertex& v, f32 s ) : DecalPolygonVertex
+	{
+		return DecalPolygonVertex
+		{
+			.position= v.position * s,
+			.light= v.light * s,
+		};
+	}
+
+	op-( DecalPolygonVertex& l, DecalPolygonVertex& r ) : DecalPolygonVertex
+	{
+		return DecalPolygonVertex
+		{
+			.position= l.position - r.position,
+			.light= l.light - r.light,
+		};
+	}
 }
 
 type DecalClipPlanes= [ Planef, 4 ];
@@ -567,87 +586,6 @@ fn ClipAndEmitDecalPolygon(
 		out_indices.push_back( u16( base_vertex + triangle_index - 1s ) );
 		out_indices.push_back( u16( base_vertex + triangle_index - 0s ) );
 	}
-}
-
-// Input polygon is expected to be convex.
-fn ClipPolygon(
-	Planef& plane,
-	ust::array_view_imut</DecalPolygonVertex/> in_vertices,
-	DecalPolygonVertices &mut out_vertices ) : size_type
-{
-	var DecalPolygonVertex mut prev_v= in_vertices.back();
-	var f32 mut prev_dist= plane.GetDistanceForPoint( prev_v.position );
-	var size_type mut out_vertex_count= 0s;
-
-	foreach( &v : in_vertices )
-	{
-		var f32 dist= plane.GetDistanceForPoint( v.position );
-
-		if( dist > 0.0f )
-		{
-			if( prev_dist < 0.0f )
-			{
-				var f32 dist_sum= dist - prev_dist;
-				var f32 k0= prev_dist / dist_sum;
-				var f32 k1= dist / dist_sum;
-
-				out_vertices[ out_vertex_count ]=
-					DecalPolygonVertex
-					{
-
-						.position= prev_v.position * k1 - v.position * k0,
-						.light= prev_v.light * k1 - v.light * k0,
-					};
-
-				++out_vertex_count;
-
-				if( out_vertex_count == c_max_decal_polygon_vertices )
-				{
-					break;
-				}
-			}
-			out_vertices[ out_vertex_count ]= v;
-			++out_vertex_count;
-			if( out_vertex_count == c_max_decal_polygon_vertices )
-			{
-				break;
-			}
-		}
-		else if( dist == 0.0f )
-		{
-			out_vertices[ out_vertex_count ]= v;
-			++out_vertex_count;
-			if( out_vertex_count == c_max_decal_polygon_vertices )
-			{
-				break;
-			}
-		}
-		else if( prev_dist > 0.0f )
-		{
-			var f32 dist_sum= dist - prev_dist;
-			var f32 k0= prev_dist / dist_sum;
-			var f32 k1= dist / dist_sum;
-
-			out_vertices[ out_vertex_count ]=
-				DecalPolygonVertex
-				{
-
-					.position= prev_v.position * k1 - v.position * k0,
-					.light= prev_v.light * k1 - v.light * k0,
-				};
-
-			++out_vertex_count;
-			if( out_vertex_count == c_max_decal_polygon_vertices )
-			{
-				break;
-			}
-		}
-
-		prev_v= v;
-		prev_dist= dist;
-	}
-
-	return out_vertex_count;
 }
 
 } // namespace PM
