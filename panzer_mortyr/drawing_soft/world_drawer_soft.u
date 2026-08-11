@@ -130,8 +130,8 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 
 	var [ MapVertexF32, 16 ]
 		mut vertices_clipped0[ dummy_vertex ... ],
-		mut vertices_clipped1[ dummy_vertex ... ],
-		mut vertices_clipped2[ dummy_vertex ... ];
+		mut vertices_clipped1[ dummy_vertex ... ] /*,
+		mut vertices_clipped2[ dummy_vertex ... ] */;
 
 	foreach( &cluster : clusters )
 	{
@@ -265,6 +265,20 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 
 			var Color32WorldTextureWithMips& texture= map_data.textures[ size_type( v0.tex_coordinates[2] ) ];
 
+			for( auto mut i= 2s; i < num_vertices; ++i )
+			{
+				RasterizeTrianlge_r(
+					surface,
+					depth_buffer,
+					cast_imut(vertices_clipped1)[0],
+					cast_imut(vertices_clipped1)[ i - 1s ],
+					cast_imut(vertices_clipped1)[ i ],
+					texture,
+					0u );
+			}
+
+
+			/*
 			for( auto mut z_index= 0s;
 				z_index < typeinfo</ typeof(c_z_splicing_values) />.element_count - 1s;
 				++z_index )
@@ -303,16 +317,16 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 					continue;
 				}
 
-
 				for( auto mut i= 2s; i < num_z_clipped_vertices; ++i )
 				{
-					RasterizeTrianlge(
+					RasterizeTrianlge_r(
 						surface,
 						depth_buffer,
 						cast_imut(vertices_clipped2)[0],
 						cast_imut(vertices_clipped2)[ i - 1s ],
 						cast_imut(vertices_clipped2)[ i ],
-						texture );
+						texture,
+						0u );
 				}
 
 				for( auto mut i= 2s; i < num_z_clipped_vertices; ++i )
@@ -327,7 +341,7 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 					RasterizeLine( surface, depth_buffer, v1, v2, color );
 					RasterizeLine( surface, depth_buffer, v2, v0, color );
 				}
-			}
+			}*/
 		}
 	}
 
@@ -420,6 +434,89 @@ fn WorldDrawerSoft::SetMap( mut this, u32 map_index )
 			.textures=
 				LoadMapTextures( materials_block, caching_game_resources_loader.GetGameFilesystem(), console_out_ ),
 		} );
+}
+
+
+fn RasterizeTrianlge_r(
+	Color32ImageView surface,
+	ust::array_view_mut</f32/> depth_buffer,
+	MapVertexF32& v0,
+	MapVertexF32& v1,
+	MapVertexF32& v2,
+	Color32WorldTextureWithMips& texture,
+	u32 depth )
+{
+	var f32 mut max_edge_error= 0.0f;
+	var size_type mut max_edge_index= ~0s;
+
+	var [ MapVertexF32, 3 ] vertices[ v0, v1, v2 ];
+	var MapVertexF32 mut prev_v= v2;
+	for( auto mut i= 0s; i < 3s; ++i )
+	{
+		var MapVertexF32 v= vertices[i];
+
+		var f32 max_z= ust::max( v.position.z, prev_v.position.z );
+		var f32 min_z= ust::min( v.position.z, prev_v.position.z );
+
+		var f32 d= max_z / ( max_z - min_z );
+
+		var f32 tc_distance= ( v.tex_coord - prev_v.tex_coord ).Length();
+
+		var f32 error= tc_distance * ust::abs( ( 2.0f * ust::sqrt( d * d + d ) - 2.0f * d - 1.0f ) );
+		if( error > max_edge_error )
+		{
+			max_edge_error= error;
+			max_edge_index= i;
+		}
+
+		prev_v= v;
+	}
+
+	if( max_edge_error <= 1.0f || depth == 3u )
+	{
+		RasterizeTrianlge( surface, depth_buffer, v0, v1, v2, texture );
+
+		if( false )
+		{
+			var Color32 color( 0x00FF00FFu );
+
+			RasterizeLine( surface, depth_buffer, v0, v1, color );
+			RasterizeLine( surface, depth_buffer, v1, v2, color );
+			RasterizeLine( surface, depth_buffer, v2, v0, color );
+		}
+	}
+	else
+	{
+		/*
+		var MapVertexF32 middle01= v0 * 0.5f + v1 * 0.5f;
+		var MapVertexF32 middle12= v1 * 0.5f + v2 * 0.5f;
+		var MapVertexF32 middle20= v2 * 0.5f + v0 * 0.5f;
+
+		RasterizeTrianlge_r( surface, depth_buffer, v0, middle01, middle20, texture, depth + 1u );
+		RasterizeTrianlge_r( surface, depth_buffer, v1, middle12, middle01, texture, depth + 1u );
+		RasterizeTrianlge_r( surface, depth_buffer, v2, middle20, middle12, texture, depth + 1u );
+		RasterizeTrianlge_r( surface, depth_buffer, middle01, middle12, middle20, texture, depth + 1u );
+		*/
+
+		if( max_edge_index == 0s )
+		{
+			var MapVertexF32 middle= v0 * 0.5f + v1 * 0.5f;
+			RasterizeTrianlge_r( surface, depth_buffer, v0, middle, v2, texture, depth + 1u );
+			RasterizeTrianlge_r( surface, depth_buffer, v2, middle, v1, texture, depth + 1u );
+		}
+		if( max_edge_index == 1s )
+		{
+			var MapVertexF32 middle= v1 * 0.5f + v2 * 0.5f;
+			RasterizeTrianlge_r( surface, depth_buffer, v0, v1, middle, texture, depth + 1u );
+			RasterizeTrianlge_r( surface, depth_buffer, v0, middle, v2, texture, depth + 1u );
+		}
+		if( max_edge_index == 2s )
+		{
+			var MapVertexF32 middle= v2 * 0.5f + v0 * 0.5f;
+			RasterizeTrianlge_r( surface, depth_buffer, v0, v1, middle, texture, depth + 1u );
+			RasterizeTrianlge_r( surface, depth_buffer, middle, v1, v2, texture, depth + 1u );
+		}
+	}
 }
 
 fn RasterizeTrianlge(
@@ -871,6 +968,17 @@ struct MapVertexF32
 			.position= v.position * s,
 			.tex_coord= v.tex_coord * s,
 			.light[ v.light[0] * s, v.light[1] * s, v.light[2] * s, v.light[3] * s ]
+		};
+	}
+
+	op+( MapVertexF32& l, MapVertexF32& r ) : MapVertexF32
+	{
+		return MapVertexF32
+		{
+			.position= l.position + r.position,
+			.tex_coord= l.tex_coord + r.tex_coord,
+			.light[
+				l.light[0] + r.light[0], l.light[1] + r.light[1], l.light[2] + r.light[2], l.light[3] + r.light[3] ],
 		};
 	}
 
