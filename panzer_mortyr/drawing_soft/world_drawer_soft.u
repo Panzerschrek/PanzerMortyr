@@ -259,13 +259,14 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 
 			for( auto mut i= 2s; i < num_vertices; ++i )
 			{
-				RasterizeTrianlge(
+				SubdivideAndRasterizeTriangle_r(
 					surface,
 					depth_buffer,
 					cast_imut(vertices_clipped1)[0],
 					cast_imut(vertices_clipped1)[ i - 1s ],
 					cast_imut(vertices_clipped1)[ i ],
-					texture );
+					texture,
+					0u );
 			}
 		}
 	}
@@ -450,6 +451,41 @@ fn LoadMapTextures(
 	}
 
 	return result_textures;
+}
+
+fn SubdivideAndRasterizeTriangle_r(
+	Color32ImageView surface,
+	ust::array_view_mut</f32/> depth_buffer,
+	MapVertexF32& v0,
+	MapVertexF32& v1,
+	MapVertexF32& v2,
+	Color32WorldTextureWithMips& texture,
+	u32 depth )
+{
+	// TODO - improve this. Subdivide edges instead of triangles and use better subdivision criteria.
+
+	var f32 min_z= ust::min( v0.position.z, ust::min( v1.position.z, v2.position.z ) );
+	var f32 max_z= ust::max( v0.position.z, ust::max( v1.position.z, v2.position.z ) );
+
+	if( max_z / min_z <= 1.1f || depth >= 3u )
+	{
+		RasterizeTrianlge( surface, depth_buffer, v0, v1, v2, texture );
+
+		RasterizeLine( surface, depth_buffer, v0, v1, Color32( 0x00FF00FFu ) );
+		RasterizeLine( surface, depth_buffer, v1, v2, Color32( 0x00FF00FFu ) );
+		RasterizeLine( surface, depth_buffer, v2, v0, Color32( 0x00FF00FFu ) );
+	}
+	else
+	{
+		var MapVertexF32 middle01= v0 * 0.5f + v1 * 0.5f;
+		var MapVertexF32 middle12= v1 * 0.5f + v2 * 0.5f;
+		var MapVertexF32 middle20= v2 * 0.5f + v0 * 0.5f;
+
+		SubdivideAndRasterizeTriangle_r( surface, depth_buffer, v0, middle01, middle20, texture, depth + 1u );
+		SubdivideAndRasterizeTriangle_r( surface, depth_buffer, v1, middle12, middle01, texture, depth + 1u );
+		SubdivideAndRasterizeTriangle_r( surface, depth_buffer, v2, middle20, middle12, texture, depth + 1u );
+		SubdivideAndRasterizeTriangle_r( surface, depth_buffer, middle01, middle12, middle20, texture, depth + 1u );
+	}
 }
 
 fn CreateTestTexture() : Color32WorldTextureWithMips
