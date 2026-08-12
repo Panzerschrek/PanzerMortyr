@@ -109,9 +109,7 @@ PanzerMortyr OpenGL rendering:
 PanzerMortyr software rendering:
 
 * Implement code taking screenshots (needed for savegames).
-* Implement near Z plane culling for triangles.
-* Implement triangle culling by frustum side planes.
-* Implement slicing of triangles by several planes parallel to near Z plane in order to approximate perspective correction.
+* Implement some sort of subdivision of triangles to compensate for affine (and not perspective-corrected) texture-mapping.
 * Try speding-up rasterization code by using fixed-point arithmetic for edges calculation.
 * Try speding-up rasterization code by using fixed-point arithmetic for colors interpolation.
 * Try seeding-up rasterization code by using depth buffer in u32 or even u16 format.
