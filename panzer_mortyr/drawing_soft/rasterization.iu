@@ -80,19 +80,21 @@ fn RasterizeTrianlge(
 		],
 	};
 
+	var [ f32, 3 ] inv_z[ 1.0f / v0.position.z, 1.0f / v1.position.z, 1.0f / v2.position.z ];
+
 	// TODO - don't care about alpha if don't need to do so.
 	var [ Vec3f, 4 ] color_equations
 	[
-		Vec3f( v0.light[0], v1.light[0], v2.light[0] ) * equations_matrix,
-		Vec3f( v0.light[1], v1.light[1], v2.light[1] ) * equations_matrix,
-		Vec3f( v0.light[2], v1.light[2], v2.light[2] ) * equations_matrix,
-		Vec3f( v0.light[3], v1.light[3], v2.light[3] ) * equations_matrix,
+		Vec3f( v0.light[0] * inv_z[0], v1.light[0] * inv_z[1], v2.light[0] * inv_z[2] ) * equations_matrix,
+		Vec3f( v0.light[1] * inv_z[0], v1.light[1] * inv_z[1], v2.light[1] * inv_z[2] ) * equations_matrix,
+		Vec3f( v0.light[2] * inv_z[0], v1.light[2] * inv_z[1], v2.light[2] * inv_z[2] ) * equations_matrix,
+		Vec3f( v0.light[3] * inv_z[0], v1.light[3] * inv_z[1], v2.light[3] * inv_z[2] ) * equations_matrix,
 	];
 
 	var [ Vec3f, 2 ] tex_coord_equations
 	[
-		Vec3f( v0.tex_coord.x, v1.tex_coord.x, v2.tex_coord.x ) * equations_matrix,
-		Vec3f( v0.tex_coord.y, v1.tex_coord.y, v2.tex_coord.y ) * equations_matrix,
+		Vec3f( v0.tex_coord.x * inv_z[0], v1.tex_coord.x * inv_z[1], v2.tex_coord.x * inv_z[2] ) * equations_matrix,
+		Vec3f( v0.tex_coord.y * inv_z[0], v1.tex_coord.y * inv_z[1], v2.tex_coord.y * inv_z[2] ) * equations_matrix,
 	];
 
 	// Calculate mip-level.
@@ -111,7 +113,9 @@ fn RasterizeTrianlge(
 	var f32 d_tc_dy_squared=
 		tex_coord_equations[0].y * tex_coord_equations[0].y + tex_coord_equations[1].y * tex_coord_equations[1].y;
 
-	var f32 max_d_tc_squared= ust::max( d_tc_dx_squared, d_tc_dy_squared );
+	var f32 min_z= ust::min( v0.position.z, ust::min( v1.position.z, v2.position.z ) );
+
+	var f32 max_d_tc_squared= ust::max( d_tc_dx_squared, d_tc_dy_squared ) * min_z * min_z;
 
 	// Calculate integer log2 by extracting exponent from the floating point value.
 	// Exponents less than zero are clamped to zero.
@@ -125,8 +129,7 @@ fn RasterizeTrianlge(
 
 	var u32 target_mip= ust::min( d_tc_log2, u32( typeinfo</ typeof( texture ) />.element_count - 1s ) );
 
-	var Vec3f depth_equation=
-		Vec3f( 1.0f / v0.position.z, 1.0f / v1.position.z, 1.0f / v2.position.z ) * equations_matrix;
+	var Vec3f depth_equation= Vec3f( inv_z ) * equations_matrix;
 
 	// Perform triangle rasterization.
 
@@ -224,28 +227,10 @@ fn RasterizeTrianlge(
 			static_assert( ( mip_size[0] & ( mip_size[0] - 1u ) ) == 0u );
 			static_assert( ( mip_size[1] & ( mip_size[1] - 1u ) ) == 0u );
 
-			var[ f32, 2 ] constexpr mip_tc_scale
+			var [ Vec3f, 2 ] tex_coord_equations_scaled
 			[
-				f32( 1 << 16 ) * f32( mip_size[0] ) / f32( mip0_size[0] ),
-				f32( 1 << 16 ) * f32( mip_size[1] ) / f32( mip0_size[1] ),
-			];
-
-			// Perform texture coordinates interpolation using fixed16 format.
-			// It gives good precision with minimum overflow/underflow chance.
-			// For offset component perform f32 -> i64 -> i32 cast to wrap-around instead of producing garbage for large f32 values.
-			// It's fine, since we use tiled power of two textures.
-			var [ [ i32, 3 ], 2 ] tex_coord_equations_fixed16
-			[
-				[
-					     ( tex_coord_equations[0].x * mip_tc_scale[0] ),
-					     ( tex_coord_equations[0].y * mip_tc_scale[0] ),
-					( i64( tex_coord_equations[0].z * mip_tc_scale[0] ) )
-				],
-				[
-					     ( tex_coord_equations[1].x * mip_tc_scale[1] ),
-					     ( tex_coord_equations[1].y * mip_tc_scale[1] ),
-					( i64( tex_coord_equations[1].z * mip_tc_scale[1] ) )
-				]
+				tex_coord_equations[0] * ( 65536.0f * f32( mip_size[0] ) / f32( mip0_size[0] ) ),
+				tex_coord_equations[1] * ( 65536.0f * f32( mip_size[1] ) / f32( mip0_size[1] ) ),
 			];
 
 			for( auto mut y= min_y_i; y < max_y_i; ++y )
@@ -262,7 +247,6 @@ fn RasterizeTrianlge(
 				{
 					// We perform rasterization for centers of pixels, so, add 0.5.
 					var [ f32, 2 ] first_pixel_center[ f32( min_x_i ) + 0.5f, f32( y ) + 0.5f ];
-					var [ i32, 2 ] first_pixel_center_fixed1[ min_x_i * 2 + 1, y * 2 + 1 ];
 
 					var [ f32, 4 ] mut pixel_color= zero_init;
 
@@ -275,15 +259,14 @@ fn RasterizeTrianlge(
 							component_equation.z;
 					}
 
-
-					var [ i32, 2 ] mut pixel_tex_coord_fixed16
+					var [ f32, 2 ] mut pixel_tex_coord
 					[
-						tex_coord_equations_fixed16[0][2] +
-						( ( tex_coord_equations_fixed16[0][0] * first_pixel_center_fixed1[0] +
-							tex_coord_equations_fixed16[0][1] * first_pixel_center_fixed1[1] ) >> 1 ),
-						tex_coord_equations_fixed16[1][2] +
-						( ( tex_coord_equations_fixed16[1][0] * first_pixel_center_fixed1[0] +
-							tex_coord_equations_fixed16[1][1] * first_pixel_center_fixed1[1] ) >> 1 ),
+						tex_coord_equations_scaled[0].x * first_pixel_center[0] +
+							tex_coord_equations_scaled[0].y * first_pixel_center[1] +
+							tex_coord_equations_scaled[0].z,
+						tex_coord_equations_scaled[1].x * first_pixel_center[0] +
+							tex_coord_equations_scaled[1].y * first_pixel_center[1] +
+							tex_coord_equations_scaled[1].z,
 					];
 
 					var f32 mut pixel_depth=
@@ -304,16 +287,18 @@ fn RasterizeTrianlge(
 						{
 							pair.first= pixel_depth;
 
-							var u32 u= ( u32( pixel_tex_coord_fixed16[0] ) >> 16 ) & ( mip_size[0] - 1u );
-							var u32 v= ( u32( pixel_tex_coord_fixed16[1] ) >> 16 ) & ( mip_size[1] - 1u );
+							var f32 pixel_z= 1.0f / pixel_depth;
+
+							var u32 u= u32( i32( pixel_tex_coord[0] * pixel_z ) >> 16 ) & ( mip_size[0] - 1u );
+							var u32 v= u32( i32( pixel_tex_coord[1] * pixel_z ) >> 16 ) & ( mip_size[1] - 1u );
 							var RGBAColor texture_value= Color32ToComponents( texture_mip[v][u] );
 
 							var RGBAColor pixel_color_comonents
 							[
-								( ( u32( texture_value[0] ) * u32( ust::max( 0.0f, ust::min( pixel_color[0], 255.0f ) ) ) ) >> 8 ),
-								( ( u32( texture_value[1] ) * u32( ust::max( 0.0f, ust::min( pixel_color[1], 255.0f ) ) ) ) >> 8 ),
-								( ( u32( texture_value[2] ) * u32( ust::max( 0.0f, ust::min( pixel_color[2], 255.0f ) ) ) ) >> 8 ),
-								( ( u32( texture_value[3] ) * u32( ust::max( 0.0f, ust::min( pixel_color[3], 255.0f ) ) ) ) >> 8 ), // TODO - consider not caring about alpha.
+								( ( u32( texture_value[0] ) * u32( ust::max( 0.0f, ust::min( pixel_color[0] * pixel_z, 255.0f ) ) ) ) >> 8 ),
+								( ( u32( texture_value[1] ) * u32( ust::max( 0.0f, ust::min( pixel_color[1] * pixel_z, 255.0f ) ) ) ) >> 8 ),
+								( ( u32( texture_value[2] ) * u32( ust::max( 0.0f, ust::min( pixel_color[2] * pixel_z, 255.0f ) ) ) ) >> 8 ),
+								( ( u32( texture_value[3] ) * u32( ust::max( 0.0f, ust::min( pixel_color[3] * pixel_z, 255.0f ) ) ) ) >> 8 ), // TODO - consider not caring about alpha.
 							];
 
 							pair.second= Color32FromComponents( pixel_color_comonents );
@@ -325,8 +310,8 @@ fn RasterizeTrianlge(
 						}
 
 
-						pixel_tex_coord_fixed16[0]+= tex_coord_equations_fixed16[0][0];
-						pixel_tex_coord_fixed16[1]+= tex_coord_equations_fixed16[1][0];
+						pixel_tex_coord[0]+= tex_coord_equations_scaled[0].x;
+						pixel_tex_coord[1]+= tex_coord_equations_scaled[1].x;
 
 						pixel_depth+= depth_equation.x;
 					}
