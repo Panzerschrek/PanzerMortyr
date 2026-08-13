@@ -107,15 +107,45 @@ fn RasterizeTrianlge(
 	// We don't need calling proper log2, since we need to floor its result to the nearest integer.
 	// So, calculate it by extracting exponent of a floating-point value directly.
 
-	var f32 d_tc_dx_squared=
-		tex_coord_equations[0].x * tex_coord_equations[0].x + tex_coord_equations[1].x * tex_coord_equations[1].x;
+	var Vec3f depth_equation= Vec3f( inv_z ) * equations_matrix;
 
-	var f32 d_tc_dy_squared=
-		tex_coord_equations[0].y * tex_coord_equations[0].y + tex_coord_equations[1].y * tex_coord_equations[1].y;
+	// Calcuate local derivatives of texture coordinates for each vertex.
+	// Find values with the smallest module.
+	// This is needed due to perspective correction.
+	var f32 mut min_d_tc_dx_squared= ust::plus_inf</f32/>(), mut min_d_tc_dy_squared= ust::plus_inf</f32/>();
+	{
+		var Vec2f tex_coord_equation_x( tex_coord_equations[0].x, tex_coord_equations[1].x );
+		var Vec2f tex_coord_equation_y( tex_coord_equations[0].y, tex_coord_equations[1].y );
+		{
+			var f32 z_squared= v0.position.z * v0.position.z;
+			ust::min_assign(
+				min_d_tc_dx_squared,
+				( tex_coord_equation_x - v0.tex_coord * depth_equation.x ).SquareLength() * z_squared );
+			ust::min_assign(
+				min_d_tc_dy_squared,
+				( tex_coord_equation_y - v0.tex_coord * depth_equation.y ).SquareLength() * z_squared );
+		}
+		{
+			var f32 z_squared= v1.position.z * v1.position.z;
+			ust::min_assign(
+				min_d_tc_dx_squared,
+				( tex_coord_equation_x - v1.tex_coord * depth_equation.x ).SquareLength() * z_squared );
+			ust::min_assign(
+				min_d_tc_dy_squared,
+				( tex_coord_equation_y - v1.tex_coord * depth_equation.y ).SquareLength() * z_squared );
+		}
+		{
+			var f32 z_squared= v2.position.z * v2.position.z;
+			ust::min_assign(
+				min_d_tc_dx_squared,
+				( tex_coord_equation_x - v2.tex_coord * depth_equation.x ).SquareLength() * z_squared );
+			ust::min_assign(
+				min_d_tc_dy_squared,
+				( tex_coord_equation_y - v2.tex_coord * depth_equation.y ).SquareLength() * z_squared );
+		}
+	}
 
-	var f32 min_z= ust::min( v0.position.z, ust::min( v1.position.z, v2.position.z ) );
-
-	var f32 max_d_tc_squared= ust::max( d_tc_dx_squared, d_tc_dy_squared ) * min_z * min_z;
+	var f32 max_d_tc_squared= ust::max( min_d_tc_dx_squared, min_d_tc_dy_squared );
 
 	// Calculate integer log2 by extracting exponent from the floating point value.
 	// Exponents less than zero are clamped to zero.
@@ -128,8 +158,6 @@ fn RasterizeTrianlge(
 		( c_exponent_shift + 1u /* extra one to compensate for squared input value */ );
 
 	var u32 target_mip= ust::min( d_tc_log2, u32( typeinfo</ typeof( texture ) />.element_count - 1s ) );
-
-	var Vec3f depth_equation= Vec3f( inv_z ) * equations_matrix;
 
 	// Perform triangle rasterization.
 
