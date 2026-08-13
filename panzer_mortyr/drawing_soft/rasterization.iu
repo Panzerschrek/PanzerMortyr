@@ -89,6 +89,31 @@ fn RasterizeTrianlge(
 		Vec3f( v0.light[3], v1.light[3], v2.light[3] ) * equations_matrix,
 	];
 
+	// Bias at 0 coord can be huge, so, require 64-bit for it.
+	var [ tup [ i32, i32, i64 ], 4 ] color_equations_fixed20
+	[
+		[
+			( color_equations[0].x * f32( 1 << 20 ) ),
+			( color_equations[0].y * f32( 1 << 20 ) ),
+			( color_equations[0].z * f32( 1 << 20 ) ),
+		],
+		[
+			( color_equations[1].x * f32( 1 << 20 ) ),
+			( color_equations[1].y * f32( 1 << 20 ) ),
+			( color_equations[1].z * f32( 1 << 20 ) ),
+		],
+		[
+			( color_equations[2].x * f32( 1 << 20 ) ),
+			( color_equations[2].y * f32( 1 << 20 ) ),
+			( color_equations[2].z * f32( 1 << 20 ) ),
+		],
+		[
+			( color_equations[3].x * f32( 1 << 20 ) ),
+			( color_equations[3].y * f32( 1 << 20 ) ),
+			( color_equations[3].z * f32( 1 << 20 ) ),
+		],
+	];
+
 	var [ Vec3f, 2 ] tex_coord_equations
 	[
 		Vec3f( v0.tex_coord.x, v1.tex_coord.x, v2.tex_coord.x ) * equations_matrix,
@@ -264,17 +289,17 @@ fn RasterizeTrianlge(
 					var [ f32, 2 ] first_pixel_center[ f32( min_x_i ) + 0.5f, f32( y ) + 0.5f ];
 					var [ i32, 2 ] first_pixel_center_fixed1[ min_x_i * 2 + 1, y * 2 + 1 ];
 
-					var [ f32, 4 ] mut pixel_color= zero_init;
+					var [ i32, 4 ] mut pixel_color_fixed20= zero_init;
 
 					for( auto mut component= 0s; component < 4s; ++component ) // TODO - consider not caring about alpha.
 					{
-						var Vec3f& component_equation= color_equations[ component ];
-						pixel_color[ component ]=
-							component_equation.x * first_pixel_center[0] +
-							component_equation.y * first_pixel_center[1] +
-							component_equation.z;
+						var tup[ i32, i32, i64 ]& component_equation= color_equations_fixed20[ component ];
+						pixel_color_fixed20[ component ]=
+							i32(
+								( ( i64( component_equation[0] ) * i64( first_pixel_center_fixed1[0] ) +
+									i64( component_equation[1] ) * i64( first_pixel_center_fixed1[1] ) ) >> 1 ) +
+								component_equation[2] );
 					}
-
 
 					var [ i32, 2 ] mut pixel_tex_coord_fixed16
 					[
@@ -310,10 +335,10 @@ fn RasterizeTrianlge(
 
 							var RGBAColor pixel_color_comonents
 							[
-								( ust::max( 0.0f, ust::min( f32( texture_value[0] ) * pixel_color[0], 255.0f ) ) ),
-								( ust::max( 0.0f, ust::min( f32( texture_value[1] ) * pixel_color[1], 255.0f ) ) ),
-								( ust::max( 0.0f, ust::min( f32( texture_value[2] ) * pixel_color[2], 255.0f ) ) ),
-								( ust::max( 0.0f, ust::min( f32( texture_value[3] ) * pixel_color[3], 255.0f ) ) ), // TODO - consider not caring about alpha.
+								( ust::max( 0, ust::min( i32( ( i64( texture_value[0] ) * i64( pixel_color_fixed20[0] ) ) >> 20 ), 255 ) ) ),
+								( ust::max( 0, ust::min( i32( ( i64( texture_value[1] ) * i64( pixel_color_fixed20[1] ) ) >> 20 ), 255 ) ) ),
+								( ust::max( 0, ust::min( i32( ( i64( texture_value[2] ) * i64( pixel_color_fixed20[2] ) ) >> 20 ), 255 ) ) ),
+								( ust::max( 0, ust::min( i32( ( i64( texture_value[3] ) * i64( pixel_color_fixed20[3] ) ) >> 20 ), 255 ) ) ), // TODO - consider not caring about alpha.
 							];
 
 							pair.second= Color32FromComponents( pixel_color_comonents );
@@ -321,9 +346,8 @@ fn RasterizeTrianlge(
 
 						for( auto mut component= 0s; component < 4s; ++component )
 						{
-							pixel_color[ component ]+= color_equations[ component ].x;
+							pixel_color_fixed20[ component ]+= color_equations_fixed20[ component ][0];
 						}
-
 
 						pixel_tex_coord_fixed16[0]+= tex_coord_equations_fixed16[0][0];
 						pixel_tex_coord_fixed16[1]+= tex_coord_equations_fixed16[1][0];
