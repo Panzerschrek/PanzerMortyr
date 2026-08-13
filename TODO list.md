@@ -108,7 +108,6 @@ PanzerMortyr OpenGL rendering:
 
 PanzerMortyr software rendering:
 
-* Implement code taking screenshots (needed for savegames).
 * Implement some sort of subdivision of triangles to compensate for affine (and not perspective-corrected) texture-mapping.
 * Try speding-up rasterization code by using fixed-point arithmetic for edges calculation.
 * Try speding-up rasterization code by using fixed-point arithmetic for colors interpolation.
