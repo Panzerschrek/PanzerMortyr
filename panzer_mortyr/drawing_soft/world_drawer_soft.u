@@ -466,17 +466,107 @@ fn SubdivideAndRasterizeTriangle_r(
 
 	if( depth < 4u )
 	{
-		var [ Vec2f, 3 ] screen_positions
+		var [ [ f32, 2 ], 3 ] vertices_projected
 		[
-			v0.position.xy() / v0.position.z,
-			v1.position.xy() / v1.position.z,
-			v2.position.xy() / v2.position.z,
+			[ v0.position.x / v0.position.z, v0.position.y / v0.position.z ],
+			[ v1.position.x / v1.position.z, v1.position.y / v1.position.z ],
+			[ v2.position.x / v2.position.z, v2.position.y / v2.position.z ],
 		];
 
+		/*
 		for( auto mut i= 0s; i < 3s; ++i )
 		{
 			var f32 square_distance= ( screen_positions[i] - screen_positions[ ( i + 1s ) % 3s ] ).SquareLength();
 			edge_needs_subdivision[i]= square_distance > ( 128.0f * 128.0f );
+		}*/
+
+		var f32 det=
+			vertices_projected[0][0] * ( vertices_projected[1][1] - vertices_projected[2][1] ) -
+			vertices_projected[1][0] * ( vertices_projected[0][1] - vertices_projected[2][1] ) +
+			vertices_projected[2][0] * ( vertices_projected[0][1] - vertices_projected[1][1] );
+
+		if( det <= 0.0f ) // This check serves as back face culling.
+		{
+			return;
+		}
+
+		var f32 inv_det= 1.0f / det;
+
+		// This matrix is an inverse of projected vertices matrix:
+		//  [ x0, x1, x2 ],
+		//  [ y0, y1, y2 ],
+		//  [  1,  1,  1 ],
+		var Mat3f equations_matrix
+		{
+			.values
+			[
+				[
+					inv_det * ( vertices_projected[1][1] - vertices_projected[2][1] ),
+					inv_det * ( vertices_projected[2][0] - vertices_projected[1][0] ),
+					inv_det * ( vertices_projected[1][0] * vertices_projected[2][1] - vertices_projected[2][0] * vertices_projected[1][1] )
+				],
+				[
+					inv_det * ( vertices_projected[2][1] - vertices_projected[0][1] ),
+					inv_det * ( vertices_projected[0][0] - vertices_projected[2][0] ),
+					inv_det * ( vertices_projected[2][0] * vertices_projected[0][1] - vertices_projected[0][0] * vertices_projected[2][1] ),
+				],
+				[
+					inv_det * ( vertices_projected[0][1] - vertices_projected[1][1] ),
+					inv_det * ( vertices_projected[1][0] - vertices_projected[0][0] ),
+					inv_det * ( vertices_projected[0][0] * vertices_projected[1][1] - vertices_projected[1][0] * vertices_projected[0][1] ),
+				],
+			],
+		};
+
+		var Vec3f depth_equation=
+			Vec3f( 1.0f / v0.position.z, 1.0f / v1.position.z, 1.0f / v2.position.z ) * equations_matrix;
+
+		var f32 depth_equation_direction_length= depth_equation.xy().Length();
+		if( depth_equation_direction_length > 0.0f )
+		{
+			var [ f32, 3 ] vertices_z[ v0.position.z, v1.position.z, v2.position.z ];
+
+			var Vec3f depth_equation_scaled= depth_equation / depth_equation_direction_length;
+
+			for( auto mut i= 0s; i < 3s; ++i )
+			{
+				var Vec2f p0( vertices_projected[i] );
+				var Vec2f p1( vertices_projected[ ( i + 1s ) % 3s ] );
+
+				if( ( p0 - p1 ).SquareLength() <= 8.0f * 8.0f )
+				{
+					continue; // Don't split too short edges.
+				}
+
+				var f32 z0= vertices_z[i], z1= vertices_z[ ( i + 1s ) % 3s ];
+				if( ust::max( z0, z1 ) / ust::min( z0, z1 ) >= 1.25f )
+				{
+					edge_needs_subdivision[i]= true;
+					continue;
+				}
+
+				var Vec2f p_middle= ( p0 + p1 ) * 0.5f;
+
+				var f32 distane_to_infinite_z_line=
+					p_middle.Dot( depth_equation_scaled.xy() ) + depth_equation_scaled.z;
+
+				var Vec2f p_middle_projected_to_infitite_z_line=
+					p_middle - depth_equation_scaled.xy() * distane_to_infinite_z_line;
+
+				var Vec2f vec0= p0 - p_middle_projected_to_infitite_z_line;
+				var Vec2f vec1= p1 - p_middle_projected_to_infitite_z_line;
+
+				var f32 len_product_squared= vec0.SquareLength() * vec1.SquareLength();
+				if( len_product_squared > 0.0f )
+				{
+					var f32 angle_cos= vec0.Dot( vec1 ) / ust::sqrt( len_product_squared );
+
+					if( angle_cos < 0.98f )
+					{
+						edge_needs_subdivision[i]= true;
+					}
+				}
+			}
 		}
 	}
 
