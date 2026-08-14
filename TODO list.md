@@ -109,11 +109,12 @@ PanzerMortyr OpenGL rendering:
 PanzerMortyr software rendering:
 
 * Implement code taking screenshots (needed for savegames).
-* Implement some sort of subdivision of triangles to compensate for affine (and not perspective-corrected) texture-mapping.
-* Try speding-up rasterization code by using fixed-point arithmetic for edges calculation.
-* Try speding-up rasterization code by using fixed-point arithmetic for colors interpolation.
-* Try seeding-up rasterization code by using depth buffer in u32 or even u16 format.
-* Try speding-up rasterization by correcting color and depth equations, so that it's not need to clamp interpolated color and depth values.
+* Try speeding-up tasterization by performing one level of subdivision for triangles for which affine rasterization can't be used.
+* Try speeding-up rasterization code by using fixed-point arithmetic for edges calculation.
+* Try seeeding-up rasterization code by using depth buffer in u32 or even u16 format.
+* Try speeding-up rasterization by correcting color and depth equations, so that it's not need to clamp interpolated color and depth values.
+* Try fixing numerical errors in inverse depth interpolation causing pixels of thin triangles to be visible through walls.
+* Draw test primitives.
 * Prepare alpha of map textures, including special ones (for liquids, atlases).
 * Prepare special textures used by billboards and decals.
 * Draw only room clusters and their subclusters visible for the given camera position (use MapVisibilityCalculator).
