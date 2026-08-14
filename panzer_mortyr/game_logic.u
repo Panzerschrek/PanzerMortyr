@@ -4263,7 +4263,6 @@ fn DamagePlayer( SoundsDescription& sounds_description, PlayerState &mut player_
 	var u32 damage_with_armor_absorption= ust::min( damage, player_state.armor * 2u );
 	var u32 damage_without_armor_absorption= damage - damage_with_armor_absorption;
 
-	// HACK!
 	// If has armor, always make sure we subtract at least one point from it.
 	// It's necessary for weak damage, like from fire with only 1 unit of damage, so that even such small damage reduces armor.
 	var u32 armor_reduce= ust::max( damage_with_armor_absorption / 2u, ust::min( 1u, player_state.armor ) );
@@ -4332,10 +4331,42 @@ fn DamageEntity( EntityState &mut entity, u32 damage )
 		return;
 	}
 
-	if( entity.energy > 0u )
+	// Investigations of the original game have shown,
+	// thar for some reason if a single damage event has enough damage to kill an entity, armor is ignored.
+	if( damage >= entity.energy )
 	{
-		// TODO - investigate whether enemies have armor.
-		entity.energy-= ust::min( damage, entity.energy );
+		entity.energy= 0u;
+
+		entity.lost_energy_in_current_step= true;
+
+		// Alarm enemies being hit.
+		entity.alarmed= true;
+
+		return;
+	}
+
+	// An investigation of the original game has shown,
+	// that armor absorbs 50% damage (rounded down),
+	// 25% (rounded down) aren't absorbed and damage entitie's energy,
+	// the rest is reflected.
+
+	var u32 damage_with_armor_absorption= ust::min( damage, entity.armor * 2u );
+	var u32 damage_without_armor_absorption= damage - damage_with_armor_absorption;
+
+	// If has armor, always make sure we subtract at least one point from it.
+	// It's necessary for weak damage, like from fire with only 1 unit of damage, so that even such small damage reduces armor.
+	var u32 armor_reduce= ust::max( damage_with_armor_absorption / 2u, ust::min( 1u, entity.armor ) );
+
+	var u32 energy_reduce= damage_with_armor_absorption / 4u + damage_without_armor_absorption;
+
+	var u32 armor_damage= ust::min( armor_reduce, entity.armor );
+	var u32 energy_damage= ust::min( energy_reduce, entity.energy );
+
+	if( armor_damage > 0u | energy_damage > 0u )
+	{
+		entity.armor-= armor_damage;
+		entity.energy-= energy_damage;
+
 		entity.lost_energy_in_current_step= true;
 
 		// Alarm enemies being hit.
