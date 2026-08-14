@@ -84,14 +84,84 @@ fn RasterizeTrianlge(
 
 	var Vec3f depth_equation= Vec3f( inv_z ) * equations_matrix;
 
+	var f32 min_y= ust::min( ust::min( vertices_projected[0][1], vertices_projected[1][1] ), vertices_projected[2][1] );
+	var f32 max_y= ust::max( ust::max( vertices_projected[0][1], vertices_projected[1][1] ), vertices_projected[2][1] );
+
+	var i32 min_y_i= ust::max( 0, i32( ust::round( min_y ) ) );
+	var i32 max_y_i= ust::min( i32( ust::round( max_y ) ), i32( surface.size[1] ) );
+
+	if( min_y_i >= max_y_i )
+	{
+		return; // This triangle is too thin - it doesn't fill even a single line.
+	}
+
+	var f32 surface_size_x( surface.size[0] );
+
+	// A triangle has up to two edges on each side, but usually it's one and two.
+	// For simplicity assume that we always have two edges on both sides.
+	// This simplifies code a bit and allows avoiding extra branching.
+	var [ f32, 2 ] mut edges_min_x[ 0.0f ... ];
+	var [ f32, 2 ] mut edges_max_x[ surface_size_x ... ];
+	var [ f32, 2 ] mut edges_min_step_x[ 0.0f ... ];
+	var [ f32, 2 ] mut edges_max_step_x[ 0.0f ... ];
+
+	{
+		var [ [ f32, 2 ], 3 ] edges
+		[
+			[
+				vertices_projected[1][0] - vertices_projected[0][0],
+				vertices_projected[1][1] - vertices_projected[0][1],
+			],
+			[
+				vertices_projected[2][0] - vertices_projected[1][0],
+				vertices_projected[2][1] - vertices_projected[1][1],
+			],
+			[
+				vertices_projected[0][0] - vertices_projected[2][0],
+				vertices_projected[0][1] - vertices_projected[2][1],
+			],
+		];
+
+		var f32 min_y_center= f32( min_y_i ) + 0.5f; // We perform rasterization for centers of pixels.
+
+		var size_type mut num_edges_min= 0s, mut nun_edges_max= 0s;
+
+		for( auto mut e= 0s; e < 3s; ++e )
+		{
+			var [ f32, 2 ]& edge= edges[e];
+			var [ f32, 2 ]& vertex_projected= vertices_projected[e];
+
+			if( edge[1] == 0.0f )
+			{
+				continue; // This edge is parallel to X axis and thus can be ignored.
+			}
+
+			var f32 edge_step= edge[0] / edge[1];
+			var f32 edge_x= vertex_projected[0] + ( min_y_center - vertex_projected[1] ) * edge_step;
+
+			if( edge[1] > 0.0f )
+			{
+				edges_max_x[ nun_edges_max ]= edge_x;
+				edges_max_step_x[ nun_edges_max ]= edge_step;
+				nun_edges_max ^= 1s;
+			}
+			else // if( edge[1] < 0.0f )
+			{
+				edges_min_x[ num_edges_min ]= edge_x;
+				edges_min_step_x[ num_edges_min ]= edge_step;
+				num_edges_min ^= 1s;
+			}
+		}
+	}
+
 	static_if( use_perspective_correction )
 	{
-		// TODO - don't care about alpha if don't need to do so.
 		var [ Vec3f, 4 ] color_equations
 		[
 			Vec3f( v0.light[0] * inv_z[0], v1.light[0] * inv_z[1], v2.light[0] * inv_z[2] ) * equations_matrix,
 			Vec3f( v0.light[1] * inv_z[0], v1.light[1] * inv_z[1], v2.light[1] * inv_z[2] ) * equations_matrix,
 			Vec3f( v0.light[2] * inv_z[0], v1.light[2] * inv_z[1], v2.light[2] * inv_z[2] ) * equations_matrix,
+			// TODO - consider not caring about alpha if don't need to do so.
 			Vec3f( v0.light[3] * inv_z[0], v1.light[3] * inv_z[1], v2.light[3] * inv_z[2] ) * equations_matrix,
 		];
 
@@ -110,7 +180,6 @@ fn RasterizeTrianlge(
 		//
 		// We don't need calling proper log2, since we need to floor its result to the nearest integer.
 		// So, calculate it by extracting exponent of a floating-point value directly.
-
 
 		// Calcuate local derivatives of texture coordinates for each vertex.
 		// Find values with the smallest module.
@@ -161,80 +230,6 @@ fn RasterizeTrianlge(
 			( c_exponent_shift + 1u /* extra one to compensate for squared input value */ );
 
 		var u32 target_mip= ust::min( d_tc_log2, u32( typeinfo</ typeof( texture ) />.element_count - 1s ) );
-
-		// Perform triangle rasterization.
-
-		var f32 min_y=
-			ust::min( ust::min( vertices_projected[0][1], vertices_projected[1][1] ), vertices_projected[2][1] );
-		var f32 max_y=
-			ust::max( ust::max( vertices_projected[0][1], vertices_projected[1][1] ), vertices_projected[2][1] );
-
-		var i32 min_y_i= ust::max( 0, i32( ust::round( min_y ) ) );
-		var i32 max_y_i= ust::min( i32( ust::round( max_y ) ), i32( surface.size[1] ) );
-
-		if( min_y_i >= max_y_i )
-		{
-			return; // This triangle is too thin - it doesn't fill even a single line.
-		}
-
-		var f32 surface_size_x( surface.size[0] );
-
-		// A triangle has up to two edges on each side, but usually it's one and two.
-		// For simplicity assume that we always have two edges on both sides.
-		// This simplifies code a bit and allows avoiding extra branching.
-		var [ f32, 2 ] mut edges_min_x[ 0.0f ... ];
-		var [ f32, 2 ] mut edges_max_x[ surface_size_x ... ];
-		var [ f32, 2 ] mut edges_min_step_x[ 0.0f ... ];
-		var [ f32, 2 ] mut edges_max_step_x[ 0.0f ... ];
-
-		{
-			var [ [ f32, 2 ], 3 ] edges
-			[
-				[
-					vertices_projected[1][0] - vertices_projected[0][0],
-					vertices_projected[1][1] - vertices_projected[0][1],
-				],
-				[
-					vertices_projected[2][0] - vertices_projected[1][0],
-					vertices_projected[2][1] - vertices_projected[1][1],
-				],
-				[
-					vertices_projected[0][0] - vertices_projected[2][0],
-					vertices_projected[0][1] - vertices_projected[2][1],
-				],
-			];
-
-			var f32 min_y_center= f32( min_y_i ) + 0.5f; // We perform rasterization for centers of pixels.
-
-			var size_type mut num_edges_min= 0s, mut nun_edges_max= 0s;
-
-			for( auto mut e= 0s; e < 3s; ++e )
-			{
-				var [ f32, 2 ]& edge= edges[e];
-				var [ f32, 2 ]& vertex_projected= vertices_projected[e];
-
-				if( edge[1] == 0.0f )
-				{
-					continue; // This edge is parallel to X axis and thus can be ignored.
-				}
-
-				var f32 edge_step= edge[0] / edge[1];
-				var f32 edge_x= vertex_projected[0] + ( min_y_center - vertex_projected[1] ) * edge_step;
-
-				if( edge[1] > 0.0f )
-				{
-					edges_max_x[ nun_edges_max ]= edge_x;
-					edges_max_step_x[ nun_edges_max ]= edge_step;
-					nun_edges_max ^= 1s;
-				}
-				else // if( edge[1] < 0.0f )
-				{
-					edges_min_x[ num_edges_min ]= edge_x;
-					edges_min_step_x[ num_edges_min ]= edge_step;
-					num_edges_min ^= 1s;
-				}
-			}
-		}
 
 		var size_type mut texture_mip_index= 0s;
 
@@ -329,7 +324,8 @@ fn RasterizeTrianlge(
 									( ust::max( 0.0f, ust::min( f32( i32( texture_value[0] ) ) * pixel_color[0] * pixel_z, 255.0f ) ) ),
 									( ust::max( 0.0f, ust::min( f32( i32( texture_value[1] ) ) * pixel_color[1] * pixel_z, 255.0f ) ) ),
 									( ust::max( 0.0f, ust::min( f32( i32( texture_value[2] ) ) * pixel_color[2] * pixel_z, 255.0f ) ) ),
-									( ust::max( 0.0f, ust::min( f32( i32( texture_value[3] ) ) * pixel_color[3] * pixel_z, 255.0f ) ) ), // TODO - consider not caring about alpha.
+									// TODO - consider not caring about alpha if don't need to do so.
+									( ust::max( 0.0f, ust::min( f32( i32( texture_value[3] ) ) * pixel_color[3] * pixel_z, 255.0f ) ) ),
 								];
 
 								pair.second= Color32FromComponents( pixel_color_components );
@@ -360,12 +356,12 @@ fn RasterizeTrianlge(
 	}
 	else
 	{
-		// TODO - don't care about alpha if don't need to do so.
 		var [ Vec3f, 4 ] color_equations
 		[
 			Vec3f( v0.light[0], v1.light[0], v2.light[0] ) * equations_matrix,
 			Vec3f( v0.light[1], v1.light[1], v2.light[1] ) * equations_matrix,
 			Vec3f( v0.light[2], v1.light[2], v2.light[2] ) * equations_matrix,
+			// TODO - consider not caring about alpha if don't need to do so.
 			Vec3f( v0.light[3], v1.light[3], v2.light[3] ) * equations_matrix,
 		];
 
@@ -404,80 +400,6 @@ fn RasterizeTrianlge(
 			( c_exponent_shift + 1u /* extra one to compensate for squared input value */ );
 
 		var u32 target_mip= ust::min( d_tc_log2, u32( typeinfo</ typeof( texture ) />.element_count - 1s ) );
-
-		// Perform triangle rasterization.
-
-		var f32 min_y=
-			ust::min( ust::min( vertices_projected[0][1], vertices_projected[1][1] ), vertices_projected[2][1] );
-		var f32 max_y=
-			ust::max( ust::max( vertices_projected[0][1], vertices_projected[1][1] ), vertices_projected[2][1] );
-
-		var i32 min_y_i= ust::max( 0, i32( ust::round( min_y ) ) );
-		var i32 max_y_i= ust::min( i32( ust::round( max_y ) ), i32( surface.size[1] ) );
-
-		if( min_y_i >= max_y_i )
-		{
-			return; // This triangle is too thin - it doesn't fill even a single line.
-		}
-
-		var f32 surface_size_x( surface.size[0] );
-
-		// A triangle has up to two edges on each side, but usually it's one and two.
-		// For simplicity assume that we always have two edges on both sides.
-		// This simplifies code a bit and allows avoiding extra branching.
-		var [ f32, 2 ] mut edges_min_x[ 0.0f ... ];
-		var [ f32, 2 ] mut edges_max_x[ surface_size_x ... ];
-		var [ f32, 2 ] mut edges_min_step_x[ 0.0f ... ];
-		var [ f32, 2 ] mut edges_max_step_x[ 0.0f ... ];
-
-		{
-			var [ [ f32, 2 ], 3 ] edges
-			[
-				[
-					vertices_projected[1][0] - vertices_projected[0][0],
-					vertices_projected[1][1] - vertices_projected[0][1],
-				],
-				[
-					vertices_projected[2][0] - vertices_projected[1][0],
-					vertices_projected[2][1] - vertices_projected[1][1],
-				],
-				[
-					vertices_projected[0][0] - vertices_projected[2][0],
-					vertices_projected[0][1] - vertices_projected[2][1],
-				],
-			];
-
-			var f32 min_y_center= f32( min_y_i ) + 0.5f; // We perform rasterization for centers of pixels.
-
-			var size_type mut num_edges_min= 0s, mut nun_edges_max= 0s;
-
-			for( auto mut e= 0s; e < 3s; ++e )
-			{
-				var [ f32, 2 ]& edge= edges[e];
-				var [ f32, 2 ]& vertex_projected= vertices_projected[e];
-
-				if( edge[1] == 0.0f )
-				{
-					continue; // This edge is parallel to X axis and thus can be ignored.
-				}
-
-				var f32 edge_step= edge[0] / edge[1];
-				var f32 edge_x= vertex_projected[0] + ( min_y_center - vertex_projected[1] ) * edge_step;
-
-				if( edge[1] > 0.0f )
-				{
-					edges_max_x[ nun_edges_max ]= edge_x;
-					edges_max_step_x[ nun_edges_max ]= edge_step;
-					nun_edges_max ^= 1s;
-				}
-				else // if( edge[1] < 0.0f )
-				{
-					edges_min_x[ num_edges_min ]= edge_x;
-					edges_min_step_x[ num_edges_min ]= edge_step;
-					num_edges_min ^= 1s;
-				}
-			}
-		}
 
 		var size_type mut texture_mip_index= 0s;
 
@@ -589,7 +511,8 @@ fn RasterizeTrianlge(
 									( ust::max( 0.0f, ust::min( f32( i32( texture_value[0] ) ) * pixel_color[0], 255.0f ) ) ),
 									( ust::max( 0.0f, ust::min( f32( i32( texture_value[1] ) ) * pixel_color[1], 255.0f ) ) ),
 									( ust::max( 0.0f, ust::min( f32( i32( texture_value[2] ) ) * pixel_color[2], 255.0f ) ) ),
-									( ust::max( 0.0f, ust::min( f32( i32( texture_value[3] ) ) * pixel_color[3], 255.0f ) ) ), // TODO - consider not caring about alpha.
+									// TODO - consider not caring about alpha if don't need to do so.
+									( ust::max( 0.0f, ust::min( f32( i32( texture_value[3] ) ) * pixel_color[3], 255.0f ) ) ),
 								];
 
 								pair.second= Color32FromComponents( pixel_color_components );
