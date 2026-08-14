@@ -619,6 +619,105 @@ fn RasterizeTrianlge(
 	}
 }
 
+// TODO - make it templated?
+fn RasterizeLine(
+	Color32ImageView surface,
+	ust::array_view_mut</f32/> depth_buffer,
+	Vec3f& v0,
+	Vec3f& v1,
+	Color32 color )
+{
+	// Given vertices should be clipped to Z near prior to this call.
+	debug_assert( v0.z >= c_z_near );
+	debug_assert( v1.z >= c_z_near );
+
+	// Work with floating-point coordinates, but quantize them,
+	// so that we don't work with infinite small delta values.
+	auto quantize= lambda( f32 x ) : f32
+	{
+		// TODO - tune this constant.
+		// Smaller values are generally better, but too small values can lead to artifacts with T-junctions.
+		var f32 constexpr c_quantization_scale= 64.0f;
+		return ust::floor( x * c_quantization_scale ) * ( 1.0f / c_quantization_scale );
+	};
+
+	var [ [ f32, 3 ], 2 ] mut vertices_projected
+	[
+		[ quantize( v0.x / v0.z ), quantize( v0.y / v0.z ), 1.0f / v0.z ],
+		[ quantize( v1.x / v1.z ), quantize( v1.y / v1.z ), 1.0f / v1.z ],
+	];
+
+	var f32 mut dx= vertices_projected[1][0] - vertices_projected[0][0];
+	var f32 mut dy= vertices_projected[1][1] - vertices_projected[0][1];
+
+	if( dx == 0.0f && dy == 0.0f )
+	{
+		return;
+	}
+
+	var f32 mut d_depth= vertices_projected[1][2] - vertices_projected[0][2];
+
+	var f32 abs_dx= ust::abs( dx );
+	var f32 abs_dy= ust::abs( dy );
+
+	if( abs_dx >= abs_dy )
+	{
+		if( dx < 0.0f )
+		{
+			ust::array_view_mut</ [ f32, 3 ] />( vertices_projected ).swap( 0s, 1s );
+			dx= -dx;
+			dy= -dy;
+			d_depth= -d_depth;
+		}
+
+		var i32 mut x_begin( ust::round( vertices_projected[0][0] ) );
+		var i32 mut x_end( ust::round( vertices_projected[1][0] ) );
+
+		for( var i32 mut x= ust::max( x_begin, 0 ); x < ust::min( x_end, i32( surface.size[0] ) ); ++x )
+		{
+			var i32 y_i( ust::round( vertices_projected[0][1] + ( 0.5f + f32( x - x_begin ) ) * ( dy / dx ) ) );
+			if( y_i >= 0 && y_i < i32( surface.size[1] ) )
+			{
+				var f32 depth= vertices_projected[0][2] + ( 0.5f + f32( x - x_begin ) ) * ( d_depth / dx );
+				var size_type address( u32(x) + u32(y_i) * surface.stride );
+				if( depth >= depth_buffer[ address ] )
+				{
+					depth_buffer[ address ]= depth;
+					surface.pixels[ address ]= color;
+				}
+			}
+		}
+	}
+	else
+	{
+		if( dy < 0.0f )
+		{
+			ust::array_view_mut</ [ f32, 3 ] />( vertices_projected ).swap( 0s, 1s );
+			dx= -dx;
+			dy= -dy;
+			d_depth= -d_depth;
+		}
+
+		var i32 mut y_begin( ust::round( vertices_projected[0][1] ) );
+		var i32 mut y_end( ust::round( vertices_projected[1][1] ) );
+
+		for( var i32 mut y= ust::max( y_begin, 0 ); y < ust::min( y_end, i32( surface.size[1] ) ); ++y )
+		{
+			var i32 x_i( ust::round( vertices_projected[0][0] + ( 0.5f + f32( y - y_begin ) ) * ( dx / dy ) ) );
+			if( x_i >= 0 && x_i < i32( surface.size[0] ) )
+			{
+				var f32 depth= vertices_projected[0][2] + ( 0.5f + f32( y - y_begin ) ) * ( d_depth / dy );
+				var size_type address( u32(x_i) + u32(y) * surface.stride );
+				if( depth >= depth_buffer[ address ] )
+				{
+					depth_buffer[ address ]= depth;
+					surface.pixels[ address ]= color;
+				}
+			}
+		}
+	}
+}
+
 // This struct has all attributes in F32 format so that it's easy to interpolate them.
 struct MapVertexF32
 {
