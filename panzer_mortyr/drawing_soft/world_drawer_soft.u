@@ -157,11 +157,19 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 		}
 
 		// Transform texture coordinates from 0 to 1 range into 0 to size range.
+		// Also add a bias, so that coordinates are always positive and thus f32 to i32 conversion performs proper truncation.
 		foreach( &mut v : temp_vertices_ )
 		{
 			auto& mip0_typeinfo= typeinfo</ Color32WorldTextureWithMips />.elements_list[0].type;
-			v.tex_coordinates[0] *= f32( mip0_typeinfo.element_type.element_count );
-			v.tex_coordinates[1] *= f32( mip0_typeinfo.element_count );
+			var [ f32, 2 ] size[ ( mip0_typeinfo.element_type.element_count ), ( mip0_typeinfo.element_count ) ];
+			// Measurements of the original game have sown,
+			// that the minimal normalized texture coordinates have -10.3 value or so.
+			// Adding 16 is fine to ensure they are always non-negative.
+			// TODO - add bias on per-quad basis and only if it's needed.
+			// Too large bias leads to insufficient precision in rasterization.
+			var f32 add_value= 16.0f;
+			v.tex_coordinates[0]= ust::fma( v.tex_coordinates[0], size[0], size[0] * add_value );
+			v.tex_coordinates[1]= ust::fma( v.tex_coordinates[1], size[1], size[1] * add_value );
 		}
 
 		// Transform vertices.
@@ -196,7 +204,13 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 				{
 					.position= transformed_vertices_view[ size_type( indices[0] ) ],
 					.tex_coord( v0.tex_coordinates[0], v0.tex_coordinates[1] ),
-					.light[ ( v0.light[0] ), ( v0.light[1] ), ( v0.light[2] ), ( v0.light[3] ) ],
+					.light
+					[
+						f32( v0.light[0] ) * ( 1.0f / 255.0f ),
+						f32( v0.light[1] ) * ( 1.0f / 255.0f ),
+						f32( v0.light[2] ) * ( 1.0f / 255.0f ),
+						f32( v0.light[3] ) * ( 1.0f / 255.0f ),
+					],
 				};
 
 			vertices_clipped0[1]=
@@ -204,7 +218,13 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 				{
 					.position= transformed_vertices_view[ size_type( indices[1] ) ],
 					.tex_coord( v1.tex_coordinates[0], v1.tex_coordinates[1] ),
-					.light[ ( v1.light[0] ), ( v1.light[1] ), ( v1.light[2] ), ( v1.light[3] ) ],
+					.light
+					[
+						f32( v1.light[0] ) * ( 1.0f / 255.0f ),
+						f32( v1.light[1] ) * ( 1.0f / 255.0f ),
+						f32( v1.light[2] ) * ( 1.0f / 255.0f ),
+						f32( v1.light[3] ) * ( 1.0f / 255.0f ),
+					],
 				};
 
 			vertices_clipped0[2]=
@@ -212,7 +232,13 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 				{
 					.position= transformed_vertices_view[ size_type( indices[2] ) ],
 					.tex_coord( v2.tex_coordinates[0], v2.tex_coordinates[1] ),
-					.light[ ( v2.light[0] ), ( v2.light[1] ), ( v2.light[2] ), ( v2.light[3] ) ],
+					.light
+					[
+						f32( v2.light[0] ) * ( 1.0f / 255.0f ),
+						f32( v2.light[1] ) * ( 1.0f / 255.0f ),
+						f32( v2.light[2] ) * ( 1.0f / 255.0f ),
+						f32( v2.light[3] ) * ( 1.0f / 255.0f ),
+					],
 				};
 
 			var size_type mut num_vertices= 3s;
@@ -258,7 +284,7 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 
 			for( auto mut i= 2s; i < num_vertices; ++i )
 			{
-				RasterizeTrianlge(
+				RasterizeTriangleAffineOrPerspectiveCorrected(
 					surface,
 					depth_buffer,
 					cast_imut(vertices_clipped1)[0],
@@ -358,6 +384,64 @@ fn WorldDrawerSoft::SetMap( mut this, u32 map_index )
 			.textures=
 				LoadMapTextures( materials_block, caching_game_resources_loader.GetGameFilesystem(), console_out_ ),
 		} );
+}
+
+fn RasterizeTriangleAffineOrPerspectiveCorrected(
+	Color32ImageView surface,
+	ust::array_view_mut</f32/> depth_buffer,
+	MapVertexF32& v0,
+	MapVertexF32& v1,
+	MapVertexF32& v2,
+	Color32WorldTextureWithMips& texture )
+{
+	var [ bool, 3 ] mut edge_needs_subdivision[ false ... ];
+
+	var [ [ f32, 2 ], 3 ] vertices_projected
+	[
+		[ v0.position.x / v0.position.z, v0.position.y / v0.position.z ],
+		[ v1.position.x / v1.position.z, v1.position.y / v1.position.z ],
+		[ v2.position.x / v2.position.z, v2.position.y / v2.position.z ],
+	];
+
+	var [ f32, 3 ] vertices_z[ v0.position.z, v1.position.z, v2.position.z ];
+
+	for( auto mut i= 0s; i < 3s; ++i )
+	{
+		var Vec2f p0( vertices_projected[i] );
+		var Vec2f p1( vertices_projected[ ( i + 1s ) % 3s ] );
+
+		var f32 z0= vertices_z[i], z1= vertices_z[ ( i + 1s ) % 3s ];
+
+		var Vec2f middle_affine= ( p0 + p1 ) * 0.5f;
+		var Vec2f middle_perspective_corrected= ( 0.5f * ( p0 / z0 + p1 / z1 ) ) / ( 0.5f * ( 1.0f / z0 + 1.0f / z1 ) );
+
+		var f32 c_max_error_pixels= 1.5f;
+
+		edge_needs_subdivision[i]=
+			( middle_affine - middle_perspective_corrected ).SquareLength() > c_max_error_pixels * c_max_error_pixels;
+	}
+
+	if( edge_needs_subdivision[0] | edge_needs_subdivision[1] | edge_needs_subdivision[2] )
+	{
+		// Can't use affine rasterization for this triangle. Use perspective-corrected rasterization.
+
+		// TODO - try subdividing its edges.
+		// If after such subdivision at leas one part can be affine-rasterized, do so.
+
+		RasterizeTrianlge</true/>( surface, depth_buffer, v0, v1, v2, texture );
+
+		if( false )
+		{
+			RasterizeLine( surface, depth_buffer, v0.position, v1.position, Color32( 0x00FF00FFu ) );
+			RasterizeLine( surface, depth_buffer, v1.position, v2.position, Color32( 0x00FF00FFu ) );
+			RasterizeLine( surface, depth_buffer, v2.position, v0.position, Color32( 0x00FF00FFu ) );
+		}
+	}
+	else
+	{
+		// Can use affine rasterization for this triangle - interpolation error isn't large.
+		RasterizeTrianlge</false/>( surface, depth_buffer, v0, v1, v2, texture );
+	}
 }
 
 fn LoadMapTextures(
