@@ -19,7 +19,6 @@ fn WindowSoft::constructor( SettingsPtr mut settings, ConsoleOutPtr& console_out
 			} (),
 		settings_= move(settings),
 		window_= zero_init /* set later */,
-		surface_= zero_init /* set later */,
 		surface_locked_= false,
 		prev_gamma_= ReadGamma( settings_ ),
 	)
@@ -67,15 +66,15 @@ fn WindowSoft::constructor( SettingsPtr mut settings, ConsoleOutPtr& console_out
 		halt;
 	}
 
-	surface_= unsafe( SDL_GetWindowSurface( window_ ) );
+	var $(SDL_Surface) surface= unsafe( SDL_GetWindowSurface( window_ ) );
 
-	if( ust::is_nullptr( surface_ ) )
+	if( ust::is_nullptr( surface ) )
 	{
 		ConsoleOutAddTextLine( console_out, "Failed to get window surface!" );
 		halt;
 	}
 
-	var Uint8 bits_per_pixel= unsafe( $>( $>(surface_).format ).BitsPerPixel );
+	var Uint8 bits_per_pixel= unsafe( $>( $>(surface).format ).BitsPerPixel );
 	if( bits_per_pixel != 32u8 )
 	{
 		ConsoleOutAddTextLine( console_out, "Unexpected pixel format! Expected exactly 32 bits per pixel." );
@@ -96,20 +95,27 @@ fn WindowSoft::GetSurface( mut this ) : Color32ImageView @( ust::reference_notat
 {
 	unsafe
 	{
+		var $(SDL_Surface) surface_ptr= SDL_GetWindowSurface( window_ );
+
+		halt if( ust::is_nullptr( surface_ptr ) );
+		var SDL_Surface& surface= $>(surface_ptr);
+
+		halt if( ust::is_nullptr( surface.format ) );
+		halt if( $>( surface.format ).BitsPerPixel != 32u8 );
+
 		// Lock surface before accessing its pixels.
-		if( !surface_locked_ && MustLockSurface( surface_ ) )
+		if( !surface_locked_ && MustLockSurface( surface_ptr ) )
 		{
-			SDL_LockSurface( surface_ );
+			SDL_LockSurface( surface_ptr );
 			surface_locked_= true;
 		}
 
-		var SDL_Surface& surface= $>(surface_);
 
 		var u32 stride= u32( surface.pitch ) / u32( typeinfo</Color32/>.size_of );
 
 		return Color32ImageView
 		{
-			.size[ ( $>(surface_).w ), ( $>(surface_).h ) ],
+			.size[ ( surface.w ), ( surface.h ) ],
 			.stride= stride,
 			.pixels( ust::byte_ptr_cast</Color32/>( surface.pixels ), size_type( stride * u32( surface.h ) ) )
 		};
@@ -123,14 +129,20 @@ fn WindowSoft::GetViewportSize( this ) : [ u32, 2 ]
 
 fn WindowSoft::SwapWindow( mut this )
 {
-	// Unlock surface before updating it.
-	if( surface_locked_ && unsafe( MustLockSurface( surface_ ) ) )
+	unsafe
 	{
-		unsafe( SDL_UnlockSurface( surface_ ) );
-		surface_locked_= false;
-	}
+		var $(SDL_Surface) surface_ptr= SDL_GetWindowSurface( window_ );
+		halt if( ust::is_nullptr( surface_ptr ) );
 
-	unsafe( SDL_UpdateWindowSurface( window_ ) );
+		// Unlock surface before updating it.
+		if( surface_locked_ && unsafe( MustLockSurface( surface_ptr ) ) )
+		{
+			unsafe( SDL_UnlockSurface( surface_ptr ) );
+			surface_locked_= false;
+		}
+
+		unsafe( SDL_UpdateWindowSurface( window_ ) );
+	}
 
 	// Update gamma each frame if necessary (if gamma settings was changed).
 	UpdateGamma();
