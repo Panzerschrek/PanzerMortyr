@@ -116,74 +116,33 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 
 	var [ Planef, 4 ] frustum_side_clip_planes= CalculateViewSpaceFrustumSideClipPlanes( surface.size );
 
-	auto quads= map_data.zmap_data.deref().quads.range();
-	auto clusters= map_data.zvox_data.deref().clusters.range();
-
-	var ZmapLamData& zmap_lam_data= map_data.zmap_lam_data.deref();
-
 	var MapVertexF32 dummy_vertex{ .position= Vec3f::MakeZero(), .tex_coord= Vec2f::MakeZero(), .light[ 0.0f ... ] };
 	var [ MapVertexF32, 16 ] mut vertices_clipped0[ dummy_vertex ... ], mut vertices_clipped1[ dummy_vertex ... ];
 
-	foreach( &cluster : clusters )
+	if( transformed_vertices_.size() < map_data.vertices.size() )
 	{
-		temp_vertices_.clear();
-		temp_indices_.clear();
+		// Resize only down.
+		transformed_vertices_.resize( map_data.vertices.size(), Vec3f::MakeZero() );
+	}
 
-		// Get geometry for this cluster.
-
-		for( auto mut q= size_type( cluster.c.first_quad_index );
-			q < size_type( cluster.c.first_quad_index ) + size_type( cluster.num_quads );
-			++q )
-		{
-			var ZmapQuad& quad= quads[q];
-			if( size_type( quad.texture_id ) >= map_data.textures.size() )
-			{
-				continue;
-			}
-
-			if( q < zmap_lam_data.tessellated_quads.size() && zmap_lam_data.tessellated_quads[q].vertex_count > 0u )
-			{
-				var size_type base_vertex_index= temp_vertices_.size();
-
-				CreateTessellatedQuadGeometry(
-					zmap_lam_data,
-					cluster,
-					q,
-					f32( quad.texture_id ),
-					base_vertex_index,
-					temp_vertices_,
-					temp_indices_ );
-			}
-		}
-
-		// Transform texture coordinates from 0 to 1 range into 0 to size range.
-		// Also add a bias, so that coordinates are always positive and thus f32 to i32 conversion performs proper truncation.
-		foreach( &mut v : temp_vertices_ )
-		{
-			auto& mip0_typeinfo= typeinfo</ Color32WorldTextureWithMips />.elements_list[0].type;
-			var [ f32, 2 ] size[ ( mip0_typeinfo.element_type.element_count ), ( mip0_typeinfo.element_count ) ];
-			// Measurements of the original game have sown,
-			// that the minimal normalized texture coordinates have -10.3 value or so.
-			// Adding 16 is fine to ensure they are always non-negative.
-			// TODO - add bias on per-quad basis and only if it's needed.
-			// Too large bias leads to insufficient precision in rasterization.
-			var f32 add_value= 16.0f;
-			v.tex_coordinates[0]= ust::fma( v.tex_coordinates[0], size[0], size[0] * add_value );
-			v.tex_coordinates[1]= ust::fma( v.tex_coordinates[1], size[1], size[1] * add_value );
-		}
+	for( auto mut cluster_index= 0s; cluster_index < map_data.clusters_draw_data.size(); ++cluster_index )
+	{
+		var ClusterDrawDataSoft& cluster_draw_data= map_data.clusters_draw_data[ cluster_index ];
 
 		// Transform vertices.
 		// Do this in separate loop to be order to read transformed vertices for more than one triangle.
 
-		if( transformed_vertices_.size() < temp_vertices_.size() )
-		{
-			// Resize only down.
-			transformed_vertices_.resize( temp_vertices_.size(), Vec3f::MakeZero() );
-		}
+		var size_type first_vertex_index( cluster_draw_data.geometry_buffer_chunk.first_vertex_index );
+		var size_type vertex_index_end(
+			cluster_draw_data.geometry_buffer_chunk.first_vertex_index +
+			cluster_draw_data.geometry_buffer_chunk.num_vertices );
 
-		auto transformed_vertices_view= transformed_vertices_.range().subrange_end( temp_indices_.size() );
+		auto cluster_vertices= map_data.vertices.range().subrange( first_vertex_index, vertex_index_end );
 
-		foreach( pair : transformed_vertices_view.iter().zip( temp_vertices_.iter() ) )
+		auto cluster_vertices_transformed=
+			transformed_vertices_.range().subrange( first_vertex_index, vertex_index_end );
+
+		foreach( pair : cluster_vertices_transformed.iter().zip( cluster_vertices.iter() ) )
 		{
 			// Perform transposed matrix by vector multiplication.
 			// Hope that it's faster.
@@ -191,18 +150,24 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 			pair.first= view_matrix_transposed * Vec3f( pair.second.position );
 		}
 
-		for( auto mut t= 0s; t + 3s <= temp_indices_.size(); t+= 3s ) label for_triangles
-		{
-			var [ u16, 3 ] indices[ temp_indices_[ t + 0s ], temp_indices_[ t + 1s ], temp_indices_[ t + 2s ] ];
+		auto cluster_indices=
+			map_data.indices.range().subrange(
+				size_type( cluster_draw_data.geometry_buffer_chunk.first_index ),
+				size_type( cluster_draw_data.geometry_buffer_chunk.first_index +
+					cluster_draw_data.geometry_buffer_chunk.num_indices ) );
 
-			var MapVertex& v0= cast_imut(temp_vertices_)[ size_type( indices[0] ) ];
-			var MapVertex& v1= cast_imut(temp_vertices_)[ size_type( indices[1] ) ];
-			var MapVertex& v2= cast_imut(temp_vertices_)[ size_type( indices[2] ) ];
+		for( auto mut t= 0s; t + 3s <= cluster_indices.size(); t+= 3s ) label for_triangles
+		{
+			var [ u16, 3 ] indices[ cluster_indices[ t + 0s ], cluster_indices[ t + 1s ], cluster_indices[ t + 2s ] ];
+
+			var MapVertex& v0= cluster_vertices[ size_type( indices[0] ) ];
+			var MapVertex& v1= cluster_vertices[ size_type( indices[1] ) ];
+			var MapVertex& v2= cluster_vertices[ size_type( indices[2] ) ];
 
 			vertices_clipped0[0]=
 				MapVertexF32
 				{
-					.position= transformed_vertices_view[ size_type( indices[0] ) ],
+					.position= cluster_vertices_transformed[ size_type( indices[0] ) ],
 					.tex_coord( v0.tex_coordinates[0], v0.tex_coordinates[1] ),
 					.light
 					[
@@ -216,7 +181,7 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 			vertices_clipped0[1]=
 				MapVertexF32
 				{
-					.position= transformed_vertices_view[ size_type( indices[1] ) ],
+					.position= cluster_vertices_transformed[ size_type( indices[1] ) ],
 					.tex_coord( v1.tex_coordinates[0], v1.tex_coordinates[1] ),
 					.light
 					[
@@ -230,7 +195,7 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 			vertices_clipped0[2]=
 				MapVertexF32
 				{
-					.position= transformed_vertices_view[ size_type( indices[2] ) ],
+					.position= cluster_vertices_transformed[ size_type( indices[2] ) ],
 					.tex_coord( v2.tex_coordinates[0], v2.tex_coordinates[1] ),
 					.light
 					[
@@ -481,6 +446,7 @@ fn WorldDrawerSoft::SetMap( mut this, u32 map_index )
 			GeometryBufferChunkSoft
 			{
 				.first_vertex_index( cluser_first_vertex_index ),
+				.num_vertices( vertices.size() - cluser_first_vertex_index ),
 				.first_index( cluster_first_index ),
 				.num_indices( indices.size() - cluster_first_index ),
 			};
