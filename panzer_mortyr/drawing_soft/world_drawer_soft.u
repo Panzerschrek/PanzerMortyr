@@ -1,6 +1,7 @@
 import "/enum_string_conversions.iu"
 import "/string_conversions.iu"
 import "../clipping.iu"
+import "../cluster_utils.iu"
 import "../image_loading.iu"
 import "../lighting.iu"
 import "../map_quad_utils.iu"
@@ -83,7 +84,7 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 	var Mat4f rotation_matrix=
 		CalculateCameraRotationMatrix( drawing_info.camera_params.azimuth, drawing_info.camera_params.elevation );
 
-	var f32 aspect= f32( surface.size[0] ) / f32( surface.size[1] );
+	var f32 view_aspect= f32( surface.size[0] ) / f32( surface.size[1] );
 
 	var f32 half_fov_inv_tan= 1.0f / ust::tan( drawing_info.camera_params.fov_x * 0.5f );
 
@@ -92,10 +93,10 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 	{
 		.values
 		[
-			[ half_fov_inv_tan,                      0.0f, 0.0f, 0.0f ],
-			[             0.0f, half_fov_inv_tan * aspect, 0.0f, 0.0f ],
-			[             0.0f,                      0.0f, 1.0f, 1.0f ],
-			[             0.0f,                      0.0f, 0.0f, 0.0f ],
+			[ half_fov_inv_tan,                           0.0f, 0.0f, 0.0f ],
+			[             0.0f, half_fov_inv_tan * view_aspect, 0.0f, 0.0f ],
+			[             0.0f,                           0.0f, 1.0f, 1.0f ],
+			[             0.0f,                           0.0f, 0.0f, 0.0f ],
 		]
 	};
 
@@ -119,6 +120,9 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 
 	var Mat4f view_matrix_transposed= view_matrix.Transpose();
 
+	// World-space clip planes.
+	var CameraClipPlanes camera_clip_planes= CreateCameraClipPlanes( drawing_info.camera_params, view_aspect );
+
 	visibility_calculator.CalculateVisibility(
 		drawing_info.camera_params.position,
 		view_matrix,
@@ -128,6 +132,7 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 	// Move Z near plane a little bit forward so that no actual geometry can lay on it.
 	var f32 z_near_for_clipping= 1.25f;
 
+	// View-space clip planes.
 	var [ Planef, 4 ] frustum_side_clip_planes= CalculateViewSpaceFrustumSideClipPlanes( surface.size );
 
 	var MapVertexF32 dummy_vertex{ .position= Vec3f::MakeZero(), .tex_coord= Vec2f::MakeZero(), .light[ 0.0f ... ] };
@@ -158,16 +163,24 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 		{
 			for( auto mut j= 0s; j < num_clusters_in_group; ++j )
 			{
-				// TODO - perform here frustum culling for individual subclusters.
-
 				var size_type cluster_index= i + j;
 
-				var u8 cluster_type= clusters[ cluster_index ].cluster_type;
+				var ZvoxCluster& cluster= clusters[ cluster_index ];
+
 				if( !(
-					cluster_type == ZvoxCluster::c_cluster_type_regular |
-					cluster_type == ZvoxCluster::c_cluster_type_notes ) )
+					cluster.cluster_type == ZvoxCluster::c_cluster_type_regular |
+					cluster.cluster_type == ZvoxCluster::c_cluster_type_notes ) )
 				{
 					// Draw dynamic clusters later.
+					continue;
+				}
+
+				// Reject clusters outside view, even if we already performed visibility calculation previously.
+				// This is needed to reject subclusters located within room clusters.
+				// Visibility calculator doesn't handle their rejction.
+				if( AreBoxVerticesClippedByAtLeastOneCameraClipPlane(
+						camera_clip_planes, CreateClusterBBox( cluster ).CreateCornerVertices() ) )
+				{
 					continue;
 				}
 
