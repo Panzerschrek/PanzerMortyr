@@ -423,6 +423,85 @@ fn WorldDrawerSoft::SetMap( mut this, u32 map_index )
 
 	ust::ignore_unused( materials_block ); // TODO - use it.
 
+	var ZmapData& zmap_data= zmap_data_ptr.deref();
+	var ZvoxData& zvox_data= zvox_data_ptr.deref();
+	var ZmapLamData& zmap_lam_data= zmap_lam_data_ptr.deref();
+
+	var ust::vector</ MapVertex /> mut vertices;
+	var ust::vector</u16/> mut indices;
+
+	var ust::vector</ClusterDrawDataSoft/> mut clusters_draw_data(
+		zvox_data.clusters.size(),
+		ClusterDrawDataSoft
+		{
+			.geometry_buffer_chunk= zero_init, // Set later.
+		} );
+
+	foreach( &pair : zvox_data.clusters.iter().zip( clusters_draw_data.iter() ) )
+	{
+		var ZvoxCluster& cluster= pair.first;
+
+		var size_type cluser_first_vertex_index= vertices.size();
+		var size_type cluster_first_index= indices.size();
+
+		// For each cluster create a mesh with vertex indices starting from 0.
+		// Doing so allows performing culling (draw only visible clusters).
+		// Also it allows to avoid reaching 65536 total vertices limit (we use 16-bit indices).
+
+		for( auto mut q= size_type( cluster.c.first_quad_index );
+			q < size_type( cluster.c.first_quad_index ) + size_type( cluster.num_quads );
+			++q )
+		{
+			var ZmapQuad& quad= zmap_data.quads[q];
+
+			var size_type base_vertex_index= vertices.size() - cluser_first_vertex_index;
+
+			var f32 mut texture_id( quad.texture_id );
+
+			if( u32( quad.texture_id ) >= 1000u )
+			{
+				// Don't draw quads with special materials in usual way.
+				continue;
+			}
+
+			if( q >= zmap_lam_data.tessellated_quads.size() || zmap_lam_data.tessellated_quads[q].vertex_count == 0u )
+			{
+				// TODO - use a fallback here.
+			}
+			else
+			{
+				CreateTessellatedQuadGeometry(
+					zmap_lam_data, cluster, q, texture_id, base_vertex_index, vertices, indices );
+			}
+		}
+
+		var ClusterDrawDataSoft &mut cluster_draw_data= pair.second;
+
+		cluster_draw_data.geometry_buffer_chunk=
+			GeometryBufferChunkSoft
+			{
+				.first_vertex_index( cluser_first_vertex_index ),
+				.first_index( cluster_first_index ),
+				.num_indices( indices.size() - cluster_first_index ),
+			};
+	}
+
+	// Transform texture coordinates from 0 to 1 range into 0 to size range.
+	// Also add a bias, so that coordinates are always positive and thus f32 to i32 conversion performs proper truncation.
+	foreach( &mut v : vertices )
+	{
+		auto& mip0_typeinfo= typeinfo</ Color32WorldTextureWithMips />.elements_list[0].type;
+		var [ f32, 2 ] size[ ( mip0_typeinfo.element_type.element_count ), ( mip0_typeinfo.element_count ) ];
+		// Measurements of the original game have sown,
+		// that the minimal normalized texture coordinates have -10.3 value or so.
+		// Adding 16 is fine to ensure they are always non-negative.
+		// TODO - add bias on per-quad basis and only if it's needed.
+		// Too large bias leads to insufficient precision in rasterization.
+		var f32 add_value= 16.0f;
+		v.tex_coordinates[0]= ust::fma( v.tex_coordinates[0], size[0], size[0] * add_value );
+		v.tex_coordinates[1]= ust::fma( v.tex_coordinates[1], size[1], size[1] * add_value );
+	}
+
 	map_data_.reset(
 		MapDrawDataSoft
 		{
@@ -430,6 +509,9 @@ fn WorldDrawerSoft::SetMap( mut this, u32 map_index )
 			.zvox_data= zvox_data_ptr,
 			.zmap_lam_data= zmap_lam_data_ptr,
 			.zmap_lem_data= zmap_lem_data_ptr,
+			.clusters_draw_data= move(clusters_draw_data),
+			.vertices= move(vertices),
+			.indices= move(indices),
 			.textures=
 				LoadMapTextures( materials_block, caching_game_resources_loader.GetGameFilesystem(), console_out_ ),
 		} );
