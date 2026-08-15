@@ -166,6 +166,7 @@ fn CreateNewMapGameState(
 				.position( f32( in_entity.position[0] ), f32( in_entity.position[1] ), f32( in_entity.position[2] ) ),
 				.azimuth( Convert1024Angle( f32( in_entity.data[4] ) ) ),
 				.energy= entity_description.energy,
+				.armor= entity_description.armor,
 				.ammo= entity_description.ammunition,
 				.current_operation= c_start_operation,
 				.num_steps_since_operation_start= 0u,
@@ -2387,6 +2388,7 @@ fn TriggerEntitiesSpawn( GameParams& game_params, GameMapData& map_data, GameSta
 				.position( f32( in_entity.position[0] ), f32( in_entity.position[1] ), f32( in_entity.position[2] ) ),
 				.azimuth( Convert1024Angle( f32( in_entity.data[4] ) ) ),
 				.energy= entity_description.energy,
+				.armor= entity_description.armor,
 				.ammo= entity_description.ammunition,
 				.current_operation= c_start_operation,
 				.num_steps_since_operation_start= 0u,
@@ -2490,7 +2492,7 @@ fn ProcessEntityLogicStep(
 			map_data, game_state, route_search_context, entity_description, entity, entity_navigation_state );
 	}
 
-	EntityPickupItems( entities_description, entity, game_state );
+	EntityPickupItems( game_global_data.sounds_description.deref(), entities_description, entity, game_state );
 
 	if( entity.attack_target_is_in_sight & !entity.alarmed )
 	{
@@ -2910,6 +2912,7 @@ fn ProcessEntityLogicStep(
 								.position= entity.position,
 								.azimuth= entity.azimuth,
 								.energy= new_entity_description.energy,
+								.armor= new_entity_description.armor,
 								.ammo= new_entity_description.ammunition,
 								.current_operation= c_start_operation,
 								.num_steps_since_operation_start= 0u,
@@ -4260,7 +4263,6 @@ fn DamagePlayer( SoundsDescription& sounds_description, PlayerState &mut player_
 	var u32 damage_with_armor_absorption= ust::min( damage, player_state.armor * 2u );
 	var u32 damage_without_armor_absorption= damage - damage_with_armor_absorption;
 
-	// HACK!
 	// If has armor, always make sure we subtract at least one point from it.
 	// It's necessary for weak damage, like from fire with only 1 unit of damage, so that even such small damage reduces armor.
 	var u32 armor_reduce= ust::max( damage_with_armor_absorption / 2u, ust::min( 1u, player_state.armor ) );
@@ -4329,10 +4331,42 @@ fn DamageEntity( EntityState &mut entity, u32 damage )
 		return;
 	}
 
-	if( entity.energy > 0u )
+	// Investigations of the original game have shown,
+	// that for some reason if a single damage event has enough damage to kill an entity, armor is ignored.
+	if( damage >= entity.energy )
 	{
-		// TODO - investigate whether enemies have armor.
-		entity.energy-= ust::min( damage, entity.energy );
+		entity.energy= 0u;
+
+		entity.lost_energy_in_current_step= true;
+
+		// Alarm enemies being hit.
+		entity.alarmed= true;
+
+		return;
+	}
+
+	// An investigation of the original game has shown,
+	// that armor absorbs 50% damage (rounded down),
+	// 25% (rounded down) aren't absorbed and damage entitie's energy,
+	// the rest is reflected.
+
+	var u32 damage_with_armor_absorption= ust::min( damage, entity.armor * 2u );
+	var u32 damage_without_armor_absorption= damage - damage_with_armor_absorption;
+
+	// If has armor, always make sure we subtract at least one point from it.
+	// It's necessary for weak damage, like from fire with only 1 unit of damage, so that even such small damage reduces armor.
+	var u32 armor_reduce= ust::max( damage_with_armor_absorption / 2u, ust::min( 1u, entity.armor ) );
+
+	var u32 energy_reduce= damage_with_armor_absorption / 4u + damage_without_armor_absorption;
+
+	var u32 armor_damage= ust::min( armor_reduce, entity.armor );
+	var u32 energy_damage= ust::min( energy_reduce, entity.energy );
+
+	if( armor_damage > 0u | energy_damage > 0u )
+	{
+		entity.armor-= armor_damage;
+		entity.energy-= energy_damage;
+
 		entity.lost_energy_in_current_step= true;
 
 		// Alarm enemies being hit.
@@ -6791,7 +6825,7 @@ fn UpdateEntityPickupTarget(
 		entity.energy <= entity_description.search_for_health_kits &&
 		entity.energy < entity_description.energy )
 	{
-		// Need to pick-up a health-pack.
+		// Need to pick-up a health-pack or armor.
 
 		for( auto mut entity_index= 0s; entity_index < game_state.entities.size(); ++entity_index )
 		{
@@ -6811,17 +6845,21 @@ fn UpdateEntityPickupTarget(
 				continue;
 			}
 
-			var bool mut gives_health= false;
+			var bool mut gives_health_or_armor= false;
 
 			foreach( &operation : other_entity_description.operations )
 			{
 				if_var( &box_contents : operation.box_contents )
 				{
-					gives_health|= box_contents.tool_type == EntitiesDescription::ToolType::HealthPack;
+					gives_health_or_armor|= box_contents.tool_type == EntitiesDescription::ToolType::HealthPack;
+
+					// Experiments with the original game have shown, that enemies pick-up armor too.
+					// So, allow selecting an armor item as a pick-up target.
+					gives_health_or_armor|= box_contents.tool_type == EntitiesDescription::ToolType::Armor;
 				}
 			}
 
-			if( !gives_health )
+			if( !gives_health_or_armor )
 			{
 				continue;
 			}
@@ -8072,7 +8110,11 @@ fn SaveEntityRoute(
 	}
 }
 
-fn EntityPickupItems( EntitiesDescription& entities_description, EntityState &mut entity, GameState &mut game_state )
+fn EntityPickupItems(
+	SoundsDescription& sounds_description,
+	EntitiesDescription& entities_description,
+	EntityState &mut entity,
+	GameState &mut game_state )
 {
 	if( entity.pickup_target_entity_index == ~0u ||
 		size_type( entity.pickup_target_entity_index ) >= game_state.entities.size() )
@@ -8184,6 +8226,13 @@ fn EntityPickupItems( EntitiesDescription& entities_description, EntityState &mu
 					// If it's a health pack - add energy, but limit it to maximum energy available for this entity.
 					entity.energy= ust::min( entity.energy + box_contents.amount, entity_description.energy );
 				}
+			}
+			else if( box_contents.tool_type == EntitiesDescription::ToolType::Armor )
+			{
+				// Give armor, but not care limiting it, since it's uclear where this limit should be.
+				entity.armor+= box_contents.amount;
+
+				EmitEntityArmorPickupSound( sounds_description, entity.sound_source_slots );
 			}
 
 			// If extra ammo is specified - add it too.

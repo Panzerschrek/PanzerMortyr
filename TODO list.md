@@ -28,7 +28,6 @@ Gameplay investigation:
 * Investigate how enemies spot the player - their field of view, view distance, spot chance, etc.
 * Investigate what some unknown fileds of entity description format mean, especially ones which affect state transitions.
 * Investigate misfire behavior.
-* Investigate how many armor points enemies have, how their armor protects them and how many armor points they can pick-up.
 * Investigate what kinds of entities are affected by gravity (what in an entity description turns gravity on and off).
 * Investigate what "zarowka" entity property is and whether it's actually used.
 * Investigate what "ponowny_atak" entity property means, how it affects enemies and what is its default value.
@@ -52,7 +51,6 @@ PanzerMortyr general:
 PanzerMortyr game logic:
 
 * Ensure all entity properties affecting state transitions are implemented.
-* Consider implement armor seeking/pick-up behavior for enemies.
 * Break glass quads and quads with breakable materials while applying spash damage. The original game doesn't do this and it doesn't look right.
 * Implement flame particles emitted by explosive decorations ("wybuch_benzyny"/"plomienie").
 * Spawn water splash particles if a projectile hits water surface.
