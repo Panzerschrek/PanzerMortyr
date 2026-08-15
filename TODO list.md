@@ -109,7 +109,6 @@ PanzerMortyr software rendering:
 * Try speeding-up rasterization code by using fixed-point arithmetic for edges calculation.
 * Try seeeding-up rasterization code by using depth buffer in u32 or even u16 format.
 * Try speeding-up rasterization by correcting color and depth equations, so that it's not need to clamp interpolated color and depth values.
-* Try fixing numerical errors in inverse depth interpolation causing pixels of thin triangles to be visible through walls.
 * Draw test primitives.
 * Prepare alpha of map textures, including special ones (for liquids, atlases).
 * Prepare special textures used by billboards and decals.

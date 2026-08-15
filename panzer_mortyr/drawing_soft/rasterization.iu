@@ -39,12 +39,30 @@ fn RasterizeTrianlge(
 		],
 	];
 
+	// Shift screen-space triangle vertex positions to its center.
+	// Calculate equations for depth, light, texture coordinates relative to this center.
+	// This is needed in order to avoid precision issues at large screen coordinates, causing artifacts like Z-fighting.
+	var [ f32, 2 ] triangle_center
+	[
+		ust::floor(
+			( vertices_projected[0][0] + vertices_projected[1][0] + vertices_projected[2][0] ) * ( 1.0f / 3.0f ) ),
+		ust::floor(
+			( vertices_projected[0][1] + vertices_projected[1][1] + vertices_projected[2][1] ) * ( 1.0f / 3.0f ) ),
+	];
+
+	var [ [ f32, 2 ], 3 ] vertices_projected_shifted
+	[
+		[ vertices_projected[0][0] - triangle_center[0], vertices_projected[0][1] - triangle_center[1] ],
+		[ vertices_projected[1][0] - triangle_center[0], vertices_projected[1][1] - triangle_center[1] ],
+		[ vertices_projected[2][0] - triangle_center[0], vertices_projected[2][1] - triangle_center[1] ],
+	];
+
 	// Calculate equations for vertex attributes interpolation.
 
 	var f32 det=
-		vertices_projected[0][0] * ( vertices_projected[1][1] - vertices_projected[2][1] ) -
-		vertices_projected[1][0] * ( vertices_projected[0][1] - vertices_projected[2][1] ) +
-		vertices_projected[2][0] * ( vertices_projected[0][1] - vertices_projected[1][1] );
+		vertices_projected_shifted[0][0] * ( vertices_projected_shifted[1][1] - vertices_projected_shifted[2][1] ) -
+		vertices_projected_shifted[1][0] * ( vertices_projected_shifted[0][1] - vertices_projected_shifted[2][1] ) +
+		vertices_projected_shifted[2][0] * ( vertices_projected_shifted[0][1] - vertices_projected_shifted[1][1] );
 
 	if( det <= 0.0f ) // This check serves as back face culling.
 	{
@@ -62,19 +80,25 @@ fn RasterizeTrianlge(
 		.values
 		[
 			[
-				inv_det * ( vertices_projected[1][1] - vertices_projected[2][1] ),
-				inv_det * ( vertices_projected[2][0] - vertices_projected[1][0] ),
-				inv_det * ( vertices_projected[1][0] * vertices_projected[2][1] - vertices_projected[2][0] * vertices_projected[1][1] )
+				inv_det * ( vertices_projected_shifted[1][1] - vertices_projected_shifted[2][1] ),
+				inv_det * ( vertices_projected_shifted[2][0] - vertices_projected_shifted[1][0] ),
+				inv_det * (
+					vertices_projected_shifted[1][0] * vertices_projected_shifted[2][1] -
+					vertices_projected_shifted[2][0] * vertices_projected_shifted[1][1] )
 			],
 			[
-				inv_det * ( vertices_projected[2][1] - vertices_projected[0][1] ),
-				inv_det * ( vertices_projected[0][0] - vertices_projected[2][0] ),
-				inv_det * ( vertices_projected[2][0] * vertices_projected[0][1] - vertices_projected[0][0] * vertices_projected[2][1] ),
+				inv_det * ( vertices_projected_shifted[2][1] - vertices_projected_shifted[0][1] ),
+				inv_det * ( vertices_projected_shifted[0][0] - vertices_projected_shifted[2][0] ),
+				inv_det * (
+					vertices_projected_shifted[2][0] * vertices_projected_shifted[0][1] -
+					vertices_projected_shifted[0][0] * vertices_projected_shifted[2][1] ),
 			],
 			[
-				inv_det * ( vertices_projected[0][1] - vertices_projected[1][1] ),
-				inv_det * ( vertices_projected[1][0] - vertices_projected[0][0] ),
-				inv_det * ( vertices_projected[0][0] * vertices_projected[1][1] - vertices_projected[1][0] * vertices_projected[0][1] ),
+				inv_det * ( vertices_projected_shifted[0][1] - vertices_projected_shifted[1][1] ),
+				inv_det * ( vertices_projected_shifted[1][0] - vertices_projected_shifted[0][0] ),
+				inv_det * (
+					vertices_projected_shifted[0][0] * vertices_projected_shifted[1][1] -
+					vertices_projected_shifted[1][0] * vertices_projected_shifted[0][1] ),
 			],
 		],
 	};
@@ -271,7 +295,11 @@ fn RasterizeTrianlge(
 					if( min_x_i < max_x_i )
 					{
 						// We perform rasterization for centers of pixels, so, add 0.5.
-						var [ f32, 2 ] first_pixel_center[ f32( min_x_i ) + 0.5f, f32( y ) + 0.5f ];
+						var [ f32, 2 ] first_pixel_center
+						[
+							f32( min_x_i ) + ( 0.5f - triangle_center[0] ),
+							f32( y ) + ( 0.5f - triangle_center[1] ),
+						];
 
 						var [ f32, 4 ] mut pixel_color= zero_init;
 
@@ -459,8 +487,16 @@ fn RasterizeTrianlge(
 					if( min_x_i < max_x_i )
 					{
 						// We perform rasterization for centers of pixels, so, add 0.5.
-						var [ f32, 2 ] first_pixel_center[ f32( min_x_i ) + 0.5f, f32( y ) + 0.5f ];
-						var [ i32, 2 ] first_pixel_center_fixed1[ min_x_i * 2 + 1, y * 2 + 1 ];
+						var [ f32, 2 ] first_pixel_center
+						[
+							f32( min_x_i ) + ( 0.5f - triangle_center[0] ),
+							f32( y ) + ( 0.5f - triangle_center[1] ),
+						];
+						var [ i32, 2 ] first_pixel_center_fixed1
+						[
+							min_x_i * 2 + 1 - i32( triangle_center[0] ) * 2,
+							y * 2 + 1 - i32( triangle_center[1] ) * 2,
+						];
 
 						var [ f32, 4 ] mut pixel_color= zero_init;
 
