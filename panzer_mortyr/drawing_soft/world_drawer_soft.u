@@ -70,7 +70,11 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 	depth_buffer_.resize( size_type( surface.size[1] * surface.stride ), 0.0f );
 	var ust::array_view_mut</f32/> depth_buffer= depth_buffer_;
 
-	var MapDrawDataSoft& map_data= map_data_.try_deref();
+	var MapFullDrawDataSoft &mut map_data_full= map_data_.try_deref();
+
+	var MapDrawDataSoft& map_data= map_data_full.map_draw_data;
+
+	var MapVisibilityCalculator &mut visibility_calculator= map_data_full.map_visibility_calculator;
 
 	var Mat4f rotation_matrix=
 		CalculateCameraRotationMatrix( drawing_info.camera_params.azimuth, drawing_info.camera_params.elevation );
@@ -110,6 +114,12 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 	var Mat4f view_matrix= translation_matrix * rotation_and_projection_matrix * viewport_transformation_matrix;
 
 	var Mat4f view_matrix_transposed= view_matrix.Transpose();
+
+	visibility_calculator.CalculateVisibility(
+		drawing_info.camera_params.position,
+		view_matrix,
+		ClippingPolygon::CreateFromBox(
+			Vec2f( 0.0f, 0.0f ), Vec2f( f32( surface.size[0] ), f32( surface.size[1] ) ) ) );
 
 	// Move Z near plane a little bit forward so that no actual geometry can lay on it.
 	var f32 z_near_for_clipping= 1.25f;
@@ -468,18 +478,26 @@ fn WorldDrawerSoft::SetMap( mut this, u32 map_index )
 		v.tex_coordinates[1]= ust::fma( v.tex_coordinates[1], size[1], size[1] * add_value );
 	}
 
+
+	var ust::shared_ptr_final</RoomClustersBSPTree/> room_clusters_bsp_tree(
+		BuildRoomClustersBSPTree( zvox_data.clusters ) );
+
 	map_data_.reset(
-		MapDrawDataSoft
+		MapFullDrawDataSoft
 		{
-			.zmap_data= zmap_data_ptr,
-			.zvox_data= zvox_data_ptr,
-			.zmap_lam_data= zmap_lam_data_ptr,
-			.zmap_lem_data= zmap_lem_data_ptr,
-			.clusters_draw_data= move(clusters_draw_data),
-			.vertices= move(vertices),
-			.indices= move(indices),
-			.textures=
-				LoadMapTextures( materials_block, caching_game_resources_loader.GetGameFilesystem(), console_out_ ),
+			.map_draw_data
+			{
+				.zmap_data= zmap_data_ptr,
+				.zvox_data= zvox_data_ptr,
+				.zmap_lam_data= zmap_lam_data_ptr,
+				.zmap_lem_data= zmap_lem_data_ptr,
+				.clusters_draw_data= move(clusters_draw_data),
+				.vertices= move(vertices),
+				.indices= move(indices),
+				.textures=
+					LoadMapTextures( materials_block, caching_game_resources_loader.GetGameFilesystem(), console_out_ ),
+			},
+			.map_visibility_calculator( room_clusters_bsp_tree ),
 		} );
 }
 
