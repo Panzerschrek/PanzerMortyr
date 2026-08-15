@@ -19,7 +19,6 @@ fn WindowSoft::constructor( SettingsPtr mut settings, ConsoleOutPtr& console_out
 			} (),
 		settings_= move(settings),
 		window_= zero_init /* set later */,
-		surface_locked_= false,
 		prev_gamma_= ReadGamma( settings_ ),
 	)
 {
@@ -103,13 +102,12 @@ fn WindowSoft::GetSurface( mut this ) : Color32ImageView @( ust::reference_notat
 		halt if( ust::is_nullptr( surface.format ) );
 		halt if( $>( surface.format ).BitsPerPixel != 32u8 );
 
-		// Lock surface before accessing its pixels.
-		if( !surface_locked_ && MustLockSurface( surface_ptr ) )
+		// Lock surface if needed before accessing its pixels.
+		// Don't care unlocking it later.
+		if( ( surface.flags & u32(SDL_RLEACCEL) ) != 0u && surface.locked == 0 )
 		{
 			SDL_LockSurface( surface_ptr );
-			surface_locked_= true;
 		}
-
 
 		var u32 stride= u32( surface.pitch ) / u32( typeinfo</Color32/>.size_of );
 
@@ -129,20 +127,7 @@ fn WindowSoft::GetViewportSize( this ) : [ u32, 2 ]
 
 fn WindowSoft::SwapWindow( mut this )
 {
-	unsafe
-	{
-		var $(SDL_Surface) surface_ptr= SDL_GetWindowSurface( window_ );
-		halt if( ust::is_nullptr( surface_ptr ) );
-
-		// Unlock surface before updating it.
-		if( surface_locked_ && unsafe( MustLockSurface( surface_ptr ) ) )
-		{
-			unsafe( SDL_UnlockSurface( surface_ptr ) );
-			surface_locked_= false;
-		}
-
-		unsafe( SDL_UpdateWindowSurface( window_ ) );
-	}
+	unsafe( SDL_UpdateWindowSurface( window_ ) );
 
 	// Update gamma each frame if necessary (if gamma settings was changed).
 	UpdateGamma();
@@ -194,11 +179,6 @@ fn WindowSoft::UpdateGamma( mut this )
 		prev_gamma_= gamma;
 		unsafe( SetWindowGamma( window_, gamma ) );
 	}
-}
-
-fn MustLockSurface( $(SDL_Surface) surface ) unsafe : bool
-{
-	return unsafe( ( $>(surface).flags & u32(SDL_RLEACCEL) ) != 0u );
 }
 
 } // namespace PM
