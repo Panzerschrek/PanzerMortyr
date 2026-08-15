@@ -7,6 +7,7 @@ import "../lighting.iu"
 import "../map_quad_utils.iu"
 import "../map_visibility_visualization.iu"
 import "../math_constants.iu"
+import "../room_clusters_bsp_tree_visualization.iu"
 import "rasterization.iu"
 import "world_drawer_soft.iu"
 
@@ -329,52 +330,18 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 
 	if( !drawing_info.test_lines.empty() )
 	{
-		var Planef near_clip_plane
-		{
-			.normal( 0.0f, 0.0f, 1.0f ),
-			// Move Z near plane a little bit forward so that no actual geometry can lay on it.
-			.distance= ( -1.25f ) * c_z_near
-		};
-
-		foreach( &test_line : drawing_info.test_lines ) label for_lanes
-		{
-			var [ Vec3f, 2 ] mut segment
-			[
-				test_line.vertices[0] * view_matrix,
-				test_line.vertices[1] * view_matrix,
-			];
-
-			if_var( segment_clipped : ClipLineSegment( near_clip_plane, segment ) )
-			{
-				segment= segment_clipped;
-			}
-			else
-			{
-				continue;
-			}
-
-			foreach( &clip_plane : frustum_side_clip_planes )
-			{
-				if_var( segment_clipped : ClipLineSegment( clip_plane, segment ) )
-				{
-					segment= segment_clipped;
-				}
-				else
-				{
-					continue label for_lanes;
-				}
-			}
-
-			RasterizeLine(
-				surface,
-				depth_buffer,
-				cast_imut(segment)[0],
-				cast_imut(segment)[1],
-				Color32FromComponents(
-					ust::make_array( test_line.color[0], test_line.color[1], test_line.color[2], 0u8 ) ) );
-		}
+		DrawTestLines( surface, depth_buffer, drawing_info.test_lines, view_matrix, frustum_side_clip_planes );
 	}
 
+	if( settings_.lock_imut().deref().r_debug_show_room_clusters_bsp_tree )
+	{
+		var ust::vector</WorldDrawingInfo::TestLine/> mut lines;
+
+		VisualizeRoomClustersBSPTree(
+			map_data.room_clusters_bsp_tree.deref(), drawing_info.camera_params.position, lines );
+
+		DrawTestLines( surface, depth_buffer, lines, view_matrix, frustum_side_clip_planes );
+	}
 	if( settings_.lock_imut().deref().r_debug_show_room_clusters_bsp_tree_projected_portals )
 	{
 		var ust::vector</WorldDrawingInfo::TestLine/> mut lines;
@@ -676,6 +643,7 @@ fn WorldDrawerSoft::SetMap( mut this, u32 map_index )
 				.zvox_data= zvox_data_ptr,
 				.zmap_lam_data= zmap_lam_data_ptr,
 				.zmap_lem_data= zmap_lem_data_ptr,
+				.room_clusters_bsp_tree= room_clusters_bsp_tree,
 				.clusters_draw_data= move(clusters_draw_data),
 				.vertices= move(vertices),
 				.indices= move(indices),
@@ -892,6 +860,58 @@ fn RasterizeTriangleWithSubdivisionAndInterpolationMethodSelection(
 				RasterizeTrianlge</false/>( surface, depth_buffer, v0, v1, v2, texture );
 			}
 		}
+	}
+}
+
+fn DrawTestLines(
+	Color32ImageView& surface,
+	ust::array_view_mut</f32/> depth_buffer,
+	ust::array_view_imut</WorldDrawingInfo::TestLine/> lines,
+	Mat4f& view_matrix,
+	[ Planef, 4 ]& frustum_side_clip_planes )
+{
+	var Planef near_clip_plane
+	{
+		.normal( 0.0f, 0.0f, 1.0f ),
+		// Move Z near plane a little bit forward so that no actual geometry can lay on it.
+		.distance= ( -1.25f ) * c_z_near
+	};
+
+	foreach( &line : lines ) label for_lanes
+	{
+		var [ Vec3f, 2 ] mut segment
+		[
+			line.vertices[0] * view_matrix,
+			line.vertices[1] * view_matrix,
+		];
+
+		if_var( segment_clipped : ClipLineSegment( near_clip_plane, segment ) )
+		{
+			segment= segment_clipped;
+		}
+		else
+		{
+			continue;
+		}
+
+		foreach( &clip_plane : frustum_side_clip_planes )
+		{
+			if_var( segment_clipped : ClipLineSegment( clip_plane, segment ) )
+			{
+				segment= segment_clipped;
+			}
+			else
+			{
+				continue label for_lanes;
+			}
+		}
+
+		RasterizeLine(
+			surface,
+			depth_buffer,
+			cast_imut(segment)[0],
+			cast_imut(segment)[1],
+			Color32FromComponents( ust::make_array( line.color[0], line.color[1], line.color[2], 0u8 ) ) );
 	}
 }
 
