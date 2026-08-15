@@ -284,7 +284,7 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 
 			for( auto mut i= 2s; i < num_vertices; ++i )
 			{
-				RasterizeTriangleAffineOrPerspectiveCorrected(
+				RasterizeTriangleWithSubdivisionAndInterpolationMethodSelection(
 					surface,
 					depth_buffer,
 					cast_imut(vertices_clipped1)[0],
@@ -435,7 +435,7 @@ fn WorldDrawerSoft::SetMap( mut this, u32 map_index )
 		} );
 }
 
-fn RasterizeTriangleAffineOrPerspectiveCorrected(
+fn RasterizeTriangleWithSubdivisionAndInterpolationMethodSelection(
 	Color32ImageView surface,
 	ust::array_view_mut</f32/> depth_buffer,
 	MapVertexF32& v0,
@@ -443,53 +443,204 @@ fn RasterizeTriangleAffineOrPerspectiveCorrected(
 	MapVertexF32& v2,
 	Color32WorldTextureWithMips& texture )
 {
-	var [ bool, 3 ] mut edge_needs_subdivision[ false ... ];
+	var f32 c_max_error_pixels= 1.5f;
 
-	var [ [ f32, 2 ], 3 ] vertices_projected
+	auto get_affine_interpolation_squared_error=
+		lambda( Vec2f& p0, f32 z0, Vec2f& p1, f32 z1 ) : f32
+		{
+			var Vec2f middle_affine= ( p0 + p1 ) * 0.5f;
+			var Vec2f middle_perspective_corrected=
+				( 0.5f * ( p0 / z0 + p1 / z1 ) ) / ( 0.5f * ( 1.0f / z0 + 1.0f / z1 ) );
+
+			return ( middle_affine - middle_perspective_corrected ).SquareLength();
+		};
+
+	var [ Vec2f, 3 ] vertices_projected
 	[
-		[ v0.position.x / v0.position.z, v0.position.y / v0.position.z ],
-		[ v1.position.x / v1.position.z, v1.position.y / v1.position.z ],
-		[ v2.position.x / v2.position.z, v2.position.y / v2.position.z ],
+		v0.position.xy() / v0.position.z,
+		v1.position.xy() / v1.position.z,
+		v2.position.xy() / v2.position.z
 	];
 
-	var [ f32, 3 ] vertices_z[ v0.position.z, v1.position.z, v2.position.z ];
+	var [ f32, 3 ] edge_interpolation_squared_errors
+	[
+		get_affine_interpolation_squared_error(
+			vertices_projected[0], v0.position.z, vertices_projected[1], v1.position.z ),
+		get_affine_interpolation_squared_error(
+			vertices_projected[1], v1.position.z, vertices_projected[2], v2.position.z ),
+		get_affine_interpolation_squared_error(
+			vertices_projected[2], v2.position.z, vertices_projected[0], v0.position.z ),
+	];
 
-	for( auto mut i= 0s; i < 3s; ++i )
+	var bool constexpr use_debug_lines_visualization= false;
+
+	if( edge_interpolation_squared_errors[0] > c_max_error_pixels * c_max_error_pixels * 4.0f ||
+		edge_interpolation_squared_errors[1] > c_max_error_pixels * c_max_error_pixels * 4.0f ||
+		edge_interpolation_squared_errors[2] > c_max_error_pixels * c_max_error_pixels * 4.0f )
 	{
-		var Vec2f p0( vertices_projected[i] );
-		var Vec2f p1( vertices_projected[ ( i + 1s ) % 3s ] );
-
-		var f32 z0= vertices_z[i], z1= vertices_z[ ( i + 1s ) % 3s ];
-
-		var Vec2f middle_affine= ( p0 + p1 ) * 0.5f;
-		var Vec2f middle_perspective_corrected= ( 0.5f * ( p0 / z0 + p1 / z1 ) ) / ( 0.5f * ( 1.0f / z0 + 1.0f / z1 ) );
-
-		var f32 c_max_error_pixels= 1.5f;
-
-		edge_needs_subdivision[i]=
-			( middle_affine - middle_perspective_corrected ).SquareLength() > c_max_error_pixels * c_max_error_pixels;
-	}
-
-	if( edge_needs_subdivision[0] | edge_needs_subdivision[1] | edge_needs_subdivision[2] )
-	{
-		// Can't use affine rasterization for this triangle. Use perspective-corrected rasterization.
-
-		// TODO - try subdividing its edges.
-		// If after such subdivision at leas one part can be affine-rasterized, do so.
-
+		// Can't use affine rasterization for this triangle or even subdivision.
+		// Use perspective-corrected rasterization.
 		RasterizeTrianlge</true/>( surface, depth_buffer, v0, v1, v2, texture );
 
-		if( false )
+		if( use_debug_lines_visualization )
 		{
-			RasterizeLine( surface, depth_buffer, v0.position, v1.position, Color32( 0x00FF00FFu ) );
-			RasterizeLine( surface, depth_buffer, v1.position, v2.position, Color32( 0x00FF00FFu ) );
-			RasterizeLine( surface, depth_buffer, v2.position, v0.position, Color32( 0x00FF00FFu ) );
+			RasterizeLine( surface, depth_buffer, v0.position, v1.position, Color32( 0x00FF0000u ) );
+			RasterizeLine( surface, depth_buffer, v1.position, v2.position, Color32( 0x00FF0000u ) );
+			RasterizeLine( surface, depth_buffer, v2.position, v0.position, Color32( 0x00FF0000u ) );
+		}
+
+		return;
+	}
+
+	// Try performing subdivision, if there is some interpolation error, but not so great one.
+
+	var [ bool, 3 ] edge_needs_subdivision
+	[
+		edge_interpolation_squared_errors[0] > c_max_error_pixels * c_max_error_pixels,
+		edge_interpolation_squared_errors[1] > c_max_error_pixels * c_max_error_pixels,
+		edge_interpolation_squared_errors[2] > c_max_error_pixels * c_max_error_pixels,
+	];
+
+	if( edge_needs_subdivision[0] )
+	{
+		var MapVertexF32 v01= ( v0 + v1 ) * 0.5f;
+
+		if( edge_needs_subdivision[1] )
+		{
+			var MapVertexF32 v12= ( v1 + v2 ) * 0.5f;
+
+			if( edge_needs_subdivision[2] )
+			{
+				// Full subdivision into 4 pieces.
+
+				var MapVertexF32 v20= ( v2 + v0 ) * 0.5f;
+
+				RasterizeTrianlge</false/>( surface, depth_buffer,  v0, v01, v20, texture );
+				RasterizeTrianlge</false/>( surface, depth_buffer,  v1, v12, v01, texture );
+				RasterizeTrianlge</false/>( surface, depth_buffer,  v2, v20, v12, texture );
+				RasterizeTrianlge</false/>( surface, depth_buffer, v01, v12, v20, texture );
+
+				if( use_debug_lines_visualization )
+				{
+					RasterizeLine( surface, depth_buffer,  v0.position,  v1.position, Color32( 0x0000FF00u ) );
+					RasterizeLine( surface, depth_buffer,  v1.position,  v2.position, Color32( 0x0000FF00u ) );
+					RasterizeLine( surface, depth_buffer,  v2.position,  v0.position, Color32( 0x0000FF00u ) );
+					RasterizeLine( surface, depth_buffer, v01.position, v12.position, Color32( 0x0000FF00u ) );
+					RasterizeLine( surface, depth_buffer, v12.position, v20.position, Color32( 0x0000FF00u ) );
+					RasterizeLine( surface, depth_buffer, v20.position, v01.position, Color32( 0x0000FF00u ) );
+				}
+			}
+			else
+			{
+				RasterizeTrianlge</false/>( surface, depth_buffer, v01,  v1, v12, texture );
+				RasterizeTrianlge</false/>( surface, depth_buffer,  v0, v01, v12, texture );
+				RasterizeTrianlge</false/>( surface, depth_buffer,  v0, v12,  v2, texture );
+
+				if( use_debug_lines_visualization )
+				{
+					RasterizeLine( surface, depth_buffer,  v0.position,  v1.position, Color32( 0x0000FF00u ) );
+					RasterizeLine( surface, depth_buffer,  v1.position,  v2.position, Color32( 0x0000FF00u ) );
+					RasterizeLine( surface, depth_buffer,  v2.position,  v0.position, Color32( 0x0000FF00u ) );
+					RasterizeLine( surface, depth_buffer, v01.position, v12.position, Color32( 0x0000FF00u ) );
+					RasterizeLine( surface, depth_buffer,  v0.position, v12.position, Color32( 0x0000FF00u ) );
+				}
+			}
+		}
+		else
+		{
+			if( edge_needs_subdivision[2] )
+			{
+				var MapVertexF32 v20= ( v2 + v0 ) * 0.5f;
+
+				RasterizeTrianlge</false/>( surface, depth_buffer, v20,  v0, v01, texture );
+				RasterizeTrianlge</false/>( surface, depth_buffer,  v2, v20, v01, texture );
+				RasterizeTrianlge</false/>( surface, depth_buffer,  v2, v01,  v1, texture );
+
+				if( use_debug_lines_visualization )
+				{
+					RasterizeLine( surface, depth_buffer,  v0.position,  v1.position, Color32( 0x0000FF00u ) );
+					RasterizeLine( surface, depth_buffer,  v1.position,  v2.position, Color32( 0x0000FF00u ) );
+					RasterizeLine( surface, depth_buffer,  v2.position,  v0.position, Color32( 0x0000FF00u ) );
+					RasterizeLine( surface, depth_buffer, v01.position, v20.position, Color32( 0x0000FF00u ) );
+					RasterizeLine( surface, depth_buffer,  v2.position, v01.position, Color32( 0x0000FF00u ) );
+				}
+			}
+			else
+			{
+				RasterizeTrianlge</false/>( surface, depth_buffer,  v0, v01,  v2, texture );
+				RasterizeTrianlge</false/>( surface, depth_buffer,  v2, v01,  v1, texture );
+
+				if( use_debug_lines_visualization )
+				{
+					RasterizeLine( surface, depth_buffer,  v0.position,  v1.position, Color32( 0x0000FF00u ) );
+					RasterizeLine( surface, depth_buffer,  v1.position,  v2.position, Color32( 0x0000FF00u ) );
+					RasterizeLine( surface, depth_buffer,  v2.position,  v0.position, Color32( 0x0000FF00u ) );
+					RasterizeLine( surface, depth_buffer,  v2.position, v01.position, Color32( 0x0000FF00u ) );
+				}
+			}
 		}
 	}
 	else
 	{
-		// Can use affine rasterization for this triangle - interpolation error isn't large.
-		RasterizeTrianlge</false/>( surface, depth_buffer, v0, v1, v2, texture );
+		if( edge_needs_subdivision[1] )
+		{
+			var MapVertexF32 v12= ( v1 + v2 ) * 0.5f;
+
+			if( edge_needs_subdivision[2] )
+			{
+				var MapVertexF32 v20= ( v2 + v0 ) * 0.5f;
+
+				RasterizeTrianlge</false/>( surface, depth_buffer, v12,  v2, v20, texture );
+				RasterizeTrianlge</false/>( surface, depth_buffer,  v1, v12, v20, texture );
+				RasterizeTrianlge</false/>( surface, depth_buffer,  v1, v20,  v0, texture );
+
+				if( use_debug_lines_visualization )
+				{
+					RasterizeLine( surface, depth_buffer,  v0.position,  v1.position, Color32( 0x0000FF00u ) );
+					RasterizeLine( surface, depth_buffer,  v1.position,  v2.position, Color32( 0x0000FF00u ) );
+					RasterizeLine( surface, depth_buffer,  v2.position,  v0.position, Color32( 0x0000FF00u ) );
+					RasterizeLine( surface, depth_buffer, v12.position, v20.position, Color32( 0x0000FF00u ) );
+					RasterizeLine( surface, depth_buffer,  v1.position, v20.position, Color32( 0x0000FF00u ) );
+				}
+			}
+			else
+			{
+				RasterizeTrianlge</false/>( surface, depth_buffer,  v1, v12,  v0, texture );
+				RasterizeTrianlge</false/>( surface, depth_buffer,  v0, v12,  v2, texture );
+
+				if( use_debug_lines_visualization )
+				{
+					RasterizeLine( surface, depth_buffer,  v0.position,  v1.position, Color32( 0x0000FF00u ) );
+					RasterizeLine( surface, depth_buffer,  v1.position,  v2.position, Color32( 0x0000FF00u ) );
+					RasterizeLine( surface, depth_buffer,  v2.position,  v0.position, Color32( 0x0000FF00u ) );
+					RasterizeLine( surface, depth_buffer,  v0.position, v12.position, Color32( 0x0000FF00u ) );
+				}
+			}
+		}
+		else
+		{
+			if( edge_needs_subdivision[2] )
+			{
+				var MapVertexF32 v20= ( v2 + v0 ) * 0.5f;
+
+				RasterizeTrianlge</false/>( surface, depth_buffer,  v1, v20,  v0, texture );
+				RasterizeTrianlge</false/>( surface, depth_buffer,  v2, v20,  v1, texture );
+
+				if( use_debug_lines_visualization )
+				{
+					RasterizeLine( surface, depth_buffer,  v0.position,  v1.position, Color32( 0x0000FF00u ) );
+					RasterizeLine( surface, depth_buffer,  v1.position,  v2.position, Color32( 0x0000FF00u ) );
+					RasterizeLine( surface, depth_buffer,  v2.position,  v0.position, Color32( 0x0000FF00u ) );
+					RasterizeLine( surface, depth_buffer,  v1.position, v20.position, Color32( 0x0000FF00u ) );
+				}
+			}
+			else
+			{
+				// No subdivision is necessary at all.
+				// Can use affine rasterization for this triangle - interpolation error isn't large.
+				RasterizeTrianlge</false/>( surface, depth_buffer, v0, v1, v2, texture );
+			}
+		}
 	}
 }
 

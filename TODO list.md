@@ -108,7 +108,6 @@ PanzerMortyr OpenGL rendering:
 
 PanzerMortyr software rendering:
 
-* Try speeding-up tasterization by performing one level of subdivision for triangles for which affine rasterization can't be used.
 * Try speeding-up rasterization code by using fixed-point arithmetic for edges calculation.
 * Try seeeding-up rasterization code by using depth buffer in u32 or even u16 format.
 * Try speeding-up rasterization by correcting color and depth equations, so that it's not need to clamp interpolated color and depth values.
