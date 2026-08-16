@@ -366,8 +366,6 @@ fn WorldDrawerSoft::SetMap( mut this, u32 map_index )
 	var GameResourcePtr</RoomClustersHierarchy/> room_clusters_hierarchy_ptr= room_clusters_hierarchy_nullable_ptr.try_to_non_nullable();
 	var GameResourcePtr</QuadsHierarchy/> quads_hierarchy_ptr= quads_hierarchy_nullable_ptr.try_to_non_nullable();
 
-	ust::ignore_unused( materials_block ); // TODO - use it.
-
 	var ZmapData& zmap_data= zmap_data_ptr.deref();
 	var ZvoxData& zvox_data= zvox_data_ptr.deref();
 	var ZmapLamData& zmap_lam_data= zmap_lam_data_ptr.deref();
@@ -385,6 +383,7 @@ fn WorldDrawerSoft::SetMap( mut this, u32 map_index )
 		ClusterDrawDataSoft
 		{
 			.geometry_buffer_chunk= zero_init, // Set later.
+			.special_material_valve_geometry_buffer_chunk= zero_init, // Set later.
 		} );
 
 	foreach( &pair : zvox_data.clusters.iter().zip( clusters_draw_data.iter() ) )
@@ -535,6 +534,99 @@ fn WorldDrawerSoft::SetMap( mut this, u32 map_index )
 				.first_index( cluster_first_index ),
 				.num_indices( indices.size() - cluster_first_index ),
 			};
+	}
+
+	// For each cluster having quads "valve" special material create 4 meshes containing these quads - for each animation frame.
+	foreach( &pair : zvox_data.clusters.iter().zip( clusters_draw_data.iter() ) )
+	{
+		var ZvoxCluster& cluster= pair.first;
+
+		var f32 texture_id(
+			materials_block.special_material_indices[ size_type( MaterialsDescription::SpecialMaterial::Valve ) ] );
+
+		for( auto mut i= 0u; i < 4u; ++i )
+		{
+			var [ f32, 2 ] tc_offset[ f32( i & 1u ) * 0.5f, f32( i >> 1 ) * 0.5f ];
+
+			var size_type cluser_first_vertex_index= vertices.size();
+			var size_type cluster_first_index= indices.size();
+
+			for( auto mut q= size_type( cluster.c.first_quad_index );
+				q < size_type( cluster.c.first_quad_index ) + size_type( cluster.num_quads );
+				++q )
+			{
+				var u32 t( zmap_data.quads[q].texture_id );
+
+				if( !(
+					t == MaterialsDescription::c_special_material_texture_indices[ size_type( MaterialsDescription::SpecialMaterial::Valve ) ] |
+					t == MaterialsDescription::c_special_material_texture_indices[ size_type( MaterialsDescription::SpecialMaterial::ValveAlternative ) ] ) )
+				{
+					continue;
+				}
+
+				var size_type first_quad_vertex_index= vertices.size();
+				var size_type base_vertex_index= vertices.size() - cluser_first_vertex_index;
+
+				if( q < zmap_lam_data.tessellated_quads.size() && zmap_lam_data.tessellated_quads[q].vertex_count > 0u )
+				{
+					var size_type num_vertices_before= vertices.size();
+
+					CreateTessellatedQuadGeometry(
+						zmap_lam_data, cluster, q, texture_id, base_vertex_index, vertices, indices );
+
+					foreach( &mut v : vertices.range().subrange_start( num_vertices_before ) )
+					{
+						v.tex_coordinates[0]+= tc_offset[0];
+						v.tex_coordinates[1]+= tc_offset[1];
+					}
+				}
+
+				// Transform texture coordinates from 0 to 1 range into 0 to size range.
+				// Also add a bias, so that coordinates are always non-negative and near zero
+				// and thus f32 to i32 conversion performs proper truncation
+				// and precision of interpolation remains reasonable.
+
+				auto quad_vertices= vertices.range().subrange_start( first_quad_vertex_index );
+
+				var [ f32, 2 ] mut min_tc[ ust::plus_inf</f32/>(), ust::plus_inf</f32/>() ];
+
+				foreach( &v : quad_vertices )
+				{
+					ust::min_assign( min_tc[0], v.tex_coordinates[0] );
+					ust::min_assign( min_tc[1], v.tex_coordinates[1] );
+				}
+
+				auto& mip0_typeinfo= typeinfo</ Color32WorldTextureWithMips />.elements_list[0].type;
+				var [ f32, 2 ] constexpr texture_size
+				[
+					( mip0_typeinfo.element_type.element_count ),
+					( mip0_typeinfo.element_count )
+				];
+
+				var [ f32, 2 ] tc_bias
+				[
+					ust::floor( min_tc[0] ) * ( - texture_size[0] ),
+					ust::floor( min_tc[1] ) * ( - texture_size[1] ),
+				];
+
+				foreach( &mut v : quad_vertices )
+				{
+					v.tex_coordinates[0]= ust::fma( v.tex_coordinates[0], texture_size[0], tc_bias[0] );
+					v.tex_coordinates[1]= ust::fma( v.tex_coordinates[1], texture_size[1], tc_bias[1] );
+				}
+			}
+
+			var ClusterDrawDataSoft &mut cluster_draw_data= pair.second;
+
+			cluster_draw_data.special_material_valve_geometry_buffer_chunk[i]=
+				GeometryBufferChunkSoft
+				{
+					.first_vertex_index( cluser_first_vertex_index ),
+					.num_vertices( vertices.size() - cluser_first_vertex_index ),
+					.first_index( cluster_first_index ),
+					.num_indices( indices.size() - cluster_first_index ),
+				};
+		}
 	}
 
 	var ust::shared_ptr_final</RoomClustersBSPTree/> room_clusters_bsp_tree(
