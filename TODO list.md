@@ -114,7 +114,6 @@ PanzerMortyr software rendering:
 * Prepare special textures used by billboards and decals.
 * Draw highlighted clusters.
 * Draw map quads with caustics.
-* Draw breakable map quads properly (don't draw broken ones).
 * Draw glass geometry.
 * Draw liquids.
 * Draw light shafts.

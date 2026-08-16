@@ -6,6 +6,7 @@ import "../image_loading.iu"
 import "../lighting.iu"
 import "../map_quad_utils.iu"
 import "../map_visibility_visualization.iu"
+import "../material_utils.iu"
 import "../math_constants.iu"
 import "../room_clusters_bsp_tree_visualization.iu"
 import "rasterization.iu"
@@ -78,7 +79,11 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 
 	var MapDrawDataSoft& map_data= map_data_full.map_draw_data;
 	var ZvoxData& zvox_data= map_data.zvox_data.deref();
+	var ZmapLamData& zmap_lam_data= map_data.zmap_lam_data.deref();
 	auto clusters= zvox_data.clusters.range();
+	auto quads= map_data.zmap_data.deref().quads.range();
+
+	var MapsDescription& maps_description= maps_description_.deref();
 
 	var MapVisibilityCalculator &mut visibility_calculator= map_data_full.map_visibility_calculator;
 
@@ -254,6 +259,45 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 						vertices_clipped1 );
 
 					stats.num_visible_map_triangles+= u32( indices.size() ) / 3u;
+				}
+
+				if( cluster_draw_data.has_breakable_quads && size_type( map_index_ ) < maps_description.maps.size() )
+				{
+					var MapsDescription::MapDescription& map_description=
+						maps_description.maps[ size_type( map_index_ ) ];
+					var MaterialsDescription::Block& materials_block=
+						materials_description_.deref().blocks[ map_description.materials_block ]; // Halts if not found.
+
+					temp_vertices_.clear();
+					temp_indices_.clear();
+
+					CreateClusterBreakablePolygons(
+						cluster,
+						quads,
+						drawing_info.broken_quad_bits,
+						zmap_lam_data,
+						materials_block,
+						map_data.breakable_material_bits,
+						temp_vertices_,
+						temp_indices_ );
+
+					// For scaling and biasing process all breakable quads of this cluster as one quad.
+					// It the worst case we just offset texture coordinates a little bit more.
+					PrepareQuadVertexTextureCoordinates( temp_vertices_ );
+
+					DrawMapTriangles(
+						surface,
+						depth_buffer,
+						view_matrix,
+						frustum_side_clip_planes,
+						map_data.textures,
+						temp_vertices_,
+						temp_indices_,
+						transformed_vertices_,
+						vertices_clipped0,
+						vertices_clipped1 );
+
+					stats.num_visible_breakable_triangles+= u32( temp_indices_.size() ) / 3u;
 				}
 			}
 
@@ -435,6 +479,9 @@ fn WorldDrawerSoft::SetMap( mut this, u32 map_index )
 	var ZmapLemData& zmap_lem_data= zmap_lem_data_ptr.deref();
 	var RoomClustersHierarchy& room_clusters_hierarchy= room_clusters_hierarchy_ptr.deref();
 
+	var BitArray mut breakable_material_bits=
+		CreateBreakableMaterialsBitArray( materials_properties_ptr.deref(), materials_block );
+
 	var ust::vector</PointLightSource/> mut light_sources=
 		CreatePointLightSourcesForMapLightSources( zvox_data, game_params_.deref() );
 
@@ -448,6 +495,10 @@ fn WorldDrawerSoft::SetMap( mut this, u32 map_index )
 			.geometry_buffer_chunk= zero_init, // Set later.
 			.special_material_valve_geometry_buffer_chunk= zero_init, // Set later.
 			.special_material_film_geometry_buffer_chunk= zero_init,
+			.has_glass_quads= false, // Set later.
+			.has_liquid_quads= false, // Set later.
+			.has_breakable_quads= false, // Set later.
+			.has_mirror_quads= false, // Set later.
 		} );
 
 	foreach( &pair : zvox_data.clusters.iter().zip( clusters_draw_data.iter() ) )
@@ -480,6 +531,12 @@ fn WorldDrawerSoft::SetMap( mut this, u32 map_index )
 			{
 				// Don't draw quads with special materials in usual way.
 				continue;
+			}
+			else if(
+				size_type( quad.texture_id ) < breakable_material_bits.GetSize() &&
+				breakable_material_bits.GetBit( size_type( quad.texture_id ) ) )
+			{
+				continue; // Draw breakable materials in separate step.
 			}
 
 			if( q >= zmap_lam_data.tessellated_quads.size() || zmap_lam_data.tessellated_quads[q].vertex_count == 0u )
@@ -556,7 +613,53 @@ fn WorldDrawerSoft::SetMap( mut this, u32 map_index )
 			PrepareQuadVertexTextureCoordinates( vertices.range().subrange_start( first_quad_vertex_index ) );
 		}
 
-		pair.second.geometry_buffer_chunk=
+		// Search for special materials for quads of this cluseter.
+		var bool
+			mut has_glass_quads= false,
+			mut has_liquid_quads= false,
+			mut has_breakable_quads= false,
+			mut has_mirror_quads= false;
+
+		for( auto mut q= size_type( cluster.c.first_quad_index );
+			q < size_type( cluster.c.first_quad_index ) + size_type( cluster.num_quads );
+			++q )
+		{
+			var u32 texture_id( zmap_data.quads[q].texture_id );
+
+			if( texture_id == MaterialsDescription::c_special_material_texture_indices[ size_type( MaterialsDescription::SpecialMaterial::Glass ) ] |
+				texture_id == MaterialsDescription::c_special_material_texture_indices[ size_type( MaterialsDescription::SpecialMaterial::ArmoredGlass ) ]  )
+			{
+				has_glass_quads= true;
+			}
+			else if(
+				texture_id == MaterialsDescription::c_special_material_texture_indices[ size_type( MaterialsDescription::SpecialMaterial::Water ) ] |
+				texture_id == MaterialsDescription::c_special_material_texture_indices[ size_type( MaterialsDescription::SpecialMaterial::Acid ) ] |
+				texture_id == MaterialsDescription::c_special_material_texture_indices[ size_type( MaterialsDescription::SpecialMaterial::AcidAlternative ) ] |
+				texture_id == MaterialsDescription::c_special_material_texture_indices[ size_type( MaterialsDescription::SpecialMaterial::Lava ) ]  )
+			{
+				has_liquid_quads= true;
+			}
+			else if(
+				texture_id == MaterialsDescription::c_special_material_texture_indices[ size_type( MaterialsDescription::SpecialMaterial::Mirror ) ] )
+			{
+				has_mirror_quads= true;
+			}
+			else if(
+				texture_id == MaterialsDescription::c_special_material_texture_indices[ size_type( MaterialsDescription::SpecialMaterial::Window ) ] )
+			{
+				has_breakable_quads= true;
+			}
+			else if(
+				size_type( texture_id ) < breakable_material_bits.GetSize() &&
+				breakable_material_bits.GetBit( size_type( texture_id ) ) )
+			{
+				has_breakable_quads= true;
+			}
+		}
+
+		var ClusterDrawDataSoft &mut cluster_draw_data= pair.second;
+
+		cluster_draw_data.geometry_buffer_chunk=
 			GeometryBufferChunkSoft
 			{
 				.first_vertex_index( cluser_first_vertex_index ),
@@ -564,6 +667,11 @@ fn WorldDrawerSoft::SetMap( mut this, u32 map_index )
 				.first_index( cluster_first_index ),
 				.num_indices( indices.size() - cluster_first_index ),
 			};
+
+		cluster_draw_data.has_glass_quads= has_glass_quads;
+		cluster_draw_data.has_liquid_quads= has_liquid_quads;
+		cluster_draw_data.has_breakable_quads= has_breakable_quads;
+		cluster_draw_data.has_mirror_quads= has_mirror_quads;
 	}
 
 	// For each cluster having quads with "valve" special material create 4 meshes containing these quads - for each animation frame.
@@ -703,6 +811,7 @@ fn WorldDrawerSoft::SetMap( mut this, u32 map_index )
 				.indices= move(indices),
 				.textures=
 					LoadMapTextures( materials_block, caching_game_resources_loader.GetGameFilesystem(), console_out_ ),
+				.breakable_material_bits= move(breakable_material_bits),
 			},
 			.map_visibility_calculator( room_clusters_bsp_tree ),
 		} );
