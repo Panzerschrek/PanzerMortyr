@@ -112,7 +112,6 @@ PanzerMortyr software rendering:
 * Draw test primitives.
 * Prepare alpha of map textures, including special ones (for liquids, atlases).
 * Prepare special textures used by billboards and decals.
-* Draw dynamic clusters.
 * Draw highlighted clusters.
 * Draw map quads with caustics.
 * Draw map quads with animated textures properly.
