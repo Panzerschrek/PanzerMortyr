@@ -112,9 +112,6 @@ PanzerMortyr software rendering:
 * Draw test primitives.
 * Prepare alpha of map textures, including special ones (for liquids, atlases).
 * Prepare special textures used by billboards and decals.
-* Draw only room clusters and their subclusters visible for the given camera position (use MapVisibilityCalculator).
-* Consider preparing map quads geometry once at map loading and then reusing it (as WorldDrawerGL does).
-* Perform frustum culling for subclusters of visible room clusters.
 * Draw dynamic clusters.
 * Draw highlighted clusters.
 * Draw map quads with caustics.
@@ -129,7 +126,6 @@ PanzerMortyr software rendering:
 * Draw snow.
 * Draw rain.
 * Draw water circles.
-* Draw caustics.
 * Draw global fog.
 * Draw local fog.
 * Apply dynamic lighting to the wolrd, models, decals.
@@ -141,6 +137,8 @@ PanzerMortyr software rendering:
 * Draw burning models.
 * Implement night vision mode.
 * Implement infrared vision mode.
+* Apply world brightness setting.
+* Consider using textures dithering (as Unreal does).
 * Draw fullscreen blending effect (for pain, burning and other similar effects).
 * Consider speeding-up software world drawing by performing drawing using multiple threads, when each thread writes into its own framebuffer and the master thread then combines these buffers together.
 
