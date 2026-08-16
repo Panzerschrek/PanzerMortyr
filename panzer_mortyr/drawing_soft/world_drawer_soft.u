@@ -119,8 +119,6 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 
 	var Mat4f view_matrix= translation_matrix * rotation_and_projection_matrix * viewport_transformation_matrix;
 
-	var Mat4f view_matrix_transposed= view_matrix.Transpose();
-
 	// World-space clip planes.
 	var CameraClipPlanes camera_clip_planes= CreateCameraClipPlanes( drawing_info.camera_params, view_aspect );
 
@@ -131,14 +129,11 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 			// Use bounds for screen pixels.
 			Vec2f( 0.0f, 0.0f ), Vec2f( f32( surface.size[0] ), f32( surface.size[1] ) ) ) );
 
-	// Move Z near plane a little bit forward so that no actual geometry can lay on it.
-	var f32 z_near_for_clipping= 1.25f;
-
 	// View-space clip planes.
-	var [ Planef, 4 ] frustum_side_clip_planes= CalculateViewSpaceFrustumSideClipPlanes( surface.size );
+	var FrustumSideClipPlanes frustum_side_clip_planes= CalculateViewSpaceFrustumSideClipPlanes( surface.size );
 
 	var MapVertexF32 dummy_vertex{ .position= Vec3f::MakeZero(), .tex_coord= Vec2f::MakeZero(), .light[ 0.0f ... ] };
-	var [ MapVertexF32, 16 ] mut vertices_clipped0[ dummy_vertex ... ], mut vertices_clipped1[ dummy_vertex ... ];
+	var TriangleVerticesClipped mut vertices_clipped0[ dummy_vertex ... ], mut vertices_clipped1[ dummy_vertex ... ];
 
 	if( transformed_vertices_.size() < map_data.vertices.size() )
 	{
@@ -188,26 +183,11 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 
 				var ClusterDrawDataSoft& cluster_draw_data= map_data.clusters_draw_data[ cluster_index ];
 
-				// Transform vertices.
-				// Do this in separate loop to be able to read transformed vertices for more than one triangle.
-
-				var size_type first_vertex_index( cluster_draw_data.geometry_buffer_chunk.first_vertex_index );
-				var size_type vertex_index_end(
-					cluster_draw_data.geometry_buffer_chunk.first_vertex_index +
-					cluster_draw_data.geometry_buffer_chunk.num_vertices );
-
-				auto cluster_vertices= map_data.vertices.range().subrange( first_vertex_index, vertex_index_end );
-
-				auto cluster_vertices_transformed=
-					transformed_vertices_.range().subrange( first_vertex_index, vertex_index_end );
-
-				foreach( pair : cluster_vertices_transformed.iter().zip( cluster_vertices.iter() ) )
-				{
-					// Perform transposed matrix by vector multiplication.
-					// Hope that it's faster.
-					// TODO - test that it really gives performance benefits.
-					pair.first= view_matrix_transposed * Vec3f( pair.second.position );
-				}
+				auto cluster_vertices=
+					map_data.vertices.range().subrange(
+						size_type( cluster_draw_data.geometry_buffer_chunk.first_vertex_index ),
+						size_type( cluster_draw_data.geometry_buffer_chunk.first_vertex_index +
+							cluster_draw_data.geometry_buffer_chunk.num_vertices ) );
 
 				auto cluster_indices=
 					map_data.indices.range().subrange(
@@ -215,109 +195,17 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 						size_type( cluster_draw_data.geometry_buffer_chunk.first_index +
 							cluster_draw_data.geometry_buffer_chunk.num_indices ) );
 
-				for( auto mut t= 0s; t + 3s <= cluster_indices.size(); t+= 3s ) label for_triangles
-				{
-					var [ u16, 3 ] indices[
-						cluster_indices[ t + 0s ], cluster_indices[ t + 1s ], cluster_indices[ t + 2s ] ];
-
-					var MapVertex& v0= cluster_vertices[ size_type( indices[0] ) ];
-					var MapVertex& v1= cluster_vertices[ size_type( indices[1] ) ];
-					var MapVertex& v2= cluster_vertices[ size_type( indices[2] ) ];
-
-					vertices_clipped0[0]=
-						MapVertexF32
-						{
-							.position= cluster_vertices_transformed[ size_type( indices[0] ) ],
-							.tex_coord( v0.tex_coordinates[0], v0.tex_coordinates[1] ),
-							.light
-							[
-								f32( v0.light[0] ) * ( 1.0f / 255.0f ),
-								f32( v0.light[1] ) * ( 1.0f / 255.0f ),
-								f32( v0.light[2] ) * ( 1.0f / 255.0f ),
-								f32( v0.light[3] ) * ( 1.0f / 255.0f ),
-							],
-						};
-
-					vertices_clipped0[1]=
-						MapVertexF32
-						{
-							.position= cluster_vertices_transformed[ size_type( indices[1] ) ],
-							.tex_coord( v1.tex_coordinates[0], v1.tex_coordinates[1] ),
-							.light
-							[
-								f32( v1.light[0] ) * ( 1.0f / 255.0f ),
-								f32( v1.light[1] ) * ( 1.0f / 255.0f ),
-								f32( v1.light[2] ) * ( 1.0f / 255.0f ),
-								f32( v1.light[3] ) * ( 1.0f / 255.0f ),
-							],
-						};
-
-					vertices_clipped0[2]=
-						MapVertexF32
-						{
-							.position= cluster_vertices_transformed[ size_type( indices[2] ) ],
-							.tex_coord( v2.tex_coordinates[0], v2.tex_coordinates[1] ),
-							.light
-							[
-								f32( v2.light[0] ) * ( 1.0f / 255.0f ),
-								f32( v2.light[1] ) * ( 1.0f / 255.0f ),
-								f32( v2.light[2] ) * ( 1.0f / 255.0f ),
-								f32( v2.light[3] ) * ( 1.0f / 255.0f ),
-							],
-						};
-
-					var size_type mut num_vertices= 3s;
-
-					num_vertices=
-						ClipPolygonByZNearPlane(
-							z_near_for_clipping,
-							ust::array_view_imut</MapVertexF32/>( vertices_clipped0 ).subrange_end( num_vertices ),
-							vertices_clipped1 );
-
-					if( num_vertices < 3s )
-					{
-						continue label for_triangles;
-					}
-
-					// Perform two pairs of clipping by two pairs of clip planes.
-					for( auto mut i= 0s; i < 2s; ++i )
-					{
-						num_vertices=
-							ClipPolygon(
-								frustum_side_clip_planes[ i * 2s + 0s ],
-								ust::array_view_imut</MapVertexF32/>( vertices_clipped1 ).subrange_end( num_vertices ),
-								vertices_clipped0 );
-
-						if( num_vertices < 3s )
-						{
-							continue label for_triangles;
-						}
-
-						num_vertices=
-							ClipPolygon(
-								frustum_side_clip_planes[ i * 2s + 1s ],
-								ust::array_view_imut</MapVertexF32/>( vertices_clipped0 ).subrange_end( num_vertices ),
-								vertices_clipped1 );
-
-						if( num_vertices < 3s )
-						{
-							continue label for_triangles;
-						}
-					}
-
-					var Color32WorldTextureWithMips& texture= map_data.textures[ size_type( v0.tex_coordinates[2] ) ];
-
-					for( auto mut i= 2s; i < num_vertices; ++i )
-					{
-						RasterizeTriangleWithSubdivisionAndInterpolationMethodSelection(
-							surface,
-							depth_buffer,
-							cast_imut(vertices_clipped1)[0],
-							cast_imut(vertices_clipped1)[ i - 1s ],
-							cast_imut(vertices_clipped1)[ i ],
-							texture );
-					}
-				}
+				DrawMapTriangles(
+					surface,
+					depth_buffer,
+					view_matrix,
+					frustum_side_clip_planes,
+					map_data.textures,
+					cluster_vertices,
+					cluster_indices,
+					transformed_vertices_,
+					vertices_clipped0,
+					vertices_clipped1 );
 
 				++stats.num_total_visible_clusters;
 				stats.num_visible_map_triangles+= u32( cluster_indices.size() ) / 3u;
@@ -655,6 +543,143 @@ fn WorldDrawerSoft::SetMap( mut this, u32 map_index )
 		} );
 }
 
+type FrustumSideClipPlanes= [ Planef, 4 ];
+
+type TriangleVerticesClipped= [ MapVertexF32, 16 ];
+
+fn DrawMapTriangles(
+	Color32ImageView& surface,
+	ust::array_view_mut</f32/> depth_buffer,
+	Mat4f& view_matrix,
+	FrustumSideClipPlanes& frustum_side_clip_planes,
+	ust::array_view_imut</Color32WorldTextureWithMips/> textures,
+	ust::array_view_imut</MapVertex/> vertices,
+	ust::array_view_imut</u16/> indices,
+	ust::vector</Vec3f/> &mut vertices_transformed,
+	TriangleVerticesClipped &mut vertices_clipped0,
+	TriangleVerticesClipped &mut vertices_clipped1 )
+{
+	// Move Z near plane a little bit forward so that no actual geometry can lay on it.
+	var f32 constexpr z_near_for_clipping= 1.25f;
+
+	if( vertices_transformed.size() < vertices.size() )
+	{
+		// Resize only down.
+		vertices_transformed.resize( vertices.size(), Vec3f::MakeZero() );
+	}
+
+	// Transform first vertices.
+	// Do this in separate loop to be able to read transformed vertices for more than one triangle.
+	foreach( pair : vertices_transformed.iter().zip( vertices.iter() ) )
+	{
+		// TODO - try speeding-up this code. Make sure the compiler uses vectorization for it.
+		pair.first= Vec3f( pair.second.position ) * view_matrix;
+	}
+
+	for( auto mut t= 0s; t + 3s <= indices.size(); t+= 3s ) label for_triangles
+	{
+		var [ u16, 3 ] triangle_indices[ indices[ t + 0s ], indices[ t + 1s ], indices[ t + 2s ] ];
+
+		var MapVertex& v0= vertices[ size_type( triangle_indices[0] ) ];
+		var MapVertex& v1= vertices[ size_type( triangle_indices[1] ) ];
+		var MapVertex& v2= vertices[ size_type( triangle_indices[2] ) ];
+
+		vertices_clipped0[0]=
+			MapVertexF32
+			{
+				.position= vertices_transformed[ size_type( triangle_indices[0] ) ],
+				.tex_coord( v0.tex_coordinates[0], v0.tex_coordinates[1] ),
+				.light
+				[
+					f32( v0.light[0] ) * ( 1.0f / 255.0f ),
+					f32( v0.light[1] ) * ( 1.0f / 255.0f ),
+					f32( v0.light[2] ) * ( 1.0f / 255.0f ),
+					f32( v0.light[3] ) * ( 1.0f / 255.0f ),
+				],
+			};
+
+		vertices_clipped0[1]=
+			MapVertexF32
+			{
+				.position= vertices_transformed[ size_type( triangle_indices[1] ) ],
+				.tex_coord( v1.tex_coordinates[0], v1.tex_coordinates[1] ),
+				.light
+				[
+					f32( v1.light[0] ) * ( 1.0f / 255.0f ),
+					f32( v1.light[1] ) * ( 1.0f / 255.0f ),
+					f32( v1.light[2] ) * ( 1.0f / 255.0f ),
+					f32( v1.light[3] ) * ( 1.0f / 255.0f ),
+				],
+			};
+
+		vertices_clipped0[2]=
+			MapVertexF32
+			{
+				.position= vertices_transformed[ size_type( triangle_indices[2] ) ],
+				.tex_coord( v2.tex_coordinates[0], v2.tex_coordinates[1] ),
+				.light
+				[
+					f32( v2.light[0] ) * ( 1.0f / 255.0f ),
+					f32( v2.light[1] ) * ( 1.0f / 255.0f ),
+					f32( v2.light[2] ) * ( 1.0f / 255.0f ),
+					f32( v2.light[3] ) * ( 1.0f / 255.0f ),
+				],
+			};
+
+		var size_type mut num_vertices= 3s;
+
+		num_vertices=
+			ClipPolygonByZNearPlane(
+				z_near_for_clipping,
+				ust::array_view_imut</MapVertexF32/>( vertices_clipped0 ).subrange_end( num_vertices ),
+				vertices_clipped1 );
+
+		if( num_vertices < 3s )
+		{
+			continue label for_triangles;
+		}
+
+		// Perform two pairs of clipping by two pairs of clip planes.
+		for( auto mut i= 0s; i < 2s; ++i )
+		{
+			num_vertices=
+				ClipPolygon(
+					frustum_side_clip_planes[ i * 2s + 0s ],
+					ust::array_view_imut</MapVertexF32/>( vertices_clipped1 ).subrange_end( num_vertices ),
+					vertices_clipped0 );
+
+			if( num_vertices < 3s )
+			{
+				continue label for_triangles;
+			}
+
+			num_vertices=
+				ClipPolygon(
+					frustum_side_clip_planes[ i * 2s + 1s ],
+					ust::array_view_imut</MapVertexF32/>( vertices_clipped0 ).subrange_end( num_vertices ),
+					vertices_clipped1 );
+
+			if( num_vertices < 3s )
+			{
+				continue label for_triangles;
+			}
+		}
+
+		var Color32WorldTextureWithMips& texture= textures[ size_type( v0.tex_coordinates[2] ) ];
+
+		for( auto mut i= 2s; i < num_vertices; ++i )
+		{
+			RasterizeTriangleWithSubdivisionAndInterpolationMethodSelection(
+				surface,
+				depth_buffer,
+				cast_imut(vertices_clipped1)[0],
+				cast_imut(vertices_clipped1)[ i - 1s ],
+				cast_imut(vertices_clipped1)[ i ],
+				texture );
+		}
+	}
+}
+
 fn RasterizeTriangleWithSubdivisionAndInterpolationMethodSelection(
 	Color32ImageView surface,
 	ust::array_view_mut</f32/> depth_buffer,
@@ -869,7 +894,7 @@ fn DrawTestLines(
 	ust::array_view_mut</f32/> depth_buffer,
 	ust::array_view_imut</WorldDrawingInfo::TestLine/> lines,
 	Mat4f& view_matrix,
-	[ Planef, 4 ]& frustum_side_clip_planes )
+	FrustumSideClipPlanes& frustum_side_clip_planes )
 {
 	var Planef near_clip_plane
 	{
