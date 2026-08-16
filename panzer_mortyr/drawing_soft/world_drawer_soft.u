@@ -133,6 +133,7 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 	var FrustumSideClipPlanes frustum_side_clip_planes= CalculateViewSpaceFrustumSideClipPlanes( surface.size );
 
 	var u32 valve_special_material_frame= CalculateValveSpecialMaterialFrame( drawing_info.game_time_s );
+	var u32 film_special_material_frame= CalculateFilmSpecialMaterialFrame( drawing_info.game_time_s );
 
 	var MapVertexF32 dummy_vertex{ .position= Vec3f::MakeZero(), .tex_coord= Vec2f::MakeZero(), .light[ 0.0f ... ] };
 	var TriangleVerticesClipped mut vertices_clipped0[ dummy_vertex ... ], mut vertices_clipped1[ dummy_vertex ... ];
@@ -207,6 +208,38 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 							size_type( valve_material_buffer_chunk.first_index ),
 							size_type( valve_material_buffer_chunk.first_index +
 								valve_material_buffer_chunk.num_indices ) );
+
+					DrawMapTriangles(
+						surface,
+						depth_buffer,
+						view_matrix,
+						frustum_side_clip_planes,
+						map_data.textures,
+						vertices,
+						indices,
+						transformed_vertices_,
+						vertices_clipped0,
+						vertices_clipped1 );
+
+					stats.num_visible_map_triangles+= u32( indices.size() ) / 3u;
+				}
+
+				var GeometryBufferChunkSoft& film_material_buffer_chunk=
+					cluster_draw_data.special_material_film_geometry_buffer_chunk[ film_special_material_frame ];
+
+				if( film_material_buffer_chunk.num_indices > 0u )
+				{
+					auto vertices=
+					map_data.vertices.range().subrange(
+						size_type( film_material_buffer_chunk.first_vertex_index ),
+						size_type( film_material_buffer_chunk.first_vertex_index +
+							film_material_buffer_chunk.num_vertices ) );
+
+					auto indices=
+						map_data.indices.range().subrange(
+							size_type( film_material_buffer_chunk.first_index ),
+							size_type( film_material_buffer_chunk.first_index +
+								film_material_buffer_chunk.num_indices ) );
 
 					DrawMapTriangles(
 						surface,
@@ -414,6 +447,7 @@ fn WorldDrawerSoft::SetMap( mut this, u32 map_index )
 		{
 			.geometry_buffer_chunk= zero_init, // Set later.
 			.special_material_valve_geometry_buffer_chunk= zero_init, // Set later.
+			.special_material_film_geometry_buffer_chunk= zero_init,
 		} );
 
 	foreach( &pair : zvox_data.clusters.iter().zip( clusters_draw_data.iter() ) )
@@ -534,7 +568,7 @@ fn WorldDrawerSoft::SetMap( mut this, u32 map_index )
 			};
 	}
 
-	// For each cluster having quads "valve" special material create 4 meshes containing these quads - for each animation frame.
+	// For each cluster having quads with "valve" special material create 4 meshes containing these quads - for each animation frame.
 	foreach( &pair : zvox_data.clusters.iter().zip( clusters_draw_data.iter() ) )
 	{
 		var ZvoxCluster& cluster= pair.first;
@@ -585,6 +619,68 @@ fn WorldDrawerSoft::SetMap( mut this, u32 map_index )
 			var ClusterDrawDataSoft &mut cluster_draw_data= pair.second;
 
 			cluster_draw_data.special_material_valve_geometry_buffer_chunk[i]=
+				GeometryBufferChunkSoft
+				{
+					.first_vertex_index( cluser_first_vertex_index ),
+					.num_vertices( vertices.size() - cluser_first_vertex_index ),
+					.first_index( cluster_first_index ),
+					.num_indices( indices.size() - cluster_first_index ),
+				};
+		}
+	}
+
+	// For each cluster having quads with "film" special material create 8 meshes containing these quads - for each animation frame.
+	foreach( &pair : zvox_data.clusters.iter().zip( clusters_draw_data.iter() ) )
+	{
+		var ZvoxCluster& cluster= pair.first;
+
+		for( auto mut i= 0u; i < 8u; ++i )
+		{
+			var u32 tile_x= i & 1u;
+			var u32 tile_y= i >> 2;
+			var u32 tile_index= tile_x + tile_y * 2u;
+
+			var f32 texture_id(
+				materials_block.special_material_indices[ size_type( MaterialsDescription::SpecialMaterial::Film ) ] +
+				tile_index );
+
+			var f32 tc_offset_y= f32( ( i >> 1 ) & 1u ) * 0.5f;
+
+			var size_type cluser_first_vertex_index= vertices.size();
+			var size_type cluster_first_index= indices.size();
+
+			for( auto mut q= size_type( cluster.c.first_quad_index );
+				q < size_type( cluster.c.first_quad_index ) + size_type( cluster.num_quads );
+				++q )
+			{
+				if( u32( zmap_data.quads[q].texture_id ) !=
+					MaterialsDescription::c_special_material_texture_indices[ size_type( MaterialsDescription::SpecialMaterial::Film ) ] )
+				{
+					continue;
+				}
+
+				var size_type first_quad_vertex_index= vertices.size();
+				var size_type base_vertex_index= vertices.size() - cluser_first_vertex_index;
+
+				if( q < zmap_lam_data.tessellated_quads.size() && zmap_lam_data.tessellated_quads[q].vertex_count > 0u )
+				{
+					var size_type num_vertices_before= vertices.size();
+
+					CreateTessellatedQuadGeometry(
+						zmap_lam_data, cluster, q, texture_id, base_vertex_index, vertices, indices );
+
+					foreach( &mut v : vertices.range().subrange_start( num_vertices_before ) )
+					{
+						v.tex_coordinates[1]+= tc_offset_y;
+					}
+				}
+
+				PrepareQuadVertexTextureCoordinates( vertices.range().subrange_start( first_quad_vertex_index ) );
+			}
+
+			var ClusterDrawDataSoft &mut cluster_draw_data= pair.second;
+
+			cluster_draw_data.special_material_film_geometry_buffer_chunk[i]=
 				GeometryBufferChunkSoft
 				{
 					.first_vertex_index( cluser_first_vertex_index ),
