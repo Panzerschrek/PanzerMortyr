@@ -3,7 +3,6 @@ import "/string_conversions.iu"
 import "../clipping.iu"
 import "../cluster_utils.iu"
 import "../image_loading.iu"
-import "../lighting.iu"
 import "../map_quad_utils.iu"
 import "../map_visibility_visualization.iu"
 import "../material_utils.iu"
@@ -95,6 +94,11 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 	auto quads= map_data.zmap_data.deref().quads.range();
 
 	var MapsDescription& maps_description= maps_description_.deref();
+
+	var ust::array_view_imut</ZmapLemClusterSkyLightData/> clusters_sky_light_data=
+		map_data.zmap_lem_data.deref().clusters_sky_light_data;
+
+	var RoomClustersHierarchy& room_clusters_hierarchy= map_data.room_clusters_hierarchy.deref();
 
 	var MapVisibilityCalculator &mut visibility_calculator= map_data_full.map_visibility_calculator;
 
@@ -427,7 +431,7 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 
 		if( transformed_vertices_.size() < size_type( model.num_vertices ) )
 		{
-			// Resize only down.
+			// Resize only up.
 			transformed_vertices_.resize( size_type( model.num_vertices ), Vec3f::MakeZero() );
 		}
 
@@ -452,6 +456,95 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 			transformed_vertices_[i]= position * model_full_matrix;
 		}
 
+		if( vertex_light_.size() < size_type( model.num_vertices ) )
+		{
+			// Resize only up.
+			vertex_light_.resize( size_type( model.num_vertices ), ust::make_zeroed</ [ f32, 4 ] />() );
+		}
+
+		auto vertex_light= vertex_light_.range().subrange_end( size_type( model.num_vertices ) );
+
+		if( model_object.constant_lighting )
+		{
+			foreach( &mut l : vertex_light )
+			{
+				l= ust::make_array( 1.0f, 1.0f, 1.0f, 1.0f );
+			}
+		}
+		else
+		{
+			var Vec3f bbox_center= frame_bbox.GetCenter() * model_transormation_matrix;
+			var f32 radius= frame_bbox.GetDimensions().Length() * 0.5f;
+
+			// https://en.wikipedia.org/wiki/Rotation_matrix#Multiplication.
+			//   The inverse of a rotation matrix is its transpose, which is also a rotation matrix:
+			//
+			var Mat4f inverse_model_rotation_matrix= rotation_matrix.Transpose();
+
+			var SphericalHarmonicsRGB mut light=
+				GetLightForPoint(
+					map_data.light_sources,
+					clusters,
+					clusters_sky_light_data,
+					room_clusters_hierarchy,
+					bbox_center,
+					radius,
+					inverse_model_rotation_matrix );
+
+			if( true /* TODO - allow disabling dynamic lights. */ )
+			{
+				var SphericalHarmonicsRGB dynamic_light=
+					GetLightForPointFromDynamicLightSources(
+						game_params_.deref(),
+						drawing_info.dynamic_light_sources,
+						bbox_center,
+						radius,
+						inverse_model_rotation_matrix );
+
+				for( auto mut i= 0s; i < 3s; ++i )
+				{
+					var SphericalHarmonics &mut dst= light[i];
+					var SphericalHarmonics& src= dynamic_light[i];
+					dst.constant_component+= src.constant_component;
+					dst.directional_components+= src.directional_components;
+				}
+			}
+
+			if( model_object.first_person_weapon )
+			{
+				foreach( &mut l : light )
+				{
+					// Always give some light for first-person weapon.
+					ust::max_assign( l.constant_component, 1.0f / 16.0f );
+				}
+			}
+
+			// TODO - optimize this code for cases where frame_mix is 0 or 1.
+			var f32 constexpr normal_scale= 1.0f / 128.0f;
+			var f32 scale0= normal_scale * ( 1.0f - frames.frame_mix );
+			var f32 scale1= normal_scale * frames.frame_mix;
+
+			for( auto mut i= 0s; i < size_type( model.num_vertices ); ++i )
+			{
+				// TODO - optimize this code, make sure vector instructions are used.
+				var [ i8, 3 ]& n0= frame0_vertices[i].normal;
+				var [ i8, 3 ]& n1= frame1_vertices[i].normal;
+
+				var Vec3f normal=
+					Vec3f( f32( n0[0] ), f32( n0[1] ), f32( n0[2] ) ) * scale0 +
+					Vec3f( f32( n1[0] ), f32( n1[1] ), f32( n1[2] ) ) * scale1;
+
+				// TODO - try speed-up normalization.
+				var Vec3f normal_normalized= normal / ust::max( normal_scale, normal.Length() );
+
+				var [ f32, 4 ] &mut dst_light= vertex_light[i];
+
+				dst_light[0]= light[0].directional_components.Dot( normal_normalized ) + light[0].constant_component;
+				dst_light[1]= light[1].directional_components.Dot( normal_normalized ) + light[1].constant_component;
+				dst_light[2]= light[2].directional_components.Dot( normal_normalized ) + light[2].constant_component;
+			}
+		}
+
 		// TODO - optimize this loop for case in no clipping by frustum planes is necessary.
 
 		foreach( &triangle : model.triangles ) label for_triangles
@@ -461,7 +554,7 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 				{
 					.position= transformed_vertices_[ size_type( triangle[0] ) ],
 					.tex_coord= model.texture_coordinates[ size_type( triangle[0] ) ],
-					.light[ 1.0f ... /* TODO - calculate proper light */ ],
+					.light= vertex_light[ size_type( triangle[0] ) ],
 				};
 
 			vertices_clipped0[1]=
@@ -469,7 +562,7 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 				{
 					.position= transformed_vertices_[ size_type( triangle[1] ) ],
 					.tex_coord= model.texture_coordinates[ size_type( triangle[1] ) ],
-					.light[ 1.0f ... /* TODO - calculate proper light */ ],
+					.light= vertex_light[ size_type( triangle[1] ) ],
 				};
 
 			vertices_clipped0[2]=
@@ -477,7 +570,7 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 				{
 					.position= transformed_vertices_[ size_type( triangle[2] ) ],
 					.tex_coord= model.texture_coordinates[ size_type( triangle[2] ) ],
-					.light[ 1.0f ... /* TODO - calculate proper light */ ],
+					.light= vertex_light[ size_type( triangle[2] ) ],
 				};
 
 			var size_type mut num_vertices= 3s;
@@ -996,7 +1089,9 @@ fn WorldDrawerSoft::SetMap( mut this, u32 map_index )
 				.zvox_data= zvox_data_ptr,
 				.zmap_lam_data= zmap_lam_data_ptr,
 				.zmap_lem_data= zmap_lem_data_ptr,
+				.room_clusters_hierarchy= room_clusters_hierarchy_ptr,
 				.room_clusters_bsp_tree= room_clusters_bsp_tree,
+				.light_sources= move(light_sources),
 				.clusters_draw_data= move(clusters_draw_data),
 				.vertices= move(vertices),
 				.indices= move(indices),
