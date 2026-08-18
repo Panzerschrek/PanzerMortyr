@@ -9,16 +9,13 @@ fn CreateModelSoft( ModelData& model_data ) : ModelSoft
 	var size_type num_lod0_triangles( model_data.num_lod0_triangles );
 
 	// Assume here that we have at least one texture. If we have more than one - don't care.
-	var ModelSoft::Texture mut texture=  CreateModelTexture( model_data.texture_collections.back().hd_textures[0] );
+	var ModelSoft::Texture mut texture= CreateModelTexture( model_data.texture_collections.back().hd_textures[0] );
 
 	return ModelSoft
 	{
 		.num_vertices( model_data.num_vertices ),
 		.num_triangles( model_data.num_lod0_triangles ),
 		.num_frames( model_data.num_frames ),
-		// TODO - set texture coordinates.
-		.vertices= CreateModelFrameVertices( model_data ),
-		.frame_bboxes= CalculateModelFrameBBoxes( model_data ),
 		.triangles=
 			ust::make_vector_from_mapped_range(
 				model_data.triangles.range().subrange_end( num_lod0_triangles ),
@@ -27,6 +24,9 @@ fn CreateModelSoft( ModelData& model_data ) : ModelSoft
 					// Original indices are multiplied by 2, divide them back.
 					return ust::make_array( u16( t[0] >> 1 ), u16( t[1] >> 1 ), u16( t[2] >> 1 ) );
 				} ),
+		.texture_coordinates= PrepareModelTextureCoordinates( model_data.texture_coordinates, texture ),
+		.vertices= CreateModelFrameVertices( model_data ),
+		.frame_bboxes= CalculateModelFrameBBoxes( model_data ),
 		.texture= move(texture),
 	};
 }
@@ -119,6 +119,47 @@ fn PrepareModelTextureMip0( [ [ Color32, dst_size ], dst_size ] &mut dst, ModelD
 					ust::make_array( p[ i * 3s + 2s ], p[ i * 3s + 1s ], p[ i * 3s + 0s ], 255u8  ) );
 		}
 	}
+}
+
+// Maps normalized texture coordinates to pixel-sized texture coorindates.
+// Also adds a bias so that texture coordinates are as close as possible to zero, but are non-negative.
+fn PrepareModelTextureCoordinates(
+	ust::array_view_imut</ObbVertexTextureCoordinates/> in_texture_coordinates,
+	ModelSoft::Texture& texture ) : ust::vector</Vec2f/>
+{
+	var ust::vector</Vec2f/> mut out_texture_coordinates=
+		ust::make_vector_from_mapped_range(
+			in_texture_coordinates,
+			lambda( ObbVertexTextureCoordinates& t ) : Vec2f
+			{
+				return Vec2f( t );
+			} );
+
+	var Vec2f mut min_tc( ust::plus_inf</f32/>(), ust::plus_inf</f32/>() );
+
+	foreach( &tc : out_texture_coordinates )
+	{
+		ust::min_assign( min_tc.x, tc.x );
+		ust::min_assign( min_tc.y, tc.y );
+	}
+
+	var Vec2f mut texture_size= Vec2f::MakeZero();
+	variant_visit( &texture_ptr : texture )
+	{
+		auto& mip0_typeinfo= typeinfo</ typeof( texture_ptr.deref() ) />.elements_list[0].type;
+		texture_size.x= f32( mip0_typeinfo.element_type.element_count );
+		texture_size.y= f32( mip0_typeinfo.element_count );
+	}
+
+	var Vec2f tc_bias( ust::floor( min_tc.x ) * ( - texture_size.x ), ust::floor( min_tc.y ) * ( - texture_size.y ) );
+
+	foreach( &mut tc : out_texture_coordinates )
+	{
+		tc.x= ust::fma( tc.x, texture_size.x, tc_bias.x );
+		tc.y= ust::fma( tc.y, texture_size.y, tc_bias.y );
+	}
+
+	return out_texture_coordinates;
 }
 
 } // namespace PM
