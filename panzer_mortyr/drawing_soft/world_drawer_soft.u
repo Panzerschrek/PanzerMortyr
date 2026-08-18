@@ -353,6 +353,106 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 			stats );
 	}
 
+	foreach( &model_object : drawing_info.model_objects )
+	{
+		var ust::optional_ref_imut</ ust::optional</ModelSoft/> /> model_opt_opt=
+			models_.find( model_object.model_file_name );
+
+		if( model_opt_opt.empty() )
+		{
+			continue;
+		}
+
+		var ust::optional</ModelSoft/>& model_opt= model_opt_opt.try_deref();
+		if( model_opt.empty() )
+		{
+			continue;
+		}
+
+		var ModelSoft& model= model_opt.try_deref();
+
+		var Mat4f rotation_matrix=
+			Mat4f::MakeRotationX( model_object.elevation ) *
+			Mat4f::MakeRotationZ( model_object.azimuth );
+
+		var Mat4f mut model_transormation_matrix= rotation_matrix * Mat4f::MakeTranslation( model_object.position );
+
+		if( model_object.first_person_weapon )
+		{
+			model_transormation_matrix=
+				CalculateFirstPersonWeaponDistortionMatrix() * model_transormation_matrix;
+		}
+
+		var WorldDrawingInfo::ModelFrames frames
+		{
+			// It looks like frame numbers above maximum are replaced with zeros.
+			// This seems to be used by weapon shot animations.
+			.frame0= ( model_object.frames.frame0 < model.num_frames ? model_object.frames.frame0 : 0u ),
+			.frame1= ( model_object.frames.frame1 < model.num_frames ? model_object.frames.frame1 : 0u ),
+			.frame_mix= model_object.frames.frame_mix
+		};
+
+		// For simplicity use the largest bbox of two frames, don't bother mixing them.
+		var BBox3f mut frame_bbox= model.frame_bboxes[ size_type( frames.frame0 ) ];
+		frame_bbox.ExtendWithOther( model.frame_bboxes[ size_type( frames.frame1 ) ] );
+
+		if( !model_object.first_person_weapon )
+		{
+			// Calculate  bounding box of the model in world space (including even rotations).
+			var [ Vec3f, 8 ] bbox_corners_transformed
+			[
+				Vec3f( frame_bbox.min.x, frame_bbox.min.y, frame_bbox.min.z ) * model_transormation_matrix,
+				Vec3f( frame_bbox.max.x, frame_bbox.min.y, frame_bbox.min.z ) * model_transormation_matrix,
+				Vec3f( frame_bbox.min.x, frame_bbox.max.y, frame_bbox.min.z ) * model_transormation_matrix,
+				Vec3f( frame_bbox.max.x, frame_bbox.max.y, frame_bbox.min.z ) * model_transormation_matrix,
+				Vec3f( frame_bbox.min.x, frame_bbox.min.y, frame_bbox.max.z ) * model_transormation_matrix,
+				Vec3f( frame_bbox.max.x, frame_bbox.min.y, frame_bbox.max.z ) * model_transormation_matrix,
+				Vec3f( frame_bbox.min.x, frame_bbox.max.y, frame_bbox.max.z ) * model_transormation_matrix,
+				Vec3f( frame_bbox.max.x, frame_bbox.max.y, frame_bbox.max.z ) * model_transormation_matrix,
+			];
+
+			if( !model_object.disable_culling && !visibility_calculator.IsBoxVisible( bbox_corners_transformed ) )
+			{
+				continue;
+			}
+
+			// Perform more costly check against camera clip planes.
+			if( AreBoxVerticesClippedByAtLeastOneCameraClipPlane( camera_clip_planes, bbox_corners_transformed ) )
+			{
+				continue;
+			}
+		}
+
+		var Mat4f model_full_matrix= model_transormation_matrix * view_matrix;
+
+		if( transformed_vertices_.size() < size_type( model.num_vertices ) )
+		{
+			// Resize only down.
+			transformed_vertices_.resize( size_type( model.num_vertices ), Vec3f::MakeZero() );
+		}
+
+		var ust::array_view_imut</ ModelFrameVertex /> frame0_vertices=
+			model.vertices.range().subrange(
+				size_type( model.num_vertices * frames.frame0 ),
+				size_type( model.num_vertices * ( frames.frame0 + 1u ) ) );
+
+		var ust::array_view_imut</ ModelFrameVertex /> frame1_vertices=
+			model.vertices.range().subrange(
+				size_type( model.num_vertices * frames.frame1 ),
+				size_type( model.num_vertices * ( frames.frame1 + 1u ) ) );
+
+		// TODO - optimize this code for cases where frame_mix is 0 or 1.
+		for( auto mut i= 0s; i < size_type( model.num_vertices ); ++i )
+		{
+			var Vec3f position=
+				Vec3f( frame0_vertices[i].position ) * frames.frame_mix +
+				Vec3f( frame1_vertices[i].position ) * ( 1.0f - frames.frame_mix );
+
+			// TODO - try speeding-up this code. Make sure the compiler uses vectorization for it.
+			transformed_vertices_[i]= position * model_full_matrix;
+		}
+	}
+
 	if( !drawing_info.test_lines.empty() )
 	{
 		DrawTestLines( rasterizer, drawing_info.test_lines, view_matrix, frustum_side_clip_planes );
