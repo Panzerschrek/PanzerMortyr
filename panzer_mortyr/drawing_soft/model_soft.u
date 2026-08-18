@@ -8,6 +8,9 @@ fn CreateModelSoft( ModelData& model_data ) : ModelSoft
 {
 	var size_type num_lod0_triangles( model_data.num_lod0_triangles );
 
+	// Assume here that we have at least one texture. If we have more than one - don't care.
+	var ModelSoft::Texture mut texture=  CreateModelTexture( model_data.texture_collections.back().hd_textures[0] );
+
 	return ModelSoft
 	{
 		.num_vertices( model_data.num_vertices ),
@@ -24,7 +27,98 @@ fn CreateModelSoft( ModelData& model_data ) : ModelSoft
 					// Original indices are multiplied by 2, divide them back.
 					return ust::make_array( u16( t[0] >> 1 ), u16( t[1] >> 1 ), u16( t[2] >> 1 ) );
 				} ),
+		.texture= move(texture),
 	};
+}
+
+fn CreateModelTexture( ModelData::TextureData& texture_data ) : ModelSoft::Texture
+{
+	// All used models in the original game use textures with sizes 64x64, 128x128 or 256x256.
+
+	if( texture_data.size[0] <= 64u && texture_data.size[1] <= 64u )
+	{
+		auto mut out_texture_ptr= ust::make_box( ust::make_zeroed</ModelSoft::Texture64WithMips/>() );
+
+		{
+			auto &mut out_texture= out_texture_ptr.deref();
+			PrepareModelTextureMip0( out_texture[0], texture_data );
+			BuildTextureMip( out_texture[1], out_texture[0] );
+			BuildTextureMip( out_texture[2], out_texture[1] );
+			BuildTextureMip( out_texture[3], out_texture[2] );
+			BuildTextureMip( out_texture[4], out_texture[3] );
+			BuildTextureMip( out_texture[5], out_texture[4] );
+			BuildTextureMip( out_texture[6], out_texture[5] );
+		}
+
+		return out_texture_ptr;
+	}
+	else if( texture_data.size[0] <= 128u && texture_data.size[1] <= 128u )
+	{
+		auto mut out_texture_ptr= ust::make_box( ust::make_zeroed</ModelSoft::Texture128WithMips/>() );
+
+		{
+			auto &mut out_texture= out_texture_ptr.deref();
+			PrepareModelTextureMip0( out_texture[0], texture_data );
+			BuildTextureMip( out_texture[1], out_texture[0] );
+			BuildTextureMip( out_texture[2], out_texture[1] );
+			BuildTextureMip( out_texture[3], out_texture[2] );
+			BuildTextureMip( out_texture[4], out_texture[3] );
+			BuildTextureMip( out_texture[5], out_texture[4] );
+			BuildTextureMip( out_texture[6], out_texture[5] );
+			BuildTextureMip( out_texture[7], out_texture[6] );
+		}
+
+		return out_texture_ptr;
+	}
+	else
+	{
+		auto mut out_texture_ptr= ust::make_box( ust::make_zeroed</ModelSoft::Texture256WithMips/>() );
+
+		{
+			auto &mut out_texture= out_texture_ptr.deref();
+			PrepareModelTextureMip0( out_texture[0], texture_data );
+			BuildTextureMip( out_texture[1], out_texture[0] );
+			BuildTextureMip( out_texture[2], out_texture[1] );
+			BuildTextureMip( out_texture[3], out_texture[2] );
+			BuildTextureMip( out_texture[4], out_texture[3] );
+			BuildTextureMip( out_texture[5], out_texture[4] );
+			BuildTextureMip( out_texture[6], out_texture[5] );
+			BuildTextureMip( out_texture[7], out_texture[6] );
+			BuildTextureMip( out_texture[8], out_texture[7] );
+		}
+
+		return out_texture_ptr;
+	}
+}
+
+template</ size_type dst_size />
+fn PrepareModelTextureMip0( [ [ Color32, dst_size ], dst_size ] &mut dst, ModelData::TextureData& src )
+{
+	auto& p= src.palette;
+
+	// TODO - optimize this code for cases where source and destination sizes are equal.
+
+	for( auto mut dst_y= 0s; dst_y < dst_size; ++dst_y )
+	{
+		var [ Color32, dst_size ] &mut dst_line= dst[ dst_y ];
+
+		var u32 src_y= u32(dst_y) * src.size[1] / u32( dst_size );
+
+		auto src_line= src.pixels_data.range().subrange(
+			size_type( src_y * src.size[0] ),
+			size_type( ( src_y + 1u ) * src.size[1] ) );
+
+		for( auto mut dst_x= 0s; dst_x < dst_size; ++dst_x )
+		{
+			var u32 src_x= u32(dst_x) * src.size[0] / u32( dst_size );
+
+			var size_type i( src_line[ size_type( src_x ) ] );
+
+			dst_line[ dst_x ]=
+				Color32FromComponents(
+					ust::make_array( p[ i * 3s + 2s ], p[ i * 3s + 1s ], p[ i * 3s + 0s ], 255u8  ) );
+		}
+	}
 }
 
 } // namespace PM
