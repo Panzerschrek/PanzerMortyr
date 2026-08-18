@@ -1,0 +1,758 @@
+import "/assert.iu"
+import "../camera_utils.iu"
+import "texture.iu"
+
+namespace PM
+{
+
+class Rasterizer
+{
+public:
+	fn constructor( mut this, Color32ImageView surface, ust::array_view_mut</f32/> depth_buffer )
+		@( c_constructor_pollution )
+		( surface_= surface, depth_buffer_= depth_buffer )
+	{
+	}
+
+	template</ bool use_perspective_correction />
+	fn RasterizeTrianlge(
+		this,
+		MapVertexF32& v0,
+		MapVertexF32& v1,
+		MapVertexF32& v2,
+		Color32WorldTextureWithMips& texture )
+	{
+		static_assert( typeinfo</ typeof(texture) />.is_tuple );
+
+		// Given triangle should be clipped to Z near prior to this call.
+		debug_assert( v0.position.z > 0.0f );
+		debug_assert( v1.position.z > 0.0f );
+		debug_assert( v2.position.z > 0.0f );
+
+		var [ [ f32, 2 ], 3 ] vertices_projected
+		[
+			[
+				QuantizeProjectedVertexCoordinate( v0.position.x / v0.position.z ),
+				QuantizeProjectedVertexCoordinate( v0.position.y / v0.position.z )
+			],
+			[
+				QuantizeProjectedVertexCoordinate( v1.position.x / v1.position.z ),
+				QuantizeProjectedVertexCoordinate( v1.position.y / v1.position.z )
+			],
+			[
+				QuantizeProjectedVertexCoordinate( v2.position.x / v2.position.z ),
+				QuantizeProjectedVertexCoordinate( v2.position.y / v2.position.z )
+			],
+		];
+
+		// Shift screen-space triangle vertex positions to its center.
+		// Calculate equations for depth, light, texture coordinates relative to this center.
+		// This is needed in order to avoid precision issues at large screen coordinates, causing artifacts like Z-fighting.
+		var [ f32, 2 ] triangle_center
+		[
+			ust::floor(
+				( vertices_projected[0][0] + vertices_projected[1][0] + vertices_projected[2][0] ) * ( 1.0f / 3.0f ) ),
+			ust::floor(
+				( vertices_projected[0][1] + vertices_projected[1][1] + vertices_projected[2][1] ) * ( 1.0f / 3.0f ) ),
+		];
+
+		var [ [ f32, 2 ], 3 ] vertices_projected_shifted
+		[
+			[ vertices_projected[0][0] - triangle_center[0], vertices_projected[0][1] - triangle_center[1] ],
+			[ vertices_projected[1][0] - triangle_center[0], vertices_projected[1][1] - triangle_center[1] ],
+			[ vertices_projected[2][0] - triangle_center[0], vertices_projected[2][1] - triangle_center[1] ],
+		];
+
+		// Calculate equations for vertex attributes interpolation.
+
+		var f32 det=
+			vertices_projected_shifted[0][0] * ( vertices_projected_shifted[1][1] - vertices_projected_shifted[2][1] ) -
+			vertices_projected_shifted[1][0] * ( vertices_projected_shifted[0][1] - vertices_projected_shifted[2][1] ) +
+			vertices_projected_shifted[2][0] * ( vertices_projected_shifted[0][1] - vertices_projected_shifted[1][1] );
+
+		if( det <= 0.0f ) // This check serves as back face culling.
+		{
+			return;
+		}
+
+		var f32 inv_det= 1.0f / det;
+
+		// This matrix is an inverse of projected vertices matrix:
+		//  [ x0, x1, x2 ],
+		//  [ y0, y1, y2 ],
+		//  [  1,  1,  1 ],
+		var Mat3f equations_matrix
+		{
+			.values
+			[
+				[
+					inv_det * ( vertices_projected_shifted[1][1] - vertices_projected_shifted[2][1] ),
+					inv_det * ( vertices_projected_shifted[2][0] - vertices_projected_shifted[1][0] ),
+					inv_det * (
+						vertices_projected_shifted[1][0] * vertices_projected_shifted[2][1] -
+						vertices_projected_shifted[2][0] * vertices_projected_shifted[1][1] )
+				],
+				[
+					inv_det * ( vertices_projected_shifted[2][1] - vertices_projected_shifted[0][1] ),
+					inv_det * ( vertices_projected_shifted[0][0] - vertices_projected_shifted[2][0] ),
+					inv_det * (
+						vertices_projected_shifted[2][0] * vertices_projected_shifted[0][1] -
+						vertices_projected_shifted[0][0] * vertices_projected_shifted[2][1] ),
+				],
+				[
+					inv_det * ( vertices_projected_shifted[0][1] - vertices_projected_shifted[1][1] ),
+					inv_det * ( vertices_projected_shifted[1][0] - vertices_projected_shifted[0][0] ),
+					inv_det * (
+						vertices_projected_shifted[0][0] * vertices_projected_shifted[1][1] -
+						vertices_projected_shifted[1][0] * vertices_projected_shifted[0][1] ),
+				],
+			],
+		};
+
+		var [ f32, 3 ] inv_z[ 1.0f / v0.position.z, 1.0f / v1.position.z, 1.0f / v2.position.z ];
+
+		var Vec3f depth_equation= Vec3f( inv_z ) * equations_matrix;
+
+		var Color32ImageView surface= surface_;
+		var ust::array_view_mut</f32/> depth_buffer= depth_buffer_;
+
+		var f32 min_y= ust::min( ust::min( vertices_projected[0][1], vertices_projected[1][1] ), vertices_projected[2][1] );
+		var f32 max_y= ust::max( ust::max( vertices_projected[0][1], vertices_projected[1][1] ), vertices_projected[2][1] );
+
+		var i32 min_y_i= ust::max( 0, i32( ust::round( min_y ) ) );
+		var i32 max_y_i= ust::min( i32( ust::round( max_y ) ), i32( surface.size[1] ) );
+
+		if( min_y_i >= max_y_i )
+		{
+			return; // This triangle is too thin - it doesn't fill even a single line.
+		}
+
+		var f32 surface_size_x( surface.size[0] );
+
+		// A triangle has up to two edges on each side, but usually it's one and two.
+		// For simplicity assume that we always have two edges on both sides.
+		// This simplifies code a bit and allows avoiding extra branching.
+		var [ f32, 2 ] mut edges_min_x[ 0.0f ... ];
+		var [ f32, 2 ] mut edges_max_x[ surface_size_x ... ];
+		var [ f32, 2 ] mut edges_min_step_x[ 0.0f ... ];
+		var [ f32, 2 ] mut edges_max_step_x[ 0.0f ... ];
+
+		{
+			var [ [ f32, 2 ], 3 ] edges
+			[
+				[
+					vertices_projected[1][0] - vertices_projected[0][0],
+					vertices_projected[1][1] - vertices_projected[0][1],
+				],
+				[
+					vertices_projected[2][0] - vertices_projected[1][0],
+					vertices_projected[2][1] - vertices_projected[1][1],
+				],
+				[
+					vertices_projected[0][0] - vertices_projected[2][0],
+					vertices_projected[0][1] - vertices_projected[2][1],
+				],
+			];
+
+			var f32 min_y_center= f32( min_y_i ) + 0.5f; // We perform rasterization for centers of pixels.
+
+			var size_type mut num_edges_min= 0s, mut nun_edges_max= 0s;
+
+			for( auto mut e= 0s; e < 3s; ++e )
+			{
+				var [ f32, 2 ]& edge= edges[e];
+				var [ f32, 2 ]& vertex_projected= vertices_projected[e];
+
+				if( edge[1] == 0.0f )
+				{
+					continue; // This edge is parallel to X axis and thus can be ignored.
+				}
+
+				var f32 edge_step= edge[0] / edge[1];
+				var f32 edge_x= vertex_projected[0] + ( min_y_center - vertex_projected[1] ) * edge_step;
+
+				if( edge[1] > 0.0f )
+				{
+					edges_max_x[ nun_edges_max ]= edge_x;
+					edges_max_step_x[ nun_edges_max ]= edge_step;
+					nun_edges_max ^= 1s;
+				}
+				else // if( edge[1] < 0.0f )
+				{
+					edges_min_x[ num_edges_min ]= edge_x;
+					edges_min_step_x[ num_edges_min ]= edge_step;
+					num_edges_min ^= 1s;
+				}
+			}
+		}
+
+		static_if( use_perspective_correction )
+		{
+			var [ Vec3f, 4 ] color_equations
+			[
+				Vec3f( v0.light[0] * inv_z[0], v1.light[0] * inv_z[1], v2.light[0] * inv_z[2] ) * equations_matrix,
+				Vec3f( v0.light[1] * inv_z[0], v1.light[1] * inv_z[1], v2.light[1] * inv_z[2] ) * equations_matrix,
+				Vec3f( v0.light[2] * inv_z[0], v1.light[2] * inv_z[1], v2.light[2] * inv_z[2] ) * equations_matrix,
+				// TODO - consider not caring about alpha if don't need to do so.
+				Vec3f( v0.light[3] * inv_z[0], v1.light[3] * inv_z[1], v2.light[3] * inv_z[2] ) * equations_matrix,
+			];
+
+			var [ Vec3f, 2 ] tex_coord_equations
+			[
+				Vec3f( v0.tex_coord.x * inv_z[0], v1.tex_coord.x * inv_z[1], v2.tex_coord.x * inv_z[2] ) * equations_matrix,
+				Vec3f( v0.tex_coord.y * inv_z[0], v1.tex_coord.y * inv_z[1], v2.tex_coord.y * inv_z[2] ) * equations_matrix,
+			];
+
+			// Calculate mip-level.
+			// The approach is pretty straighforward.
+			// First calculate squared magnitude derivatives of texture coordinates along X and Y axis.
+			// Then take the maximum value among them.
+			// Then calculate log2 of such squared value and divide it by two, which is equivalent of taking log2 of square root.
+			// Then clamp to allowed range.
+			//
+			// We don't need calling proper log2, since we need to floor its result to the nearest integer.
+			// So, calculate it by extracting exponent of a floating-point value directly.
+
+			// Calcuate local derivatives of texture coordinates for each vertex.
+			// Find values with the smallest module.
+			// This is needed due to perspective correction.
+			var f32 mut min_d_tc_dx_squared= ust::plus_inf</f32/>(), mut min_d_tc_dy_squared= ust::plus_inf</f32/>();
+			{
+				var Vec2f tex_coord_equation_x( tex_coord_equations[0].x, tex_coord_equations[1].x );
+				var Vec2f tex_coord_equation_y( tex_coord_equations[0].y, tex_coord_equations[1].y );
+				{
+					var f32 z_squared= v0.position.z * v0.position.z;
+					ust::min_assign(
+						min_d_tc_dx_squared,
+						( tex_coord_equation_x - v0.tex_coord * depth_equation.x ).SquareLength() * z_squared );
+					ust::min_assign(
+						min_d_tc_dy_squared,
+						( tex_coord_equation_y - v0.tex_coord * depth_equation.y ).SquareLength() * z_squared );
+				}
+				{
+					var f32 z_squared= v1.position.z * v1.position.z;
+					ust::min_assign(
+						min_d_tc_dx_squared,
+						( tex_coord_equation_x - v1.tex_coord * depth_equation.x ).SquareLength() * z_squared );
+					ust::min_assign(
+						min_d_tc_dy_squared,
+						( tex_coord_equation_y - v1.tex_coord * depth_equation.y ).SquareLength() * z_squared );
+				}
+				{
+					var f32 z_squared= v2.position.z * v2.position.z;
+					ust::min_assign(
+						min_d_tc_dx_squared,
+						( tex_coord_equation_x - v2.tex_coord * depth_equation.x ).SquareLength() * z_squared );
+					ust::min_assign(
+						min_d_tc_dy_squared,
+						( tex_coord_equation_y - v2.tex_coord * depth_equation.y ).SquareLength() * z_squared );
+				}
+			}
+
+			var f32 max_d_tc_squared= ust::max( min_d_tc_dx_squared, min_d_tc_dy_squared );
+
+			// Calculate integer log2 by extracting exponent from the floating point value.
+			// Exponents less than zero are clamped to zero.
+			// Since input value is a squared value, it's non-negative and thus we can assume sign bit is always zero.
+			var u32 constexpr c_exponent_shift= 23u;
+			var u32 constexpr c_exponent_bias= 127u;
+			var u32 constexpr c_exponent_bias_shifted= c_exponent_bias << c_exponent_shift;
+			var u32 d_tc_log2= (
+				ust::max( u32( byte32( max_d_tc_squared ) ), c_exponent_bias_shifted ) - c_exponent_bias_shifted ) >>
+				( c_exponent_shift + 1u /* extra one to compensate for squared input value */ );
+
+			var u32 target_mip= ust::min( d_tc_log2, u32( typeinfo</ typeof( texture ) />.element_count - 1s ) );
+
+			var size_type mut texture_mip_index= 0s;
+
+			// Iterate over all mip levels of the given texture, but execute actual rasterization only for one of them.
+			// Since a texture is a tuple of mip levels, specaial tuple-for code is generated, which is individual for each mip-level.
+			foreach( &texture_mip : texture )
+			{
+				if( texture_mip_index == size_type( target_mip ) )
+				{
+					var [ i32, 2 ] constexpr mip0_size
+					[
+						( typeinfo</ typeof( texture[0] ) />.element_type.element_count ),
+						( typeinfo</ typeof( texture[0] ) />.element_count ),
+					];
+
+					var [ u32, 2 ] constexpr mip_size
+					[
+						( typeinfo</ typeof( texture_mip ) />.element_type.element_count ),
+						( typeinfo</ typeof( texture_mip ) />.element_count ),
+					];
+					static_assert( ( mip_size[0] & ( mip_size[0] - 1u ) ) == 0u );
+					static_assert( ( mip_size[1] & ( mip_size[1] - 1u ) ) == 0u );
+
+					var [ Vec3f, 2 ] tex_coord_equations_scaled
+					[
+						tex_coord_equations[0] * ( f32( mip_size[0] ) / f32( mip0_size[0] ) ),
+						tex_coord_equations[1] * ( f32( mip_size[1] ) / f32( mip0_size[1] ) ),
+					];
+
+					for( auto mut y= min_y_i; y < max_y_i; ++y )
+					{
+						var f32 min_x=
+							ust::max( ust::max( cast_imut(edges_min_x)[0], cast_imut(edges_min_x)[1] ), 0.0f );
+						var f32 max_x=
+							ust::min( ust::min( cast_imut(edges_max_x)[0], cast_imut(edges_max_x)[1] ), surface_size_x );
+
+						var i32 min_x_i= i32( ust::round( min_x ) );
+						var i32 max_x_i= i32( ust::round( max_x ) );
+
+						if( min_x_i < max_x_i )
+						{
+							// We perform rasterization for centers of pixels, so, add 0.5.
+							var [ f32, 2 ] first_pixel_center
+							[
+								f32( min_x_i ) + ( 0.5f - triangle_center[0] ),
+								f32( y ) + ( 0.5f - triangle_center[1] ),
+							];
+
+							var [ f32, 4 ] mut pixel_color= zero_init;
+
+							for( auto mut component= 0s; component < 4s; ++component ) // TODO - consider not caring about alpha.
+							{
+								var Vec3f& component_equation= color_equations[ component ];
+								pixel_color[ component ]=
+									component_equation.x * first_pixel_center[0] +
+									component_equation.y * first_pixel_center[1] +
+									component_equation.z;
+							}
+
+							var [ f32, 2 ] mut pixel_tex_coord
+							[
+								tex_coord_equations_scaled[0].x * first_pixel_center[0] +
+									tex_coord_equations_scaled[0].y * first_pixel_center[1] +
+									tex_coord_equations_scaled[0].z,
+								tex_coord_equations_scaled[1].x * first_pixel_center[0] +
+									tex_coord_equations_scaled[1].y * first_pixel_center[1] +
+									tex_coord_equations_scaled[1].z,
+							];
+
+							var f32 mut pixel_depth=
+								depth_equation.x * first_pixel_center[0] +
+								depth_equation.y * first_pixel_center[1] +
+								depth_equation.z;
+
+							var size_type offset( u32(y) * surface.stride );
+							var size_type offset_start= offset + size_type( min_x_i );
+							var size_type offset_end= offset + size_type( max_x_i );
+
+							auto dst_colors= surface.pixels.subrange( offset_start, offset_end );
+							auto dst_depth= depth_buffer.subrange( offset_start, offset_end );
+
+							foreach( pair : dst_depth.iter().zip( dst_colors.iter() ) )
+							{
+								if( pixel_depth >= pair.first )
+								{
+									pair.first= pixel_depth;
+
+									var f32 pixel_z= 1.0f / pixel_depth;
+
+									var u32 u= u32( i32( pixel_tex_coord[0] * pixel_z ) ) & ( mip_size[0] - 1u );
+									var u32 v= u32( i32( pixel_tex_coord[1] * pixel_z ) ) & ( mip_size[1] - 1u );
+									var RGBAColor texture_value= Color32ToComponents( texture_mip[v][u] );
+
+									var RGBAColor pixel_color_components
+									[
+										( ust::max( 0.0f, ust::min( f32( i32( texture_value[0] ) ) * pixel_color[0] * pixel_z, 255.0f ) ) ),
+										( ust::max( 0.0f, ust::min( f32( i32( texture_value[1] ) ) * pixel_color[1] * pixel_z, 255.0f ) ) ),
+										( ust::max( 0.0f, ust::min( f32( i32( texture_value[2] ) ) * pixel_color[2] * pixel_z, 255.0f ) ) ),
+										// TODO - consider not caring about alpha if don't need to do so.
+										( ust::max( 0.0f, ust::min( f32( i32( texture_value[3] ) ) * pixel_color[3] * pixel_z, 255.0f ) ) ),
+									];
+
+									pair.second= Color32FromComponents( pixel_color_components );
+								}
+
+								for( auto mut component= 0s; component < 4s; ++component )
+								{
+									pixel_color[ component ]+= color_equations[ component ].x;
+								}
+
+
+								pixel_tex_coord[0]+= tex_coord_equations_scaled[0].x;
+								pixel_tex_coord[1]+= tex_coord_equations_scaled[1].x;
+
+								pixel_depth+= depth_equation.x;
+							}
+						}
+
+						edges_min_x[0]+= edges_min_step_x[0];
+						edges_min_x[1]+= edges_min_step_x[1];
+						edges_max_x[0]+= edges_max_step_x[0];
+						edges_max_x[1]+= edges_max_step_x[1];
+					}
+				}
+
+				++texture_mip_index;
+			}
+		}
+		else
+		{
+			var [ Vec3f, 4 ] color_equations
+			[
+				Vec3f( v0.light[0], v1.light[0], v2.light[0] ) * equations_matrix,
+				Vec3f( v0.light[1], v1.light[1], v2.light[1] ) * equations_matrix,
+				Vec3f( v0.light[2], v1.light[2], v2.light[2] ) * equations_matrix,
+				// TODO - consider not caring about alpha if don't need to do so.
+				Vec3f( v0.light[3], v1.light[3], v2.light[3] ) * equations_matrix,
+			];
+
+			var [ Vec3f, 2 ] tex_coord_equations
+			[
+				Vec3f( v0.tex_coord.x, v1.tex_coord.x, v2.tex_coord.x ) * equations_matrix,
+				Vec3f( v0.tex_coord.y, v1.tex_coord.y, v2.tex_coord.y ) * equations_matrix,
+			];
+
+			// Calculate mip-level.
+			// The approach is pretty straighforward.
+			// First calculate squared magnitude derivatives of texture coordinates along X and Y axis.
+			// Then take the maximum value among them.
+			// Then calculate log2 of such squared value and divide it by two, which is equivalent of taking log2 of square root.
+			// Then clamp to allowed range.
+			//
+			// We don't need calling proper log2, since we need to floor its result to the nearest integer.
+			// So, calculate it by extracting exponent of a floating-point value directly.
+
+			var f32 d_tc_dx_squared=
+				tex_coord_equations[0].x * tex_coord_equations[0].x + tex_coord_equations[1].x * tex_coord_equations[1].x;
+
+			var f32 d_tc_dy_squared=
+				tex_coord_equations[0].y * tex_coord_equations[0].y + tex_coord_equations[1].y * tex_coord_equations[1].y;
+
+			var f32 max_d_tc_squared= ust::max( d_tc_dx_squared, d_tc_dy_squared );
+
+			// Calculate integer log2 by extracting exponent from the floating point value.
+			// Exponents less than zero are clamped to zero.
+			// Since input value is a squared value, it's non-negative and thus we can assume sign bit is always zero.
+			var u32 constexpr c_exponent_shift= 23u;
+			var u32 constexpr c_exponent_bias= 127u;
+			var u32 constexpr c_exponent_bias_shifted= c_exponent_bias << c_exponent_shift;
+			var u32 d_tc_log2= (
+				ust::max( u32( byte32( max_d_tc_squared ) ), c_exponent_bias_shifted ) - c_exponent_bias_shifted ) >>
+				( c_exponent_shift + 1u /* extra one to compensate for squared input value */ );
+
+			var u32 target_mip= ust::min( d_tc_log2, u32( typeinfo</ typeof( texture ) />.element_count - 1s ) );
+
+			var size_type mut texture_mip_index= 0s;
+
+			// Iterate over all mip levels of the given texture, but execute actual rasterization only for one of them.
+			// Since a texture is a tuple of mip levels, specaial tuple-for code is generated, which is individual for each mip-level.
+			foreach( &texture_mip : texture )
+			{
+				if( texture_mip_index == size_type( target_mip ) )
+				{
+					var [ i32, 2 ] constexpr mip0_size
+					[
+						( typeinfo</ typeof( texture[0] ) />.element_type.element_count ),
+						( typeinfo</ typeof( texture[0] ) />.element_count ),
+					];
+
+					var [ u32, 2 ] constexpr mip_size
+					[
+						( typeinfo</ typeof( texture_mip ) />.element_type.element_count ),
+						( typeinfo</ typeof( texture_mip ) />.element_count ),
+					];
+					static_assert( ( mip_size[0] & ( mip_size[0] - 1u ) ) == 0u );
+					static_assert( ( mip_size[1] & ( mip_size[1] - 1u ) ) == 0u );
+
+					var[ f32, 2 ] constexpr mip_tc_scale
+					[
+						f32( 1 << 16 ) * f32( mip_size[0] ) / f32( mip0_size[0] ),
+						f32( 1 << 16 ) * f32( mip_size[1] ) / f32( mip0_size[1] ),
+					];
+
+					// Perform texture coordinates interpolation using fixed16 format.
+					// It gives good precision with minimum overflow/underflow chance.
+					// For offset component perform f32 -> i64 -> i32 cast to wrap-around instead of producing garbage for large f32 values.
+					// It's fine, since we use tiled power of two textures.
+					var [ [ i32, 3 ], 2 ] tex_coord_equations_fixed16
+					[
+						[
+							     ( tex_coord_equations[0].x * mip_tc_scale[0] ),
+							     ( tex_coord_equations[0].y * mip_tc_scale[0] ),
+							( i64( tex_coord_equations[0].z * mip_tc_scale[0] ) )
+						],
+						[
+							     ( tex_coord_equations[1].x * mip_tc_scale[1] ),
+							     ( tex_coord_equations[1].y * mip_tc_scale[1] ),
+							( i64( tex_coord_equations[1].z * mip_tc_scale[1] ) )
+						]
+					];
+
+					for( auto mut y= min_y_i; y < max_y_i; ++y )
+					{
+						var f32 min_x=
+							ust::max( ust::max( cast_imut(edges_min_x)[0], cast_imut(edges_min_x)[1] ), 0.0f );
+						var f32 max_x=
+							ust::min( ust::min( cast_imut(edges_max_x)[0], cast_imut(edges_max_x)[1] ), surface_size_x );
+
+						var i32 min_x_i= i32( ust::round( min_x ) );
+						var i32 max_x_i= i32( ust::round( max_x ) );
+
+						if( min_x_i < max_x_i )
+						{
+							// We perform rasterization for centers of pixels, so, add 0.5.
+							var [ f32, 2 ] first_pixel_center
+							[
+								f32( min_x_i ) + ( 0.5f - triangle_center[0] ),
+								f32( y ) + ( 0.5f - triangle_center[1] ),
+							];
+							var [ i32, 2 ] first_pixel_center_fixed1
+							[
+								min_x_i * 2 + 1 - i32( triangle_center[0] ) * 2,
+								y * 2 + 1 - i32( triangle_center[1] ) * 2,
+							];
+
+							var [ f32, 4 ] mut pixel_color= zero_init;
+
+							for( auto mut component= 0s; component < 4s; ++component ) // TODO - consider not caring about alpha.
+							{
+								var Vec3f& component_equation= color_equations[ component ];
+								pixel_color[ component ]=
+									component_equation.x * first_pixel_center[0] +
+									component_equation.y * first_pixel_center[1] +
+									component_equation.z;
+							}
+
+							var [ i32, 2 ] mut pixel_tex_coord_fixed16
+							[
+								tex_coord_equations_fixed16[0][2] +
+								( ( tex_coord_equations_fixed16[0][0] * first_pixel_center_fixed1[0] +
+									tex_coord_equations_fixed16[0][1] * first_pixel_center_fixed1[1] ) >> 1 ),
+								tex_coord_equations_fixed16[1][2] +
+								( ( tex_coord_equations_fixed16[1][0] * first_pixel_center_fixed1[0] +
+									tex_coord_equations_fixed16[1][1] * first_pixel_center_fixed1[1] ) >> 1 ),
+							];
+
+							var f32 mut pixel_depth=
+								depth_equation.x * first_pixel_center[0] +
+								depth_equation.y * first_pixel_center[1] +
+								depth_equation.z;
+
+							var size_type offset( u32(y) * surface.stride );
+							var size_type offset_start= offset + size_type( min_x_i );
+							var size_type offset_end= offset + size_type( max_x_i );
+
+							auto dst_colors= surface.pixels.subrange( offset_start, offset_end );
+							auto dst_depth= depth_buffer.subrange( offset_start, offset_end );
+
+							foreach( pair : dst_depth.iter().zip( dst_colors.iter() ) )
+							{
+								if( pixel_depth >= pair.first )
+								{
+									pair.first= pixel_depth;
+
+									var u32 u= ( u32( pixel_tex_coord_fixed16[0] ) >> 16 ) & ( mip_size[0] - 1u );
+									var u32 v= ( u32( pixel_tex_coord_fixed16[1] ) >> 16 ) & ( mip_size[1] - 1u );
+									var RGBAColor texture_value= Color32ToComponents( texture_mip[v][u] );
+
+									var RGBAColor pixel_color_components
+									[
+										( ust::max( 0.0f, ust::min( f32( i32( texture_value[0] ) ) * pixel_color[0], 255.0f ) ) ),
+										( ust::max( 0.0f, ust::min( f32( i32( texture_value[1] ) ) * pixel_color[1], 255.0f ) ) ),
+										( ust::max( 0.0f, ust::min( f32( i32( texture_value[2] ) ) * pixel_color[2], 255.0f ) ) ),
+										// TODO - consider not caring about alpha if don't need to do so.
+										( ust::max( 0.0f, ust::min( f32( i32( texture_value[3] ) ) * pixel_color[3], 255.0f ) ) ),
+									];
+
+									pair.second= Color32FromComponents( pixel_color_components );
+								}
+
+								for( auto mut component= 0s; component < 4s; ++component )
+								{
+									pixel_color[ component ]+= color_equations[ component ].x;
+								}
+
+								pixel_tex_coord_fixed16[0]+= tex_coord_equations_fixed16[0][0];
+								pixel_tex_coord_fixed16[1]+= tex_coord_equations_fixed16[1][0];
+
+								pixel_depth+= depth_equation.x;
+							}
+						}
+
+						edges_min_x[0]+= edges_min_step_x[0];
+						edges_min_x[1]+= edges_min_step_x[1];
+						edges_max_x[0]+= edges_max_step_x[0];
+						edges_max_x[1]+= edges_max_step_x[1];
+					}
+				}
+
+				++texture_mip_index;
+			}
+		}
+	}
+
+	fn RasterizeLine( this, Vec3f& v0, Vec3f& v1, Color32 color )
+	{
+		// Given vertices should be clipped to Z near prior to this call.
+		debug_assert( v0.z > 0.0f );
+		debug_assert( v1.z > 0.0f );
+
+		var [ [ f32, 3 ], 2 ] mut vertices_projected
+		[
+			[
+				QuantizeProjectedVertexCoordinate( v0.x / v0.z ),
+				QuantizeProjectedVertexCoordinate( v0.y / v0.z ),
+				1.0f / v0.z
+			],
+			[
+				QuantizeProjectedVertexCoordinate( v1.x / v1.z ),
+				QuantizeProjectedVertexCoordinate( v1.y / v1.z ),
+				1.0f / v1.z
+			],
+		];
+
+		var f32 mut dx= vertices_projected[1][0] - vertices_projected[0][0];
+		var f32 mut dy= vertices_projected[1][1] - vertices_projected[0][1];
+
+		if( dx == 0.0f && dy == 0.0f )
+		{
+			return;
+		}
+
+		var Color32ImageView surface= surface_;
+		var ust::array_view_mut</f32/> depth_buffer= depth_buffer_;
+
+		var f32 mut d_depth= vertices_projected[1][2] - vertices_projected[0][2];
+
+		if( ust::abs( dx )  >= ust::abs( dy ) )
+		{
+			if( dx < 0.0f )
+			{
+				ust::array_view_mut</ [ f32, 3 ] />( vertices_projected ).swap( 0s, 1s );
+				dx= -dx;
+				dy= -dy;
+				d_depth= -d_depth;
+			}
+
+			var i32 x_begin= ust::max( 0, i32( ust::round( vertices_projected[0][0] ) ) );
+			var i32 x_end= ust::min( i32( ust::round( vertices_projected[1][0] ) ), i32( surface.size[0] ) );
+
+			if( x_begin < x_end )
+			{
+				var f32 dy_dx= dy / dx;
+				var f32 d_depth_dx= d_depth / dx;
+
+				var f32 initial_delta_x= f32( x_begin ) - vertices_projected[0][0] + 0.5f;
+				var f32 mut y= vertices_projected[0][1] + initial_delta_x * dy_dx;
+				var f32 mut depth= vertices_projected[0][2] + initial_delta_x * d_depth_dx;
+
+				for( var i32 mut x= x_begin; x < x_end; ++x, y+= dy_dx, depth += d_depth_dx )
+				{
+					var i32 y_i( ust::round( y ) );
+					if( y_i >= 0 && y_i < i32( surface.size[1] ) )
+					{
+						var size_type address( u32(x) + u32(y_i) * surface.stride );
+						if( depth >= depth_buffer[ address ] )
+						{
+							depth_buffer[ address ]= depth;
+							surface.pixels[ address ]= color;
+						}
+					}
+				}
+			}
+		}
+		else
+		{
+			if( dy < 0.0f )
+			{
+				ust::array_view_mut</ [ f32, 3 ] />( vertices_projected ).swap( 0s, 1s );
+				dx= -dx;
+				dy= -dy;
+				d_depth= -d_depth;
+			}
+
+			var i32 y_begin= ust::max( 0, i32( ust::round( vertices_projected[0][1] ) ) );
+			var i32 y_end= ust::min( i32( ust::round( vertices_projected[1][1] ) ), i32( surface.size[1] ) );
+
+			if( y_begin < y_end )
+			{
+				var f32 dx_dy= dx / dy;
+				var f32 d_depth_dy= d_depth / dy;
+
+				var f32 initial_delta_y= f32( y_begin ) + 0.5f - vertices_projected[0][1];
+				var f32 mut x= vertices_projected[0][0] + initial_delta_y * dx_dy;
+				var f32 mut depth= vertices_projected[0][2] + initial_delta_y * d_depth_dy;
+
+				for( var i32 mut y= y_begin; y < y_end; ++y, x+= dx_dy, depth += d_depth_dy )
+				{
+					var i32 x_i( ust::round( x ) );
+					if( x_i >= 0 && x_i < i32( surface.size[0] ) )
+					{
+						var size_type address( u32(x_i) + u32(y) * surface.stride );
+						if( depth >= depth_buffer[ address ] )
+						{
+							depth_buffer[ address ]= depth;
+							surface.pixels[ address ]= color;
+						}
+					}
+				}
+			}
+		}
+	}
+
+private:
+	// Work with floating-point coordinates, but quantize them,
+	// so that we don't work with infinite small delta values.
+	fn QuantizeProjectedVertexCoordinate( f32 x ) : f32
+	{
+		// TODO - tune this constant.
+		// Smaller values are generally better, but too small values can lead to artifacts with T-junctions.
+		var f32 constexpr c_quantization_scale= 64.0f;
+		// TODO - try avoiding using "floor", since it may be a little bit slow.
+		return ust::floor( x * c_quantization_scale ) * ( 1.0f / c_quantization_scale );
+	}
+
+private:
+	var [ ust::reference_notation::pollution_element, 2 ] c_constructor_pollution[ [ "0a", "1a" ], [ "0b", "2a" ] ];
+
+private:
+	Color32ImageView @("a") surface_;
+	ust::array_view_mut</f32/> @("b") depth_buffer_;
+}
+
+// This struct has all attributes in F32 format so that it's easy to interpolate them.
+struct MapVertexF32
+{
+	Vec3f position;
+	Vec2f tex_coord;
+	[ f32, 4 ] light;
+
+	op*( MapVertexF32& v, f32 s ) : MapVertexF32
+	{
+		return MapVertexF32
+		{
+			.position= v.position * s,
+			.tex_coord= v.tex_coord * s,
+			.light[ v.light[0] * s, v.light[1] * s, v.light[2] * s, v.light[3] * s ]
+		};
+	}
+
+	op+( MapVertexF32& l, MapVertexF32& r ) : MapVertexF32
+	{
+		return MapVertexF32
+		{
+			.position= l.position + r.position,
+			.tex_coord= l.tex_coord + r.tex_coord,
+			.light[
+				l.light[0] + r.light[0], l.light[1] + r.light[1], l.light[2] + r.light[2], l.light[3] + r.light[3] ],
+		};
+	}
+
+	op-( MapVertexF32& l, MapVertexF32& r ) : MapVertexF32
+	{
+		return MapVertexF32
+		{
+			.position= l.position - r.position,
+			.tex_coord= l.tex_coord - r.tex_coord,
+			.light[
+				l.light[0] - r.light[0], l.light[1] - r.light[1], l.light[2] - r.light[2], l.light[3] - r.light[3] ],
+		};
+	}
+}
+
+} // namespace PM

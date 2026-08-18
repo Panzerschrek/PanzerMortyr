@@ -9,7 +9,7 @@ import "../map_visibility_visualization.iu"
 import "../material_utils.iu"
 import "../math_constants.iu"
 import "../room_clusters_bsp_tree_visualization.iu"
-import "rasterization.iu"
+import "rasterizer.iu"
 import "world_drawer_soft.iu"
 
 namespace PM
@@ -73,7 +73,8 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 	// Prepare and clear depth buffer.
 	depth_buffer_.clear();
 	depth_buffer_.resize( size_type( surface.size[1] * surface.stride ), 0.0f );
-	var ust::array_view_mut</f32/> depth_buffer= depth_buffer_;
+
+	var Rasterizer rasterizer( surface, depth_buffer_ );
 
 	var MapFullDrawDataSoft &mut map_data_full= map_data_.try_deref();
 
@@ -184,8 +185,7 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 				}
 
 				DrawMapClusterTriangles(
-					surface,
-					depth_buffer,
+					rasterizer,
 					view_matrix,
 					frustum_side_clip_planes,
 					map_data,
@@ -215,8 +215,7 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 								valve_material_buffer_chunk.num_indices ) );
 
 					DrawMapTriangles(
-						surface,
-						depth_buffer,
+						rasterizer,
 						view_matrix,
 						frustum_side_clip_planes,
 						map_data.textures,
@@ -247,8 +246,7 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 								film_material_buffer_chunk.num_indices ) );
 
 					DrawMapTriangles(
-						surface,
-						depth_buffer,
+						rasterizer,
 						view_matrix,
 						frustum_side_clip_planes,
 						map_data.textures,
@@ -286,8 +284,7 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 					PrepareQuadVertexTextureCoordinates( temp_vertices_ );
 
 					DrawMapTriangles(
-						surface,
-						depth_buffer,
+						rasterizer,
 						view_matrix,
 						frustum_side_clip_planes,
 						map_data.textures,
@@ -329,8 +326,7 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 		}
 
 		DrawMapClusterTriangles(
-			surface,
-			depth_buffer,
+			rasterizer,
 			Mat4f::MakeTranslation( dynamic_cluster_object.translation ) * view_matrix,
 			frustum_side_clip_planes,
 			map_data,
@@ -343,7 +339,7 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 
 	if( !drawing_info.test_lines.empty() )
 	{
-		DrawTestLines( surface, depth_buffer, drawing_info.test_lines, view_matrix, frustum_side_clip_planes );
+		DrawTestLines( rasterizer, drawing_info.test_lines, view_matrix, frustum_side_clip_planes );
 	}
 
 	if( settings_.lock_imut().deref().r_debug_show_room_clusters_bsp_tree )
@@ -353,7 +349,7 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 		VisualizeRoomClustersBSPTree(
 			map_data.room_clusters_bsp_tree.deref(), drawing_info.camera_params.position, lines );
 
-		DrawTestLines( surface, depth_buffer, lines, view_matrix, frustum_side_clip_planes );
+		DrawTestLines( rasterizer, lines, view_matrix, frustum_side_clip_planes );
 	}
 	if( settings_.lock_imut().deref().r_debug_show_room_clusters_bsp_tree_projected_portals )
 	{
@@ -366,9 +362,7 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 			test_line.vertices[0].z= 1.0f;
 			test_line.vertices[1].z= 1.0f;
 
-			RasterizeLine(
-				surface,
-				depth_buffer,
+			rasterizer.RasterizeLine(
 				cast_imut(test_line.vertices)[0],
 				cast_imut(test_line.vertices)[1],
 				Color32FromComponents(
@@ -386,9 +380,7 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 			test_line.vertices[0].z= 1.0f;
 			test_line.vertices[1].z= 1.0f;
 
-			RasterizeLine(
-				surface,
-				depth_buffer,
+			rasterizer.RasterizeLine(
 				cast_imut(test_line.vertices)[0],
 				cast_imut(test_line.vertices)[1],
 				Color32FromComponents(
@@ -856,8 +848,7 @@ type FrustumSideClipPlanes= [ Planef, 4 ];
 type TriangleVerticesClipped= [ MapVertexF32, 16 ];
 
 fn DrawMapClusterTriangles(
-	Color32ImageView& surface,
-	ust::array_view_mut</f32/> depth_buffer,
+	Rasterizer& rasterizer,
 	Mat4f& view_matrix,
 	FrustumSideClipPlanes& frustum_side_clip_planes,
 	MapDrawDataSoft& map_data,
@@ -882,8 +873,7 @@ fn DrawMapClusterTriangles(
 				cluster_draw_data.geometry_buffer_chunk.num_indices ) );
 
 	DrawMapTriangles(
-		surface,
-		depth_buffer,
+		rasterizer,
 		view_matrix,
 		frustum_side_clip_planes,
 		map_data.textures,
@@ -898,8 +888,7 @@ fn DrawMapClusterTriangles(
 }
 
 fn DrawMapTriangles(
-	Color32ImageView& surface,
-	ust::array_view_mut</f32/> depth_buffer,
+	Rasterizer& rasterizer,
 	Mat4f& view_matrix,
 	FrustumSideClipPlanes& frustum_side_clip_planes,
 	ust::array_view_imut</Color32WorldTextureWithMips/> textures,
@@ -1020,8 +1009,7 @@ fn DrawMapTriangles(
 		for( auto mut i= 2s; i < num_vertices; ++i )
 		{
 			RasterizeTriangleWithSubdivisionAndInterpolationMethodSelection(
-				surface,
-				depth_buffer,
+				rasterizer,
 				cast_imut(vertices_clipped1)[0],
 				cast_imut(vertices_clipped1)[ i - 1s ],
 				cast_imut(vertices_clipped1)[ i ],
@@ -1031,8 +1019,7 @@ fn DrawMapTriangles(
 }
 
 fn RasterizeTriangleWithSubdivisionAndInterpolationMethodSelection(
-	Color32ImageView surface,
-	ust::array_view_mut</f32/> depth_buffer,
+	Rasterizer& rasterizer,
 	MapVertexF32& v0,
 	MapVertexF32& v1,
 	MapVertexF32& v2,
@@ -1075,13 +1062,13 @@ fn RasterizeTriangleWithSubdivisionAndInterpolationMethodSelection(
 	{
 		// Can't use affine rasterization for this triangle or even subdivision.
 		// Use perspective-corrected rasterization.
-		RasterizeTrianlge</true/>( surface, depth_buffer, v0, v1, v2, texture );
+		rasterizer.RasterizeTrianlge</true/>( v0, v1, v2, texture );
 
 		if( use_debug_lines_visualization )
 		{
-			RasterizeLine( surface, depth_buffer, v0.position, v1.position, Color32( 0x00FF0000u ) );
-			RasterizeLine( surface, depth_buffer, v1.position, v2.position, Color32( 0x00FF0000u ) );
-			RasterizeLine( surface, depth_buffer, v2.position, v0.position, Color32( 0x00FF0000u ) );
+			rasterizer.RasterizeLine( v0.position, v1.position, Color32( 0x00FF0000u ) );
+			rasterizer.RasterizeLine( v1.position, v2.position, Color32( 0x00FF0000u ) );
+			rasterizer.RasterizeLine( v2.position, v0.position, Color32( 0x00FF0000u ) );
 		}
 
 		return;
@@ -1110,34 +1097,34 @@ fn RasterizeTriangleWithSubdivisionAndInterpolationMethodSelection(
 
 				var MapVertexF32 v20= ( v2 + v0 ) * 0.5f;
 
-				RasterizeTrianlge</false/>( surface, depth_buffer,  v0, v01, v20, texture );
-				RasterizeTrianlge</false/>( surface, depth_buffer,  v1, v12, v01, texture );
-				RasterizeTrianlge</false/>( surface, depth_buffer,  v2, v20, v12, texture );
-				RasterizeTrianlge</false/>( surface, depth_buffer, v01, v12, v20, texture );
+				rasterizer.RasterizeTrianlge</false/>(  v0, v01, v20, texture );
+				rasterizer.RasterizeTrianlge</false/>(  v1, v12, v01, texture );
+				rasterizer.RasterizeTrianlge</false/>(  v2, v20, v12, texture );
+				rasterizer.RasterizeTrianlge</false/>( v01, v12, v20, texture );
 
 				if( use_debug_lines_visualization )
 				{
-					RasterizeLine( surface, depth_buffer,  v0.position,  v1.position, Color32( 0x0000FF00u ) );
-					RasterizeLine( surface, depth_buffer,  v1.position,  v2.position, Color32( 0x0000FF00u ) );
-					RasterizeLine( surface, depth_buffer,  v2.position,  v0.position, Color32( 0x0000FF00u ) );
-					RasterizeLine( surface, depth_buffer, v01.position, v12.position, Color32( 0x0000FF00u ) );
-					RasterizeLine( surface, depth_buffer, v12.position, v20.position, Color32( 0x0000FF00u ) );
-					RasterizeLine( surface, depth_buffer, v20.position, v01.position, Color32( 0x0000FF00u ) );
+					rasterizer.RasterizeLine(  v0.position,  v1.position, Color32( 0x0000FF00u ) );
+					rasterizer.RasterizeLine(  v1.position,  v2.position, Color32( 0x0000FF00u ) );
+					rasterizer.RasterizeLine(  v2.position,  v0.position, Color32( 0x0000FF00u ) );
+					rasterizer.RasterizeLine( v01.position, v12.position, Color32( 0x0000FF00u ) );
+					rasterizer.RasterizeLine( v12.position, v20.position, Color32( 0x0000FF00u ) );
+					rasterizer.RasterizeLine( v20.position, v01.position, Color32( 0x0000FF00u ) );
 				}
 			}
 			else
 			{
-				RasterizeTrianlge</false/>( surface, depth_buffer, v01,  v1, v12, texture );
-				RasterizeTrianlge</false/>( surface, depth_buffer,  v0, v01, v12, texture );
-				RasterizeTrianlge</false/>( surface, depth_buffer,  v0, v12,  v2, texture );
+				rasterizer.RasterizeTrianlge</false/>( v01,  v1, v12, texture );
+				rasterizer.RasterizeTrianlge</false/>(  v0, v01, v12, texture );
+				rasterizer.RasterizeTrianlge</false/>(  v0, v12,  v2, texture );
 
 				if( use_debug_lines_visualization )
 				{
-					RasterizeLine( surface, depth_buffer,  v0.position,  v1.position, Color32( 0x0000FF00u ) );
-					RasterizeLine( surface, depth_buffer,  v1.position,  v2.position, Color32( 0x0000FF00u ) );
-					RasterizeLine( surface, depth_buffer,  v2.position,  v0.position, Color32( 0x0000FF00u ) );
-					RasterizeLine( surface, depth_buffer, v01.position, v12.position, Color32( 0x0000FF00u ) );
-					RasterizeLine( surface, depth_buffer,  v0.position, v12.position, Color32( 0x0000FF00u ) );
+					rasterizer.RasterizeLine(  v0.position,  v1.position, Color32( 0x0000FF00u ) );
+					rasterizer.RasterizeLine(  v1.position,  v2.position, Color32( 0x0000FF00u ) );
+					rasterizer.RasterizeLine(  v2.position,  v0.position, Color32( 0x0000FF00u ) );
+					rasterizer.RasterizeLine( v01.position, v12.position, Color32( 0x0000FF00u ) );
+					rasterizer.RasterizeLine(  v0.position, v12.position, Color32( 0x0000FF00u ) );
 				}
 			}
 		}
@@ -1147,30 +1134,30 @@ fn RasterizeTriangleWithSubdivisionAndInterpolationMethodSelection(
 			{
 				var MapVertexF32 v20= ( v2 + v0 ) * 0.5f;
 
-				RasterizeTrianlge</false/>( surface, depth_buffer, v20,  v0, v01, texture );
-				RasterizeTrianlge</false/>( surface, depth_buffer,  v2, v20, v01, texture );
-				RasterizeTrianlge</false/>( surface, depth_buffer,  v2, v01,  v1, texture );
+				rasterizer.RasterizeTrianlge</false/>( v20,  v0, v01, texture );
+				rasterizer.RasterizeTrianlge</false/>(  v2, v20, v01, texture );
+				rasterizer.RasterizeTrianlge</false/>(  v2, v01,  v1, texture );
 
 				if( use_debug_lines_visualization )
 				{
-					RasterizeLine( surface, depth_buffer,  v0.position,  v1.position, Color32( 0x0000FF00u ) );
-					RasterizeLine( surface, depth_buffer,  v1.position,  v2.position, Color32( 0x0000FF00u ) );
-					RasterizeLine( surface, depth_buffer,  v2.position,  v0.position, Color32( 0x0000FF00u ) );
-					RasterizeLine( surface, depth_buffer, v01.position, v20.position, Color32( 0x0000FF00u ) );
-					RasterizeLine( surface, depth_buffer,  v2.position, v01.position, Color32( 0x0000FF00u ) );
+					rasterizer.RasterizeLine(  v0.position,  v1.position, Color32( 0x0000FF00u ) );
+					rasterizer.RasterizeLine(  v1.position,  v2.position, Color32( 0x0000FF00u ) );
+					rasterizer.RasterizeLine(  v2.position,  v0.position, Color32( 0x0000FF00u ) );
+					rasterizer.RasterizeLine( v01.position, v20.position, Color32( 0x0000FF00u ) );
+					rasterizer.RasterizeLine(  v2.position, v01.position, Color32( 0x0000FF00u ) );
 				}
 			}
 			else
 			{
-				RasterizeTrianlge</false/>( surface, depth_buffer,  v0, v01,  v2, texture );
-				RasterizeTrianlge</false/>( surface, depth_buffer,  v2, v01,  v1, texture );
+				rasterizer.RasterizeTrianlge</false/>(  v0, v01,  v2, texture );
+				rasterizer.RasterizeTrianlge</false/>(  v2, v01,  v1, texture );
 
 				if( use_debug_lines_visualization )
 				{
-					RasterizeLine( surface, depth_buffer,  v0.position,  v1.position, Color32( 0x0000FF00u ) );
-					RasterizeLine( surface, depth_buffer,  v1.position,  v2.position, Color32( 0x0000FF00u ) );
-					RasterizeLine( surface, depth_buffer,  v2.position,  v0.position, Color32( 0x0000FF00u ) );
-					RasterizeLine( surface, depth_buffer,  v2.position, v01.position, Color32( 0x0000FF00u ) );
+					rasterizer.RasterizeLine(  v0.position,  v1.position, Color32( 0x0000FF00u ) );
+					rasterizer.RasterizeLine(  v1.position,  v2.position, Color32( 0x0000FF00u ) );
+					rasterizer.RasterizeLine(  v2.position,  v0.position, Color32( 0x0000FF00u ) );
+					rasterizer.RasterizeLine(  v2.position, v01.position, Color32( 0x0000FF00u ) );
 				}
 			}
 		}
@@ -1185,30 +1172,30 @@ fn RasterizeTriangleWithSubdivisionAndInterpolationMethodSelection(
 			{
 				var MapVertexF32 v20= ( v2 + v0 ) * 0.5f;
 
-				RasterizeTrianlge</false/>( surface, depth_buffer, v12,  v2, v20, texture );
-				RasterizeTrianlge</false/>( surface, depth_buffer,  v1, v12, v20, texture );
-				RasterizeTrianlge</false/>( surface, depth_buffer,  v1, v20,  v0, texture );
+				rasterizer.RasterizeTrianlge</false/>( v12,  v2, v20, texture );
+				rasterizer.RasterizeTrianlge</false/>(  v1, v12, v20, texture );
+				rasterizer.RasterizeTrianlge</false/>(  v1, v20,  v0, texture );
 
 				if( use_debug_lines_visualization )
 				{
-					RasterizeLine( surface, depth_buffer,  v0.position,  v1.position, Color32( 0x0000FF00u ) );
-					RasterizeLine( surface, depth_buffer,  v1.position,  v2.position, Color32( 0x0000FF00u ) );
-					RasterizeLine( surface, depth_buffer,  v2.position,  v0.position, Color32( 0x0000FF00u ) );
-					RasterizeLine( surface, depth_buffer, v12.position, v20.position, Color32( 0x0000FF00u ) );
-					RasterizeLine( surface, depth_buffer,  v1.position, v20.position, Color32( 0x0000FF00u ) );
+					rasterizer.RasterizeLine(  v0.position,  v1.position, Color32( 0x0000FF00u ) );
+					rasterizer.RasterizeLine(  v1.position,  v2.position, Color32( 0x0000FF00u ) );
+					rasterizer.RasterizeLine(  v2.position,  v0.position, Color32( 0x0000FF00u ) );
+					rasterizer.RasterizeLine( v12.position, v20.position, Color32( 0x0000FF00u ) );
+					rasterizer.RasterizeLine(  v1.position, v20.position, Color32( 0x0000FF00u ) );
 				}
 			}
 			else
 			{
-				RasterizeTrianlge</false/>( surface, depth_buffer,  v1, v12,  v0, texture );
-				RasterizeTrianlge</false/>( surface, depth_buffer,  v0, v12,  v2, texture );
+				rasterizer.RasterizeTrianlge</false/>(  v1, v12,  v0, texture );
+				rasterizer.RasterizeTrianlge</false/>(  v0, v12,  v2, texture );
 
 				if( use_debug_lines_visualization )
 				{
-					RasterizeLine( surface, depth_buffer,  v0.position,  v1.position, Color32( 0x0000FF00u ) );
-					RasterizeLine( surface, depth_buffer,  v1.position,  v2.position, Color32( 0x0000FF00u ) );
-					RasterizeLine( surface, depth_buffer,  v2.position,  v0.position, Color32( 0x0000FF00u ) );
-					RasterizeLine( surface, depth_buffer,  v0.position, v12.position, Color32( 0x0000FF00u ) );
+					rasterizer.RasterizeLine(  v0.position,  v1.position, Color32( 0x0000FF00u ) );
+					rasterizer.RasterizeLine(  v1.position,  v2.position, Color32( 0x0000FF00u ) );
+					rasterizer.RasterizeLine(  v2.position,  v0.position, Color32( 0x0000FF00u ) );
+					rasterizer.RasterizeLine(  v0.position, v12.position, Color32( 0x0000FF00u ) );
 				}
 			}
 		}
@@ -1218,30 +1205,29 @@ fn RasterizeTriangleWithSubdivisionAndInterpolationMethodSelection(
 			{
 				var MapVertexF32 v20= ( v2 + v0 ) * 0.5f;
 
-				RasterizeTrianlge</false/>( surface, depth_buffer,  v1, v20,  v0, texture );
-				RasterizeTrianlge</false/>( surface, depth_buffer,  v2, v20,  v1, texture );
+				rasterizer.RasterizeTrianlge</false/>(  v1, v20,  v0, texture );
+				rasterizer.RasterizeTrianlge</false/>(  v2, v20,  v1, texture );
 
 				if( use_debug_lines_visualization )
 				{
-					RasterizeLine( surface, depth_buffer,  v0.position,  v1.position, Color32( 0x0000FF00u ) );
-					RasterizeLine( surface, depth_buffer,  v1.position,  v2.position, Color32( 0x0000FF00u ) );
-					RasterizeLine( surface, depth_buffer,  v2.position,  v0.position, Color32( 0x0000FF00u ) );
-					RasterizeLine( surface, depth_buffer,  v1.position, v20.position, Color32( 0x0000FF00u ) );
+					rasterizer.RasterizeLine(  v0.position,  v1.position, Color32( 0x0000FF00u ) );
+					rasterizer.RasterizeLine(  v1.position,  v2.position, Color32( 0x0000FF00u ) );
+					rasterizer.RasterizeLine(  v2.position,  v0.position, Color32( 0x0000FF00u ) );
+					rasterizer.RasterizeLine(  v1.position, v20.position, Color32( 0x0000FF00u ) );
 				}
 			}
 			else
 			{
 				// No subdivision is necessary at all.
 				// Can use affine rasterization for this triangle - interpolation error isn't large.
-				RasterizeTrianlge</false/>( surface, depth_buffer, v0, v1, v2, texture );
+				rasterizer.RasterizeTrianlge</false/>( v0, v1, v2, texture );
 			}
 		}
 	}
 }
 
 fn DrawTestLines(
-	Color32ImageView& surface,
-	ust::array_view_mut</f32/> depth_buffer,
+	Rasterizer& rasterizer,
 	ust::array_view_imut</WorldDrawingInfo::TestLine/> lines,
 	Mat4f& view_matrix,
 	FrustumSideClipPlanes& frustum_side_clip_planes )
@@ -1282,9 +1268,7 @@ fn DrawTestLines(
 			}
 		}
 
-		RasterizeLine(
-			surface,
-			depth_buffer,
+		rasterizer.RasterizeLine(
 			cast_imut(segment)[0],
 			cast_imut(segment)[1],
 			Color32FromComponents( ust::make_array( line.color[0], line.color[1], line.color[2], 0u8 ) ) );
