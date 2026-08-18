@@ -50,6 +50,16 @@ fn WorldDrawerSoft::constructor(
 
 fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDrawingStats
 {
+	if( map_index_ != drawing_info.map_index )
+	{
+		// Load models in use if switching to a new map.
+		LoadModels(
+			drawing_info.used_models,
+			caching_game_resources_loader_ptr_.lock_imut().deref().GetGameFilesystem(),
+			console_out_,
+			models_ );
+	}
+
 	// Ensure we have actual map data.
 	SetMap( drawing_info.map_index );
 
@@ -1301,6 +1311,52 @@ fn DrawTestLines(
 			cast_imut(segment)[1],
 			Color32FromComponents( ust::make_array( line.color[0], line.color[1], line.color[2], 0u8 ) ) );
 	}
+}
+
+fn LoadModels(
+	ust::array_view_imut</ResourceString/> model_list,
+	GameFilesystemPtr& game_filesystem_ptr,
+	ConsoleOutPtr& console_out_ptr,
+	ModelsMapSoft &mut models )
+{
+	// Populate new models table and take existing models from the old one (if can).
+	// Doing so we avoid loading models which are already loaded and also unload no longer used models.
+	var ModelsMapSoft mut new_models;
+
+	auto mut fs_lock= game_filesystem_ptr.lock_mut();
+	var ( fn( ust::file_readable &mut f ) : ust::io_result</ModelData/> ) load_model_fn( LoadModel );
+
+	foreach( &file_name : model_list )
+	{
+		if_var( &mut prev_model : models.find( file_name ) )
+		{
+			new_models.insert_new( file_name, take( prev_model ) );
+			continue;
+		}
+
+		result_match( fs_lock.deref().LoadFile( file_name, load_model_fn ) )
+		{
+			Ok(m) ->
+			{
+				new_models.insert_new( file_name, CreateModelSoft( m ) );
+			},
+			Err(e) ->
+			{
+				ConsoleOutAddTextLine(
+					console_out_ptr,
+					ust::concat(
+						"Failed to load model file \"",
+						ConvertResourceStringToStringView( file_name ),
+						"\"! Error: ",
+						ust::enum_to_string( e ) ) );
+
+				// Add a stub.
+				new_models.insert_new( file_name, ust::optional</ModelSoft/>() );
+			},
+		}
+	}
+
+	models= move( new_models );
 }
 
 fn LoadMapTextures(
