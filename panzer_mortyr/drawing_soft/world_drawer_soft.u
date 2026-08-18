@@ -451,6 +451,89 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 			// TODO - try speeding-up this code. Make sure the compiler uses vectorization for it.
 			transformed_vertices_[i]= position * model_full_matrix;
 		}
+
+		// TODO - optimize this loop for case in no clipping by frustum planes is necessary.
+
+		foreach( &triangle : model.triangles ) label for_triangles
+		{
+			vertices_clipped0[0]=
+				Rasterizer::Vertex
+				{
+					.position= transformed_vertices_[ size_type( triangle[0] ) ],
+					.tex_coord= model.texture_coordinates[ size_type( triangle[0] ) ],
+					.light[ 1.0f ... /* TODO - calculate proper light */ ],
+				};
+
+			vertices_clipped0[1]=
+				Rasterizer::Vertex
+				{
+					.position= transformed_vertices_[ size_type( triangle[1] ) ],
+					.tex_coord= model.texture_coordinates[ size_type( triangle[1] ) ],
+					.light[ 1.0f ... /* TODO - calculate proper light */ ],
+				};
+
+			vertices_clipped0[2]=
+				Rasterizer::Vertex
+				{
+					.position= transformed_vertices_[ size_type( triangle[2] ) ],
+					.tex_coord= model.texture_coordinates[ size_type( triangle[2] ) ],
+					.light[ 1.0f ... /* TODO - calculate proper light */ ],
+				};
+
+			var size_type mut num_vertices= 3s;
+
+			num_vertices=
+				ClipPolygonByZNearPlane(
+					c_z_near_for_clipping,
+					ust::array_view_imut</Rasterizer::Vertex/>( vertices_clipped0 ).subrange_end( num_vertices ),
+					vertices_clipped1 );
+
+			if( num_vertices < 3s )
+			{
+				continue label for_triangles;
+			}
+
+			// Perform two pairs of clipping by two pairs of clip planes.
+			for( auto mut i= 0s; i < 2s; ++i )
+			{
+				num_vertices=
+					ClipPolygon(
+						frustum_side_clip_planes[ i * 2s + 0s ],
+						ust::array_view_imut</Rasterizer::Vertex/>( vertices_clipped1 ).subrange_end( num_vertices ),
+						vertices_clipped0 );
+
+				if( num_vertices < 3s )
+				{
+					continue label for_triangles;
+				}
+
+				num_vertices=
+					ClipPolygon(
+						frustum_side_clip_planes[ i * 2s + 1s ],
+						ust::array_view_imut</Rasterizer::Vertex/>( vertices_clipped0 ).subrange_end( num_vertices ),
+						vertices_clipped1 );
+
+				if( num_vertices < 3s )
+				{
+					continue label for_triangles;
+				}
+			}
+
+			variant_visit( &texture_ptr : model.texture )
+			{
+				auto& texture= texture_ptr.deref();
+
+				for( auto mut i= 2s; i < num_vertices; ++i )
+				{
+					RasterizeTriangleWithSubdivisionAndInterpolationMethodSelection(
+						rasterizer,
+						cast_imut(vertices_clipped1)[0],
+						cast_imut(vertices_clipped1)[ i - 1s ],
+						cast_imut(vertices_clipped1)[ i ],
+						texture );
+				}
+			}
+		}
 	}
 
 	if( !drawing_info.test_lines.empty() )
@@ -1014,9 +1097,6 @@ fn DrawMapTriangles(
 	TriangleVerticesClipped &mut vertices_clipped0,
 	TriangleVerticesClipped &mut vertices_clipped1 )
 {
-	// Move Z near plane a little bit forward so that no actual geometry can lay on it.
-	var f32 constexpr z_near_for_clipping= 1.25f;
-
 	if( vertices_transformed.size() < vertices.size() )
 	{
 		// Resize only down.
@@ -1085,7 +1165,7 @@ fn DrawMapTriangles(
 
 		num_vertices=
 			ClipPolygonByZNearPlane(
-				z_near_for_clipping,
+				c_z_near_for_clipping,
 				ust::array_view_imut</Rasterizer::Vertex/>( vertices_clipped0 ).subrange_end( num_vertices ),
 				vertices_clipped1 );
 
@@ -1581,5 +1661,9 @@ fn CalculateViewSpaceFrustumSideClipPlanes( [ u32, 2 ]& viewport_size ) : [ Plan
 	];
 	return result_planes;
 }
+
+// Move Z near plane a little bit forward so that no actual geometry can lay on it.
+var f32 constexpr c_z_near_for_clipping= 1.25f;
+
 
 } // namespace PM
