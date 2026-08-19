@@ -91,26 +91,10 @@ fn ConstructWorldDrawingInfo(
 		// It may be a little bit slow, since some maps have a lot of quads.
 		drawing_info.broken_quad_bits= game_state.broken_quad_bits;
 
-		if_var( &death_camera_state : game_state.player.death_camera_state )
 		{
-			drawing_info.camera_params.azimuth= death_camera_state.azimuth;
-			drawing_info.camera_params.elevation= death_camera_state.elevation;
-
-			// For death camera angles perform mixing between angles of previous and next game state.
-			// Miss-predicting them isn't allowed, but some delay is fine.
-
-			if_var( &previous_game_state : previous_game_state_opt )
-			{
-				if_var( &prev_death_camera_state : previous_game_state.player.death_camera_state )
-				{
-					drawing_info.camera_params.azimuth=
-						MixAngle(
-							prev_death_camera_state.azimuth, death_camera_state.azimuth, time_steps_fraction );
-					drawing_info.camera_params.elevation=
-						MixAngle(
-							prev_death_camera_state.elevation, death_camera_state.elevation, time_steps_fraction );
-				}
-			}
+			auto [ azimuth, elevation ]= GetCameraAngles( game_state_extended, time_steps_fraction, camera_controller );
+			drawing_info.camera_params.azimuth= azimuth;
+			drawing_info.camera_params.elevation= elevation;
 		}
 
 		var Vec3f mut camera_position_without_depth_shift= GetCameraPositionForPlayer( game_state.player );
@@ -2250,9 +2234,8 @@ fn ConstructGameEventNotificationsDrawingInfo(
 		var f32 c_note_full_alpha_distance= 32.0f;
 		var f32 c_note_base_scale= 20.0f;
 
-		// TODO - use death camera angles if needed.
-		var f32 camera_azimuth= camera_controller.GetAzimuth();
-		var f32 camera_elevation= camera_controller.GetElevation();
+		auto [ camera_azimuth, camera_elevation ] =
+			GetCameraAngles( game_state_extended, time_steps_fraction, camera_controller );
 
 		var Vec3f direction_vector=
 			CalculateCameraDirectionVector( camera_azimuth, camera_elevation ) * c_note_visible_max_distance;
@@ -2399,6 +2382,38 @@ fn GetCameraDepthShift( f32 azimuth, f32 elevation ) : Vec3f
 	var f32 c_camera_depth_offset= -8.0f;
 
 	return Vec3f( 0.0f, c_camera_depth_offset, 0.0f ) * camera_rotation_matrix;
+}
+
+fn GetCameraAngles(
+	GameStateExtended& game_state_extended,
+	f32 time_steps_fraction,
+	CameraController& camera_controller ) : [ f32, 2 ]
+{
+	var f32 mut azimuth= camera_controller.GetAzimuth();
+	var f32 mut elevation= camera_controller.GetElevation();
+
+	if_var( &death_camera_state : game_state_extended.current.player.death_camera_state )
+	{
+		azimuth= death_camera_state.azimuth;
+		elevation= death_camera_state.elevation;
+
+		// For death camera angles perform mixing between angles of previous and next game state.
+		// Miss-predicting them isn't allowed, but some delay is fine.
+
+		if_var( &previous_game_state : game_state_extended.previous )
+		{
+			if_var( &prev_death_camera_state : previous_game_state.player.death_camera_state )
+			{
+				azimuth=
+					MixAngle( prev_death_camera_state.azimuth, death_camera_state.azimuth, time_steps_fraction );
+
+				elevation=
+					MixAngle( prev_death_camera_state.elevation, death_camera_state.elevation, time_steps_fraction );
+			}
+		}
+	}
+
+	return ust::make_array( azimuth, elevation );
 }
 
 fn GetCameraPositionForPlayerWithExtraDepthShift( PlayerState& player_state, f32 azimuth, f32 elevation ) : Vec3f
