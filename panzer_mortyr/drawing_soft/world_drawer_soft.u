@@ -513,31 +513,7 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 				}
 			}
 
-			// TODO - optimize this code for cases where frame_mix is 0 or 1.
-			var f32 constexpr normal_scale= 1.0f / 128.0f;
-			var f32 scale0= normal_scale * ( 1.0f - frames.frame_mix );
-			var f32 scale1= normal_scale * frames.frame_mix;
-
-			for( auto mut i= 0s; i < size_type( model.num_vertices ); ++i )
-			{
-				// TODO - optimize this code, make sure vector instructions are used.
-				var [ i8, 3 ]& n0= frame0_vertices[i].normal;
-				var [ i8, 3 ]& n1= frame1_vertices[i].normal;
-
-				var Vec3f normal=
-					Vec3f( f32( n0[0] ), f32( n0[1] ), f32( n0[2] ) ) * scale0 +
-					Vec3f( f32( n1[0] ), f32( n1[1] ), f32( n1[2] ) ) * scale1;
-
-				// TODO - try speed-up normalization.
-				var Vec3f normal_normalized= normal / ust::max( normal_scale, normal.Length() );
-
-				vertex_light[i]=
-					ust::make_array(
-						light[0].directional_components.Dot( normal_normalized ) + light[0].constant_component,
-						light[1].directional_components.Dot( normal_normalized ) + light[1].constant_component,
-						light[2].directional_components.Dot( normal_normalized ) + light[2].constant_component,
-						0.0f );
-			}
+			ApplyLightToModelVertices( frame0_vertices, frame1_vertices, vertex_light, frames.frame_mix, light );
 		}
 
 		// TODO - optimize this loop for case in no clipping by frustum planes is necessary.
@@ -1153,6 +1129,46 @@ fn TransformModelVertices(
 
 		// TODO - try speeding-up this code. Make sure the compiler uses vectorization for it.
 		vertices_transformed[i]= position * m;
+	}
+}
+
+fn ApplyLightToModelVertices(
+	ust::array_view_imut</ ModelFrameVertex /> frame0_vertices,
+	ust::array_view_imut</ ModelFrameVertex /> frame1_vertices,
+	ust::array_view_mut</[ f32, 4 ] /> vertex_light,
+	f32 frame_mix,
+	SphericalHarmonicsRGB& light )
+{
+	debug_assert( frame0_vertices.size() == frame1_vertices.size() );
+	debug_assert( vertex_light.size() >= frame0_vertices.size() );
+
+	// TODO - optimize this code for cases where frame_mix is 0 or 1.
+	var f32 constexpr normal_scale= 1.0f / 128.0f;
+	var f32 scale0= normal_scale * ( 1.0f - frame_mix );
+	var f32 scale1= normal_scale * frame_mix;
+
+	 // Read it into a local variable to ensure it's not re-read on each loop iteration.
+	var SphericalHarmonicsRGB l= light;
+
+	for( auto mut i= 0s; i < frame0_vertices.size(); ++i )
+	{
+		// TODO - optimize this code, make sure vector instructions are used.
+		var [ i8, 3 ]& n0= frame0_vertices[i].normal;
+		var [ i8, 3 ]& n1= frame1_vertices[i].normal;
+
+		var Vec3f normal=
+			Vec3f( f32( n0[0] ), f32( n0[1] ), f32( n0[2] ) ) * scale0 +
+			Vec3f( f32( n1[0] ), f32( n1[1] ), f32( n1[2] ) ) * scale1;
+
+		// TODO - try speed-up normalization.
+		var Vec3f normal_normalized= normal / ust::max( normal_scale, normal.Length() );
+
+		vertex_light[i]=
+			ust::make_array(
+				l[0].directional_components.Dot( normal_normalized ) + l[0].constant_component,
+				l[1].directional_components.Dot( normal_normalized ) + l[1].constant_component,
+				l[2].directional_components.Dot( normal_normalized ) + l[2].constant_component,
+				0.0f );
 	}
 }
 
