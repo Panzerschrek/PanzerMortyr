@@ -357,7 +357,7 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 			stats );
 	}
 
-	foreach( &model_object : drawing_info.model_objects )
+	foreach( &model_object : drawing_info.model_objects ) label for_model_objects
 	{
 		var ust::optional_ref_imut</ ust::optional</ModelSoft/> /> model_opt_opt=
 			models_.find( model_object.model_file_name );
@@ -400,7 +400,14 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 		var BBox3f mut frame_bbox= model.frame_bboxes[ size_type( frames.frame0 ) ];
 		frame_bbox.ExtendWithOther( model.frame_bboxes[ size_type( frames.frame1 ) ] );
 
-		if( !model_object.first_person_weapon )
+		var bool mut is_fully_inside_view_frustum= true;
+
+		if( model_object.first_person_weapon )
+		{
+			// Assume first person weapon models need clipping by frustum planes.
+			is_fully_inside_view_frustum= false;
+		}
+		else
 		{
 			// Calculate  bounding box of the model in world space (including even rotations).
 			var [ Vec3f, 8 ] bbox_corners_transformed
@@ -421,9 +428,22 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 			}
 
 			// Perform more costly check against camera clip planes.
-			if( AreBoxVerticesClippedByAtLeastOneCameraClipPlane( camera_clip_planes, bbox_corners_transformed ) )
+			foreach( &clip_plane : camera_clip_planes )
 			{
-				continue;
+				var f32 mut min_distance= ust::plus_inf</f32/>(), mut max_distance= ust::minus_inf</f32/>();
+				foreach( &v : bbox_corners_transformed )
+				{
+					var f32 distance= clip_plane.GetDistanceForPoint( v );
+					ust::min_assign( min_distance, distance );
+					ust::max_assign( max_distance, distance );
+				}
+
+				if( min_distance >= 0.0f )
+				{
+					continue label for_model_objects;
+				}
+
+				is_fully_inside_view_frustum &= max_distance <= 0.0f;
 			}
 		}
 
@@ -533,14 +553,23 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 			}
 		}
 
-		DrawModelTriangles(
-			rasterizer,
-			frustum_side_clip_planes,
-			model,
-			vertices_transformed,
-			vertex_light,
-			vertices_clipped0,
-			vertices_clipped1 );
+		if( is_fully_inside_view_frustum )
+		{
+			// This model object is fully inside view frustum. Don't need to perform clipping for each its triangle.
+			DrawModelTrianglesWithoutFrustumPlanesClipping( rasterizer, model, vertices_transformed, vertex_light );
+		}
+		else
+		{
+			// Require frustim clipping.
+			DrawModelTrianglesWithFrustumPlanesClipping(
+				rasterizer,
+				frustum_side_clip_planes,
+				model,
+				vertices_transformed,
+				vertex_light,
+				vertices_clipped0,
+				vertices_clipped1 );
+		}
 
 		++stats.num_visible_models;
 		stats.num_visible_model_triangles+= u32( model.triangles.size() );
@@ -1353,7 +1382,50 @@ fn DrawMapTriangles(
 	}
 }
 
-fn DrawModelTriangles(
+// This function is optimized for case where no frustum planes clipping is necessary for the given model.
+// Its triangles are just passed directly into rasterization code.
+// Vertices of given model should have positive Z and their projection should be roughly within screen bounds!
+fn DrawModelTrianglesWithoutFrustumPlanesClipping(
+	Rasterizer& rasterizer,
+	ModelSoft& model,
+	ust::array_view_imut</Vec3f/> vertices_transformed,
+	ust::array_view_imut</ [ f32, 4 ] /> vertex_light )
+{
+	variant_visit( &texture_ptr : model.texture )
+	{
+		auto& texture= texture_ptr.deref();
+
+		foreach( &triangle : model.triangles ) label for_triangles
+		{
+			var [ Rasterizer::Vertex, 3 ] v
+			[
+				{
+					.position= vertices_transformed[ size_type( triangle[0] ) ],
+					.tex_coord= model.texture_coordinates[ size_type( triangle[0] ) ],
+					.light= vertex_light[ size_type( triangle[0] ) ],
+				},
+				{
+					.position= vertices_transformed[ size_type( triangle[1] ) ],
+					.tex_coord= model.texture_coordinates[ size_type( triangle[1] ) ],
+					.light= vertex_light[ size_type( triangle[1] ) ],
+				},
+				{
+					.position= vertices_transformed[ size_type( triangle[2] ) ],
+					.tex_coord= model.texture_coordinates[ size_type( triangle[2] ) ],
+					.light= vertex_light[ size_type( triangle[2] ) ],
+				},
+			];
+
+			debug_assert( v[0].position.z > 0.0f );
+			debug_assert( v[1].position.z > 0.0f );
+			debug_assert( v[2].position.z > 0.0f );
+
+			RasterizeTriangleWithSubdivisionAndInterpolationMethodSelection( rasterizer, v[0], v[1], v[2], texture );
+		}
+	}
+}
+
+fn DrawModelTrianglesWithFrustumPlanesClipping(
 	Rasterizer& rasterizer,
 	FrustumSideClipPlanes& frustum_side_clip_planes,
 	ModelSoft& model,
@@ -1362,8 +1434,6 @@ fn DrawModelTriangles(
 	TriangleVerticesClipped &mut vertices_clipped0,
 	TriangleVerticesClipped &mut vertices_clipped1 )
 {
-	// TODO - optimize this loop for case in no clipping by frustum planes is necessary.
-
 	foreach( &triangle : model.triangles ) label for_triangles
 	{
 		vertices_clipped0[0]=
