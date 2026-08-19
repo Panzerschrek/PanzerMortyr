@@ -91,6 +91,13 @@ fn ConstructWorldDrawingInfo(
 		// It may be a little bit slow, since some maps have a lot of quads.
 		drawing_info.broken_quad_bits= game_state.broken_quad_bits;
 
+		if_var( &death_camera_state : game_state.player.death_camera_state )
+		{
+			// TODO - interpolate camera angles if necessary.
+			drawing_info.camera_params.azimuth= death_camera_state.azimuth;
+			drawing_info.camera_params.elevation= death_camera_state.elevation;
+		}
+
 		var Vec3f mut camera_position_without_depth_shift= GetCameraPositionForPlayer( game_state.player );
 
 		if_var( &current_predicted_game_state : current_predicted_game_state_opt )
@@ -108,14 +115,8 @@ fn ConstructWorldDrawingInfo(
 		}
 
 		drawing_info.camera_params.position=
-			camera_position_without_depth_shift + GetCameraDepthShift( camera_controller );
-
-		if_var( &death_camera_state : game_state.player.death_camera_state )
-		{
-			// TODO - interpolate camera angles if necessary.
-			drawing_info.camera_params.azimuth= death_camera_state.azimuth;
-			drawing_info.camera_params.elevation= death_camera_state.elevation;
-		}
+			camera_position_without_depth_shift +
+			GetCameraDepthShift( drawing_info.camera_params.azimuth, drawing_info.camera_params.elevation );
 
 		auto get_entity_position_and_azimuth=
 			lambda[&]( size_type i ) : ust::optional</ tup[ Vec3f, f32 ] />
@@ -2231,17 +2232,22 @@ fn ConstructGameEventNotificationsDrawingInfo(
 		var f32 c_note_full_alpha_distance= 32.0f;
 		var f32 c_note_base_scale= 20.0f;
 
+		// TODO - use death camera angles if needed.
+		var f32 camera_azimuth= camera_controller.GetAzimuth();
+		var f32 camera_elevation= camera_controller.GetElevation();
+
 		var Vec3f direction_vector= CalculateCameraDirectionVector( camera_controller ) * c_note_visible_max_distance;
 
 		// Extrapolate/mix camera position used for note volume intersection search.
 
 		var Vec3f mut camera_position=
-			GetCameraPositionForPlayerWithExtraDepthShift( game_state.player, camera_controller );
+			GetCameraPositionForPlayerWithExtraDepthShift( game_state.player, camera_azimuth, camera_elevation );
 
 		if_var( &current_predicted_game_state : game_state_extended.current_predicted )
 		{
 			camera_position=
-				GetCameraPositionForPlayerWithExtraDepthShift( current_predicted_game_state.player, camera_controller );
+				GetCameraPositionForPlayerWithExtraDepthShift(
+					current_predicted_game_state.player, camera_azimuth, camera_elevation );
 		}
 
 		if_var( &next_predicted_game_state : game_state_extended.next_predicted )
@@ -2249,7 +2255,8 @@ fn ConstructGameEventNotificationsDrawingInfo(
 			camera_position=
 				MixPosition(
 					camera_position,
-					GetCameraPositionForPlayerWithExtraDepthShift( next_predicted_game_state.player, camera_controller ),
+					GetCameraPositionForPlayerWithExtraDepthShift(
+						next_predicted_game_state.player, camera_azimuth, camera_elevation ),
 					time_steps_fraction );
 		}
 
@@ -2295,6 +2302,7 @@ fn ConstructCrosshairDrawingInfo(
 	var CrosshairDrawingInfo mut drawing_info
 	{
 		.camera_position= Vec3f::MakeZero(),
+		// TODO - use death camera angles if needed.
 		.camera_azimuth= camera_controller.GetAzimuth(),
 		.camera_elevation= camera_controller.GetElevation(),
 		.camera_fov= camera_controller.GetFOV(),
@@ -2318,7 +2326,8 @@ fn ConstructCrosshairDrawingInfo(
 					: game_state_extended.current_predicted.try_deref() );
 
 			drawing_info.camera_position=
-				GetCameraPositionForPlayerWithExtraDepthShift( start_state.player, camera_controller );
+				GetCameraPositionForPlayerWithExtraDepthShift(
+					start_state.player, drawing_info.camera_azimuth, drawing_info.camera_elevation );
 
 			auto [ position, kind ]=
 				GetCrosshairPositionAndKind(
@@ -2335,7 +2344,9 @@ fn ConstructCrosshairDrawingInfo(
 					MixPosition(
 						drawing_info.camera_position,
 						GetCameraPositionForPlayerWithExtraDepthShift(
-							next_predicted_game_state.player, camera_controller ),
+							next_predicted_game_state.player,
+							drawing_info.camera_azimuth,
+							drawing_info.camera_elevation ),
 						time_steps_fraction );
 
 				drawing_info.hit_point=
@@ -2360,11 +2371,9 @@ fn GetCameraPositionForPlayer( PlayerState& player_state ) : Vec3f
 	return Vec3f( player_state.position.xy(), player_state.position.z + c_camera_z_offset + crouching_z_offset );
 }
 
-fn GetCameraDepthShift( CameraController& camera_controller ) : Vec3f
+fn GetCameraDepthShift( f32 azimuth, f32 elevation ) : Vec3f
 {
-	var Mat4f camera_rotation_matrix=
-		Mat4f::MakeRotationX( camera_controller.GetElevation() ) *
-		Mat4f::MakeRotationZ( camera_controller.GetAzimuth() );
+	var Mat4f camera_rotation_matrix= Mat4f::MakeRotationX( elevation ) * Mat4f::MakeRotationZ( azimuth );
 
 	// The original game moves camera slightly backwards. Do exactly this.
 	// This constant was fine-tuned to match position of the first-person weapon almost pixel to pixel compared to the original game.
@@ -2373,9 +2382,9 @@ fn GetCameraDepthShift( CameraController& camera_controller ) : Vec3f
 	return Vec3f( 0.0f, c_camera_depth_offset, 0.0f ) * camera_rotation_matrix;
 }
 
-fn GetCameraPositionForPlayerWithExtraDepthShift( PlayerState& player_state, CameraController& camera_controller ) : Vec3f
+fn GetCameraPositionForPlayerWithExtraDepthShift( PlayerState& player_state, f32 azimuth, f32 elevation ) : Vec3f
 {
-	return GetCameraPositionForPlayer( player_state ) + GetCameraDepthShift( camera_controller );
+	return GetCameraPositionForPlayer( player_state ) + GetCameraDepthShift( azimuth, elevation );
 }
 
 fn CreateModelFrames( ModelAnimationFrames& in_frames ) : WorldDrawingInfo::ModelFrames
