@@ -427,14 +427,6 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 			}
 		}
 
-		var Mat4f model_full_matrix= model_transormation_matrix * view_matrix;
-
-		if( transformed_vertices_.size() < size_type( model.num_vertices ) )
-		{
-			// Resize only up.
-			transformed_vertices_.resize( size_type( model.num_vertices ), Vec3f::MakeZero() );
-		}
-
 		var ust::array_view_imut</ ModelFrameVertex /> frame0_vertices=
 			model.vertices.range().subrange(
 				size_type( model.num_vertices * frames.frame0 ),
@@ -445,16 +437,18 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 				size_type( model.num_vertices * frames.frame1 ),
 				size_type( model.num_vertices * ( frames.frame1 + 1u ) ) );
 
-		// TODO - optimize this code for cases where frame_mix is 0 or 1.
-		for( auto mut i= 0s; i < size_type( model.num_vertices ); ++i )
+		if( transformed_vertices_.size() < size_type( model.num_vertices ) )
 		{
-			var Vec3f position=
-				Vec3f( frame0_vertices[i].position ) * ( 1.0f - frames.frame_mix ) +
-				Vec3f( frame1_vertices[i].position ) * frames.frame_mix;
-
-			// TODO - try speeding-up this code. Make sure the compiler uses vectorization for it.
-			transformed_vertices_[i]= position * model_full_matrix;
+			// Resize only up.
+			transformed_vertices_.resize( size_type( model.num_vertices ), Vec3f::MakeZero() );
 		}
+
+		TransformModelVertices(
+			frame0_vertices,
+			frame1_vertices,
+			transformed_vertices_,
+			frames.frame_mix,
+			model_transormation_matrix * view_matrix );
 
 		if( vertex_light_.size() < size_type( model.num_vertices ) )
 		{
@@ -1135,6 +1129,30 @@ fn PrepareQuadVertexTextureCoordinates( ust::array_view_mut</MapVertex/> quad_ve
 	{
 		v.tex_coordinates[0]= ust::fma( v.tex_coordinates[0], texture_size[0], tc_bias[0] );
 		v.tex_coordinates[1]= ust::fma( v.tex_coordinates[1], texture_size[1], tc_bias[1] );
+	}
+}
+
+fn TransformModelVertices(
+	ust::array_view_imut</ ModelFrameVertex /> frame0_vertices,
+	ust::array_view_imut</ ModelFrameVertex /> frame1_vertices,
+	ust::array_view_mut</Vec3f/> vertices_transformed,
+	f32 frame_mix,
+	Mat4f& model_full_matrix )
+{
+	debug_assert( frame0_vertices.size() == frame1_vertices.size() );
+	debug_assert( vertices_transformed.size() >= frame0_vertices.size() );
+
+	var Mat4f m= model_full_matrix; // Read it into a local variable to ensure it's not re-read on each loop iteration.
+
+	// TODO - optimize this code for cases where frame_mix is 0 or 1.
+	for( auto mut i= 0s; i < frame0_vertices.size(); ++i )
+	{
+		var Vec3f position=
+			Vec3f( frame0_vertices[i].position ) * ( 1.0f - frame_mix ) +
+			Vec3f( frame1_vertices[i].position ) * frame_mix;
+
+		// TODO - try speeding-up this code. Make sure the compiler uses vectorization for it.
+		vertices_transformed[i]= position * m;
 	}
 }
 
