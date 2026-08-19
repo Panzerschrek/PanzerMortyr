@@ -445,12 +445,18 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 
 		auto vertices_transformed= transformed_vertices_.range().subrange_end( size_type( model.num_vertices ) );
 
-		TransformModelVertices(
-			frame0_vertices,
-			frame1_vertices,
-			vertices_transformed,
-			frames.frame_mix,
-			model_transormation_matrix * view_matrix );
+		var Mat4f model_full_matrix= model_transormation_matrix * view_matrix;
+
+		if( frames.frame0 == frames.frame1 )
+		{
+			// Optimization for cases where no frame mixing is necessary.
+			TransformModelVerticesSingleFrame( frame0_vertices, vertices_transformed, model_full_matrix );
+		}
+		else
+		{
+			TransformModelVerticesTwoFrames(
+				frame0_vertices, frame1_vertices, vertices_transformed, frames.frame_mix, model_full_matrix );
+		}
 
 		if( vertex_light_.size() < size_type( model.num_vertices ) )
 		{
@@ -515,7 +521,16 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 				}
 			}
 
-			ApplyLightToModelVertices( frame0_vertices, frame1_vertices, vertex_light, frames.frame_mix, light );
+			if( frames.frame0 == frames.frame1 )
+			{
+				// Optimization for cases where no frame mixing is necessary.
+				ApplyLightToModelVerticesSingleFrame( frame0_vertices, vertex_light, light );
+			}
+			else
+			{
+				ApplyLightToModelVerticesTwoFrames(
+					frame0_vertices, frame1_vertices, vertex_light, frames.frame_mix, light );
+			}
 		}
 
 		DrawModelTriangles(
@@ -1039,7 +1054,23 @@ fn PrepareQuadVertexTextureCoordinates( ust::array_view_mut</MapVertex/> quad_ve
 	}
 }
 
-fn TransformModelVertices(
+fn TransformModelVerticesSingleFrame(
+	ust::array_view_imut</ ModelFrameVertex /> frame_vertices,
+	ust::array_view_mut</Vec3f/> vertices_transformed,
+	Mat4f& model_full_matrix  )
+{
+	debug_assert( vertices_transformed.size() >= frame_vertices.size() );
+
+	var Mat4f m= model_full_matrix; // Read it into a local variable to ensure it's not re-read on each loop iteration.
+
+	foreach( pair : vertices_transformed.iter().zip( frame_vertices.iter() ) )
+	{
+		// TODO - try speeding-up this code. Make sure the compiler uses vectorization for it.
+		pair.first= Vec3f( pair.second.position ) * m;
+	}
+}
+
+fn TransformModelVerticesTwoFrames(
 	ust::array_view_imut</ ModelFrameVertex /> frame0_vertices,
 	ust::array_view_imut</ ModelFrameVertex /> frame1_vertices,
 	ust::array_view_mut</Vec3f/> vertices_transformed,
@@ -1049,9 +1080,17 @@ fn TransformModelVertices(
 	debug_assert( frame0_vertices.size() == frame1_vertices.size() );
 	debug_assert( vertices_transformed.size() >= frame0_vertices.size() );
 
-	var Mat4f m= model_full_matrix; // Read it into a local variable to ensure it's not re-read on each loop iteration.
+	// Optimization for cases where no interpolation between frames is needed.
+	if( frame_mix <= 0.001f )
+	{
+		return TransformModelVerticesSingleFrame( frame0_vertices, vertices_transformed, model_full_matrix );
+	}
+	if( frame_mix >= 0.999f )
+	{
+		return TransformModelVerticesSingleFrame( frame1_vertices, vertices_transformed, model_full_matrix );
+	}
 
-	// TODO - optimize this code for cases where frame_mix is 0 or 1.
+	var Mat4f m= model_full_matrix; // Read it into a local variable to ensure it's not re-read on each loop iteration.
 
 	foreach( pair : vertices_transformed.iter().zip( frame0_vertices.iter().zip( frame1_vertices.iter() ) ) )
 	{
@@ -1064,7 +1103,36 @@ fn TransformModelVertices(
 	}
 }
 
-fn ApplyLightToModelVertices(
+fn ApplyLightToModelVerticesSingleFrame(
+	ust::array_view_imut</ ModelFrameVertex /> frame_vertices,
+	ust::array_view_mut</[ f32, 4 ] /> vertex_light,
+	SphericalHarmonicsRGB& light )
+{
+	debug_assert( vertex_light.size() >= frame_vertices.size() );
+
+	 // Read it into a local variable to ensure it's not re-read on each loop iteration.
+	var SphericalHarmonicsRGB l= light;
+
+	var f32 constexpr normal_scale= 1.0f / 128.0f;
+
+	foreach( pair : vertex_light.iter().zip( frame_vertices.iter() ) )
+	{
+		// TODO - optimize this code, make sure vector instructions are used.
+
+		// Since input normals are already normalized and no mixing is performed, renormalization isn't necessary.
+		var [ i8, 3 ]& n= pair.second.normal;
+		var Vec3f normal_normalized( f32(n[0]) * normal_scale, f32(n[1]) * normal_scale, f32(n[2]) * normal_scale );
+
+		pair.first=
+			ust::make_array(
+				l[0].directional_components.Dot( normal_normalized ) + l[0].constant_component,
+				l[1].directional_components.Dot( normal_normalized ) + l[1].constant_component,
+				l[2].directional_components.Dot( normal_normalized ) + l[2].constant_component,
+				0.0f );
+	}
+}
+
+fn ApplyLightToModelVerticesTwoFrames(
 	ust::array_view_imut</ ModelFrameVertex /> frame0_vertices,
 	ust::array_view_imut</ ModelFrameVertex /> frame1_vertices,
 	ust::array_view_mut</[ f32, 4 ] /> vertex_light,
@@ -1074,10 +1142,18 @@ fn ApplyLightToModelVertices(
 	debug_assert( frame0_vertices.size() == frame1_vertices.size() );
 	debug_assert( vertex_light.size() >= frame0_vertices.size() );
 
-	// TODO - optimize this code for cases where frame_mix is 0 or 1.
-	var f32 constexpr normal_scale= 1.0f / 128.0f;
-	var f32 scale0= normal_scale * ( 1.0f - frame_mix );
-	var f32 scale1= normal_scale * frame_mix;
+	// Optimization for cases where no interpolation between frames is needed.
+	if( frame_mix <= 0.001f )
+	{
+		return ApplyLightToModelVerticesSingleFrame( frame0_vertices, vertex_light, light );
+	}
+	if( frame_mix >= 0.999f )
+	{
+		return ApplyLightToModelVerticesSingleFrame( frame1_vertices, vertex_light, light );
+	}
+
+	var f32 scale0= 1.0f - frame_mix;
+	var f32 scale1= frame_mix;
 
 	 // Read it into a local variable to ensure it's not re-read on each loop iteration.
 	var SphericalHarmonicsRGB l= light;
@@ -1092,8 +1168,9 @@ fn ApplyLightToModelVertices(
 			Vec3f( f32( n0[0] ), f32( n0[1] ), f32( n0[2] ) ) * scale0 +
 			Vec3f( f32( n1[0] ), f32( n1[1] ), f32( n1[2] ) ) * scale1;
 
+		// Perform normalization, since mixing may produce non-normalized normals.
 		// TODO - try speed-up normalization.
-		var Vec3f normal_normalized= normal / ust::max( normal_scale, normal.Length() );
+		var Vec3f normal_normalized= normal / ust::max( 1.0f / 1024.0f, normal.Length() );
 
 		pair.first=
 			ust::make_array(
