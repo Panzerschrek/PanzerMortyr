@@ -62,7 +62,6 @@ PanzerMortyr game logic:
 * Adjust rotation angles for grenade projectiles, so that they look nicely.
 * Consider performing proper player to entity visibility check while doing entity state transition based on "w_zasiegu_widocznosci" property.
 * Consider disabling all or at least some weapons of the player if weapon shot start position is in water or other liquid. The original game allow shooting in water, but PanzerMortyr probably shouldn't allow this.
-* Perform camera rotation upon player's death as the original game does. It seems to be a full circle azimuth rotation and a rotation to some fixed elevation. Sometimes it's even a 180 degree flip.
 * Consider disabling burning effect for non-enemy entities. It doesn't look well for things made of iron or other non-burnable materials.
 * Consider optimizing global navigation graph calculation even more - to reduce map loading time.
 * Consider not creating edges in global navigation graph requiring jumping down too deep (to avoid fall damage).
@@ -84,6 +83,7 @@ PanzerMortyr multiplayer game logic:
 
 PanzerMortyr rendering:
 
+* Support performing camera roll rotation (needed for death camera).
 * Apply additional tessellation for tessellated polygons in order to perform smoother light values interpolation (naively triangulating them doesn't produce good result always).
 * Somehow distort/colorize the whole image while swimming in water. Maybe even add or alter global fog if camera is in water volume.
 * Consider optimizing calculating light from point light sources for models - avoid enumerating all lights.
@@ -117,7 +117,7 @@ PanzerMortyr software rendering:
 * Draw glass geometry.
 * Draw liquids.
 * Draw light shafts.
-* Draw models.
+* Draw first-person weapon models specially, so that they are always drawn atop other geometry.
 * Draw billboards.
 * Draw decals.
 * Draw snow.
@@ -125,7 +125,7 @@ PanzerMortyr software rendering:
 * Draw water circles.
 * Draw global fog.
 * Draw local fog.
-* Apply dynamic lighting to the wolrd, models, decals.
+* Apply dynamic lighting to the wolrd, decals.
 * Draw sky (with clouds).
 * Draw sun/moon.
 * Draw stars.
@@ -135,6 +135,8 @@ PanzerMortyr software rendering:
 * Implement night vision mode.
 * Implement infrared vision mode.
 * Apply world brightness setting.
+* Consider optimizing vertices transformation code by producing 4-component position vectors and thus ensuring vector instructions are used.
+* Consider optimizing vertices transformations and other heavy calculations by using "fma" instructions.
 * Consider using textures dithering (as Unreal does).
 * Draw fullscreen blending effect (for pain, burning and other similar effects).
 * Consider speeding-up software world drawing by performing drawing using multiple threads, when each thread writes into its own framebuffer and the master thread then combines these buffers together.
