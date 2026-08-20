@@ -452,13 +452,8 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 				size_type( model.num_vertices * frames.frame1 ),
 				size_type( model.num_vertices * ( frames.frame1 + 1u ) ) );
 
-		if( transformed_vertices_.size() < size_type( model.num_vertices ) )
-		{
-			// Resize only up.
-			transformed_vertices_.resize( size_type( model.num_vertices ), Vec3f::MakeZero() );
-		}
-
-		auto vertices_transformed= transformed_vertices_.range().subrange_end( size_type( model.num_vertices ) );
+		auto vertices_transformed=
+			EnsureTransformedVerticesCapacity( transformed_vertices_, size_type( model.num_vertices ) );
 
 		var Mat4f model_full_matrix= model_transormation_matrix * view_matrix;
 
@@ -473,17 +468,11 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 				frame0_vertices, frame1_vertices, vertices_transformed, frames.frame_mix, model_full_matrix );
 		}
 
-		if( vertex_light_.size() < size_type( model.num_vertices ) )
-		{
-			// Resize only up.
-			vertex_light_.resize( size_type( model.num_vertices ), ust::make_zeroed</ [ f32, 4 ] />() );
-		}
-
-		auto vertex_light= vertex_light_.range().subrange_end( size_type( model.num_vertices ) );
+		auto vertex_lights= EnsureVertexLightsCapacity( vertex_lights_, size_type( model.num_vertices ) );
 
 		if( model_object.constant_lighting )
 		{
-			foreach( &mut l : vertex_light )
+			foreach( &mut l : vertex_lights )
 			{
 				l= ust::make_array( 1.0f, 1.0f, 1.0f, 1.0f );
 			}
@@ -539,19 +528,19 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 			if( frames.frame0 == frames.frame1 )
 			{
 				// Optimization for cases where no frame mixing is necessary.
-				ApplyLightToModelVerticesSingleFrame( frame0_vertices, vertex_light, light );
+				ApplyLightToModelVerticesSingleFrame( frame0_vertices, vertex_lights, light );
 			}
 			else
 			{
 				ApplyLightToModelVerticesTwoFrames(
-					frame0_vertices, frame1_vertices, vertex_light, frames.frame_mix, light );
+					frame0_vertices, frame1_vertices, vertex_lights, frames.frame_mix, light );
 			}
 		}
 
 		if( is_fully_inside_view_frustum )
 		{
 			// This model object is fully inside view frustum. Don't need to perform clipping for each of its triangles.
-			DrawModelTrianglesWithoutFrustumPlanesClipping( rasterizer, model, vertices_transformed, vertex_light );
+			DrawModelTrianglesWithoutFrustumPlanesClipping( rasterizer, model, vertices_transformed, vertex_lights );
 		}
 		else
 		{
@@ -561,7 +550,7 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 				frustum_side_clip_planes,
 				model,
 				vertices_transformed,
-				vertex_light,
+				vertex_lights,
 				vertices_clipped0,
 				vertices_clipped1 );
 		}
@@ -1078,6 +1067,28 @@ fn PrepareQuadVertexTextureCoordinates( ust::array_view_mut</MapVertex/> quad_ve
 	}
 }
 
+fn EnsureTransformedVerticesCapacity( ust::vector</Vec3f/> &mut transformed_vertices, size_type capacity )
+	: ust::array_view_mut</ Vec3f /> @( ust::reference_notation::return_inner_references::param0 )
+{
+	if( transformed_vertices.size() < capacity )
+	{
+		// Resize only up.
+		transformed_vertices.resize( capacity, Vec3f::MakeZero() );
+	}
+	return transformed_vertices.range().subrange_end( capacity );
+}
+
+fn EnsureVertexLightsCapacity( ust::vector</ [ f32, 4 ] /> &mut vertex_lights, size_type capacity )
+	: ust::array_view_mut</ [ f32, 4 ] />   @( ust::reference_notation::return_inner_references::param0 )
+{
+	if( vertex_lights.size() < capacity )
+	{
+		// Resize only up.
+		vertex_lights.resize( capacity, ust::make_zeroed</ [ f32, 4 ] />() );
+	}
+	return vertex_lights.range().subrange_end( capacity );
+}
+
 fn TransformModelVerticesSingleFrame(
 	ust::array_view_imut</ ModelFrameVertex /> frame_vertices,
 	ust::array_view_mut</Vec3f/> vertices_transformed,
@@ -1260,15 +1271,11 @@ fn DrawMapTriangles(
 	TriangleVerticesClipped &mut vertices_clipped0,
 	TriangleVerticesClipped &mut vertices_clipped1 )
 {
-	if( vertices_transformed.size() < vertices.size() )
-	{
-		// Resize only up.
-		vertices_transformed.resize( vertices.size(), Vec3f::MakeZero() );
-	}
+	auto vertices_transformed_range= EnsureTransformedVerticesCapacity( vertices_transformed, vertices.size() );
 
 	// Transform all vertices first.
 	// Do this in separate loop to be able to read transformed vertices for more than one triangle.
-	foreach( pair : vertices_transformed.iter().zip( vertices.iter() ) )
+	foreach( pair : vertices_transformed_range.iter().zip( vertices.iter() ) )
 	{
 		// TODO - try speeding-up this code. Make sure the compiler uses vectorization for it.
 		pair.first= Vec3f( pair.second.position ) * view_matrix;
@@ -1285,7 +1292,7 @@ fn DrawMapTriangles(
 		vertices_clipped0[0]=
 			Rasterizer::Vertex
 			{
-				.position= vertices_transformed[ size_type( triangle_indices[0] ) ],
+				.position= vertices_transformed_range[ size_type( triangle_indices[0] ) ],
 				.tex_coord( v0.tex_coordinates[0], v0.tex_coordinates[1] ),
 				.light
 				[
@@ -1299,7 +1306,7 @@ fn DrawMapTriangles(
 		vertices_clipped0[1]=
 			Rasterizer::Vertex
 			{
-				.position= vertices_transformed[ size_type( triangle_indices[1] ) ],
+				.position= vertices_transformed_range[ size_type( triangle_indices[1] ) ],
 				.tex_coord( v1.tex_coordinates[0], v1.tex_coordinates[1] ),
 				.light
 				[
@@ -1313,7 +1320,7 @@ fn DrawMapTriangles(
 		vertices_clipped0[2]=
 			Rasterizer::Vertex
 			{
-				.position= vertices_transformed[ size_type( triangle_indices[2] ) ],
+				.position= vertices_transformed_range[ size_type( triangle_indices[2] ) ],
 				.tex_coord( v2.tex_coordinates[0], v2.tex_coordinates[1] ),
 				.light
 				[
