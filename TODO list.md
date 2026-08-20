@@ -117,7 +117,7 @@ PanzerMortyr software rendering:
 * Draw glass geometry.
 * Draw liquids.
 * Draw light shafts.
-* Draw models.
+* Draw first-person weapon models specially, so that they are always drawn atop other geometry.
 * Draw billboards.
 * Draw decals.
 * Draw snow.
@@ -125,7 +125,7 @@ PanzerMortyr software rendering:
 * Draw water circles.
 * Draw global fog.
 * Draw local fog.
-* Apply dynamic lighting to the wolrd, models, decals.
+* Apply dynamic lighting to the wolrd, decals.
 * Draw sky (with clouds).
 * Draw sun/moon.
 * Draw stars.
@@ -135,6 +135,8 @@ PanzerMortyr software rendering:
 * Implement night vision mode.
 * Implement infrared vision mode.
 * Apply world brightness setting.
+* Consider optimizing vertices transformation code by producing 4-component position vectors and thus ensuring vector instructions are used.
+* Consider optimizing vertices transformations and other heavy calculations by using "fma" instructions.
 * Consider using textures dithering (as Unreal does).
 * Draw fullscreen blending effect (for pain, burning and other similar effects).
 * Consider speeding-up software world drawing by performing drawing using multiple threads, when each thread writes into its own framebuffer and the master thread then combines these buffers together.
