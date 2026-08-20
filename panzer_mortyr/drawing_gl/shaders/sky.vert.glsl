@@ -18,7 +18,5 @@ void main()
 
 	vec3 view_vec_normalized= normalize( v_position );
 
-	const float horizon_level= -0.1;
-	float z_adjusted= view_vec_normalized.z + horizon_level;
-	f_tex_coord= view_vec_normalized.xy / ( abs(z_adjusted) + 0.05 );
+	f_tex_coord= view_vec_normalized.xy / ( 0.5001 - 0.5 * view_vec_normalized.z );
 }
