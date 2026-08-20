@@ -11,7 +11,7 @@ out vec4 color;
 
 void main()
 {
-	float tc_scale= 0.5;
+	float tc_scale= 1.0;
 	float layer1_shift_scale= 2.0;
 
 	vec2 tc_scaled= f_tex_coord * tc_scale;
