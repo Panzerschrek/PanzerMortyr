@@ -100,6 +100,8 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 
 	var RoomClustersHierarchy& room_clusters_hierarchy= map_data.room_clusters_hierarchy.deref();
 
+	var GameParams& game_params= game_params_.deref();
+
 	var MapVisibilityCalculator &mut visibility_calculator= map_data_full.map_visibility_calculator;
 
 	var Mat4f rotation_matrix=
@@ -229,8 +231,10 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 					rasterizer,
 					view_matrix,
 					frustum_side_clip_planes,
+					game_params,
 					map_data,
 					cluster_index,
+					dynamic_light_soruces_,
 					transformed_vertices_,
 					vertex_lights_,
 					vertices_clipped0,
@@ -260,9 +264,11 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 						rasterizer,
 						view_matrix,
 						frustum_side_clip_planes,
+						game_params,
 						map_data.textures,
 						vertices,
 						indices,
+						dynamic_light_soruces_,
 						transformed_vertices_,
 						vertex_lights_,
 						vertices_clipped0,
@@ -292,9 +298,11 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 						rasterizer,
 						view_matrix,
 						frustum_side_clip_planes,
+						game_params,
 						map_data.textures,
 						vertices,
 						indices,
+						dynamic_light_soruces_,
 						transformed_vertices_,
 						vertex_lights_,
 						vertices_clipped0,
@@ -331,9 +339,11 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 						rasterizer,
 						view_matrix,
 						frustum_side_clip_planes,
+						game_params,
 						map_data.textures,
 						temp_vertices_,
 						temp_indices_,
+						dynamic_light_soruces_,
 						transformed_vertices_,
 						vertex_lights_,
 						vertices_clipped0,
@@ -374,8 +384,10 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 			rasterizer,
 			Mat4f::MakeTranslation( dynamic_cluster_object.translation ) * view_matrix,
 			frustum_side_clip_planes,
+			game_params,
 			map_data,
 			size_type( dynamic_cluster_object.cluster_index ),
+			ust::empty_range, // TODO - pass proper lights.
 			transformed_vertices_,
 			vertex_lights_,
 			vertices_clipped0,
@@ -1248,8 +1260,10 @@ fn DrawMapClusterTriangles(
 	Rasterizer& rasterizer,
 	Mat4f& view_matrix,
 	FrustumSideClipPlanes& frustum_side_clip_planes,
+	GameParams& game_params,
 	MapDrawDataSoft& map_data,
 	size_type cluster_index,
+	ust::array_view_imut</ WorldDrawingInfo::DynamicLightSource /> dynamic_light_soruces,
 	ust::vector</Vec3f/> &mut vertices_transformed,
 	ust::vector</ [ f32, 4 ] /> &mut vertex_lights,
 	TriangleVerticesClipped &mut vertices_clipped0,
@@ -1274,9 +1288,11 @@ fn DrawMapClusterTriangles(
 		rasterizer,
 		view_matrix,
 		frustum_side_clip_planes,
+		game_params,
 		map_data.textures,
 		cluster_vertices,
 		cluster_indices,
+		dynamic_light_soruces,
 		vertices_transformed,
 		vertex_lights,
 		vertices_clipped0,
@@ -1290,9 +1306,11 @@ fn DrawMapTriangles(
 	Rasterizer& rasterizer,
 	Mat4f& view_matrix,
 	FrustumSideClipPlanes& frustum_side_clip_planes,
+	GameParams& game_params,
 	ust::array_view_imut</Color32WorldTextureWithMips/> textures,
 	ust::array_view_imut</MapVertex/> vertices,
 	ust::array_view_imut</u16/> indices,
+	ust::array_view_imut</ WorldDrawingInfo::DynamicLightSource /> dynamic_light_soruces,
 	ust::vector</Vec3f/> &mut vertices_transformed,
 	ust::vector</ [ f32, 4 ] /> &mut vertex_lights,
 	TriangleVerticesClipped &mut vertices_clipped0,
@@ -1318,6 +1336,22 @@ fn DrawMapTriangles(
 				f32( pair.second.light[1] ) * ( 1.0f / 255.0f ),
 				f32( pair.second.light[2] ) * ( 1.0f / 255.0f ),
 				f32( pair.second.light[3] ) * ( 1.0f / 255.0f ) );
+	}
+
+	if( !dynamic_light_soruces.empty() )
+	{
+		var Mat4f rotation_matrix= Mat4f::MakeIdentity();
+		foreach( pair : vertex_lights_range.iter().zip( vertices.iter() ) )
+		{
+			var SphericalHarmonicsRGB light=
+				GetLightForPointFromDynamicLightSources(
+					game_params, dynamic_light_soruces, Vec3f( pair.second.position ), 1.0f, rotation_matrix );
+
+			for( auto mut i= 0s; i < 3s; ++i )
+			{
+				pair.first[i]+= light[i].constant_component;
+			}
+		}
 	}
 
 	for( auto mut t= 0s; t + 3s <= indices.size(); t+= 3s ) label for_triangles
