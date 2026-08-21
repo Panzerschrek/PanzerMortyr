@@ -11,11 +11,7 @@ out vec4 color;
 
 void main()
 {
-	vec3 layer0_tc= vec3( f_tex_coord + fu_texture_shift, fu_texture_layer );
-	vec3 layer1_tc= vec3( f_tex_coord + fu_texture_shift * 2.0, fu_texture_layer + 1.0 );
-
-	vec3 tex_value0= texture( fu_texture, layer0_tc ).rgb;
-	vec3 tex_value1= texture( fu_texture, layer1_tc ).rgb;
-
+	vec3 tex_value0= texture( fu_texture, vec3( f_tex_coord + fu_texture_shift, fu_texture_layer ) ).rgb;
+	vec3 tex_value1= texture( fu_texture, vec3( f_tex_coord + fu_texture_shift * 2.0, fu_texture_layer + 1.0 ) ).rgb;
 	color= vec4( ( tex_value0 + tex_value1 ) * f_color, 1.0 );
 }
