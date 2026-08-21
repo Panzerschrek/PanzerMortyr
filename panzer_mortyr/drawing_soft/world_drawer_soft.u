@@ -211,7 +211,7 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 				}
 
 				// Collect dynamic light sources affecting this cluster.
-				dynamic_light_soruces_.clear();
+				dynamic_light_sources_.clear();
 				foreach( &dynamic_light_source : drawing_info.dynamic_light_sources )
 				{
 					var f32 radius= GetDynamicLightRadius( dynamic_light_source );
@@ -223,7 +223,7 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 
 					if( cluster_bbox.InstersectsOrTouches( light_bbox ) )
 					{
-						dynamic_light_soruces_.push_back( dynamic_light_source );
+						dynamic_light_sources_.push_back( dynamic_light_source );
 					}
 				}
 
@@ -234,7 +234,7 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 					game_params,
 					map_data,
 					cluster_index,
-					dynamic_light_soruces_,
+					dynamic_light_sources_,
 					transformed_vertices_,
 					vertex_lights_,
 					vertices_clipped0,
@@ -268,7 +268,7 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 						map_data.textures,
 						vertices,
 						indices,
-						dynamic_light_soruces_,
+						dynamic_light_sources_,
 						transformed_vertices_,
 						vertex_lights_,
 						vertices_clipped0,
@@ -302,7 +302,7 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 						map_data.textures,
 						vertices,
 						indices,
-						dynamic_light_soruces_,
+						dynamic_light_sources_,
 						transformed_vertices_,
 						vertex_lights_,
 						vertices_clipped0,
@@ -343,7 +343,7 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 						map_data.textures,
 						temp_vertices_,
 						temp_indices_,
-						dynamic_light_soruces_,
+						dynamic_light_sources_,
 						transformed_vertices_,
 						vertex_lights_,
 						vertices_clipped0,
@@ -1263,7 +1263,7 @@ fn DrawMapClusterTriangles(
 	GameParams& game_params,
 	MapDrawDataSoft& map_data,
 	size_type cluster_index,
-	ust::array_view_imut</ WorldDrawingInfo::DynamicLightSource /> dynamic_light_soruces,
+	ust::array_view_imut</ WorldDrawingInfo::DynamicLightSource /> dynamic_light_sources,
 	ust::vector</Vec3f/> &mut vertices_transformed,
 	ust::vector</ [ f32, 4 ] /> &mut vertex_lights,
 	TriangleVerticesClipped &mut vertices_clipped0,
@@ -1292,7 +1292,7 @@ fn DrawMapClusterTriangles(
 		map_data.textures,
 		cluster_vertices,
 		cluster_indices,
-		dynamic_light_soruces,
+		dynamic_light_sources,
 		vertices_transformed,
 		vertex_lights,
 		vertices_clipped0,
@@ -1310,7 +1310,7 @@ fn DrawMapTriangles(
 	ust::array_view_imut</Color32WorldTextureWithMips/> textures,
 	ust::array_view_imut</MapVertex/> vertices,
 	ust::array_view_imut</u16/> indices,
-	ust::array_view_imut</ WorldDrawingInfo::DynamicLightSource /> dynamic_light_soruces,
+	ust::array_view_imut</ WorldDrawingInfo::DynamicLightSource /> dynamic_light_sources,
 	ust::vector</Vec3f/> &mut vertices_transformed,
 	ust::vector</ [ f32, 4 ] /> &mut vertex_lights,
 	TriangleVerticesClipped &mut vertices_clipped0,
@@ -1338,18 +1338,36 @@ fn DrawMapTriangles(
 				f32( pair.second.light[3] ) * ( 1.0f / 255.0f ) );
 	}
 
-	if( !dynamic_light_soruces.empty() )
+	if( !dynamic_light_sources.empty() )
 	{
-		var Mat4f rotation_matrix= Mat4f::MakeIdentity();
 		foreach( pair : vertex_lights_range.iter().zip( vertices.iter() ) )
 		{
-			var SphericalHarmonicsRGB light=
-				GetLightForPointFromDynamicLightSources(
-					game_params, dynamic_light_soruces, Vec3f( pair.second.position ), 1.0f, rotation_matrix );
+			var f32 constexpr c_min_light_square_distance= 1.0f;
+			var f32 constexpr c_max_source_light_power= 3.0f;
+			var f32 c_dynamic_lights_power_bias= 1.0f / 2.0f;
 
-			for( auto mut i= 0s; i < 3s; ++i )
+			foreach( &light_source : dynamic_light_sources )
 			{
-				pair.first[i]+= light[i].constant_component;
+
+				var Vec3f vector_to_light= light_source.position - Vec3f( pair.second.position );
+
+				var f32 square_distance= ust::max( vector_to_light.SquareLength(), c_min_light_square_distance );
+
+				var f32 power_at_given_distance=
+					ust::min( c_max_source_light_power, light_source.power / square_distance - c_dynamic_lights_power_bias );
+
+				if( power_at_given_distance <= 0.0f )
+				{
+					// Too far away and thus contribution of this light source is negligible.
+					continue;
+				}
+
+				auto& in_color= game_params.light_colors[ light_source.color_index & 31u ];
+
+				for( auto mut c= 0u; c < 3u; ++c )
+				{
+					pair.first[c]+= power_at_given_distance * ( f32( in_color[ 2u - c ] ) / 255.0f );
+				}
 			}
 		}
 	}
