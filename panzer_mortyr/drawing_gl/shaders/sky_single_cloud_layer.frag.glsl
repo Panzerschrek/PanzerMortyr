@@ -11,7 +11,5 @@ out vec4 color;
 
 void main()
 {
-	float tc_scale= 1.0;
-
-	color= vec4( texture( fu_texture, vec3( f_tex_coord * tc_scale + fu_texture_shift, fu_texture_layer ) ).rgb * f_color, 1.0 );
+	color= vec4( texture( fu_texture, vec3( f_tex_coord + fu_texture_shift, fu_texture_layer ) ).rgb * f_color, 1.0 );
 }
