@@ -214,7 +214,10 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 				dynamic_light_sources_.clear();
 				foreach( &dynamic_light_source : drawing_info.dynamic_light_sources )
 				{
-					var f32 radius= GetDynamicLightRadius( dynamic_light_source );
+					var DynamicLightSourceSoft s( dynamic_light_source, game_params );
+
+					var f32 radius= s.GetRadius();
+
 					var BBox3f light_bbox
 					{
 						.min= dynamic_light_source.position - Vec3f( radius, radius, radius ),
@@ -223,7 +226,7 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 
 					if( cluster_bbox.InstersectsOrTouches( light_bbox ) )
 					{
-						dynamic_light_sources_.push_back( dynamic_light_source );
+						dynamic_light_sources_.push_back( s );
 					}
 				}
 
@@ -231,7 +234,6 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 					rasterizer,
 					view_matrix,
 					frustum_side_clip_planes,
-					game_params,
 					map_data,
 					cluster_index,
 					dynamic_light_sources_,
@@ -264,7 +266,6 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 						rasterizer,
 						view_matrix,
 						frustum_side_clip_planes,
-						game_params,
 						map_data.textures,
 						vertices,
 						indices,
@@ -298,7 +299,6 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 						rasterizer,
 						view_matrix,
 						frustum_side_clip_planes,
-						game_params,
 						map_data.textures,
 						vertices,
 						indices,
@@ -339,7 +339,6 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 						rasterizer,
 						view_matrix,
 						frustum_side_clip_planes,
-						game_params,
 						map_data.textures,
 						temp_vertices_,
 						temp_indices_,
@@ -384,7 +383,6 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 			rasterizer,
 			Mat4f::MakeTranslation( dynamic_cluster_object.translation ) * view_matrix,
 			frustum_side_clip_planes,
-			game_params,
 			map_data,
 			size_type( dynamic_cluster_object.cluster_index ),
 			ust::empty_range, // TODO - pass proper lights.
@@ -1260,10 +1258,9 @@ fn DrawMapClusterTriangles(
 	Rasterizer& rasterizer,
 	Mat4f& view_matrix,
 	FrustumSideClipPlanes& frustum_side_clip_planes,
-	GameParams& game_params,
 	MapDrawDataSoft& map_data,
 	size_type cluster_index,
-	ust::array_view_imut</ WorldDrawingInfo::DynamicLightSource /> dynamic_light_sources,
+	ust::array_view_imut</ DynamicLightSourceSoft /> dynamic_light_sources,
 	ust::vector</Vec3f/> &mut vertices_transformed,
 	ust::vector</ [ f32, 4 ] /> &mut vertex_lights,
 	TriangleVerticesClipped &mut vertices_clipped0,
@@ -1288,7 +1285,6 @@ fn DrawMapClusterTriangles(
 		rasterizer,
 		view_matrix,
 		frustum_side_clip_planes,
-		game_params,
 		map_data.textures,
 		cluster_vertices,
 		cluster_indices,
@@ -1306,11 +1302,10 @@ fn DrawMapTriangles(
 	Rasterizer& rasterizer,
 	Mat4f& view_matrix,
 	FrustumSideClipPlanes& frustum_side_clip_planes,
-	GameParams& game_params,
 	ust::array_view_imut</Color32WorldTextureWithMips/> textures,
 	ust::array_view_imut</MapVertex/> vertices,
 	ust::array_view_imut</u16/> indices,
-	ust::array_view_imut</ WorldDrawingInfo::DynamicLightSource /> dynamic_light_sources,
+	ust::array_view_imut</ DynamicLightSourceSoft /> dynamic_light_sources,
 	ust::vector</Vec3f/> &mut vertices_transformed,
 	ust::vector</ [ f32, 4 ] /> &mut vertex_lights,
 	TriangleVerticesClipped &mut vertices_clipped0,
@@ -1342,34 +1337,15 @@ fn DrawMapTriangles(
 	{
 		foreach( &light_source : dynamic_light_sources )
 		{
-			var f32 constexpr c_min_light_square_distance= 96.0f * 96.0f;
-			var f32 constexpr c_max_source_light_power= 2.0f;
-			var f32 constexpr c_dynamic_lights_power_bias= 1.0f / 4.0f;
-
-			// A hacky way to make weak light sources not so weak.
-			var f32 power_tweaked= light_source.power + 96.0f * ust::sqrt( light_source.power );
+			 // Read it into a local variable to ensure it's not re-read on each loop iteration.
+			var DynamicLightSourceSoft l= light_source;
 
 			foreach( pair : vertex_lights_range.iter().zip( vertices.iter() ) )
 			{
-				var Vec3f vector_to_light= light_source.position - Vec3f( pair.second.position );
-
-				var f32 square_distance= ust::max( vector_to_light.SquareLength(), c_min_light_square_distance );
-
-				var f32 power_at_given_distance=
-					ust::min( c_max_source_light_power, power_tweaked / square_distance - c_dynamic_lights_power_bias );
-
-				if( power_at_given_distance <= 0.0f )
-				{
-					// Too far away and thus contribution of this light source is negligible.
-					continue;
-				}
-
-				auto& in_color= game_params.light_colors[ light_source.color_index & 31u ];
-
-				for( auto mut c= 0u; c < 3u; ++c )
-				{
-					pair.first[c]+= power_at_given_distance * ( f32( in_color[ 2u - c ] ) / 255.0f );
-				}
+				var [ f32, 3 ] light= l.CalculateLightForPoint( Vec3f( pair.second.position ) );
+				pair.first[0]+= light[0];
+				pair.first[1]+= light[1];
+				pair.first[2]+= light[2];
 			}
 		}
 	}
