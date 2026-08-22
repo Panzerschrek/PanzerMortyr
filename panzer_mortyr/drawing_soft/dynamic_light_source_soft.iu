@@ -1,0 +1,90 @@
+import "/common_lib/game_params_file.iu"
+import "../world_drawing_info.iu"
+
+namespace PM
+{
+
+// This class allows calculating per-vertex light for map geometry from a dynamic light soruce.
+// Its code is tweaked in such a way so that dynamic lights applied to lowpoly map geometry looks nice.
+class DynamicLightSourceSoft
+{
+public:
+	// Allow copying, since it's pretty cheap.
+	fn constructor( mut this, DynamicLightSourceSoft& other )= default;
+	op=( mut this, DynamicLightSourceSoft& other )= default;
+
+	fn constructor( WorldDrawingInfo::DynamicLightSource& in_source, GameParams& game_params )
+		(
+			position_= in_source.position,
+			// A hacky way to make weak light sources not so weak.
+			power_= in_source.power + 96.0f * ust::sqrt( in_source.power ),
+			radius_= ust::sqrt( power_ / c_dynamic_lights_power_bias ),
+			// Convert color to f32 format once. Don't do this for each light calculation request.
+			color_= GetColor( game_params, in_source.color_index ),
+		)
+	{
+	}
+
+	// Construct a copy of light source moved relative to the original one.
+	fn constructor( DynamicLightSourceSoft& other, Vec3f& offset )
+		(
+			position_= other.position_ + offset,
+			power_= other.power_,
+			radius_= other.radius_,
+			color_= other.color_,
+		)
+	{
+	}
+
+	fn GetPosition( this ) : Vec3f&
+	{
+		return position_;
+	}
+
+	fn GetRadius( this ) : f32
+	{
+		return radius_;
+	}
+
+	fn CalculateLightForPoint( this, Vec3f& position ) : [ f32, 3 ]
+	{
+		var f32 square_distance= ust::max( ( position_ - position ).SquareLength(), c_min_light_square_distance );
+
+		var f32 power_at_given_distance=
+			ust::max(
+				0.0f, ust::min( c_max_source_light_power, power_ / square_distance - c_dynamic_lights_power_bias ) );
+
+		return
+			ust::make_array(
+				color_[0] * power_at_given_distance,
+				color_[1] * power_at_given_distance,
+				color_[2] * power_at_given_distance );
+	}
+
+private:
+	fn GetColor( GameParams& game_params, u32 color_index ) : [ f32, 3 ]
+	{
+		// Convert BGR into RGB and normalize.
+		auto& in_color= game_params.light_colors[ color_index & 31u ];
+		var [ f32, 3 ] color
+		[
+			f32( in_color[2] ) * ( 1.0f / 255.0f ),
+			f32( in_color[1] ) * ( 1.0f / 255.0f ),
+			f32( in_color[0] ) * ( 1.0f / 255.0f ),
+		];
+		return color;
+	}
+
+private:
+	var f32 constexpr c_min_light_square_distance= 96.0f * 96.0f;
+	var f32 constexpr c_max_source_light_power= 2.0f;
+	var f32 constexpr c_dynamic_lights_power_bias= 1.0f / 4.0f;
+
+private:
+	Vec3f position_;
+	f32 power_;
+	f32 radius_;
+	[ f32, 3 ] color_;
+}
+
+} // namespace PM

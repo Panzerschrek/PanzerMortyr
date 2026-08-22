@@ -125,7 +125,7 @@ PanzerMortyr software rendering:
 * Draw water circles.
 * Draw global fog.
 * Draw local fog.
-* Apply dynamic lighting to the wolrd, decals.
+* Apply dynamic lighting to decals.
 * Draw sky (with clouds).
 * Draw sun/moon.
 * Draw stars.
