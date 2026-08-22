@@ -21,7 +21,14 @@ void main()
 
 	// Use exponential fog formula.
 	// This code should match code calculating fog for semitransparent geometry and for rain/snow!
-	float fog_density= 1.0 - exp( linear_distance * fu_fog_distance_scale );
+	//float fog_density= 1.0 - exp( linear_distance * fu_fog_distance_scale );
+	float a= 1.0 + linear_distance * fu_fog_distance_scale / 32.0;
+	a*=a;
+	a*=a;
+	a*=a;
+	a*=a;
+	a*=a;
+	float fog_density= 1.0 - a;
 
 	color= vec4( fu_fog_color, fog_density );
 }
