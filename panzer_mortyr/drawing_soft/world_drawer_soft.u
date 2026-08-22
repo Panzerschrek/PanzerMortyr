@@ -378,16 +378,40 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 
 		var ZvoxCluster& cluster= clusters[ size_type( dynamic_cluster_object.cluster_index ) ];
 
-		var BBox3f mut bbox= CreateClusterBBox( cluster );
-		bbox.min+= dynamic_cluster_object.translation;
-		bbox.max+= dynamic_cluster_object.translation;
+		var BBox3f mut cluster_bbox= CreateClusterBBox( cluster );
+		cluster_bbox.min+= dynamic_cluster_object.translation;
+		cluster_bbox.max+= dynamic_cluster_object.translation;
 
-		var [ Vec3f, 8 ] bbox_corner_vertices= bbox.CreateCornerVertices();
+		var [ Vec3f, 8 ] bbox_corner_vertices= cluster_bbox.CreateCornerVertices();
 
 		if( !visibility_calculator.IsBoxVisible( bbox_corner_vertices ) ||
 			AreBoxVerticesClippedByAtLeastOneCameraClipPlane( camera_clip_planes, bbox_corner_vertices ) )
 		{
 			continue;
+		}
+
+		// Collect dynamic light sources affecting this cluster.
+		cluster_dynamic_light_sources_.clear();
+		if( dynamic_lights_enabled )
+		{
+			foreach( &dynamic_light_source : dynamic_light_sources )
+			{
+				var Vec3f& position= dynamic_light_source.GetPosition();
+				var f32 radius= dynamic_light_source.GetRadius();
+
+				var BBox3f light_bbox
+				{
+					.min= position - Vec3f( radius, radius, radius ),
+					.max= position + Vec3f( radius, radius, radius ),
+				};
+
+				if( cluster_bbox.InstersectsOrTouches( light_bbox ) )
+				{
+					// Translate dynamic light sources so that light is applied properly for translated dynamic clusters.
+					cluster_dynamic_light_sources_.push_back(
+						DynamicLightSourceSoft( dynamic_light_source, -dynamic_cluster_object.translation ) );
+				}
+			}
 		}
 
 		DrawMapClusterTriangles(
@@ -396,7 +420,7 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 			frustum_side_clip_planes,
 			map_data,
 			size_type( dynamic_cluster_object.cluster_index ),
-			ust::empty_range, // TODO - pass proper lights.
+			cluster_dynamic_light_sources_,
 			transformed_vertices_,
 			vertex_lights_,
 			vertices_clipped0,
