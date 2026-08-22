@@ -1,4 +1,5 @@
 import "/enum_string_conversions.iu"
+import "/scoped_array.iu"
 import "/string_conversions.iu"
 import "../clipping.iu"
 import "../cluster_utils.iu"
@@ -159,6 +160,14 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 
 	var bool dynamic_lights_enabled= settings_.lock_imut().deref().r_dynamic_lights_enabled;
 
+	// Convert dynamic light sources into out own format.
+	scoped_array DynamicLightSourceSoft dynamic_light_sources[ drawing_info.dynamic_light_sources.size() ](
+		drawing_info.dynamic_light_sources.iter().map(
+			lambda[ &game_params ]( WorldDrawingInfo::DynamicLightSource& s ) : DynamicLightSourceSoft
+			{
+				return DynamicLightSourceSoft( s, game_params );
+			} ) );
+
 	var Rasterizer::Vertex dummy_vertex
 	{
 		.position= Vec3f::MakeZero(),
@@ -212,21 +221,20 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 
 				// Collect dynamic light sources affecting this cluster.
 				cluster_dynamic_light_sources_.clear();
-				foreach( &dynamic_light_source : drawing_info.dynamic_light_sources )
+				foreach( &dynamic_light_source : dynamic_light_sources )
 				{
-					var DynamicLightSourceSoft s( dynamic_light_source, game_params );
-
-					var f32 radius= s.GetRadius();
+					var Vec3f& position= dynamic_light_source.GetPosition();
+					var f32 radius= dynamic_light_source.GetRadius();
 
 					var BBox3f light_bbox
 					{
-						.min= dynamic_light_source.position - Vec3f( radius, radius, radius ),
-						.max= dynamic_light_source.position + Vec3f( radius, radius, radius ),
+						.min= position - Vec3f( radius, radius, radius ),
+						.max= position + Vec3f( radius, radius, radius ),
 					};
 
 					if( cluster_bbox.InstersectsOrTouches( light_bbox ) )
 					{
-						cluster_dynamic_light_sources_.push_back( s );
+						cluster_dynamic_light_sources_.push_back( dynamic_light_source );
 					}
 				}
 
