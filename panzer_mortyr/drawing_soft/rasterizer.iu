@@ -762,34 +762,66 @@ public:
 			var size_type offset_start( y * surface.stride );
 			var size_type offset_end= offset_start + size_type( surface.size[0] );
 
-			auto dst_colors= surface.pixels.subrange( offset_start, offset_end );
-			auto dst_depth= depth_buffer.subrange( offset_start, offset_end );
+			auto line_colors= surface.pixels.subrange( offset_start, offset_end );
+			auto line_depth= depth_buffer.subrange( offset_start, offset_end );
 
-			auto mut x= 0u;
-
-			foreach( pair : dst_depth.iter().zip( dst_colors.iter() ) )
-			{
-				if( pair.first <= 0.0f )
+			auto calc_tc=
+				lambda[&]( u32 x, u32 y ) : Vec2f
 				{
-					var Vec3f coord( f32(x), f32(y), 1.0f );
+					var Vec3f coord_transformed= Vec3f( f32(x), f32(y), 1.0f ) * m;
 
-					var Vec3f coord_transformed= coord * m;
-
+					// Use formula close to what Quake uses.
 					var Vec3f direction( coord_transformed.xy(), coord_transformed.z * 3.0f );
-
 					var Vec2f tex_coord_base= direction.xy() * ( 1.0f / direction.Length() );
 
-					var [ u32, 2 ] tex_coord
-					[
-						( i32( ( tex_coord_base.x + 2.0f ) * 128.0f ) & 127 ),
-						( i32( ( tex_coord_base.y + 2.0f ) * 128.0f ) & 127 ),
-					];
+					return ( tex_coord_base + Vec2f( 2.0f, 2.0f ) ) * 128.0f;
+				};
 
-					// TODO - modulate texture by sky gradient.
-					pair.second= texture[ tex_coord[1] ][ tex_coord[0] ];
+			// Use approximation of non-linear texture mapping formula
+			// using a fixed set of spans covering the entire screen width.
+
+			var u32 constexpr c_num_spans= 16u;
+
+			var u32 mut next_x_start= 0u;
+			var Vec2f mut next_tc_start= calc_tc( next_x_start, y );
+
+			for( auto mut span= 0u; span < c_num_spans; ++span )
+			{
+				var u32 x_start= next_x_start;
+				var u32 x_end= ( span + 1u ) * surface.size[0] / c_num_spans;
+
+				var Vec2f tc_start= next_tc_start;
+				var Vec2f tc_end= calc_tc( x_end, y );
+
+				var u32 x_delta= x_end - x_start;
+
+				var Vec2f tc_step= ( tc_end - tc_start ) * ( 1.0f / f32( x_delta ) );
+
+				var Vec2f mut pixel_tc= tc_start;
+
+				auto span_colors= line_colors.subrange( size_type( x_start ), size_type( x_end ) );
+				auto span_depth= line_depth.subrange( size_type( x_start ), size_type( x_end ) );
+
+				foreach( pair : span_depth.iter().zip( span_colors.iter() ) )
+				{
+					if( pair.first <= 0.0f )
+					{
+						var [ u32, 2 ] tex_coord
+						[
+							( i32( pixel_tc.x ) & 127 ),
+							( i32( pixel_tc.y ) & 127 ),
+						];
+
+						// TODO - modulate texture by sky gradient.
+						pair.second= texture[ tex_coord[1] ][ tex_coord[0] ];
+
+					}
+
+					pixel_tc+= tc_step;
 				}
 
-				++x;
+				next_x_start= x_end;
+				next_tc_start= tc_end;
 			}
 		}
 	}
