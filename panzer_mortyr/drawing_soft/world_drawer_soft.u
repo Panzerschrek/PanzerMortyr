@@ -681,7 +681,41 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 
 	if( size_type( map_data.clouds_texture_layer ) < map_data.textures.size() )
 	{
-		var Color32WorldTextureWithMips& texture= map_data.textures[size_type( map_data.clouds_texture_layer ) ];
+		var Color32WorldTextureWithMips& texture= map_data.textures[ size_type( map_data.clouds_texture_layer ) ];
+
+		var u32 tc_shift( drawing_info.game_time_s * 2.0f );
+
+		for( auto mut y= 0u; y < 256u; ++y )
+		{
+			var [ Color32, 128 ]& src_line= texture[0][ ( y + tc_shift ) & 127u ];
+			var [ Color32, 256 ] &mut dst_line= sky_texture_[y];
+
+			for( auto mut x= 0u; x < 256u; ++x )
+			{
+				var f32 color_mix= f32( x + y ) * ( c_half_sqrt_2 / 256.0f ) + ( 0.5f - c_half_sqrt_2 );
+
+				var f32 one_minus_color_mix= 1.0f - color_mix;
+
+				var [ f32, 3 ] color
+				[
+					ust::max( 0.0f, map_data.sky_colors[1][0] * color_mix + map_data.sky_colors[0][0] * one_minus_color_mix ),
+					ust::max( 0.0f, map_data.sky_colors[1][1] * color_mix + map_data.sky_colors[0][1] * one_minus_color_mix ),
+					ust::max( 0.0f, map_data.sky_colors[1][2] * color_mix + map_data.sky_colors[0][2] * one_minus_color_mix ),
+				];
+
+				var RGBAColor texture_value= Color32ToComponents( src_line[ ( x + tc_shift ) & 127u ] );
+
+				var RGBAColor pixel_color_components
+				[
+					( ust::min( u32( f32( i32( texture_value[0] ) ) * color[0] ), 255u ) ),
+					( ust::min( u32( f32( i32( texture_value[1] ) ) * color[1] ), 255u ) ),
+					( ust::min( u32( f32( i32( texture_value[2] ) ) * color[2] ), 255u ) ),
+					0u8, // Don't care about alpha.
+				];
+
+				dst_line[x]= Color32FromComponents( pixel_color_components );
+			}
+		}
 
 		var Mat3f viewport_inverse_transformation_matrix
 		{
@@ -719,7 +753,7 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 			perspective_inverse_matrix *
 			rotation_inverse_matrix;
 
-		rasterizer.FillSky( texture[0], map_data.sky_colors, sky_inverse_transformation_matrix );
+		rasterizer.FillSky( sky_texture_, sky_inverse_transformation_matrix );
 	}
 
 	return stats;
