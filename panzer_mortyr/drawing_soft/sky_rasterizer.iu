@@ -22,28 +22,28 @@ public:
 		var f32 min_y= ust::min( v0.y, ust::min( v1.y, v2.y ) );
 		var f32 max_y= ust::max( v0.y, ust::max( v1.y, v2.y ) );
 
-		var [ f32, 2 ] pixel_to_span_scale
+		var [ f32, 2 ] pixel_to_tile_scale
 		[
-			f32( c_num_spans[0] ) / f32( surface_.size[0] ),
-			f32( c_num_spans[1] ) / f32( surface_.size[1] ),
+			f32( c_num_tiles[0] ) / f32( surface_.size[0] ),
+			f32( c_num_tiles[1] ) / f32( surface_.size[1] ),
 		];
 
-		var i32 min_span_x= ust::max( 0, i32( min_x * pixel_to_span_scale[0] ) );
-		var i32 max_span_x= ust::min( i32( max_x * pixel_to_span_scale[0] ), i32( c_num_spans[0] ) - 1 );
+		var i32 min_tile_x= ust::max( 0, i32( min_x * pixel_to_tile_scale[0] ) );
+		var i32 max_tile_x= ust::min( i32( max_x * pixel_to_tile_scale[0] ), i32( c_num_tiles[0] ) - 1 );
 
-		var i32 min_span_y= ust::max( 0, i32( min_y * pixel_to_span_scale[1] ) );
-		var i32 max_span_y= ust::min( i32( max_y * pixel_to_span_scale[1] ), i32( c_num_spans[1] ) - 1 );
+		var i32 min_tile_y= ust::max( 0, i32( min_y * pixel_to_tile_scale[1] ) );
+		var i32 max_tile_y= ust::min( i32( max_y * pixel_to_tile_scale[1] ), i32( c_num_tiles[1] ) - 1 );
 
-		for( auto mut y= min_span_y; y <= max_span_y; ++y )
+		for( auto mut y= min_tile_y; y <= max_tile_y; ++y )
 		{
-			var u32 mut val( filled_vertical_spans_[ u32(y) ] );
+			var u32 mut val( filled_tiles_[ u32(y) ] );
 
-			for( auto mut x= min_span_x; x <= max_span_x; ++x )
+			for( auto mut x= min_tile_x; x <= max_tile_x; ++x )
 			{
 				val|= 1u << u32(x);
 			}
 
-			filled_vertical_spans_[ u32(y) ]= u16( val );
+			filled_tiles_[ u32(y) ]= u16( val );
 		}
 	}
 
@@ -76,7 +76,12 @@ public:
 
 		for( auto mut y= 0u; y < surface.size[1]; ++y )
 		{
-			var u32 vertical_span_mask( filled_vertical_spans_[ y * c_num_spans[1] / surface.size[1] ] );
+			var u32 row_tiles_mask( filled_tiles_[ y * c_num_tiles[1] / surface.size[1] ] );
+
+			if( row_tiles_mask == 0u )
+			{
+				continue;
+			}
 
 			var size_type offset_start( y * surface.stride );
 			var size_type offset_end= offset_start + size_type( surface.size[0] );
@@ -124,16 +129,16 @@ public:
 			var u32 mut next_x_start= 0u;
 			auto [ mut next_tc_start_fixed16, mut next_color_start_fixed18 ]= calc_params( next_x_start, y );
 
-			for( auto mut span= 0u; span < c_num_spans[0]; ++span )
+			for( auto mut span= 0u; span < c_num_tiles[0]; ++span )
 			{
 				var u32 x_start= next_x_start;
-				var u32 x_end= ( span + 1u ) * surface.size[0] / c_num_spans[0];
+				var u32 x_end= ( span + 1u ) * surface.size[0] / c_num_tiles[0];
 
 				var [ i32, 2 ] tc_start_fixed16= next_tc_start_fixed16;
 				var [ i32, 3 ] color_start_fixed18= next_color_start_fixed18;
 				auto [ tc_end_fixed16, color_end_fixed18 ]= calc_params( x_end, y );
 
-				if( ( vertical_span_mask & ( 1u << span ) ) != 0u )
+				if( ( row_tiles_mask & ( 1u << span ) ) != 0u )
 				{
 					var i32 x_delta( x_end - x_start );
 
@@ -225,13 +230,14 @@ public:
 private:
 	var [ ust::reference_notation::pollution_element, 2 ] c_constructor_pollution[ [ "0a", "1a" ], [ "0b", "2a" ] ];
 
-	var [ u32, 2 ] constexpr c_num_spans[ 16u, 32u ];
+	var [ u32, 2 ] constexpr c_num_tiles[ 16u, 32u ];
 
 private:
 	Color32ImageView @("a") surface_;
 	ust::array_view_mut</f32/> @("b") depth_buffer_;
 
-	[ u16, c_num_spans[1] ] filled_vertical_spans_[ 0u16 ... ];
+	// For each row store a bit mask representing filled bits of each tile in a row.
+	[ u16, c_num_tiles[1] ] filled_tiles_[ 0u16 ... ];
 }
 
 } // namespace PM
