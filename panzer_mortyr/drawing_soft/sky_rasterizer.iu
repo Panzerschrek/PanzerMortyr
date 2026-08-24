@@ -16,17 +16,34 @@ public:
 
 	fn AddSkyTriangle( mut this, Vec2f& v0, Vec2f& v1, Vec2f& v2 )
 	{
+		var f32 min_x= ust::min( v0.x, ust::min( v1.x, v2.x ) );
+		var f32 max_x= ust::max( v0.x, ust::max( v1.x, v2.x ) );
+
 		var f32 min_y= ust::min( v0.y, ust::min( v1.y, v2.y ) );
 		var f32 max_y= ust::max( v0.y, ust::max( v1.y, v2.y ) );
 
-		var f32 pixel_to_span_scale= f32( c_num_spans[1] ) / f32( surface_.size[1] );
+		var [ f32, 2 ] pixel_to_span_scale
+		[
+			f32( c_num_spans[0] ) / f32( surface_.size[0] ),
+			f32( c_num_spans[1] ) / f32( surface_.size[1] ),
+		];
 
-		var i32 min_span_y= ust::max( 0, i32( min_y * pixel_to_span_scale ) );
-		var i32 max_span_y= ust::min( i32( max_y * pixel_to_span_scale ), i32( c_num_spans[1] ) - 1 );
+		var i32 min_span_x= ust::max( 0, i32( min_x * pixel_to_span_scale[0] ) );
+		var i32 max_span_x= ust::min( i32( max_x * pixel_to_span_scale[0] ), i32( c_num_spans[0] ) - 1 );
+
+		var i32 min_span_y= ust::max( 0, i32( min_y * pixel_to_span_scale[1] ) );
+		var i32 max_span_y= ust::min( i32( max_y * pixel_to_span_scale[1] ), i32( c_num_spans[1] ) - 1 );
 
 		for( auto mut y= min_span_y; y <= max_span_y; ++y )
 		{
-			filled_vertical_spans_[ u32(y) ]= true;
+			var u32 mut val( filled_vertical_spans_[ u32(y) ] );
+
+			for( auto mut x= min_span_x; x <= max_span_x; ++x )
+			{
+				val|= 1u << u32(x);
+			}
+
+			filled_vertical_spans_[ u32(y) ]= u16( val );
 		}
 	}
 
@@ -59,10 +76,7 @@ public:
 
 		for( auto mut y= 0u; y < surface.size[1]; ++y )
 		{
-			if( !filled_vertical_spans_[ y * c_num_spans[1] / surface.size[1] ] )
-			{
-				continue;
-			}
+			var u32 vertical_span_mask( filled_vertical_spans_[ y * c_num_spans[1] / surface.size[1] ] );
 
 			var size_type offset_start( y * surface.stride );
 			var size_type offset_end= offset_start + size_type( surface.size[0] );
@@ -119,83 +133,86 @@ public:
 				var [ i32, 3 ] color_start_fixed18= next_color_start_fixed18;
 				auto [ tc_end_fixed16, color_end_fixed18 ]= calc_params( x_end, y );
 
-				var i32 x_delta( x_end - x_start );
-
-				var [ i32, 2 ] tc_step_fixed16
-				[
-					( ( tc_end_fixed16[0] - tc_start_fixed16[0] ) / x_delta ),
-					( ( tc_end_fixed16[1] - tc_start_fixed16[1] ) / x_delta ),
-				];
-
-				var [ i32, 3 ] color_step_fixed18
-				[
-					( ( color_end_fixed18[0] - color_start_fixed18[0] ) / x_delta ),
-					( ( color_end_fixed18[1] - color_start_fixed18[1] ) / x_delta ),
-					( ( color_end_fixed18[2] - color_start_fixed18[2] ) / x_delta ),
-				];
-
-				var [ i32, 2 ] mut pixel_tc_fixed16= tc_start_fixed16;
-
-				var [ i32, 3 ] mut pixel_color_fixed18= color_start_fixed18;
-
-				auto span_colors= line_colors.subrange( size_type( x_start ), size_type( x_end ) );
-				auto span_depth= line_depth.subrange( size_type( x_start ), size_type( x_end ) );
-
-				foreach( pair : span_depth.iter().zip( span_colors.iter() ) )
+				if( ( vertical_span_mask & ( 1u << span ) ) != 0u )
 				{
-					if( pair.first <= 0.0f )
+					var i32 x_delta( x_end - x_start );
+
+					var [ i32, 2 ] tc_step_fixed16
+					[
+						( ( tc_end_fixed16[0] - tc_start_fixed16[0] ) / x_delta ),
+						( ( tc_end_fixed16[1] - tc_start_fixed16[1] ) / x_delta ),
+					];
+
+					var [ i32, 3 ] color_step_fixed18
+					[
+						( ( color_end_fixed18[0] - color_start_fixed18[0] ) / x_delta ),
+						( ( color_end_fixed18[1] - color_start_fixed18[1] ) / x_delta ),
+						( ( color_end_fixed18[2] - color_start_fixed18[2] ) / x_delta ),
+					];
+
+					var [ i32, 2 ] mut pixel_tc_fixed16= tc_start_fixed16;
+
+					var [ i32, 3 ] mut pixel_color_fixed18= color_start_fixed18;
+
+					auto span_colors= line_colors.subrange( size_type( x_start ), size_type( x_end ) );
+					auto span_depth= line_depth.subrange( size_type( x_start ), size_type( x_end ) );
+
+					foreach( pair : span_depth.iter().zip( span_colors.iter() ) )
 					{
-						var [ u32, 2 ] tex_coord0
-						[
-							( ( pixel_tc_fixed16[0] >> 16 ) & 127 ),
-							( ( pixel_tc_fixed16[1] >> 16 ) & 127 ),
-						];
-
-						var RGBAColor texture0_value= Color32ToComponents( texture0[ tex_coord0[1] ][ tex_coord0[0] ] );
-
-						static_if( use_two_textures )
+						if( pair.first <= 0.0f )
 						{
-							var [ u32, 2 ] tex_coord1
+							var [ u32, 2 ] tex_coord0
 							[
-								( ( ( pixel_tc_fixed16[0] + extra_texture_layer_shift_fixed16 ) >> 16 ) & 127 ),
-								( ( ( pixel_tc_fixed16[1] + extra_texture_layer_shift_fixed16 ) >> 16 ) & 127 ),
+								( ( pixel_tc_fixed16[0] >> 16 ) & 127 ),
+								( ( pixel_tc_fixed16[1] >> 16 ) & 127 ),
 							];
 
-							var RGBAColor texture1_value= Color32ToComponents( texture1[ tex_coord1[1] ][ tex_coord1[0] ] );
+							var RGBAColor texture0_value= Color32ToComponents( texture0[ tex_coord0[1] ][ tex_coord0[0] ] );
 
-							var RGBAColor pixel_color_components
-							[
-								( ust::min( ( ( u32( texture0_value[0] ) + u32( texture1_value[0] ) ) * u32( pixel_color_fixed18[0] ) ) >> 18, 255u ) ),
-								( ust::min( ( ( u32( texture0_value[1] ) + u32( texture1_value[1] ) ) * u32( pixel_color_fixed18[1] ) ) >> 18, 255u ) ),
-								( ust::min( ( ( u32( texture0_value[2] ) + u32( texture1_value[2] ) ) * u32( pixel_color_fixed18[2] ) ) >> 18, 255u ) ),
-								0u8, // Don't care about alpha.
-							];
+							static_if( use_two_textures )
+							{
+								var [ u32, 2 ] tex_coord1
+								[
+									( ( ( pixel_tc_fixed16[0] + extra_texture_layer_shift_fixed16 ) >> 16 ) & 127 ),
+									( ( ( pixel_tc_fixed16[1] + extra_texture_layer_shift_fixed16 ) >> 16 ) & 127 ),
+								];
 
-							pair.second= Color32FromComponents( pixel_color_components );
+								var RGBAColor texture1_value= Color32ToComponents( texture1[ tex_coord1[1] ][ tex_coord1[0] ] );
+
+								var RGBAColor pixel_color_components
+								[
+									( ust::min( ( ( u32( texture0_value[0] ) + u32( texture1_value[0] ) ) * u32( pixel_color_fixed18[0] ) ) >> 18, 255u ) ),
+									( ust::min( ( ( u32( texture0_value[1] ) + u32( texture1_value[1] ) ) * u32( pixel_color_fixed18[1] ) ) >> 18, 255u ) ),
+									( ust::min( ( ( u32( texture0_value[2] ) + u32( texture1_value[2] ) ) * u32( pixel_color_fixed18[2] ) ) >> 18, 255u ) ),
+									0u8, // Don't care about alpha.
+								];
+
+								pair.second= Color32FromComponents( pixel_color_components );
+							}
+							else
+							{
+								ust::ignore_unused( extra_texture_layer_shift_fixed16 );
+								ust::ignore_unused( texture1 );
+
+								var RGBAColor pixel_color_components
+								[
+									( ust::min( ( ( u32( texture0_value[0] ) ) * u32( pixel_color_fixed18[0] ) ) >> 18, 255u ) ),
+									( ust::min( ( ( u32( texture0_value[1] ) ) * u32( pixel_color_fixed18[1] ) ) >> 18, 255u ) ),
+									( ust::min( ( ( u32( texture0_value[2] ) ) * u32( pixel_color_fixed18[2] ) ) >> 18, 255u ) ),
+									0u8, // Don't care about alpha.
+								];
+
+								pair.second= Color32FromComponents( pixel_color_components );
+							}
 						}
-						else
-						{
-							ust::ignore_unused( extra_texture_layer_shift_fixed16 );
-							ust::ignore_unused( texture1 );
 
-							var RGBAColor pixel_color_components
-							[
-								( ust::min( ( ( u32( texture0_value[0] ) ) * u32( pixel_color_fixed18[0] ) ) >> 18, 255u ) ),
-								( ust::min( ( ( u32( texture0_value[1] ) ) * u32( pixel_color_fixed18[1] ) ) >> 18, 255u ) ),
-								( ust::min( ( ( u32( texture0_value[2] ) ) * u32( pixel_color_fixed18[2] ) ) >> 18, 255u ) ),
-								0u8, // Don't care about alpha.
-							];
+						pixel_tc_fixed16[0]+= tc_step_fixed16[0];
+						pixel_tc_fixed16[1]+= tc_step_fixed16[1];
 
-							pair.second= Color32FromComponents( pixel_color_components );
-						}
+						pixel_color_fixed18[0]+= color_step_fixed18[0];
+						pixel_color_fixed18[1]+= color_step_fixed18[1];
+						pixel_color_fixed18[2]+= color_step_fixed18[2];
 					}
-
-					pixel_tc_fixed16[0]+= tc_step_fixed16[0];
-					pixel_tc_fixed16[1]+= tc_step_fixed16[1];
-
-					pixel_color_fixed18[0]+= color_step_fixed18[0];
-					pixel_color_fixed18[1]+= color_step_fixed18[1];
-					pixel_color_fixed18[2]+= color_step_fixed18[2];
 				}
 
 				next_x_start= x_end;
@@ -214,7 +231,7 @@ private:
 	Color32ImageView @("a") surface_;
 	ust::array_view_mut</f32/> @("b") depth_buffer_;
 
-	[ bool, c_num_spans[1] ] filled_vertical_spans_[ false ... ];
+	[ u16, c_num_spans[1] ] filled_vertical_spans_[ 0u16 ... ];
 }
 
 } // namespace PM
