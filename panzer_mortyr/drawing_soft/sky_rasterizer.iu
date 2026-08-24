@@ -10,68 +10,47 @@ class SkyRasterizer
 public:
 	fn constructor( mut this, Color32ImageView surface, ust::array_view_mut</f32/> depth_buffer )
 		@( c_constructor_pollution )
-		( surface_= surface, depth_buffer_= depth_buffer )
+		(
+			surface_= surface,
+			depth_buffer_= depth_buffer,
+			pixel_to_tile_scale_(
+				f32( c_num_tiles[0] ) / f32( surface.size[0] ),
+				f32( c_num_tiles[1] ) / f32( surface.size[1] ) )
+		)
 	{
 	}
 
 	fn AddSkyTriangle( mut this, Vec2f& v0, Vec2f& v1, Vec2f& v2 )
 	{
-		var f32 min_x= ust::min( v0.x, ust::min( v1.x, v2.x ) );
-		var f32 max_x= ust::max( v0.x, ust::max( v1.x, v2.x ) );
+		// Perform here conservarive rasterization of the given triangle into tiles grid.
 
-		var f32 min_y= ust::min( v0.y, ust::min( v1.y, v2.y ) );
-		var f32 max_y= ust::max( v0.y, ust::max( v1.y, v2.y ) );
+		var [ Vec2f, 3 ] vertices[ v0 * pixel_to_tile_scale_, v1 * pixel_to_tile_scale_, v2 * pixel_to_tile_scale_ ];
+		var [ Vec2f, 3 ] edges[ vertices[1] - vertices[0], vertices[2] - vertices[1], vertices[0] - vertices[2] ];
 
-		var [ f32, 2 ] pixel_to_tile_scale
-		[
-			f32( c_num_tiles[0] ) / f32( surface_.size[0] ),
-			f32( c_num_tiles[1] ) / f32( surface_.size[1] ),
-		];
+		var i32 min_tile_y= ust::max( 0, i32( ust::min( vertices[0].y, ust::min( vertices[1].y, vertices[2].y ) ) ) );
+		var i32 max_tile_y=
+			ust::min(
+				i32( ust::max( vertices[0].y, ust::max( vertices[1].y, vertices[2].y ) ) ),
+				i32( c_num_tiles[1] - 1u ) );
 
-		var i32 min_tile_x= ust::max( 0, i32( min_x * pixel_to_tile_scale[0] ) );
-		var i32 max_tile_x= ust::min( i32( max_x * pixel_to_tile_scale[0] ), i32( c_num_tiles[0] ) - 1 );
-
-		var i32 min_tile_y= ust::max( 0, i32( min_y * pixel_to_tile_scale[1] ) );
-		var i32 max_tile_y= ust::min( i32( max_y * pixel_to_tile_scale[1] ), i32( c_num_tiles[1] ) - 1 );
-
-		if( false )
-		{
-			for( auto mut y= min_tile_y; y <= max_tile_y; ++y )
-			{
-				var u32 mut val( filled_tiles_[ u32(y) ] );
-
-				for( auto mut x= min_tile_x; x <= max_tile_x; ++x )
-				{
-					val|= 1u << u32(x);
-				}
-
-				filled_tiles_[ u32(y) ]= val;
-			}
-		}
-
-		var [ [ Vec2f, 2 ], 3 ] edges
-		[
-			[ v0 * Vec2f( pixel_to_tile_scale ), Vec2f( pixel_to_tile_scale ) * ( v1 - v0 ) ],
-			[ v1 * Vec2f( pixel_to_tile_scale ), Vec2f( pixel_to_tile_scale ) * ( v2 - v1 ) ],
-			[ v2 * Vec2f( pixel_to_tile_scale ), Vec2f( pixel_to_tile_scale ) * ( v0 - v2 ) ],
-		];
-
+		// Iterate with <= in order to iterate over all lines covered by the given triangle.
 		for( auto mut y= min_tile_y; y <= max_tile_y; ++y )
 		{
 			var f32 mut min_x= 0.0f;
-			var f32 mut max_x= f32( c_num_tiles[1] );
+			var f32 mut max_x= f32( c_num_tiles[0] );
 
-			var f32 center_y= f32(y) + 0.5f;
+			var f32 center_y= f32(y) + 0.5f; // Perform conservative rasterization for pixel centers.
 
-			foreach( &edge_pair : edges )
+			for( auto mut e= 0s; e < 3s; ++e )
 			{
-				var Vec2f& edge_start= edge_pair[0];
-				var Vec2f& edge_vec= edge_pair[1];
+				var Vec2f& edge_start= vertices[e];
+				var Vec2f& edge_vec= edges[e];
 
 				if( edge_vec.y > 0.0f )
 				{
 					var f32 abs_edge_vec_y= edge_vec.y;
 
+					// The term with 0.5 allows us doing conservative rasterization.
 					var f32 x_delta_scaled=
 						edge_vec.x * ( center_y - edge_start.y ) + 0.5f * ( abs_edge_vec_y + ust::abs( edge_vec.x ) );
 
@@ -81,7 +60,7 @@ public:
 					{
 						max_x= 0.0f;
 					}
-					else if( x_scaled > f32( c_num_tiles[1] ) * abs_edge_vec_y )
+					else if( x_scaled > f32( c_num_tiles[0] ) * abs_edge_vec_y )
 					{}
 					else
 					{
@@ -92,6 +71,7 @@ public:
 				{
 					var f32 abs_edge_vec_y= -edge_vec.y;
 
+					// The term with 0.5 allows us doing conservative rasterization.
 					var f32 x_delta_scaled=
 						edge_vec.x * ( edge_start.y - center_y ) - 0.5f * ( abs_edge_vec_y + ust::abs( edge_vec.x ) );
 
@@ -99,9 +79,9 @@ public:
 
 					if( x_scaled < 0.0f )
 					{}
-					else if( x_scaled > f32( c_num_tiles[1] ) * abs_edge_vec_y )
+					else if( x_scaled > f32( c_num_tiles[0] ) * abs_edge_vec_y )
 					{
-						min_x= f32( c_num_tiles[1] );
+						min_x= f32( c_num_tiles[0] );
 					}
 					else
 					{
@@ -116,14 +96,17 @@ public:
 			var i32 min_x_i= ust::max( 0, i32( ust::round( min_x ) ) );
 			var i32 max_x_i= ust::min( i32( ust::round( max_x ) ), i32( c_num_tiles[0] ) );
 
-			var u32 mut val( filled_tiles_[ u32(y) ] );
-
-			for( auto mut x= min_x_i; x < max_x_i; ++x )
+			if( min_x_i < max_x_i )
 			{
-				val|= 1u << u32(x);
-			}
+				var u32 mut val( filled_tiles_[ u32(y) ] );
 
-			filled_tiles_[ u32(y) ]= val;
+				for( auto mut x= min_x_i; x < max_x_i; ++x )
+				{
+					val|= 1u << u32(x);
+				}
+
+				filled_tiles_[ u32(y) ]= val;
+			}
 		}
 	}
 
@@ -313,8 +296,10 @@ private:
 	var [ u32, 2 ] constexpr c_num_tiles[ 32u /* TODO - use 16 instead */, 64u ];
 
 private:
-	Color32ImageView @("a") surface_;
-	ust::array_view_mut</f32/> @("b") depth_buffer_;
+	Color32ImageView @("a") imut surface_;
+	ust::array_view_mut</f32/> @("b") imut depth_buffer_;
+
+	Vec2f imut pixel_to_tile_scale_;
 
 	// For each row store a bit mask representing filled bits of each tile in a row.
 	[ u32, c_num_tiles[1] ] filled_tiles_[ 0u32 ... ];
