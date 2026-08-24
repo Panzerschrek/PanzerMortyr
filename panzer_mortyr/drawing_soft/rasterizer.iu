@@ -1,6 +1,5 @@
 import "/assert.iu"
-import "../camera_utils.iu"
-import "../math_constants.iu"
+import "../mat.iu"
 import "texture.iu"
 
 namespace PM
@@ -70,6 +69,30 @@ public:
 		@( c_constructor_pollution )
 		( surface_= surface, depth_buffer_= depth_buffer )
 	{
+	}
+
+	fn GetSurface( this )
+		: Color32ImageView @( ust::reference_notation::return_inner_references::param0_inner_reference0 )
+	{
+		return surface_;
+	}
+
+	fn GetDepthBuffer( this )
+		: ust::array_view_mut</f32/> @( ust::reference_notation::return_inner_references::param_n_inner_reference_m( 0u8, 1u8 ) )
+	{
+		return depth_buffer_;
+	}
+
+	fn GetSurfaceAndDepthBuffer( this )
+		: tup[ Color32ImageView, ust::array_view_mut</f32/> ] @( c_get_surface_and_depth_buffer_return_inner_references )
+	{
+		var tup[ Color32ImageView, ust::array_view_mut</f32/> ] res
+		[
+			surface_,
+			depth_buffer_,
+		];
+
+		return res;
 	}
 
 	template</
@@ -750,178 +773,6 @@ public:
 		}
 	}
 
-	template</ bool use_two_textures />
-	fn FillSky(
-		this,
-		Color32SquareTexture</ 7s />& texture0,
-		Color32SquareTexture</ 7s />& texture1,
-		f32 texture_shift,
-		[ [ f32, 3 ], 2 ]& sky_colors,
-		Mat3f& transform_matrix )
-	{
-		var Color32ImageView surface= surface_;
-		var ust::array_view_mut</f32/> depth_buffer= depth_buffer_;
-
-		// Read it into a local variable to ensure it's not re-read on each loop iteration.
-		var Mat3f transform_matrix_local= transform_matrix;
-
-		// Pre-scale colors to fixed18 range.
-		var [ [ f32, 3 ], 2 ] colors
-		[
-			[ sky_colors[0][0] * f32( 1 << 18 ), sky_colors[0][1] * f32( 1 << 18 ), sky_colors[0][2] * f32( 1 << 18 ) ],
-			[ sky_colors[1][0] * f32( 1 << 18 ), sky_colors[1][1] * f32( 1 << 18 ), sky_colors[1][2] * f32( 1 << 18 ) ],
-		];
-
-		// Ensure shift in range 0 to 1.
-		var f32 texture_shift_wrapped= texture_shift - ust::floor( texture_shift );
-
-		var i32 extra_texture_layer_shift_fixed16( ( 128.0f * 65536.0f ) * texture_shift_wrapped );
-
-		for( auto mut y= 0u; y < surface.size[1]; ++y )
-		{
-			var size_type offset_start( y * surface.stride );
-			var size_type offset_end= offset_start + size_type( surface.size[0] );
-
-			auto line_colors= surface.pixels.subrange( offset_start, offset_end );
-			auto line_depth= depth_buffer.subrange( offset_start, offset_end );
-
-			auto calc_params=
-				lambda[&]( u32 x, u32 y ) : tup[ [ i32, 2 ], [ i32, 3 ] ]
-				{
-					var Vec3f coord_transformed= Vec3f( f32(x), f32(y), 1.0f ) * transform_matrix_local;
-
-					// Use sky texture transformation similar to what Quake does.
-					var Vec3f distorted_direction( coord_transformed.xy(), coord_transformed.z * 3.0f );
-					var Vec2f tex_coord_base= distorted_direction.xy() * ( 1.0f / distorted_direction.Length() );
-
-					var [ i32, 2 ] tc_fixed16
-					[
-						( ( tex_coord_base.x + texture_shift_wrapped ) * ( 128.0f * 65536.0f ) ),
-						( ( tex_coord_base.y + texture_shift_wrapped ) * ( 128.0f * 65536.0f ) ),
-					];
-
-					// Calculate gradient along XY axis of undistored unit sphere.
-					var f32 color_mix=
-						( coord_transformed.x + coord_transformed.y ) *
-							( c_half_sqrt_2 * 0.5f ) /
-							coord_transformed.Length()
-						+ 0.5f;
-
-					var f32 one_minus_color_mix= 1.0f - color_mix;
-
-					var [ i32, 3 ] color_fixed18
-					[
-						( ust::max( 0.0f, colors[1][0] * color_mix + colors[0][0] * one_minus_color_mix ) ),
-						( ust::max( 0.0f, colors[1][1] * color_mix + colors[0][1] * one_minus_color_mix ) ),
-						( ust::max( 0.0f, colors[1][2] * color_mix + colors[0][2] * one_minus_color_mix ) ),
-					];
-
-					return ust::make_tuple( tc_fixed16, color_fixed18 );
-				};
-
-			// Use approximation of non-linear texture mapping formula
-			// using a fixed set of spans covering the entire screen width.
-
-			var u32 constexpr c_num_spans= 16u;
-
-			var u32 mut next_x_start= 0u;
-			auto [ mut next_tc_start_fixed16, mut next_color_start_fixed18 ]= calc_params( next_x_start, y );
-
-			for( auto mut span= 0u; span < c_num_spans; ++span )
-			{
-				var u32 x_start= next_x_start;
-				var u32 x_end= ( span + 1u ) * surface.size[0] / c_num_spans;
-
-				var [ i32, 2 ] tc_start_fixed16= next_tc_start_fixed16;
-				var [ i32, 3 ] color_start_fixed18= next_color_start_fixed18;
-				auto [ tc_end_fixed16, color_end_fixed18 ]= calc_params( x_end, y );
-
-				var i32 x_delta( x_end - x_start );
-
-				var [ i32, 2 ] tc_step_fixed16
-				[
-					( ( tc_end_fixed16[0] - tc_start_fixed16[0] ) / x_delta ),
-					( ( tc_end_fixed16[1] - tc_start_fixed16[1] ) / x_delta ),
-				];
-
-				var [ i32, 3 ] color_step_fixed18
-				[
-					( ( color_end_fixed18[0] - color_start_fixed18[0] ) / x_delta ),
-					( ( color_end_fixed18[1] - color_start_fixed18[1] ) / x_delta ),
-					( ( color_end_fixed18[2] - color_start_fixed18[2] ) / x_delta ),
-				];
-
-				var [ i32, 2 ] mut pixel_tc_fixed16= tc_start_fixed16;
-
-				var [ i32, 3 ] mut pixel_color_fixed18= color_start_fixed18;
-
-				auto span_colors= line_colors.subrange( size_type( x_start ), size_type( x_end ) );
-				auto span_depth= line_depth.subrange( size_type( x_start ), size_type( x_end ) );
-
-				foreach( pair : span_depth.iter().zip( span_colors.iter() ) )
-				{
-					if( pair.first <= 0.0f )
-					{
-						var [ u32, 2 ] tex_coord0
-						[
-							( ( pixel_tc_fixed16[0] >> 16 ) & 127 ),
-							( ( pixel_tc_fixed16[1] >> 16 ) & 127 ),
-						];
-
-						var RGBAColor texture0_value= Color32ToComponents( texture0[ tex_coord0[1] ][ tex_coord0[0] ] );
-
-						static_if( use_two_textures )
-						{
-							var [ u32, 2 ] tex_coord1
-							[
-								( ( ( pixel_tc_fixed16[0] + extra_texture_layer_shift_fixed16 ) >> 16 ) & 127 ),
-								( ( ( pixel_tc_fixed16[1] + extra_texture_layer_shift_fixed16 ) >> 16 ) & 127 ),
-							];
-
-							var RGBAColor texture1_value= Color32ToComponents( texture1[ tex_coord1[1] ][ tex_coord1[0] ] );
-
-							var RGBAColor pixel_color_components
-							[
-								( ust::min( ( ( u32( texture0_value[0] ) + u32( texture1_value[0] ) ) * u32( pixel_color_fixed18[0] ) ) >> 18, 255u ) ),
-								( ust::min( ( ( u32( texture0_value[1] ) + u32( texture1_value[1] ) ) * u32( pixel_color_fixed18[1] ) ) >> 18, 255u ) ),
-								( ust::min( ( ( u32( texture0_value[2] ) + u32( texture1_value[2] ) ) * u32( pixel_color_fixed18[2] ) ) >> 18, 255u ) ),
-								0u8, // Don't care about alpha.
-							];
-
-							pair.second= Color32FromComponents( pixel_color_components );
-						}
-						else
-						{
-							ust::ignore_unused( extra_texture_layer_shift_fixed16 );
-							ust::ignore_unused( texture1 );
-
-							var RGBAColor pixel_color_components
-							[
-								( ust::min( ( ( u32( texture0_value[0] ) ) * u32( pixel_color_fixed18[0] ) ) >> 18, 255u ) ),
-								( ust::min( ( ( u32( texture0_value[1] ) ) * u32( pixel_color_fixed18[1] ) ) >> 18, 255u ) ),
-								( ust::min( ( ( u32( texture0_value[2] ) ) * u32( pixel_color_fixed18[2] ) ) >> 18, 255u ) ),
-								0u8, // Don't care about alpha.
-							];
-
-							pair.second= Color32FromComponents( pixel_color_components );
-						}
-					}
-
-					pixel_tc_fixed16[0]+= tc_step_fixed16[0];
-					pixel_tc_fixed16[1]+= tc_step_fixed16[1];
-
-					pixel_color_fixed18[0]+= color_step_fixed18[0];
-					pixel_color_fixed18[1]+= color_step_fixed18[1];
-					pixel_color_fixed18[2]+= color_step_fixed18[2];
-				}
-
-				next_x_start= x_end;
-				next_tc_start_fixed16= tc_end_fixed16;
-				next_color_start_fixed18= color_end_fixed18;
-			}
-		}
-	}
-
 private:
 	// Work with floating-point coordinates, but quantize them,
 	// so that we don't work with infinite small delta values.
@@ -936,6 +787,8 @@ private:
 
 private:
 	var [ ust::reference_notation::pollution_element, 2 ] c_constructor_pollution[ [ "0a", "1a" ], [ "0b", "2a" ] ];
+
+	var tup[ [ [ char8, 2 ], 1 ], [ [ char8, 2 ], 1 ] ] c_get_surface_and_depth_buffer_return_inner_references[ [ "0a" ], [ "0b" ] ];
 
 private:
 	Color32ImageView @("a") surface_;
