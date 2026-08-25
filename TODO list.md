@@ -50,6 +50,8 @@ PanzerMortyr general:
 
 PanzerMortyr game logic:
 
+* Don't create colliders for enemies and maybe other entities with zero energy. Investigations of the original game have shown, that player doesn't collide with dead enemies even if they have non-zero bounding box.
+* Drop items from entities at the center of their bounding box, not at entity position (located typically on ground).
 * Ensure all entity properties affecting state transitions are implemented.
 * Break glass quads and quads with breakable materials while applying spash damage. The original game doesn't do this and it doesn't look right.
 * Implement flame particles emitted by explosive decorations ("wybuch_benzyny"/"plomienie").
@@ -126,7 +128,6 @@ PanzerMortyr software rendering:
 * Draw global fog.
 * Draw local fog.
 * Apply dynamic lighting to decals.
-* Draw sky (with clouds).
 * Draw sun/moon.
 * Draw stars.
 * Draw mirrors.
@@ -135,8 +136,10 @@ PanzerMortyr software rendering:
 * Implement night vision mode.
 * Implement infrared vision mode.
 * Apply world brightness setting.
+* Fix issues with hall-of-mirrors effect visible at some places on some maps where sky quads are missing or aren't large enough to cover the entire sky.
 * Consider optimizing vertices transformation code by producing 4-component position vectors and thus ensuring vector instructions are used.
 * Consider optimizing vertices transformations and other heavy calculations by using "fma" instructions.
+* Consider optimizing code calculating per-vertex light for models using bit-hacky fast inverse square root.
 * Consider using textures dithering (as Unreal does).
 * Draw fullscreen blending effect (for pain, burning and other similar effects).
 * Consider speeding-up software world drawing by performing drawing using multiple threads, when each thread writes into its own framebuffer and the master thread then combines these buffers together.

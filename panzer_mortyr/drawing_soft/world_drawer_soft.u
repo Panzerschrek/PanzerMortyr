@@ -1,6 +1,7 @@
 import "/enum_string_conversions.iu"
 import "/scoped_array.iu"
 import "/string_conversions.iu"
+import "../camera_utils.iu"
 import "../clipping.iu"
 import "../cluster_utils.iu"
 import "../image_loading.iu"
@@ -9,7 +10,9 @@ import "../map_visibility_visualization.iu"
 import "../material_utils.iu"
 import "../math_constants.iu"
 import "../room_clusters_bsp_tree_visualization.iu"
+import "../sky_common.iu"
 import "rasterizer.iu"
+import "sky_rasterizer.iu"
 import "world_drawer_soft.iu"
 
 namespace PM
@@ -65,13 +68,6 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 
 	auto mut window_lock= window_.lock_mut();
 	var Color32ImageView surface= window_lock.deref().GetSurface();
-
-	// For now just fill the screen with some color.
-	// TODO - remove it after proper sky drawing is implemented.
-	foreach( &mut pixel : surface.pixels )
-	{
-		pixel= Color32FromComponents( ust::make_array( 32u8, 16u8, 8u8, 255u8 ) );
-	}
 
 	var WorldDrawingStats mut stats= zero_init;
 
@@ -179,6 +175,19 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 
 	var MapVisibilityCalculator::VisibleRoomClusterFlags visible_room_cluster_flags=
 		visibility_calculator.GetVisibleRoomClusterFlags();
+
+	// Draw sky before any other geometry.
+	// It's needed, since sky drawing uses no depth test.
+	DrawSky(
+		map_data,
+		drawing_info,
+		visible_room_cluster_flags,
+		rotation_matrix,
+		camera_clip_planes,
+		view_aspect,
+		view_matrix,
+		frustum_side_clip_planes,
+		rasterizer );
 
 	for( auto mut i= 0s; i < map_data.clusters_draw_data.size(); )
 	{
@@ -782,6 +791,7 @@ fn WorldDrawerSoft::SetMap( mut this, u32 map_index )
 			.has_liquid_quads= false, // Set later.
 			.has_breakable_quads= false, // Set later.
 			.has_mirror_quads= false, // Set later.
+			.has_sky_quads= false, // Set later.
 		} );
 
 	foreach( &pair : zvox_data.clusters.iter().zip( clusters_draw_data.iter() ) )
@@ -901,7 +911,8 @@ fn WorldDrawerSoft::SetMap( mut this, u32 map_index )
 			mut has_glass_quads= false,
 			mut has_liquid_quads= false,
 			mut has_breakable_quads= false,
-			mut has_mirror_quads= false;
+			mut has_mirror_quads= false,
+			mut has_sky_quads= false;
 
 		for( auto mut q= size_type( cluster.c.first_quad_index );
 			q < size_type( cluster.c.first_quad_index ) + size_type( cluster.num_quads );
@@ -926,6 +937,12 @@ fn WorldDrawerSoft::SetMap( mut this, u32 map_index )
 				texture_id == MaterialsDescription::c_special_material_texture_indices[ size_type( MaterialsDescription::SpecialMaterial::Mirror ) ] )
 			{
 				has_mirror_quads= true;
+			}
+			else if(
+				texture_id == MaterialsDescription::c_special_material_texture_indices[ size_type( MaterialsDescription::SpecialMaterial::Sky ) ] ||
+				texture_id == MaterialsDescription::c_special_material_texture_indices[ size_type( MaterialsDescription::SpecialMaterial::Unknown1019 ) ] )
+			{
+				has_sky_quads= true;
 			}
 			else if(
 				texture_id == MaterialsDescription::c_special_material_texture_indices[ size_type( MaterialsDescription::SpecialMaterial::Window ) ] )
@@ -955,6 +972,7 @@ fn WorldDrawerSoft::SetMap( mut this, u32 map_index )
 		cluster_draw_data.has_liquid_quads= has_liquid_quads;
 		cluster_draw_data.has_breakable_quads= has_breakable_quads;
 		cluster_draw_data.has_mirror_quads= has_mirror_quads;
+		cluster_draw_data.has_sky_quads= has_sky_quads;
 	}
 
 	// For each cluster having quads with "valve" special material create 4 meshes containing these quads - for each animation frame.
@@ -1096,6 +1114,24 @@ fn WorldDrawerSoft::SetMap( mut this, u32 map_index )
 				.indices= move(indices),
 				.textures=
 					LoadMapTextures( materials_block, caching_game_resources_loader.GetGameFilesystem(), console_out_ ),
+				.clouds_texture_layer=
+					materials_block.special_material_indices[ size_type( MaterialsDescription::SpecialMaterial::Sky ) ],
+				.sky_colors
+				[
+					[
+						f32( map_description.sky_colors[0][2] ) / 255.0f,
+						f32( map_description.sky_colors[0][1] ) / 255.0f,
+						f32( map_description.sky_colors[0][0] ) / 255.0f,
+					],
+					[
+						f32( map_description.sky_colors[1][2] ) / 255.0f,
+						f32( map_description.sky_colors[1][1] ) / 255.0f,
+						f32( map_description.sky_colors[1][0] ) / 255.0f,
+					],
+				],
+				// Investigations of the original game have shown, that sky model 3 has two cloud layers.
+				// Other skies have only single layer.
+				.use_two_cloud_layers= map_description.sky_model == 3u,
 				.breakable_material_bits= move(breakable_material_bits),
 			},
 			.map_visibility_calculator( room_clusters_bsp_tree ),
@@ -1282,6 +1318,232 @@ fn ApplyLightToModelVerticesTwoFrames(
 				l[1].directional_components.Dot( normal_normalized ) + l[1].constant_component,
 				l[2].directional_components.Dot( normal_normalized ) + l[2].constant_component,
 				0.0f );
+	}
+}
+
+fn DrawSky(
+	MapDrawDataSoft& map_data,
+	WorldDrawingInfo& drawing_info,
+	MapVisibilityCalculator::VisibleRoomClusterFlags visible_room_cluster_flags,
+	Mat4f& rotation_matrix,
+	CameraClipPlanes& camera_clip_planes,
+	f32 view_aspect,
+	Mat4f& view_matrix,
+	FrustumSideClipPlanes& frustum_side_clip_planes,
+	Rasterizer& rasterizer )
+{
+	if( size_type( map_data.clouds_texture_layer ) >= map_data.textures.size() )
+	{
+		return;
+	}
+
+	var Color32SquareTexture</ 7s />& texture0= map_data.textures[ size_type( map_data.clouds_texture_layer ) ][0];
+
+	auto clusters= map_data.zvox_data.deref().clusters.range();
+	auto quads= map_data.zmap_data.deref().quads.range();
+
+	var Color32ImageView surface= rasterizer.GetSurface();
+	var SkyRasterizer mut sky_rasterizer( surface );
+
+	var SkyVertex dummy_sky_vertex{ .position= Vec3f::MakeZero() };
+	var [ SkyVertex, 16 ]
+		mut vertices_clipped0[ dummy_sky_vertex ... ],
+		mut vertices_clipped1[ dummy_sky_vertex ... ];
+
+	for( auto mut i= 0s; i < map_data.clusters_draw_data.size(); )
+	{
+		var ZvoxCluster& room_cluster= clusters[ i ];
+		if( room_cluster.c.num_children_clusters < 0 )
+		{
+			++i;
+			continue;
+		}
+
+		// This room cluster and all his children.
+		var size_type num_clusters_in_group= size_type( room_cluster.c.num_children_clusters ) + 1s;
+
+		if( visible_room_cluster_flags[ i ] )
+		{
+			for( auto mut j= 0s; j < num_clusters_in_group; ++j )
+			{
+				var size_type cluster_index= i + j;
+
+				var ClusterDrawDataSoft& cluster_draw_data= map_data.clusters_draw_data[ cluster_index ];
+
+				if( !( cluster_draw_data.has_sky_quads | cluster_draw_data.has_breakable_quads ) )
+				{
+					continue; // Process only clusters having sky quads or breakable quads.
+				}
+
+				var ZvoxCluster& cluster= clusters[ cluster_index ];
+
+				// Reject clusters outside view, even if we already performed visibility calculation previously.
+				// This is needed to reject subclusters located within room clusters.
+				// Visibility calculator doesn't handle their rejction.
+				if( AreBoxVerticesClippedByAtLeastOneCameraClipPlane(
+						camera_clip_planes, CreateClusterBBox( cluster ).CreateCornerVertices() ) )
+				{
+					continue;
+				}
+
+				if( cluster.num_quads <= 0 )
+				{
+					continue;
+				}
+
+				var Vec3f cluster_center(
+					f32( cluster.c.center[0] ), f32( cluster.c.center[1] ), f32( cluster.c.center[2] ) );
+
+				var Mat4f cluster_view_matrix= Mat4f::MakeTranslation( cluster_center ) * view_matrix;
+
+				for( auto mut q= size_type( cluster.c.first_quad_index );
+					q < size_type( cluster.c.first_quad_index ) + size_type( cluster.num_quads );
+					++q ) label for_quads
+				{
+					var ZmapQuad& quad= quads[q];
+
+					// Draw sky where sky quads are.
+					// Also draw sky where breakable quads are, since sky should be drawn behind broken windows.
+					// Make an exception for glass, since it's semitransparent
+					// and thus proper sky quads are placed behind it if necessary.
+
+					var u32 texture_id( quad.texture_id );
+
+					var bool is_sky_quad=
+						texture_id == MaterialsDescription::c_special_material_texture_indices[ size_type( MaterialsDescription::SpecialMaterial::Sky ) ] ||
+						texture_id == MaterialsDescription::c_special_material_texture_indices[ size_type( MaterialsDescription::SpecialMaterial::Unknown1019 ) ];
+
+					var bool is_glass_quad=
+						texture_id == MaterialsDescription::c_special_material_texture_indices[ size_type( MaterialsDescription::SpecialMaterial::Glass ) ] ||
+						texture_id == MaterialsDescription::c_special_material_texture_indices[ size_type( MaterialsDescription::SpecialMaterial::ArmoredGlass ) ];
+
+					if( !( is_sky_quad || ( !is_glass_quad && drawing_info.broken_quad_bits.GetBit( size_type(q) ) ) ) )
+					{
+						continue;
+					}
+
+					foreach( pair :
+							ust::array_view_mut</SkyVertex/>( vertices_clipped0 )
+							.iter().zip( ust::array_view_imut</ [ i16, 3 ] />( quad.vertices ).iter() ) )
+					{
+						pair.first.position=
+							Vec3f(
+								f32( pair.second[0] ),
+								f32( pair.second[1] ),
+								f32( pair.second[2] ) ) * cluster_view_matrix;
+					}
+
+					var size_type mut num_vertices= 4s;
+
+					num_vertices=
+						ClipPolygonByZNearPlane(
+							c_z_near_for_clipping,
+							ust::array_view_imut</SkyVertex/>( vertices_clipped0 ).subrange_end( num_vertices ),
+							vertices_clipped1 );
+
+					if( num_vertices < 3s )
+					{
+						continue label for_quads;
+					}
+
+					// Perform two pairs of clipping by two pairs of clip planes.
+					for( auto mut i= 0s; i < 2s; ++i )
+					{
+						num_vertices=
+							ClipPolygon(
+								frustum_side_clip_planes[ i * 2s + 0s ],
+								ust::array_view_imut</SkyVertex/>( vertices_clipped1 ).subrange_end( num_vertices ),
+								vertices_clipped0 );
+
+						if( num_vertices < 3s )
+						{
+							continue label for_quads;
+						}
+
+						num_vertices=
+							ClipPolygon(
+								frustum_side_clip_planes[ i * 2s + 1s ],
+								ust::array_view_imut</SkyVertex/>( vertices_clipped0 ).subrange_end( num_vertices ),
+								vertices_clipped1 );
+
+						if( num_vertices < 3s )
+						{
+							continue label for_quads;
+						}
+					}
+
+					var Vec3f& v0= cast_imut(vertices_clipped1)[0].position;
+					debug_assert( v0.z > 0.0f );
+					var Vec2f v0_projected= v0.xy() / v0.z;
+
+					for( auto mut i= 2s; i < num_vertices; ++i )
+					{
+						var Vec3f& v1= cast_imut(vertices_clipped1)[ i - 1s ].position;
+						var Vec3f& v2= cast_imut(vertices_clipped1)[ i ].position;
+						debug_assert( v1.z > 0.0f );
+						debug_assert( v2.z > 0.0f );
+						sky_rasterizer.AddSkyTriangle( v0_projected, v1.xy() / v1.z, v2.xy() / v2.z );
+					}
+				}
+			}
+		}
+
+		i+= num_clusters_in_group;
+	}
+
+	var Mat3f viewport_inverse_transformation_matrix
+	{
+		.values
+		[
+			[ 2.0f / f32( surface.size[0] ),                           0.0f, 0.0f ],
+			[                          0.0f, -2.0f / f32( surface.size[1] ), 0.0f ],
+			[                         -1.0f,                           1.0f, 1.0f ],
+		],
+	};
+
+	var f32 half_fov_tan= ust::tan( drawing_info.camera_params.fov_x * 0.5f );
+
+	var Mat3f perspective_inverse_matrix
+	{
+		.values
+		[
+			[ half_fov_tan,                       0.0f, 0.0f ],
+			[         0.0f, half_fov_tan / view_aspect, 0.0f ],
+			[         0.0f,                       0.0f, 1.0f ],
+		]
+	};
+
+	// For rotation transpose matrix is inverse matrix.
+	var Mat3f rotation_inverse_matrix
+	{
+		.values
+		[
+			[ rotation_matrix.values[0][0], rotation_matrix.values[1][0], rotation_matrix.values[2][0] ],
+			[ rotation_matrix.values[0][1], rotation_matrix.values[1][1], rotation_matrix.values[2][1] ],
+			[ rotation_matrix.values[0][2], rotation_matrix.values[1][2], rotation_matrix.values[2][2] ],
+		]
+	};
+
+	var Mat3f sky_inverse_transformation_matrix=
+		viewport_inverse_transformation_matrix *
+		perspective_inverse_matrix *
+		rotation_inverse_matrix;
+
+	var f32 texture_shift= drawing_info.game_time_s * c_clouds_scroll_speed;
+
+	if( map_data.use_two_cloud_layers &&
+		size_type( map_data.clouds_texture_layer + 1u ) < map_data.textures.size() )
+	{
+		var Color32SquareTexture</ 7s />& texture1=
+			map_data.textures[size_type( map_data.clouds_texture_layer + 1u ) ][0];
+
+		sky_rasterizer.FillSky</ true /* use two textures */ />(
+			texture0, texture1, texture_shift, map_data.sky_colors, sky_inverse_transformation_matrix );
+	}
+	else
+	{
+		sky_rasterizer.FillSky</ false /* use single texture */ />(
+			texture0, texture0, texture_shift, map_data.sky_colors, sky_inverse_transformation_matrix );
 	}
 }
 
@@ -2045,6 +2307,28 @@ fn CalculateViewSpaceFrustumSideClipPlanes( [ u32, 2 ]& viewport_size ) : [ Plan
 		{ .normal= Vec3f( 0.0f, -half_fov_y_cos,  half_fov_y_sin ) * plane_normals_matrix, .distance= 0.0f },
 	];
 	return result_planes;
+}
+
+struct SkyVertex
+{
+	Vec3f position;
+
+	op*( SkyVertex& v, f32 s ) : SkyVertex
+	{
+		return SkyVertex{ .position= v.position * s };
+	}
+
+	/*
+	op+( SkyVertex& l, SkyVertex& r ) : SkyVertex
+	{
+		return SkyVertex{ .position= l.position + r.position };
+	}
+	*/
+
+	op-( SkyVertex& l, SkyVertex& r ) : SkyVertex
+	{
+		return SkyVertex{ .position= l.position - r.position };
+	}
 }
 
 // Move Z near plane a little bit forward so that no actual geometry can lay on it.
