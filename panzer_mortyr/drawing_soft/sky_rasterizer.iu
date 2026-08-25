@@ -132,9 +132,8 @@ public:
 		[ [ f32, 3 ], 2 ]& sky_colors,
 		Mat3f& transform_matrix )
 	{
+		// Read some fields/params into local variables to ensure they aren't re-read on each loop iteration.
 		var Color32ImageView surface= surface_;
-
-		// Read it into a local variable to ensure it's not re-read on each loop iteration.
 		var Mat3f transform_matrix_local= transform_matrix;
 
 		// Pre-scale colors to fixed18 range.
@@ -147,7 +146,43 @@ public:
 		// Ensure shift in range 0 to 1.
 		var f32 texture_shift_wrapped= texture_shift - ust::floor( texture_shift );
 
-		var i32 extra_texture_layer_shift_fixed16( f32( c_texture_size << 16 ) * texture_shift_wrapped );
+		var i32 extra_texture_layer_shift_fixed16( texture_shift_wrapped * f32( c_texture_size << 16 ) );
+
+		// Returns texture coordinates and color.
+		auto calc_params=
+			lambda[&]( u32 x, u32 y ) : tup[ [ i32, 2 ], [ i32, 3 ] ]
+			{
+				var Vec3f coord_transformed= Vec3f( f32(x), f32(y), 1.0f ) * transform_matrix_local;
+
+				// Use sky texture transformation similar to what Quake does.
+				// This code should match code in sky shader!
+				var Vec3f distorted_direction( coord_transformed.xy(), coord_transformed.z * 3.0f );
+				var Vec2f tex_coord_base= distorted_direction.xy() * ( 1.0f / distorted_direction.Length() );
+
+				var [ i32, 2 ] tc_fixed16
+				[
+					( ( tex_coord_base.x + texture_shift_wrapped ) * f32( c_texture_size << 16 ) ),
+					( ( tex_coord_base.y + texture_shift_wrapped ) * f32( c_texture_size << 16 ) ),
+				];
+
+				// Calculate gradient along XY axis of undistored unit sphere.
+				var f32 color_mix=
+					( coord_transformed.x + coord_transformed.y ) *
+						( c_half_sqrt_2 * 0.5f ) /
+						coord_transformed.Length()
+					+ 0.5f;
+
+				var f32 one_minus_color_mix= 1.0f - color_mix;
+
+				var [ i32, 3 ] color_fixed18
+				[
+					( ust::max( 0.0f, colors[1][0] * color_mix + colors[0][0] * one_minus_color_mix ) ),
+					( ust::max( 0.0f, colors[1][1] * color_mix + colors[0][1] * one_minus_color_mix ) ),
+					( ust::max( 0.0f, colors[1][2] * color_mix + colors[0][2] * one_minus_color_mix ) ),
+				];
+
+				return ust::make_tuple( tc_fixed16, color_fixed18 );
+			};
 
 		for( auto mut y= 0u; y < surface.size[1]; ++y )
 		{
@@ -162,41 +197,6 @@ public:
 			var size_type offset_end= offset_start + size_type( surface.size[0] );
 
 			auto line_colors= surface.pixels.subrange( offset_start, offset_end );
-
-			auto calc_params=
-				lambda[&]( u32 x, u32 y ) : tup[ [ i32, 2 ], [ i32, 3 ] ]
-				{
-					var Vec3f coord_transformed= Vec3f( f32(x), f32(y), 1.0f ) * transform_matrix_local;
-
-					// Use sky texture transformation similar to what Quake does.
-					var Vec3f distorted_direction( coord_transformed.xy(), coord_transformed.z * 3.0f );
-					var Vec2f tex_coord_base= distorted_direction.xy() * ( 1.0f / distorted_direction.Length() );
-
-					var [ i32, 2 ] tc_fixed16
-					[
-						( ( tex_coord_base.x + texture_shift_wrapped ) * f32( c_texture_size << 16 ) ),
-						( ( tex_coord_base.y + texture_shift_wrapped ) * f32( c_texture_size << 16 ) ),
-					];
-
-					// Calculate gradient along XY axis of undistored unit sphere.
-					var f32 color_mix=
-						( coord_transformed.x + coord_transformed.y ) *
-							( c_half_sqrt_2 * 0.5f ) /
-							coord_transformed.Length()
-						+ 0.5f;
-
-					var f32 one_minus_color_mix= 1.0f - color_mix;
-
-					var [ i32, 3 ] color_fixed18
-					[
-						( ust::max( 0.0f, colors[1][0] * color_mix + colors[0][0] * one_minus_color_mix ) ),
-						( ust::max( 0.0f, colors[1][1] * color_mix + colors[0][1] * one_minus_color_mix ) ),
-						( ust::max( 0.0f, colors[1][2] * color_mix + colors[0][2] * one_minus_color_mix ) ),
-					];
-
-					return ust::make_tuple( tc_fixed16, color_fixed18 );
-				};
-
 			// Use approximation of non-linear texture mapping formula
 			// using a fixed set of spans covering the entire screen width.
 
