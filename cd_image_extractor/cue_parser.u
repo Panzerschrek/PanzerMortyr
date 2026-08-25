@@ -1,17 +1,16 @@
 import "/number_parsing.iu"
-import "/stdout.iu"
 import "/common_lib/string_iterators.iu"
 import "cue_parser.iu"
 
 namespace PM
 {
 
-fn ParseCueFile( ust::string_view8 file_contents ) : ust::optional</CueFileParsed/>
+fn ParseCueFile( Logger &mut logger, ust::string_view8 file_contents ) : ust::optional</CueFileParsed/>
 {
 	// A dumb size-based check for case if someone provided a binary file instead of CUE.
 	if( file_contents.size() > 1024s * 16s )
 	{
-		ust::stderr_print( "Too large CUE file to be parsed!\n" );
+		logger.LogLine( "Too large CUE file to be parsed!" );
 		return ust::null_optional;
 	}
 
@@ -36,7 +35,7 @@ fn ParseCueFile( ust::string_view8 file_contents ) : ust::optional</CueFileParse
 			auto mut file_name_opt= ParseQuotedString( line );
 			if( file_name_opt.empty() )
 			{
-				ust::stderr_print( "Failed to parse file name!\n" );
+				logger.LogLine( "Failed to parse file name!" );
 				continue;
 			}
 
@@ -46,11 +45,11 @@ fn ParseCueFile( ust::string_view8 file_contents ) : ust::optional</CueFileParse
 
 			if( !line.starts_with( "BINARY" ) )
 			{
-				ust::stderr_print( "Unexpected file type, only BINARY is supported.\n" );
+				logger.LogLine( "Unexpected file type, only BINARY is supported" );
 				continue;
 			}
 
-			auto mut file_entry_opt= ParseCueFileEntry( move(file_name), parsing_state );
+			auto mut file_entry_opt= ParseCueFileEntry( logger, move(file_name), parsing_state );
 			if( !file_entry_opt.empty() )
 			{
 				cue_file_parsed.files.push_back( file_entry_opt.try_take() );
@@ -58,7 +57,7 @@ fn ParseCueFile( ust::string_view8 file_contents ) : ust::optional</CueFileParse
 		}
 		else
 		{
-			ust::stderr_print( ust::concat( "Unknown top-level entry: ", current_line, "\n" ) );
+			logger.LogLine( ust::concat( "Unknown top-level entry: ", current_line ) );
 			parsing_state.NextLine();
 		}
 	}
@@ -78,7 +77,9 @@ struct ParsingState
 }
 
 fn ParseCueFileEntry(
-	ust::string8 mut file_name, ParsingState &mut parsing_state ) : ust::optional</CueFileParsed::File/>
+	Logger& mut logger,
+	ust::string8 mut file_name,
+	ParsingState &mut parsing_state ) : ust::optional</CueFileParsed::File/>
 {
 	var CueFileParsed::File mut file_entry{ .name= move( file_name ) };
 
@@ -92,7 +93,7 @@ fn ParseCueFileEntry(
 		{
 			parsing_state.NextLine();
 
-			auto mut track_opt= ParseCueTrack( words_iterator, parsing_state );
+			auto mut track_opt= ParseCueTrack( logger, words_iterator, parsing_state );
 			if( !track_opt.empty() )
 			{
 				file_entry.tracks.push_back( track_opt.try_take() );
@@ -108,6 +109,7 @@ fn ParseCueFileEntry(
 }
 
 fn ParseCueTrack(
+	Logger &mut logger,
 	ust::iterator</ WordsIterator /> &mut track_words_iterator,
 	ParsingState &mut parsing_state ) : ust::optional</CueFileParsed::Track/>
 {
@@ -116,14 +118,14 @@ fn ParseCueTrack(
 
 	if( track_number_opt.empty() )
 	{
-		ust::stderr_print( "Failed to parse track number!\n" );
+		logger.LogLine( "Failed to parse track number!" );
 		return ust::null_optional;
 	}
 
 	auto track_mode_opt= ParseTrackMode( track_words_iterator.next().deref_or( ust::string_view8() ) );
 	if( track_mode_opt.empty() )
 	{
-		ust::stderr_print( "Unsupported track mode!\n" );
+		logger.LogLine( "Unsupported track mode!" );
 		return ust::null_optional;
 	}
 
@@ -143,7 +145,7 @@ fn ParseCueTrack(
 		{
 			parsing_state.NextLine();
 
-			auto mut track_index_opt= ParseTrackIndex( words_iterator );
+			auto mut track_index_opt= ParseTrackIndex( logger, words_iterator );
 			if( !track_index_opt.empty() )
 			{
 				track.indices.push_back( track_index_opt.try_take() );
@@ -164,13 +166,14 @@ fn ParseCueTrack(
 }
 
 fn ParseTrackIndex(
+	Logger &mut logger,
 	ust::iterator</ WordsIterator /> &mut words_iterator ) : ust::optional</ CueFileParsed::TrackIndex />
 {
 	auto number_opt= ParseNumberWithLeadingZeros( words_iterator.next().deref_or( ust::string_view8() ) );
 
 	if( number_opt.empty() )
 	{
-		ust::stderr_print( "Failed to parse index number!\n" );
+		logger.LogLine( "Failed to parse index number!" );
 		return ust::null_optional;
 	}
 
@@ -178,7 +181,7 @@ fn ParseTrackIndex(
 
 	if( offset_opt.empty() )
 	{
-		ust::stderr_print( "Failed to parse frame offset!\n" );
+		logger.LogLine( "Failed to parse frame offset!" );
 		return ust::null_optional;
 	}
 
