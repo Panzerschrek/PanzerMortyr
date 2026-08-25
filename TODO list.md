@@ -39,7 +39,6 @@ PanzerMortyr general:
 * Consider performing even more advanced game data search - with more hardcoded paths, Windows registry fetches, etc.
 * Ensure PanzerMortyr works properly on Wayland-based systems.
 * Support russian version of the original game (published by 1С).
-* Consider writing console messages into a file - to simplify troubleshooting.
 * Consider optimizing code performing serialization/deserialization (for game saving) - read/write scalars and arrays of scalars as byte arrays.
 * Consider implementing autosaves - create an autosave upon entering a level, upon picking-up a key, etc. Allow loading such saves from the load menu.
 * Consider preventing saving or disabling save menu if no game is active.
@@ -171,6 +170,5 @@ PanzerMortyr cinimatics:
 CD image extractor:
 
 * Consider supporting images in MDF/MDS format.
-* Consider writing a log file.
 * Consider handling more CUE commands (investigate which commands are actually used in Mortyr CUE files).
 * Consider adding more validation for contents of the given ISO file - make sure it's really a Mortyr ISO and not something else.
