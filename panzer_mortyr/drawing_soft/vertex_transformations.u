@@ -218,6 +218,24 @@ fn ApplyLightToModelVerticesTwoFrames(
 	}
 }
 
+fn CalculateFogDensityForModelVerticesSingleFrame(
+	ust::array_view_imut</ ModelFrameVertex /> frame_vertices,
+	ust::array_view_mut</ VertexLightWithFog /> vertex_lights,
+	Mat4f& matrix )
+{
+	debug_assert( vertex_lights.size() >= frame_vertices.size() );
+
+	// Read it into a local variable to ensure it's not re-read on each loop iteration.
+	var Mat4f m= matrix;
+
+	foreach( pair : vertex_lights.iter().zip( frame_vertices.iter() ) )
+	{
+		// TODO - optimize this code, make sure vector instructions are used.
+		var Vec3f position_transformed= Vec3f( pair.second.position ) * m;
+		pair.first[3]= CalculateOneMinusFogDensity( position_transformed.Length() );
+	}
+}
+
 fn CalculateFogDensityForModelVerticesTwoFrames(
 	ust::array_view_imut</ ModelFrameVertex /> frame0_vertices,
 	ust::array_view_imut</ ModelFrameVertex /> frame1_vertices,
@@ -228,6 +246,16 @@ fn CalculateFogDensityForModelVerticesTwoFrames(
 	debug_assert( frame0_vertices.size() == frame1_vertices.size() );
 	debug_assert( vertex_lights.size() >= frame0_vertices.size() );
 
+	// Optimization for cases where no interpolation between frames is needed.
+	if( frame_mix <= 0.001f )
+	{
+		return CalculateFogDensityForModelVerticesSingleFrame( frame0_vertices, vertex_lights, matrix );
+	}
+	if( frame_mix >= 0.999f )
+	{
+		return CalculateFogDensityForModelVerticesSingleFrame( frame1_vertices, vertex_lights, matrix );
+	}
+
 	var f32 scale0= 1.0f - frame_mix;
 	var f32 scale1= frame_mix;
 
@@ -236,6 +264,8 @@ fn CalculateFogDensityForModelVerticesTwoFrames(
 
 	foreach( pair : vertex_lights.iter().zip( frame0_vertices.iter().zip( frame1_vertices.iter() ) ) )
 	{
+		// TODO - optimize this code, make sure vector instructions are used.
+
 		var [ f32, 3 ]& p0= pair.second.first .position;
 		var [ f32, 3 ]& p1= pair.second.second.position;
 
