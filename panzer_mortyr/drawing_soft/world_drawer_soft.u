@@ -4,6 +4,7 @@ import "/string_conversions.iu"
 import "../camera_utils.iu"
 import "../clipping.iu"
 import "../cluster_utils.iu"
+import "../fog.iu"
 import "../image_loading.iu"
 import "../map_quad_utils.iu"
 import "../map_visibility_visualization.iu"
@@ -81,8 +82,6 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 	depth_buffer_.clear();
 	depth_buffer_.resize( size_type( surface.size[1] * surface.stride ), 0.0f );
 
-	var Rasterizer rasterizer( surface, depth_buffer_ );
-
 	var MapFullDrawDataSoft &mut map_data_full= map_data_.try_deref();
 
 	var MapDrawDataSoft& map_data= map_data_full.map_draw_data;
@@ -101,6 +100,8 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 	var GameParams& game_params= game_params_.deref();
 
 	var MapVisibilityCalculator &mut visibility_calculator= map_data_full.map_visibility_calculator;
+
+	var Rasterizer rasterizer( surface, depth_buffer_, map_data.fog_color );
 
 	var Mat4f rotation_matrix=
 		CalculateCameraRotationMatrix( drawing_info.camera_params.azimuth, drawing_info.camera_params.elevation );
@@ -156,6 +157,12 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 	var u32 film_special_material_frame= CalculateFilmSpecialMaterialFrame( drawing_info.game_time_s );
 
 	var bool dynamic_lights_enabled= settings_.lock_imut().deref().r_dynamic_lights_enabled;
+	var bool global_fog_enabled= map_data.global_fog_enabled && settings_.lock_imut().deref().r_fog_enabled;
+
+	var ust::optional</Vec3f/> camera_position_for_fog=
+		( global_fog_enabled
+			? ust::optional</Vec3f/>( drawing_info.camera_params.position )
+			: ust::optional</Vec3f/>() );
 
 	// Convert dynamic light sources into our own format.
 	scoped_array DynamicLightSourceSoft dynamic_light_sources[ drawing_info.dynamic_light_sources.size() ](
@@ -253,6 +260,7 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 
 				DrawMapClusterTriangles(
 					rasterizer,
+					camera_position_for_fog.as_ref(),
 					view_matrix,
 					frustum_side_clip_planes,
 					map_data,
@@ -285,6 +293,7 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 
 					DrawMapTriangles(
 						rasterizer,
+						camera_position_for_fog.as_ref(),
 						view_matrix,
 						frustum_side_clip_planes,
 						map_data.textures,
@@ -318,6 +327,7 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 
 					DrawMapTriangles(
 						rasterizer,
+						camera_position_for_fog.as_ref(),
 						view_matrix,
 						frustum_side_clip_planes,
 						map_data.textures,
@@ -358,6 +368,7 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 
 					DrawMapTriangles(
 						rasterizer,
+						camera_position_for_fog.as_ref(),
 						view_matrix,
 						frustum_side_clip_planes,
 						map_data.textures,
@@ -424,8 +435,16 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 			}
 		}
 
+		var ust::optional</Vec3f/> mut cluster_camera_position_for_fog;
+		if_var( &camera_position : camera_position_for_fog )
+		{
+			// Translate camera position so that fog is calculated properly.
+			cluster_camera_position_for_fog= camera_position - dynamic_cluster_object.translation;
+		}
+
 		DrawMapClusterTriangles(
 			rasterizer,
+			cluster_camera_position_for_fog.as_ref(),
 			Mat4f::MakeTranslation( dynamic_cluster_object.translation ) * view_matrix,
 			frustum_side_clip_planes,
 			map_data,
@@ -553,7 +572,7 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 		{
 			foreach( &mut l : vertex_lights )
 			{
-				l= ust::make_array( 1.0f, 1.0f, 1.0f, 1.0f );
+				l= ust::make_array( 1.0f, 1.0f, 1.0f, 0.0f /* set fog density to zero */ );
 			}
 		}
 		else
@@ -613,6 +632,43 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 			{
 				ApplyLightToModelVerticesTwoFrames(
 					frame0_vertices, frame1_vertices, vertex_lights, frames.frame_mix, light );
+			}
+		}
+
+		if( global_fog_enabled )
+		{
+			var Mat4f fog_space_matrix= model_transormation_matrix * translation_matrix;
+
+			var f32 distance_to_camera= ( frame_bbox.GetCenter() * fog_space_matrix ).Length();
+
+			var f32 frame_bbox_diameter= frame_bbox.GetDimensions().Length();
+
+			if( frame_bbox_diameter * 6.0f <= distance_to_camera )
+			{
+				// For far-away small model objects calculate fog for their center. It's cheap to do so.
+				var f32 one_minus_fog_density= CalculateOneMinusFogDensity( distance_to_camera );
+
+				foreach( &mut light_and_fog : vertex_lights )
+				{
+					light_and_fog[0]*= one_minus_fog_density;
+					light_and_fog[1]*= one_minus_fog_density;
+					light_and_fog[2]*= one_minus_fog_density;
+					light_and_fog[3]= 1.0f - one_minus_fog_density;
+				}
+			}
+			else
+			{
+				// This model object is large and/or close to camera. Use per-vertex fog density calculation.
+				if( frames.frame0 == frames.frame1 )
+				{
+					// Optimization for cases where no frame mixing is necessary.
+					CalculateFogDensityForModelVerticesSingleFrame( frame0_vertices, vertex_lights, fog_space_matrix );
+				}
+				else
+				{
+					CalculateFogDensityForModelVerticesTwoFrames(
+						frame0_vertices, frame1_vertices, vertex_lights, frames.frame_mix, fog_space_matrix );
+				}
 			}
 		}
 
@@ -1133,6 +1189,14 @@ fn WorldDrawerSoft::SetMap( mut this, u32 map_index )
 				// Investigations of the original game have shown, that sky model 3 has two cloud layers.
 				// Other skies have only single layer.
 				.use_two_cloud_layers= map_description.sky_model == 3u,
+				.fog_color
+				[
+					f32( map_description.fog_color[2] ),
+					f32( map_description.fog_color[1] ),
+					f32( map_description.fog_color[0] ),
+					0.0f
+				],
+				.global_fog_enabled= map_description.linear_fog_enabled,
 				.breakable_material_bits= move(breakable_material_bits),
 			},
 			.map_visibility_calculator( room_clusters_bsp_tree ),
@@ -1405,13 +1469,14 @@ type TriangleVerticesClipped= [ Rasterizer::Vertex, 16 ];
 
 fn DrawMapClusterTriangles(
 	Rasterizer& rasterizer,
+	ust::optional_ref_imut</Vec3f/> camera_position_for_fog,
 	Mat4f& view_matrix,
 	FrustumSideClipPlanes& frustum_side_clip_planes,
 	MapDrawDataSoft& map_data,
 	size_type cluster_index,
 	ust::array_view_imut</ DynamicLightSourceSoft /> dynamic_light_sources,
 	ust::vector</Vec3f/> &mut vertices_transformed,
-	ust::vector</ [ f32, 4 ] /> &mut vertex_lights,
+	ust::vector</ VertexLightWithFog /> &mut vertex_lights,
 	TriangleVerticesClipped &mut vertices_clipped0,
 	TriangleVerticesClipped &mut vertices_clipped1,
 	WorldDrawingStats &mut stats )
@@ -1432,6 +1497,7 @@ fn DrawMapClusterTriangles(
 
 	DrawMapTriangles(
 		rasterizer,
+		camera_position_for_fog,
 		view_matrix,
 		frustum_side_clip_planes,
 		map_data.textures,
@@ -1449,6 +1515,7 @@ fn DrawMapClusterTriangles(
 
 fn DrawMapTriangles(
 	Rasterizer& rasterizer,
+	ust::optional_ref_imut</Vec3f/> camera_position_for_fog,
 	Mat4f& view_matrix,
 	FrustumSideClipPlanes& frustum_side_clip_planes,
 	ust::array_view_imut</Color32WorldTextureWithMips/> textures,
@@ -1456,7 +1523,7 @@ fn DrawMapTriangles(
 	ust::array_view_imut</u16/> indices,
 	ust::array_view_imut</ DynamicLightSourceSoft /> dynamic_light_sources,
 	ust::vector</Vec3f/> &mut vertices_transformed,
-	ust::vector</ [ f32, 4 ] /> &mut vertex_lights,
+	ust::vector</ VertexLightWithFog /> &mut vertex_lights,
 	TriangleVerticesClipped &mut vertices_clipped0,
 	TriangleVerticesClipped &mut vertices_clipped1 )
 {
@@ -1468,6 +1535,11 @@ fn DrawMapTriangles(
 
 	auto vertex_lights_range= EnsureVertexLightsCapacity( vertex_lights, vertices.size() );
 	CalculateLightForMapVertices( vertices, vertex_lights_range, dynamic_light_sources );
+
+	if_var( &camera_position : camera_position_for_fog )
+	{
+		CalculateFogDensityForMapVertices( vertices, vertex_lights_range, camera_position );
+	}
 
 	// After positions and light is prepared, draw triangles.
 
@@ -1563,7 +1635,7 @@ fn DrawModelTrianglesWithoutFrustumPlanesClipping(
 	Rasterizer& rasterizer,
 	ModelSoft& model,
 	ust::array_view_imut</Vec3f/> vertices_transformed,
-	ust::array_view_imut</ [ f32, 4 ] /> vertex_light )
+	ust::array_view_imut</ VertexLightWithFog /> vertex_light )
 {
 	variant_visit( &texture_ptr : model.texture )
 	{
@@ -1604,7 +1676,7 @@ fn DrawModelTrianglesWithFrustumPlanesClipping(
 	FrustumSideClipPlanes& frustum_side_clip_planes,
 	ModelSoft& model,
 	ust::array_view_imut</Vec3f/> vertices_transformed,
-	ust::array_view_imut</ [ f32, 4 ] /> vertex_light,
+	ust::array_view_imut</ VertexLightWithFog /> vertex_light,
 	TriangleVerticesClipped &mut vertices_clipped0,
 	TriangleVerticesClipped &mut vertices_clipped1 )
 {

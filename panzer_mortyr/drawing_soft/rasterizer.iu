@@ -13,7 +13,7 @@ public:
 	{
 		Vec3f position;
 		Vec2f tex_coord;
-		[ f32, 4 ] light;
+		[ f32, 4 ] light; // RGB light modulated by one minus fog density and fog density itself in the last component.
 
 		op*( Vertex& v, f32 s ) : Vertex
 		{
@@ -65,9 +65,9 @@ public:
 	}
 
 public:
-	fn constructor( mut this, Color32ImageView surface, ust::array_view_mut</f32/> depth_buffer )
+	fn constructor( mut this, Color32ImageView surface, ust::array_view_mut</f32/> depth_buffer, [ f32, 4 ]& fog_color )
 		@( c_constructor_pollution )
-		( surface_= surface, depth_buffer_= depth_buffer )
+		( surface_= surface, depth_buffer_= depth_buffer, fog_color_= fog_color )
 	{
 	}
 
@@ -184,6 +184,7 @@ public:
 
 		var Color32ImageView surface= surface_;
 		var ust::array_view_mut</f32/> depth_buffer= depth_buffer_;
+		var [ f32, 4 ] fog_color= fog_color_;
 
 		var f32 min_y= ust::min( ust::min( vertices_projected[0][1], vertices_projected[1][1] ), vertices_projected[2][1] );
 		var f32 max_y= ust::max( ust::max( vertices_projected[0][1], vertices_projected[1][1] ), vertices_projected[2][1] );
@@ -424,13 +425,15 @@ public:
 									var u32 v= u32( i32( pixel_tex_coord[1] * pixel_z ) ) & ( mip_size[1] - 1u );
 									var RGBAColor texture_value= Color32ToComponents( texture_mip[v][u] );
 
+									var f32 fog_scale= pixel_color[3] * pixel_z;
+
 									var RGBAColor pixel_color_components
 									[
-										( ust::max( 0.0f, ust::min( f32( i32( texture_value[0] ) ) * pixel_color[0] * pixel_z, 255.0f ) ) ),
-										( ust::max( 0.0f, ust::min( f32( i32( texture_value[1] ) ) * pixel_color[1] * pixel_z, 255.0f ) ) ),
-										( ust::max( 0.0f, ust::min( f32( i32( texture_value[2] ) ) * pixel_color[2] * pixel_z, 255.0f ) ) ),
+										( ust::max( 0.0f, ust::min( f32( i32( texture_value[0] ) ) * ( pixel_color[0] * pixel_z ) + fog_color[0] * fog_scale, 255.0f ) ) ),
+										( ust::max( 0.0f, ust::min( f32( i32( texture_value[1] ) ) * ( pixel_color[1] * pixel_z ) + fog_color[1] * fog_scale, 255.0f ) ) ),
+										( ust::max( 0.0f, ust::min( f32( i32( texture_value[2] ) ) * ( pixel_color[2] * pixel_z ) + fog_color[2] * fog_scale, 255.0f ) ) ),
 										// TODO - consider not caring about alpha if don't need to do so.
-										( ust::max( 0.0f, ust::min( f32( i32( texture_value[3] ) ) * pixel_color[3] * pixel_z, 255.0f ) ) ),
+										( ust::max( 0.0f, ust::min( f32( i32( texture_value[3] ) ) * ( pixel_color[3] * pixel_z ) + fog_color[3] * fog_scale, 255.0f ) ) ),
 									];
 
 									pair.second= Color32FromComponents( pixel_color_components );
@@ -619,13 +622,15 @@ public:
 									var u32 v= ( u32( pixel_tex_coord_fixed16[1] ) >> 16 ) & ( mip_size[1] - 1u );
 									var RGBAColor texture_value= Color32ToComponents( texture_mip[v][u] );
 
+									var f32 fog_scale= pixel_color[3];
+
 									var RGBAColor pixel_color_components
 									[
-										( ust::max( 0.0f, ust::min( f32( i32( texture_value[0] ) ) * pixel_color[0], 255.0f ) ) ),
-										( ust::max( 0.0f, ust::min( f32( i32( texture_value[1] ) ) * pixel_color[1], 255.0f ) ) ),
-										( ust::max( 0.0f, ust::min( f32( i32( texture_value[2] ) ) * pixel_color[2], 255.0f ) ) ),
+										( ust::max( 0.0f, ust::min( f32( i32( texture_value[0] ) ) * pixel_color[0] + fog_color[0] * fog_scale, 255.0f ) ) ),
+										( ust::max( 0.0f, ust::min( f32( i32( texture_value[1] ) ) * pixel_color[1] + fog_color[1] * fog_scale, 255.0f ) ) ),
+										( ust::max( 0.0f, ust::min( f32( i32( texture_value[2] ) ) * pixel_color[2] + fog_color[2] * fog_scale, 255.0f ) ) ),
 										// TODO - consider not caring about alpha if don't need to do so.
-										( ust::max( 0.0f, ust::min( f32( i32( texture_value[3] ) ) * pixel_color[3], 255.0f ) ) ),
+										( ust::max( 0.0f, ust::min( f32( i32( texture_value[3] ) ) * pixel_color[3] + fog_color[3] * fog_scale, 255.0f ) ) ),
 									];
 
 									pair.second= Color32FromComponents( pixel_color_components );
@@ -782,6 +787,7 @@ private:
 private:
 	Color32ImageView @("a") imut surface_;
 	ust::array_view_mut</f32/> @("b") imut depth_buffer_;
+	[ f32, 4 ] imut fog_color_;
 }
 
 } // namespace PM

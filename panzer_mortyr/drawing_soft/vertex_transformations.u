@@ -1,4 +1,5 @@
 import "/assert.iu"
+import "../fog.iu"
 import "vertex_transformations.iu"
 
 namespace PM
@@ -15,13 +16,13 @@ fn EnsureTransformedVerticesCapacity( ust::vector</Vec3f/> &mut transformed_vert
 	return transformed_vertices.range().subrange_end( capacity );
 }
 
-fn EnsureVertexLightsCapacity( ust::vector</ [ f32, 4 ] /> &mut vertex_lights, size_type capacity )
-	: ust::array_view_mut</ [ f32, 4 ] /> @( ust::reference_notation::return_inner_references::param0 )
+fn EnsureVertexLightsCapacity( ust::vector</ VertexLightWithFog /> &mut vertex_lights, size_type capacity )
+	: ust::array_view_mut</ VertexLightWithFog /> @( ust::reference_notation::return_inner_references::param0 )
 {
 	if( vertex_lights.size() < capacity )
 	{
 		// Resize only up.
-		vertex_lights.resize( capacity, ust::make_zeroed</ [ f32, 4 ] />() );
+		vertex_lights.resize( capacity, ust::make_zeroed</ VertexLightWithFog />() );
 	}
 	return vertex_lights.range().subrange_end( capacity );
 }
@@ -44,7 +45,7 @@ fn TransformMapVertices(
 
 fn CalculateLightForMapVertices(
 	ust::array_view_imut</ MapVertex /> vertices,
-	ust::array_view_mut</ [ f32, 4 ] /> vertex_lights,
+	ust::array_view_mut</ VertexLightWithFog /> vertex_lights,
 	ust::array_view_imut</ DynamicLightSourceSoft /> dynamic_light_sources )
 {
 	debug_assert( vertices.size() == vertex_lights.size() );
@@ -57,13 +58,13 @@ fn CalculateLightForMapVertices(
 				f32( pair.second.light[0] ) * ( 1.0f / 255.0f ),
 				f32( pair.second.light[1] ) * ( 1.0f / 255.0f ),
 				f32( pair.second.light[2] ) * ( 1.0f / 255.0f ),
-				f32( pair.second.light[3] ) * ( 1.0f / 255.0f ) );
+				0.0f /* set fog density to zero */ );
 	}
 
 	// Add light from dynamic light sources.
 	foreach( &light_source : dynamic_light_sources )
 	{
-		 // Read it into a local variable to ensure it's not re-read on each loop iteration.
+		// Read it into a local variable to ensure it's not re-read on each loop iteration.
 		var DynamicLightSourceSoft l= light_source;
 
 		foreach( pair : vertex_lights.iter().zip( vertices.iter() ) )
@@ -76,12 +77,31 @@ fn CalculateLightForMapVertices(
 	}
 }
 
+fn CalculateFogDensityForMapVertices(
+	ust::array_view_imut</ MapVertex /> vertices,
+	ust::array_view_mut</ VertexLightWithFog /> vertex_lights,
+	Vec3f& camera_position )
+{
+	debug_assert( vertices.size() == vertex_lights.size() );
+
+	var Vec3f c= camera_position; // Read it into a local variable to ensure it's not re-read on each loop iteration.
+
+	foreach( pair : vertex_lights.iter().zip( vertices.iter() ) )
+	{
+		var f32 one_minus_fog_density= CalculateOneMinusFogDensity( ( c - Vec3f( pair.second.position ) ).Length() );
+		pair.first[0]*= one_minus_fog_density;
+		pair.first[1]*= one_minus_fog_density;
+		pair.first[2]*= one_minus_fog_density;
+		pair.first[3]= 1.0f - one_minus_fog_density;
+	}
+}
+
 fn TransformModelVerticesSingleFrame(
 	ust::array_view_imut</ ModelFrameVertex /> frame_vertices,
 	ust::array_view_mut</Vec3f/> vertices_transformed,
 	Mat4f& model_full_matrix  )
 {
-	debug_assert( vertices_transformed.size() >= frame_vertices.size() );
+	debug_assert( vertices_transformed.size() == frame_vertices.size() );
 
 	var Mat4f m= model_full_matrix; // Read it into a local variable to ensure it's not re-read on each loop iteration.
 
@@ -100,7 +120,7 @@ fn TransformModelVerticesTwoFrames(
 	Mat4f& model_full_matrix )
 {
 	debug_assert( frame0_vertices.size() == frame1_vertices.size() );
-	debug_assert( vertices_transformed.size() >= frame0_vertices.size() );
+	debug_assert( vertices_transformed.size() == frame0_vertices.size() );
 
 	// Optimization for cases where no interpolation between frames is needed.
 	if( frame_mix <= 0.001f )
@@ -127,17 +147,17 @@ fn TransformModelVerticesTwoFrames(
 
 fn ApplyLightToModelVerticesSingleFrame(
 	ust::array_view_imut</ ModelFrameVertex /> frame_vertices,
-	ust::array_view_mut</ [ f32, 4 ] /> vertex_light,
+	ust::array_view_mut</ VertexLightWithFog /> vertex_lights,
 	SphericalHarmonicsRGB& light )
 {
-	debug_assert( vertex_light.size() >= frame_vertices.size() );
+	debug_assert( vertex_lights.size() == frame_vertices.size() );
 
 	 // Read it into a local variable to ensure it's not re-read on each loop iteration.
 	var SphericalHarmonicsRGB l= light;
 
 	var f32 constexpr normal_scale= 1.0f / 128.0f;
 
-	foreach( pair : vertex_light.iter().zip( frame_vertices.iter() ) )
+	foreach( pair : vertex_lights.iter().zip( frame_vertices.iter() ) )
 	{
 		// TODO - optimize this code, make sure vector instructions are used.
 
@@ -150,28 +170,28 @@ fn ApplyLightToModelVerticesSingleFrame(
 				l[0].directional_components.Dot( normal_normalized ) + l[0].constant_component,
 				l[1].directional_components.Dot( normal_normalized ) + l[1].constant_component,
 				l[2].directional_components.Dot( normal_normalized ) + l[2].constant_component,
-				0.0f );
+				0.0f /* set fog density to zero */ );
 	}
 }
 
 fn ApplyLightToModelVerticesTwoFrames(
 	ust::array_view_imut</ ModelFrameVertex /> frame0_vertices,
 	ust::array_view_imut</ ModelFrameVertex /> frame1_vertices,
-	ust::array_view_mut</ [ f32, 4 ] /> vertex_light,
+	ust::array_view_mut</ VertexLightWithFog /> vertex_lights,
 	f32 frame_mix,
 	SphericalHarmonicsRGB& light )
 {
 	debug_assert( frame0_vertices.size() == frame1_vertices.size() );
-	debug_assert( vertex_light.size() >= frame0_vertices.size() );
+	debug_assert( vertex_lights.size() == frame0_vertices.size() );
 
 	// Optimization for cases where no interpolation between frames is needed.
 	if( frame_mix <= 0.001f )
 	{
-		return ApplyLightToModelVerticesSingleFrame( frame0_vertices, vertex_light, light );
+		return ApplyLightToModelVerticesSingleFrame( frame0_vertices, vertex_lights, light );
 	}
 	if( frame_mix >= 0.999f )
 	{
-		return ApplyLightToModelVerticesSingleFrame( frame1_vertices, vertex_light, light );
+		return ApplyLightToModelVerticesSingleFrame( frame1_vertices, vertex_lights, light );
 	}
 
 	var f32 scale0= 1.0f - frame_mix;
@@ -180,7 +200,7 @@ fn ApplyLightToModelVerticesTwoFrames(
 	 // Read it into a local variable to ensure it's not re-read on each loop iteration.
 	var SphericalHarmonicsRGB l= light;
 
-	foreach( pair : vertex_light.iter().zip( frame0_vertices.iter().zip( frame1_vertices.iter() ) ) )
+	foreach( pair : vertex_lights.iter().zip( frame0_vertices.iter().zip( frame1_vertices.iter() ) ) )
 	{
 		// TODO - optimize this code, make sure vector instructions are used.
 		var [ i8, 3 ]& n0= pair.second.first .normal;
@@ -199,7 +219,75 @@ fn ApplyLightToModelVerticesTwoFrames(
 				l[0].directional_components.Dot( normal_normalized ) + l[0].constant_component,
 				l[1].directional_components.Dot( normal_normalized ) + l[1].constant_component,
 				l[2].directional_components.Dot( normal_normalized ) + l[2].constant_component,
-				0.0f );
+				0.0f /* set fog density to zero */ );
+	}
+}
+
+fn CalculateFogDensityForModelVerticesSingleFrame(
+	ust::array_view_imut</ ModelFrameVertex /> frame_vertices,
+	ust::array_view_mut</ VertexLightWithFog /> vertex_lights,
+	Mat4f& matrix )
+{
+	debug_assert( vertex_lights.size() == frame_vertices.size() );
+
+	// Read it into a local variable to ensure it's not re-read on each loop iteration.
+	var Mat4f m= matrix;
+
+	foreach( pair : vertex_lights.iter().zip( frame_vertices.iter() ) )
+	{
+		// TODO - optimize this code, make sure vector instructions are used.
+		var Vec3f position_transformed= Vec3f( pair.second.position ) * m;
+
+		var f32 one_minus_fog_density= CalculateOneMinusFogDensity( position_transformed.Length() );
+		pair.first[0]*= one_minus_fog_density;
+		pair.first[1]*= one_minus_fog_density;
+		pair.first[2]*= one_minus_fog_density;
+		pair.first[3]= 1.0f - one_minus_fog_density;
+	}
+}
+
+fn CalculateFogDensityForModelVerticesTwoFrames(
+	ust::array_view_imut</ ModelFrameVertex /> frame0_vertices,
+	ust::array_view_imut</ ModelFrameVertex /> frame1_vertices,
+	ust::array_view_mut</ VertexLightWithFog /> vertex_lights,
+	f32 frame_mix,
+	Mat4f& matrix )
+{
+	debug_assert( frame0_vertices.size() == frame1_vertices.size() );
+	debug_assert( vertex_lights.size() == frame0_vertices.size() );
+
+	// Optimization for cases where no interpolation between frames is needed.
+	if( frame_mix <= 0.001f )
+	{
+		return CalculateFogDensityForModelVerticesSingleFrame( frame0_vertices, vertex_lights, matrix );
+	}
+	if( frame_mix >= 0.999f )
+	{
+		return CalculateFogDensityForModelVerticesSingleFrame( frame1_vertices, vertex_lights, matrix );
+	}
+
+	var f32 scale0= 1.0f - frame_mix;
+	var f32 scale1= frame_mix;
+
+	// Read it into a local variable to ensure it's not re-read on each loop iteration.
+	var Mat4f m= matrix;
+
+	foreach( pair : vertex_lights.iter().zip( frame0_vertices.iter().zip( frame1_vertices.iter() ) ) )
+	{
+		// TODO - optimize this code, make sure vector instructions are used.
+
+		var [ f32, 3 ]& p0= pair.second.first .position;
+		var [ f32, 3 ]& p1= pair.second.second.position;
+
+		var Vec3f position= Vec3f( p0 ) * scale0 + Vec3f( p1 ) * scale1;
+
+		var Vec3f position_transformed= position * m;
+
+		var f32 one_minus_fog_density= CalculateOneMinusFogDensity( position_transformed.Length() );
+		pair.first[0]*= one_minus_fog_density;
+		pair.first[1]*= one_minus_fog_density;
+		pair.first[2]*= one_minus_fog_density;
+		pair.first[3]= 1.0f - one_minus_fog_density;
 	}
 }
 

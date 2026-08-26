@@ -124,9 +124,10 @@ PanzerMortyr software rendering:
 * Draw snow.
 * Draw rain.
 * Draw water circles.
-* Draw global fog.
+* Apply global fog to liquids, glass, light shafts, broken glass, billboards, snow, rain.
 * Draw local fog.
 * Apply dynamic lighting to decals.
+* Apply global fog to decals.
 * Draw sun/moon.
 * Draw stars.
 * Draw mirrors.
