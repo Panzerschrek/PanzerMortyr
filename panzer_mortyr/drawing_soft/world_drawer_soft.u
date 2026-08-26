@@ -157,6 +157,10 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 	var u32 film_special_material_frame= CalculateFilmSpecialMaterialFrame( drawing_info.game_time_s );
 
 	var bool dynamic_lights_enabled= settings_.lock_imut().deref().r_dynamic_lights_enabled;
+	var bool fog_enabled= settings_.lock_imut().deref().r_fog_enabled;
+
+	var ust::optional</Vec3f/> camera_position_for_fog=
+		( fog_enabled ? ust::optional</Vec3f/>( drawing_info.camera_params.position ) : ust::optional</Vec3f/>() );
 
 	// Convert dynamic light sources into our own format.
 	scoped_array DynamicLightSourceSoft dynamic_light_sources[ drawing_info.dynamic_light_sources.size() ](
@@ -254,7 +258,7 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 
 				DrawMapClusterTriangles(
 					rasterizer,
-					drawing_info.camera_params.position,
+					camera_position_for_fog.as_ref(),
 					view_matrix,
 					frustum_side_clip_planes,
 					map_data,
@@ -287,7 +291,7 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 
 					DrawMapTriangles(
 						rasterizer,
-						drawing_info.camera_params.position,
+						camera_position_for_fog.as_ref(),
 						view_matrix,
 						frustum_side_clip_planes,
 						map_data.textures,
@@ -321,7 +325,7 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 
 					DrawMapTriangles(
 						rasterizer,
-						drawing_info.camera_params.position,
+						camera_position_for_fog.as_ref(),
 						view_matrix,
 						frustum_side_clip_planes,
 						map_data.textures,
@@ -362,7 +366,7 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 
 					DrawMapTriangles(
 						rasterizer,
-						drawing_info.camera_params.position,
+						camera_position_for_fog.as_ref(),
 						view_matrix,
 						frustum_side_clip_planes,
 						map_data.textures,
@@ -429,10 +433,16 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 			}
 		}
 
+		var ust::optional</Vec3f/> mut cluster_camera_position_for_fog;
+		if_var( &camera_position : camera_position_for_fog )
+		{
+			// Translate camera position so that fog is calculated properly.
+			cluster_camera_position_for_fog= camera_position - dynamic_cluster_object.translation;
+		}
+
 		DrawMapClusterTriangles(
 			rasterizer,
-			// Translate camera position so that fog is calculated properly.
-			drawing_info.camera_params.position - dynamic_cluster_object.translation,
+			cluster_camera_position_for_fog.as_ref(),
 			Mat4f::MakeTranslation( dynamic_cluster_object.translation ) * view_matrix,
 			frustum_side_clip_planes,
 			map_data,
@@ -623,39 +633,42 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 			}
 		}
 
-		var f32 distance_to_camera=
-			( frame_bbox.GetCenter() * model_transormation_matrix - drawing_info.camera_params.position ).Length();
-
-		var f32 frame_bbox_diameter= frame_bbox.GetDimensions().Length();
-
-		if( frame_bbox_diameter * 6.0f <= distance_to_camera )
+		if( fog_enabled )
 		{
-			// For far-away small model objects calculate fog for their center. It's cheap to do so.
-			var f32 one_minus_fog_density= CalculateOneMinusFogDensity( distance_to_camera );
+			var f32 distance_to_camera=
+				( frame_bbox.GetCenter() * model_transormation_matrix - drawing_info.camera_params.position ).Length();
 
-			foreach( &mut light_and_fog : vertex_lights )
-			{
-				light_and_fog[0]*= one_minus_fog_density;
-				light_and_fog[1]*= one_minus_fog_density;
-				light_and_fog[2]*= one_minus_fog_density;
-				light_and_fog[3]= 1.0f - one_minus_fog_density;
-			}
-		}
-		else
-		{
-			// This model object is large and/or close to camera. Use per-vertex fog density calculation.
+			var f32 frame_bbox_diameter= frame_bbox.GetDimensions().Length();
 
-			var Mat4f fog_space_matrix=
-				model_transormation_matrix * Mat4f::MakeTranslation( -drawing_info.camera_params.position );
-			if( frames.frame0 == frames.frame1 )
+			if( frame_bbox_diameter * 6.0f <= distance_to_camera )
 			{
-				// Optimization for cases where no frame mixing is necessary.
-				CalculateFogDensityForModelVerticesSingleFrame( frame0_vertices, vertex_lights, fog_space_matrix );
+				// For far-away small model objects calculate fog for their center. It's cheap to do so.
+				var f32 one_minus_fog_density= CalculateOneMinusFogDensity( distance_to_camera );
+
+				foreach( &mut light_and_fog : vertex_lights )
+				{
+					light_and_fog[0]*= one_minus_fog_density;
+					light_and_fog[1]*= one_minus_fog_density;
+					light_and_fog[2]*= one_minus_fog_density;
+					light_and_fog[3]= 1.0f - one_minus_fog_density;
+				}
 			}
 			else
 			{
-				CalculateFogDensityForModelVerticesTwoFrames(
-					frame0_vertices, frame1_vertices, vertex_lights, frames.frame_mix, fog_space_matrix );
+				// This model object is large and/or close to camera. Use per-vertex fog density calculation.
+
+				var Mat4f fog_space_matrix=
+					model_transormation_matrix * Mat4f::MakeTranslation( -drawing_info.camera_params.position );
+				if( frames.frame0 == frames.frame1 )
+				{
+					// Optimization for cases where no frame mixing is necessary.
+					CalculateFogDensityForModelVerticesSingleFrame( frame0_vertices, vertex_lights, fog_space_matrix );
+				}
+				else
+				{
+					CalculateFogDensityForModelVerticesTwoFrames(
+						frame0_vertices, frame1_vertices, vertex_lights, frames.frame_mix, fog_space_matrix );
+				}
 			}
 		}
 
@@ -1455,7 +1468,7 @@ type TriangleVerticesClipped= [ Rasterizer::Vertex, 16 ];
 
 fn DrawMapClusterTriangles(
 	Rasterizer& rasterizer,
-	Vec3f& camera_position,
+	ust::optional_ref_imut</Vec3f/> camera_position_for_fog,
 	Mat4f& view_matrix,
 	FrustumSideClipPlanes& frustum_side_clip_planes,
 	MapDrawDataSoft& map_data,
@@ -1483,7 +1496,7 @@ fn DrawMapClusterTriangles(
 
 	DrawMapTriangles(
 		rasterizer,
-		camera_position,
+		camera_position_for_fog,
 		view_matrix,
 		frustum_side_clip_planes,
 		map_data.textures,
@@ -1501,7 +1514,7 @@ fn DrawMapClusterTriangles(
 
 fn DrawMapTriangles(
 	Rasterizer& rasterizer,
-	Vec3f& camera_position,
+	ust::optional_ref_imut</Vec3f/> camera_position_for_fog,
 	Mat4f& view_matrix,
 	FrustumSideClipPlanes& frustum_side_clip_planes,
 	ust::array_view_imut</Color32WorldTextureWithMips/> textures,
@@ -1521,7 +1534,11 @@ fn DrawMapTriangles(
 
 	auto vertex_lights_range= EnsureVertexLightsCapacity( vertex_lights, vertices.size() );
 	CalculateLightForMapVertices( vertices, vertex_lights_range, dynamic_light_sources );
-	CalculateFogDensityForMapVertices( vertices, vertex_lights_range, camera_position );
+
+	if_var( &camera_position : camera_position_for_fog )
+	{
+		CalculateFogDensityForMapVertices( vertices, vertex_lights_range, camera_position );
+	}
 
 	// After positions and light is prepared, draw triangles.
 
