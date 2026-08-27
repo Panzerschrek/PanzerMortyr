@@ -153,6 +153,9 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 	// View-space clip planes.
 	var FrustumSideClipPlanes frustum_side_clip_planes= CalculateViewSpaceFrustumSideClipPlanes( surface.size );
 
+	semitransparent_geometry_vertices_.clear();
+	semitransparent_geometry_indices_.clear();
+
 	var u32 valve_special_material_frame= CalculateValveSpecialMaterialFrame( drawing_info.game_time_s );
 	var u32 film_special_material_frame= CalculateFilmSpecialMaterialFrame( drawing_info.game_time_s );
 
@@ -342,45 +345,67 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 					stats.num_visible_map_triangles+= u32( indices.size() ) / 3u;
 				}
 
-				if( cluster_draw_data.has_breakable_quads && size_type( map_index_ ) < maps_description.maps.size() )
+				if( size_type( map_index_ ) < maps_description.maps.size()  )
 				{
 					var MapsDescription::MapDescription& map_description=
 						maps_description.maps[ size_type( map_index_ ) ];
 					var MaterialsDescription::Block& materials_block=
 						materials_description_.deref().blocks[ map_description.materials_block ]; // Halts if not found.
 
-					temp_vertices_.clear();
-					temp_indices_.clear();
+					if( cluster_draw_data.has_breakable_quads )
+					{
+						temp_vertices_.clear();
+						temp_indices_.clear();
 
-					CreateClusterBreakablePolygons(
-						cluster,
-						quads,
-						drawing_info.broken_quad_bits,
-						zmap_lam_data,
-						materials_block,
-						map_data.breakable_material_bits,
-						temp_vertices_,
-						temp_indices_ );
+						CreateClusterBreakablePolygons(
+							cluster,
+							quads,
+							drawing_info.broken_quad_bits,
+							zmap_lam_data,
+							materials_block,
+							map_data.breakable_material_bits,
+							temp_vertices_,
+							temp_indices_ );
 
-					// For scaling and biasing process all breakable quads of this cluster as one quad.
-					// It the worst case we just offset texture coordinates a little bit more.
-					PrepareQuadVertexTextureCoordinates( temp_vertices_ );
+						// For scaling and biasing process all breakable quads of this cluster as one quad.
+						// It the worst case we just offset texture coordinates a little bit more.
+						PrepareQuadVertexTextureCoordinates( temp_vertices_ );
 
-					DrawMapTriangles(
-						rasterizer,
-						camera_position_for_fog.as_ref(),
-						view_matrix,
-						frustum_side_clip_planes,
-						map_data.textures,
-						temp_vertices_,
-						temp_indices_,
-						cluster_dynamic_light_sources_,
-						transformed_vertices_,
-						vertex_lights_,
-						vertices_clipped0,
-						vertices_clipped1 );
+						DrawMapTriangles(
+							rasterizer,
+							camera_position_for_fog.as_ref(),
+							view_matrix,
+							frustum_side_clip_planes,
+							map_data.textures,
+							temp_vertices_,
+							temp_indices_,
+							cluster_dynamic_light_sources_,
+							transformed_vertices_,
+							vertex_lights_,
+							vertices_clipped0,
+							vertices_clipped1 );
 
-					stats.num_visible_breakable_triangles+= u32( temp_indices_.size() ) / 3u;
+						stats.num_visible_breakable_triangles+= u32( temp_indices_.size() ) / 3u;
+					}
+
+					if( cluster_draw_data.has_glass_quads )
+					{
+						var size_type first_vertex= semitransparent_geometry_vertices_.size();
+
+						CreateClusterGlassPolygons(
+							cluster,
+							quads,
+							drawing_info.broken_quad_bits,
+							zmap_lam_data,
+							materials_block,
+							semitransparent_geometry_vertices_,
+							semitransparent_geometry_indices_ );
+
+						// Process all vertices of cluster glass polygons as belonging to single quad.
+						// It may lead to too large texture coordinates biasing, but it's not a huge probles.
+						PrepareQuadVertexTextureCoordinates(
+							semitransparent_geometry_vertices_.range().subrange_start( first_vertex ) );
+					}
 				}
 			}
 
@@ -744,6 +769,21 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 					ust::make_array( test_line.color[0], test_line.color[1], test_line.color[2], 0u8 ) ) );
 		}
 	}
+
+	// Draw all semitransparent geometry.
+	DrawMapTriangles(
+		rasterizer,
+		camera_position_for_fog.as_ref(),
+		view_matrix,
+		frustum_side_clip_planes,
+		map_data.textures,
+		semitransparent_geometry_vertices_,
+		semitransparent_geometry_indices_,
+		cluster_dynamic_light_sources_,
+		transformed_vertices_,
+		vertex_lights_,
+		vertices_clipped0,
+		vertices_clipped1 );
 
 	return stats;
 }
