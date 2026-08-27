@@ -111,16 +111,14 @@ PanzerMortyr software rendering:
 * Try seeeding-up rasterization code by using depth buffer in u32 or even u16 format.
 * Try speeding-up rasterization by correcting color and depth equations, so that it's not need to clamp interpolated color and depth values.
 * Draw test primitives.
-* Prepare special textures used by billboards and decals.
 * Draw highlighted clusters.
 * Draw map quads with caustics.
 * Draw first-person weapon models specially, so that they are always drawn atop other geometry.
-* Draw billboards.
 * Draw decals.
 * Draw snow.
 * Draw rain.
 * Draw water circles.
-* Apply global fog to broken glass, billboards, snow, rain.
+* Apply global fog to broken glass, snow, rain.
 * Draw local fog.
 * Apply dynamic lighting to decals.
 * Apply global fog to decals.

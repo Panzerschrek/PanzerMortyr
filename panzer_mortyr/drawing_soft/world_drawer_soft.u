@@ -1,6 +1,7 @@
 import "/enum_string_conversions.iu"
 import "/scoped_array.iu"
 import "/string_conversions.iu"
+import "../billboards.iu"
 import "../camera_utils.iu"
 import "../clipping.iu"
 import "../cluster_utils.iu"
@@ -47,6 +48,9 @@ fn WorldDrawerSoft::constructor(
 				auto mut lock= caching_game_resources_loader.lock_mut();
 				return lock.deref().LoadMaterialsDescription();
 			}(),
+		billboards_description_=
+			LoadBillboardsDescription(
+				caching_game_resources_loader.lock_imut().deref().GetGameFilesystem(), console_out ),
 		caching_game_resources_loader_ptr_= move(caching_game_resources_loader),
 		console_out_= move(console_out),
 		map_index_= 0u,
@@ -834,6 +838,26 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 		stats.num_visible_model_triangles+= u32( model.triangles.size() );
 	}
 
+	{
+		var size_type first_vertex= semitransparent_geometry_vertices_.size();
+
+		stats.num_visible_billboards+=
+			BuildBillboardPolygons(
+				drawing_info.billboards,
+				billboards_description_,
+				drawing_info.camera_params.position,
+				drawing_info.camera_params.fov_x,
+				camera_clip_planes,
+				visibility_calculator.GetVisibleLeafsBBox(),
+				semitransparent_geometry_vertices_,
+				semitransparent_geometry_indices_ );
+
+		// For scaling and biasing process all billboards as one quad.
+		// It the worst case we just offset texture coordinates a little bit more.
+		PrepareQuadVertexTextureCoordinates(
+			semitransparent_geometry_vertices_.range().subrange_start( first_vertex ) );
+	}
+
 	if( !drawing_info.test_lines.empty() )
 	{
 		DrawTestLines( rasterizer, drawing_info.test_lines, view_matrix, frustum_side_clip_planes );
@@ -906,6 +930,8 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 		vertex_lights_,
 		vertices_clipped0,
 		vertices_clipped1 );
+
+	stats.num_visible_semitransparent_triangles+= u32( semitransparent_geometry_indices_.size() ) / 3u;
 
 	return stats;
 }
@@ -2229,6 +2255,26 @@ fn DrawTestLines(
 	}
 }
 
+fn LoadBillboardsDescription(
+	GameFilesystemPtr& game_filesystem_ptr, ConsoleOutPtr& console_out_ptr ) : BillboardsDescription
+{
+	auto mut lock= game_filesystem_ptr.lock_mut();
+	result_match( lock.deref().LoadFileToString( c_billboards_description_file_name ) )
+	{
+		Ok( file_contents ) ->
+		{
+			return ParseBillboardsDescriptionFile( file_contents );
+		},
+		Err( e ) ->
+		{
+			ConsoleOutAddTextLine(
+				console_out_ptr,
+				ust::concat( "Failed to read billboards description file! Error: ", ust::enum_to_string(e), "!" ) );
+			return BillboardsDescription();
+		},
+	}
+}
+
 fn LoadModels(
 	ust::array_view_imut</ResourceString/> model_list,
 	GameFilesystemPtr& game_filesystem_ptr,
@@ -2423,10 +2469,8 @@ fn LoadMapTextures(
 
 				for( auto mut y= 0u; y < MaterialsDescription::c_texture_size; ++y )
 				{
-					// Perform here vertical flipping while copying data into destination tile.
-
 					auto src_line= ust::array_view_imut</RGBAColor/>(texture_data).subrange_start(
-						size_type( ( MaterialsDescription::c_texture_size - 1u - y ) * MaterialsDescription::c_texture_size ) );
+						size_type( y * MaterialsDescription::c_texture_size ) );
 
 					var ust::array_view_mut</Color32/> dst_line( dst_texture[0][y] );
 
