@@ -85,10 +85,11 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 	var MapFullDrawDataSoft &mut map_data_full= map_data_.try_deref();
 
 	var MapDrawDataSoft& map_data= map_data_full.map_draw_data;
+	var ZmapData& zmap_data= map_data.zmap_data.deref();
 	var ZvoxData& zvox_data= map_data.zvox_data.deref();
 	var ZmapLamData& zmap_lam_data= map_data.zmap_lam_data.deref();
 	auto clusters= zvox_data.clusters.range();
-	auto quads= map_data.zmap_data.deref().quads.range();
+	auto quads= zmap_data.quads.range();
 
 	var MapsDescription& maps_description= maps_description_.deref();
 
@@ -498,6 +499,44 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 			vertices_clipped0,
 			vertices_clipped1,
 			stats );
+	}
+
+	foreach( &light_shafts_box : zmap_data.light_shaft_boxes )
+	{
+		if( light_shafts_box.enabled_flag <= 0 )
+		{
+			continue;
+		}
+
+		var BBox3f bbox
+		{
+			.min(
+				f32( light_shafts_box.center[0] - light_shafts_box.bounding_box_half_size[0] ),
+				f32( light_shafts_box.center[1] - light_shafts_box.bounding_box_half_size[1] ),
+				f32( light_shafts_box.center[2] - light_shafts_box.bounding_box_half_size[2] ) ),
+			.max(
+				f32( light_shafts_box.center[0] + light_shafts_box.bounding_box_half_size[0] ),
+				f32( light_shafts_box.center[1] + light_shafts_box.bounding_box_half_size[1] ),
+				f32( light_shafts_box.center[2] + light_shafts_box.bounding_box_half_size[2] ) ),
+		};
+
+		var [ Vec3f, 8 ] bbox_corner_vertices= bbox.CreateCornerVertices();
+
+		if( !visibility_calculator.IsBoxVisible( bbox_corner_vertices ) ||
+			AreBoxVerticesClippedByAtLeastOneCameraClipPlane( camera_clip_planes, bbox_corner_vertices ) )
+		{
+			continue;
+		}
+
+		var size_type first_vertex= semitransparent_geometry_vertices_.size();
+
+		CreateLightShaftsBoxPolygons(
+			light_shafts_box, semitransparent_geometry_vertices_, semitransparent_geometry_indices_ );
+
+		// Process all vertices of a light shafts box as a single quad.
+		// It may lead to too large texture coordinates biasing, but it's not a huge probles.
+		PrepareQuadVertexTextureCoordinates(
+			semitransparent_geometry_vertices_.range().subrange_start( first_vertex ) );
 	}
 
 	foreach( &model_object : drawing_info.model_objects ) label for_model_objects
