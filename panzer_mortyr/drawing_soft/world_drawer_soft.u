@@ -2324,6 +2324,95 @@ fn LoadMapTextures(
 			texture_31_image_data, u32( materials_block.textures.size() + 1s ), result_textures );
 	}
 
+	// Handle specially tiles in texture 32.
+	// Upload each tile in lower and upper rows of the 4x4 grid into a separate texture layer.
+	// It's necessary to avoid leaking due to texture filtering.
+	if_var( &mut texture_32_image_data : texture_32_image_data_opt )
+	{
+		var [ RGBAColor, MaterialsDescription::c_texture_size * MaterialsDescription::c_texture_size ] mut texture_data= zero_init;
+
+		var u32 subtile_size= MaterialsDescription::c_texture_size / 2u;
+
+		for( auto mut row= 0u; row < 2u; ++row )
+		{
+			var u32 subtile_y= row * 3u;
+			for( auto mut subtile_x= 0u; subtile_x < 4u; ++subtile_x )
+			{
+				for( auto mut y= 0u; y < subtile_size; ++y )
+				{
+					for( auto mut x= 0u; x < subtile_size; ++x )
+					{
+						// TODO - speed-up this, copy whole lines.
+
+						var u32 src_x= subtile_x * subtile_size + x;
+						var u32 src_y=
+							MaterialsDescription::c_texture_size * MaterialsDescription::c_texture_file_num_tiles_x
+							- 1u
+							- ( subtile_y * subtile_size + y );
+
+						var [ u8, 4 ] pixel=
+							texture_32_image_data.pixels[ size_type(
+								src_x +
+								src_y * ( MaterialsDescription::c_texture_size * MaterialsDescription::c_texture_file_num_tiles_x ) ) ];
+
+						texture_data[ x + y * MaterialsDescription::c_texture_size ]= pixel;
+						texture_data[ ( x + subtile_size ) + y * MaterialsDescription::c_texture_size ]= pixel;
+						texture_data[ x + ( y + subtile_size ) * MaterialsDescription::c_texture_size ]= pixel;
+						texture_data[ ( x + subtile_size ) + ( y + subtile_size ) * MaterialsDescription::c_texture_size ]= pixel;
+					}
+				}
+
+				if( row > 0u && subtile_x > 0u )
+				{
+					// Make black color to transparent for textures used as decals.
+					foreach( &mut pixel : texture_data )
+					{
+						var u8 almost_black= 8u8;
+						if( pixel[0] <= almost_black & pixel[1] <= almost_black & pixel[2] <= almost_black )
+						{
+							pixel[3]= 0u8;
+						}
+						else
+						{
+							pixel[3]= 255u8;
+						}
+					}
+				}
+
+				var u32 dst_layer=
+					u32( materials_block.textures.size() + 2s ) *
+						( MaterialsDescription::c_texture_file_num_tiles_x * MaterialsDescription::c_texture_file_num_tiles_y ) +
+					row * 4u +
+					subtile_x;
+
+				var Color32WorldTextureWithMips &mut dst_texture= result_textures[ size_type( dst_layer ) ];
+
+				for( auto mut y= 0u; y < MaterialsDescription::c_texture_size; ++y )
+				{
+					// Perform here vertical flipping while copying data into destination tile.
+
+					auto src_line= ust::array_view_imut</RGBAColor/>(texture_data).subrange_start(
+						size_type( ( MaterialsDescription::c_texture_size - 1u - y ) * MaterialsDescription::c_texture_size ) );
+
+					var ust::array_view_mut</Color32/> dst_line( dst_texture[0][y] );
+
+					foreach( pair : dst_line.iter().zip( src_line.iter() ) )
+					{
+						pair.first= Color32FromComponents( pair.second );
+					}
+				}
+
+				BuildTextureMip( dst_texture[1], dst_texture[0] );
+				BuildTextureMip( dst_texture[2], dst_texture[1] );
+				BuildTextureMip( dst_texture[3], dst_texture[2] );
+				BuildTextureMip( dst_texture[4], dst_texture[3] );
+				BuildTextureMip( dst_texture[5], dst_texture[4] );
+				BuildTextureMip( dst_texture[6], dst_texture[5] );
+				BuildTextureMip( dst_texture[7], dst_texture[6] );
+			}
+		}
+	}
+
 	return result_textures;
 }
 
