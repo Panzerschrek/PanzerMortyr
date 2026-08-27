@@ -893,7 +893,7 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 
 	// Draw semitransparent geometry after all opaque geometry.
 
-	DrawMapTrianglesWithPremultipliedAlphaBlending(
+	DrawSemitransparentMapTriangles(
 		rasterizer,
 		camera_position_for_fog.as_ref(),
 		view_matrix,
@@ -1658,11 +1658,13 @@ var ( fn(
 		ust::vector</ VertexLightWithFog /> &mut vertex_lights,
 		TriangleVerticesClipped &mut vertices_clipped0,
 		TriangleVerticesClipped &mut vertices_clipped1 ) )
-	DrawMapTriangles( DrawMapTrianglesWithBlendingModeSelection</ Rasterizer::BlendingMode::None /> ),
-	DrawMapTrianglesWithPremultipliedAlphaBlending( DrawMapTrianglesWithBlendingModeSelection</ Rasterizer::BlendingMode::PremultipliedAlpha /> );
+	// For regular triangles use no blending and write into depth buffer.
+	DrawMapTriangles( DrawMapTrianglesTemplated</ Rasterizer::BlendingMode::None, Rasterizer::DepthWriteMode::Yes /> ),
+	// For semitransparent trinagles use blending and don't write into depth buffer.
+	DrawSemitransparentMapTriangles( DrawMapTrianglesTemplated</ Rasterizer::BlendingMode::PremultipliedAlpha, Rasterizer::DepthWriteMode::No /> );
 
-template</ Rasterizer::BlendingMode blending_mode />
-fn DrawMapTrianglesWithBlendingModeSelection(
+template</ Rasterizer::BlendingMode blending_mode, Rasterizer::DepthWriteMode depth_write_mode />
+fn DrawMapTrianglesTemplated(
 	Rasterizer& rasterizer,
 	ust::optional_ref_imut</Vec3f/> camera_position_for_fog,
 	Mat4f& view_matrix,
@@ -1737,7 +1739,7 @@ fn DrawMapTrianglesWithBlendingModeSelection(
 
 		for( auto mut i= 2s; i < num_vertices; ++i )
 		{
-			RasterizeTriangleWithSubdivisionAndInterpolationMethodSelection</ blending_mode />(
+			RasterizeTriangleWithSubdivisionAndInterpolationMethodSelection</ blending_mode, depth_write_mode />(
 				rasterizer,
 				cast_imut(vertices_clipped1)[0],
 				cast_imut(vertices_clipped1)[ i - 1s ],
@@ -1785,7 +1787,9 @@ fn DrawModelTrianglesWithoutFrustumPlanesClipping(
 			debug_assert( v[1].position.z > 0.0f );
 			debug_assert( v[2].position.z > 0.0f );
 
-			RasterizeTriangleWithSubdivisionAndInterpolationMethodSelection</ Rasterizer::BlendingMode::None />(
+			RasterizeTriangleWithSubdivisionAndInterpolationMethodSelection</
+				Rasterizer::BlendingMode::None,
+				Rasterizer::DepthWriteMode::Yes />(
 				rasterizer, v[0], v[1], v[2], texture );
 		}
 	}
@@ -1841,7 +1845,9 @@ fn DrawModelTrianglesWithFrustumPlanesClipping(
 
 			for( auto mut i= 2s; i < num_vertices; ++i )
 			{
-				RasterizeTriangleWithSubdivisionAndInterpolationMethodSelection</ Rasterizer::BlendingMode::None />(
+				RasterizeTriangleWithSubdivisionAndInterpolationMethodSelection</
+					Rasterizer::BlendingMode::None,
+					Rasterizer::DepthWriteMode::Yes />(
 					rasterizer,
 					cast_imut(vertices_clipped1)[0],
 					cast_imut(vertices_clipped1)[ i - 1s ],
@@ -1924,7 +1930,7 @@ fn ClipPolygonByNearZAndFrustumSidePlanes(
 	return num_vertices;
 }
 
-template</ Rasterizer::BlendingMode blending_mode, type TextureType />
+template</ Rasterizer::BlendingMode blending_mode, Rasterizer::DepthWriteMode depth_write_mode, type TextureType />
 fn RasterizeTriangleWithSubdivisionAndInterpolationMethodSelection(
 	Rasterizer& rasterizer,
 	Rasterizer::Vertex& v0,
@@ -1970,7 +1976,7 @@ fn RasterizeTriangleWithSubdivisionAndInterpolationMethodSelection(
 		// Can't use affine rasterization for this triangle or even subdivision.
 		// Use perspective-corrected rasterization.
 		rasterizer.RasterizeTrianlge</
-			Rasterizer::AttributesInterpolationMode::PerspectiveCorrected, blending_mode />( v0, v1, v2, texture );
+			Rasterizer::AttributesInterpolationMode::PerspectiveCorrected, blending_mode, depth_write_mode />( v0, v1, v2, texture );
 
 		if( use_debug_lines_visualization )
 		{
@@ -2005,13 +2011,13 @@ fn RasterizeTriangleWithSubdivisionAndInterpolationMethodSelection(
 
 				var Rasterizer::Vertex v20= ( v2 + v0 ) * 0.5f;
 
-				rasterizer.RasterizeTrianlge</ Rasterizer::AttributesInterpolationMode::Affine, blending_mode />(
+				rasterizer.RasterizeTrianlge</ Rasterizer::AttributesInterpolationMode::Affine, blending_mode, depth_write_mode />(
 					 v0, v01, v20, texture );
-				rasterizer.RasterizeTrianlge</ Rasterizer::AttributesInterpolationMode::Affine, blending_mode />(
+				rasterizer.RasterizeTrianlge</ Rasterizer::AttributesInterpolationMode::Affine, blending_mode, depth_write_mode />(
 					 v1, v12, v01, texture );
-				rasterizer.RasterizeTrianlge</ Rasterizer::AttributesInterpolationMode::Affine, blending_mode />(
+				rasterizer.RasterizeTrianlge</ Rasterizer::AttributesInterpolationMode::Affine, blending_mode, depth_write_mode />(
 					 v2, v20, v12, texture );
-				rasterizer.RasterizeTrianlge</ Rasterizer::AttributesInterpolationMode::Affine, blending_mode />(
+				rasterizer.RasterizeTrianlge</ Rasterizer::AttributesInterpolationMode::Affine, blending_mode, depth_write_mode />(
 					v01, v12, v20, texture );
 
 				if( use_debug_lines_visualization )
@@ -2026,11 +2032,11 @@ fn RasterizeTriangleWithSubdivisionAndInterpolationMethodSelection(
 			}
 			else
 			{
-				rasterizer.RasterizeTrianlge</ Rasterizer::AttributesInterpolationMode::Affine, blending_mode />(
+				rasterizer.RasterizeTrianlge</ Rasterizer::AttributesInterpolationMode::Affine, blending_mode, depth_write_mode />(
 					v01,  v1, v12, texture );
-				rasterizer.RasterizeTrianlge</ Rasterizer::AttributesInterpolationMode::Affine, blending_mode />(
+				rasterizer.RasterizeTrianlge</ Rasterizer::AttributesInterpolationMode::Affine, blending_mode, depth_write_mode />(
 					 v0, v01, v12, texture );
-				rasterizer.RasterizeTrianlge</ Rasterizer::AttributesInterpolationMode::Affine, blending_mode />(
+				rasterizer.RasterizeTrianlge</ Rasterizer::AttributesInterpolationMode::Affine, blending_mode, depth_write_mode />(
 					 v0, v12,  v2, texture );
 
 				if( use_debug_lines_visualization )
@@ -2049,11 +2055,11 @@ fn RasterizeTriangleWithSubdivisionAndInterpolationMethodSelection(
 			{
 				var Rasterizer::Vertex v20= ( v2 + v0 ) * 0.5f;
 
-				rasterizer.RasterizeTrianlge</ Rasterizer::AttributesInterpolationMode::Affine, blending_mode />(
+				rasterizer.RasterizeTrianlge</ Rasterizer::AttributesInterpolationMode::Affine, blending_mode, depth_write_mode />(
 					v20,  v0, v01, texture );
-				rasterizer.RasterizeTrianlge</ Rasterizer::AttributesInterpolationMode::Affine, blending_mode />(
+				rasterizer.RasterizeTrianlge</ Rasterizer::AttributesInterpolationMode::Affine, blending_mode, depth_write_mode />(
 					 v2, v20, v01, texture );
-				rasterizer.RasterizeTrianlge</ Rasterizer::AttributesInterpolationMode::Affine, blending_mode />(
+				rasterizer.RasterizeTrianlge</ Rasterizer::AttributesInterpolationMode::Affine, blending_mode, depth_write_mode />(
 					 v2, v01,  v1, texture );
 
 				if( use_debug_lines_visualization )
@@ -2067,9 +2073,9 @@ fn RasterizeTriangleWithSubdivisionAndInterpolationMethodSelection(
 			}
 			else
 			{
-				rasterizer.RasterizeTrianlge</ Rasterizer::AttributesInterpolationMode::Affine, blending_mode />(
+				rasterizer.RasterizeTrianlge</ Rasterizer::AttributesInterpolationMode::Affine, blending_mode, depth_write_mode />(
 					 v0, v01,  v2, texture );
-				rasterizer.RasterizeTrianlge</ Rasterizer::AttributesInterpolationMode::Affine, blending_mode />(
+				rasterizer.RasterizeTrianlge</ Rasterizer::AttributesInterpolationMode::Affine, blending_mode, depth_write_mode />(
 					 v2, v01,  v1, texture );
 
 				if( use_debug_lines_visualization )
@@ -2092,11 +2098,11 @@ fn RasterizeTriangleWithSubdivisionAndInterpolationMethodSelection(
 			{
 				var Rasterizer::Vertex v20= ( v2 + v0 ) * 0.5f;
 
-				rasterizer.RasterizeTrianlge</ Rasterizer::AttributesInterpolationMode::Affine, blending_mode />(
+				rasterizer.RasterizeTrianlge</ Rasterizer::AttributesInterpolationMode::Affine, blending_mode, depth_write_mode />(
 					v12,  v2, v20, texture );
-				rasterizer.RasterizeTrianlge</ Rasterizer::AttributesInterpolationMode::Affine, blending_mode />(
+				rasterizer.RasterizeTrianlge</ Rasterizer::AttributesInterpolationMode::Affine, blending_mode, depth_write_mode />(
 					 v1, v12, v20, texture );
-				rasterizer.RasterizeTrianlge</ Rasterizer::AttributesInterpolationMode::Affine, blending_mode />(
+				rasterizer.RasterizeTrianlge</ Rasterizer::AttributesInterpolationMode::Affine, blending_mode, depth_write_mode />(
 					 v1, v20,  v0, texture );
 
 				if( use_debug_lines_visualization )
@@ -2110,9 +2116,9 @@ fn RasterizeTriangleWithSubdivisionAndInterpolationMethodSelection(
 			}
 			else
 			{
-				rasterizer.RasterizeTrianlge</ Rasterizer::AttributesInterpolationMode::Affine, blending_mode />(
+				rasterizer.RasterizeTrianlge</ Rasterizer::AttributesInterpolationMode::Affine, blending_mode, depth_write_mode />(
 					 v1, v12,  v0, texture );
-				rasterizer.RasterizeTrianlge</ Rasterizer::AttributesInterpolationMode::Affine, blending_mode />(
+				rasterizer.RasterizeTrianlge</ Rasterizer::AttributesInterpolationMode::Affine, blending_mode, depth_write_mode />(
 					 v0, v12,  v2, texture );
 
 				if( use_debug_lines_visualization )
@@ -2130,9 +2136,9 @@ fn RasterizeTriangleWithSubdivisionAndInterpolationMethodSelection(
 			{
 				var Rasterizer::Vertex v20= ( v2 + v0 ) * 0.5f;
 
-				rasterizer.RasterizeTrianlge</ Rasterizer::AttributesInterpolationMode::Affine, blending_mode />(
+				rasterizer.RasterizeTrianlge</ Rasterizer::AttributesInterpolationMode::Affine, blending_mode, depth_write_mode />(
 					 v1, v20,  v0, texture );
-				rasterizer.RasterizeTrianlge</ Rasterizer::AttributesInterpolationMode::Affine, blending_mode />(
+				rasterizer.RasterizeTrianlge</ Rasterizer::AttributesInterpolationMode::Affine, blending_mode, depth_write_mode />(
 					 v2, v20,  v1, texture );
 
 				if( use_debug_lines_visualization )
@@ -2147,7 +2153,7 @@ fn RasterizeTriangleWithSubdivisionAndInterpolationMethodSelection(
 			{
 				// No subdivision is necessary at all.
 				// Can use affine rasterization for this triangle - interpolation error isn't large.
-				rasterizer.RasterizeTrianlge</ Rasterizer::AttributesInterpolationMode::Affine, blending_mode />(
+				rasterizer.RasterizeTrianlge</ Rasterizer::AttributesInterpolationMode::Affine, blending_mode, depth_write_mode />(
 					v0, v1, v2, texture );
 			}
 		}
