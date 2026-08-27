@@ -2270,6 +2270,9 @@ fn LoadMapTextures(
 			return LoadImageBMP( f, console_out );
 		};
 
+	var ust::optional</ImageData/> mut texture_31_image_data_opt;
+	var ust::optional</ImageData/> mut texture_32_image_data_opt;
+
 	for( var size_type mut t= 0s; t < materials_block.textures.size(); ++t )
 	{
 		result_match( game_filesystem.LoadFile( materials_block.textures[t].mips[1], load_image ) )
@@ -2285,44 +2288,19 @@ fn LoadMapTextures(
 
 				SetMapTextureAlpha( materials_block, t, image_data );
 
-				for( auto mut tile_y= 0u; tile_y < MaterialsDescription::c_texture_file_num_tiles_y; ++tile_y )
+				ConvertAndSplitMapTextureIntoLayers( image_data, u32(t), result_textures );
+
+				if( t == 31s )
 				{
-					var u32 src_offset_y= ( MaterialsDescription::c_texture_file_num_tiles_y - 1u - tile_y ) * MaterialsDescription::c_texture_size;
-
-					for( auto mut tile_x= 0u; tile_x < MaterialsDescription::c_texture_file_num_tiles_x; ++tile_x )
-					{
-						var u32 src_offset_x= tile_x * MaterialsDescription::c_texture_size;
-
-						var u32 dst_layer=
-							u32(t) * ( MaterialsDescription::c_texture_file_num_tiles_x * MaterialsDescription::c_texture_file_num_tiles_y )  +
-							tile_y * MaterialsDescription::c_texture_file_num_tiles_x +
-							tile_x;
-
-						var Color32WorldTextureWithMips &mut dst_texture= result_textures[ size_type( dst_layer ) ];
-
-						for( auto mut y= 0u; y < MaterialsDescription::c_texture_size; ++y )
-						{
-							// Perform here vertical flipping while copying data into destination tile.
-
-							auto src_line= image_data.pixels.range().subrange_start(
-								size_type( src_offset_x + ( src_offset_y + MaterialsDescription::c_texture_size - 1u - y ) * image_data.size[0] ) );
-
-							var ust::array_view_mut</Color32/> dst_line( dst_texture[0][y] );
-
-							foreach( pair : dst_line.iter().zip( src_line.iter() ) )
-							{
-								pair.first= Color32FromComponents( pair.second );
-							}
-						}
-
-						BuildTextureMip( dst_texture[1], dst_texture[0] );
-						BuildTextureMip( dst_texture[2], dst_texture[1] );
-						BuildTextureMip( dst_texture[3], dst_texture[2] );
-						BuildTextureMip( dst_texture[4], dst_texture[3] );
-						BuildTextureMip( dst_texture[5], dst_texture[4] );
-						BuildTextureMip( dst_texture[6], dst_texture[5] );
-						BuildTextureMip( dst_texture[7], dst_texture[6] );
-					}
+					texture_31_image_data_opt= move( image_data );
+				}
+				else if( t == 32s )
+				{
+					texture_32_image_data_opt= move( image_data );
+				}
+				else
+				{
+					move( image_data );
 				}
 			},
 			Err(e) ->
@@ -2333,7 +2311,66 @@ fn LoadMapTextures(
 		}
 	}
 
+	if_var( &mut texture_31_image_data : texture_31_image_data_opt )
+	{
+		// Create alpha-texted version of texture 31.
+		MakeMapTexture31AlphaTested( texture_31_image_data );
+		ConvertAndSplitMapTextureIntoLayers(
+			texture_31_image_data, u32( materials_block.textures.size() ), result_textures );
+
+		// Create black version of texture 31.
+		MakeMapTexture31Black( texture_31_image_data );
+		ConvertAndSplitMapTextureIntoLayers(
+			texture_31_image_data, u32( materials_block.textures.size() + 1s ), result_textures );
+	}
+
 	return result_textures;
+}
+
+fn ConvertAndSplitMapTextureIntoLayers(
+	ImageData& image_data,
+	u32 texture_index,
+	ust::array_view_mut</ Color32WorldTextureWithMips /> result_textures )
+{
+	for( auto mut tile_y= 0u; tile_y < MaterialsDescription::c_texture_file_num_tiles_y; ++tile_y )
+	{
+		var u32 src_offset_y= ( MaterialsDescription::c_texture_file_num_tiles_y - 1u - tile_y ) * MaterialsDescription::c_texture_size;
+
+		for( auto mut tile_x= 0u; tile_x < MaterialsDescription::c_texture_file_num_tiles_x; ++tile_x )
+		{
+			var u32 src_offset_x= tile_x * MaterialsDescription::c_texture_size;
+
+			var u32 dst_layer=
+				texture_index * ( MaterialsDescription::c_texture_file_num_tiles_x * MaterialsDescription::c_texture_file_num_tiles_y )  +
+				tile_y * MaterialsDescription::c_texture_file_num_tiles_x +
+				tile_x;
+
+			var Color32WorldTextureWithMips &mut dst_texture= result_textures[ size_type( dst_layer ) ];
+
+			for( auto mut y= 0u; y < MaterialsDescription::c_texture_size; ++y )
+			{
+				// Perform here vertical flipping while copying data into destination tile.
+
+				auto src_line= image_data.pixels.range().subrange_start(
+					size_type( src_offset_x + ( src_offset_y + MaterialsDescription::c_texture_size - 1u - y ) * image_data.size[0] ) );
+
+				var ust::array_view_mut</Color32/> dst_line( dst_texture[0][y] );
+
+				foreach( pair : dst_line.iter().zip( src_line.iter() ) )
+				{
+					pair.first= Color32FromComponents( pair.second );
+				}
+			}
+
+			BuildTextureMip( dst_texture[1], dst_texture[0] );
+			BuildTextureMip( dst_texture[2], dst_texture[1] );
+			BuildTextureMip( dst_texture[3], dst_texture[2] );
+			BuildTextureMip( dst_texture[4], dst_texture[3] );
+			BuildTextureMip( dst_texture[5], dst_texture[4] );
+			BuildTextureMip( dst_texture[6], dst_texture[5] );
+			BuildTextureMip( dst_texture[7], dst_texture[6] );
+		}
+	}
 }
 
 fn CalculateViewSpaceFrustumSideClipPlanes( [ u32, 2 ]& viewport_size ) : [ Planef, 4 ]
