@@ -17,6 +17,7 @@ import "../material_utils.iu"
 import "../precipitation_constants.iu"
 import "../room_clusters_bsp_tree_visualization.iu"
 import "../sky_common.iu"
+import "../texture_common.iu"
 import "caustics.iu"
 import "gl_functions.iu"
 import "gl_state.iu"
@@ -3156,96 +3157,7 @@ fn LoadMapTextures(
 					continue;
 				}
 
-				if( t == 33s )
-				{
-					var size_type half_lines_offset( image_data.size[1] / 2u * image_data.size[0] );
-
-					// Generate alpha based on brightness for lower two tiles (where blood images actually are).
-					foreach( &mut pixel : image_data.pixels.range().subrange_end( half_lines_offset ) )
-					{
-						var u32 brightness= ust::max( u32( pixel[0] ), ust::max( u32( pixel[1] ), u32( pixel[2] ) ) );
-						pixel[3]= u8( ust::min( brightness * 2u, 255u ) );
-					}
-
-					// Set alpha in other two tiles to zero.
-					foreach( &mut pixel : image_data.pixels.range().subrange_start( half_lines_offset ) )
-					{
-						pixel[3]= 0u8;
-					}
-				}
-				else if( t >= 30s )
-				{
-					// Set alpha to zero for special textures.
-					foreach( &mut pixel : image_data.pixels )
-					{
-						pixel[3]= 0u8;
-					}
-				}
-				else
-				{
-					// Set alpha to 255 for regular textures, but override it for some special materials.
-
-					// In the original game glass uses additive blending.
-					// We use non-zero alpha (and thus somethign more like premultiplied alpha-blending),
-					// since pure additive blending for glass gives too bright results.
-					var u8 c_glass_alpha= 128u8;
-					// Add a little bit absorption to water/acid textures - avoid using pure additive blending.
-					var u8 c_water_alpha= 85u8;
-					var u8 c_acid_alpha= 85u8;
-					// Lava texture is almost additive.
-					var u8 c_lava_alpha= 32u8;
-
-					for( auto mut tile_y= 0u; tile_y < MaterialsDescription::c_texture_file_num_tiles_y; ++tile_y )
-					{
-						for( auto mut tile_x= 0u; tile_x < MaterialsDescription::c_texture_file_num_tiles_x; ++tile_x )
-						{
-							var u32 layer_index=
-								u32(t) * ( MaterialsDescription::c_texture_file_num_tiles_x * MaterialsDescription::c_texture_file_num_tiles_y ) +
-								tile_x +
-								tile_y * MaterialsDescription::c_texture_file_num_tiles_x;
-
-							var u8 mut alpha= 255u8;
-
-							if( layer_index == materials_block.special_material_indices[ size_type( MaterialsDescription::SpecialMaterial::Glass ) ] |
-								layer_index == materials_block.special_material_indices[ size_type( MaterialsDescription::SpecialMaterial::ArmoredGlass ) ] )
-							{
-								alpha= c_glass_alpha;
-							}
-							if( layer_index == materials_block.special_material_indices[ size_type( MaterialsDescription::SpecialMaterial::Water ) ] )
-							{
-								alpha= c_water_alpha;
-							}
-							if( layer_index == materials_block.special_material_indices[ size_type( MaterialsDescription::SpecialMaterial::Acid ) ] |
-								layer_index == materials_block.special_material_indices[ size_type( MaterialsDescription::SpecialMaterial::AcidAlternative ) ]  )
-							{
-								alpha= c_acid_alpha;
-							}
-							if( layer_index == materials_block.special_material_indices[ size_type( MaterialsDescription::SpecialMaterial::Lava ) ] )
-							{
-								alpha= c_lava_alpha;
-							}
-
-							var u32 offset_y= ( MaterialsDescription::c_texture_file_num_tiles_y - 1u - tile_y ) * MaterialsDescription::c_texture_size;
-							var u32 offset_x= tile_x * MaterialsDescription::c_texture_size;
-
-							for( auto mut y= 0u; y < MaterialsDescription::c_texture_size; ++y )
-							{
-								var size_type line_offset(
-									offset_x +
-									( offset_y + MaterialsDescription::c_texture_size - 1u - y ) * image_data.size[0] );
-
-								auto line=
-									image_data.pixels.range().subrange(
-										line_offset, line_offset + size_type( MaterialsDescription::c_texture_size ) );
-
-								foreach( &mut pixel : line )
-								{
-									pixel[3]= alpha;
-								}
-							}
-						}
-					}
-				}
+				SetMapTextureAlpha( materials_block, t, image_data );
 
 				UploadMapTextureLayers( image_data, u32(t), texture_data );
 
@@ -3272,34 +3184,12 @@ fn LoadMapTextures(
 
 	if_var( &mut texture_31_image_data : texture_31_image_data_opt )
 	{
-		// Turn black into alpha.
-		// TODO - fill alpha pixels with color of nearby pixels, so that alpha-edges doesn't look black.
-		foreach( &mut pixel : texture_31_image_data.pixels )
-		{
-			var u8 almost_black= 2u8;
-			if( pixel[0] <= almost_black && pixel[1] <= almost_black && pixel[2] <= almost_black )
-			{
-				pixel[3]= 0u8;
-			}
-			else
-			{
-				pixel[3]= 255u8;
-			}
-		}
-
 		// Upload alpha-texted version of texture 31.
+		MakeMapTexture31AlphaTested( texture_31_image_data );
 		UploadMapTextureLayers( texture_31_image_data, u32( materials_block.textures.size() ), texture_data );
 
-		foreach( &mut pixel : texture_31_image_data.pixels )
-		{
-			var u8 brightness= ust::max( cast_imut(pixel)[0], ust::max( cast_imut(pixel)[1], cast_imut(pixel)[2] ) );
-			pixel[0]= 0u8;
-			pixel[1]= 0u8;
-			pixel[2]= 0u8;
-			pixel[3]= brightness;
-		}
-
 		// Upload black version of texture 31.
+		MakeMapTexture31Black( texture_31_image_data );
 		UploadMapTextureLayers( texture_31_image_data, u32( materials_block.textures.size() + 1s ), texture_data );
 	}
 

@@ -12,6 +12,7 @@ import "../material_utils.iu"
 import "../math_constants.iu"
 import "../room_clusters_bsp_tree_visualization.iu"
 import "../sky_common.iu"
+import "../texture_common.iu"
 import "rasterizer.iu"
 import "sky_rasterizer.iu"
 import "vertex_transformations.iu"
@@ -85,12 +86,16 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 	var MapFullDrawDataSoft &mut map_data_full= map_data_.try_deref();
 
 	var MapDrawDataSoft& map_data= map_data_full.map_draw_data;
+	var ZmapData& zmap_data= map_data.zmap_data.deref();
 	var ZvoxData& zvox_data= map_data.zvox_data.deref();
 	var ZmapLamData& zmap_lam_data= map_data.zmap_lam_data.deref();
 	auto clusters= zvox_data.clusters.range();
-	auto quads= map_data.zmap_data.deref().quads.range();
+	auto quads= zmap_data.quads.range();
 
 	var MapsDescription& maps_description= maps_description_.deref();
+
+	var MaterialsDescription::Block& materials_block=
+		materials_description_.deref().blocks[ maps_description.maps[ size_type( map_index_ ) ].materials_block ];
 
 	var ust::array_view_imut</ZmapLemClusterSkyLightData/> clusters_sky_light_data=
 		map_data.zmap_lem_data.deref().clusters_sky_light_data;
@@ -152,6 +157,9 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 
 	// View-space clip planes.
 	var FrustumSideClipPlanes frustum_side_clip_planes= CalculateViewSpaceFrustumSideClipPlanes( surface.size );
+
+	semitransparent_geometry_vertices_.clear();
+	semitransparent_geometry_indices_.clear();
 
 	var u32 valve_special_material_frame= CalculateValveSpecialMaterialFrame( drawing_info.game_time_s );
 	var u32 film_special_material_frame= CalculateFilmSpecialMaterialFrame( drawing_info.game_time_s );
@@ -342,13 +350,8 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 					stats.num_visible_map_triangles+= u32( indices.size() ) / 3u;
 				}
 
-				if( cluster_draw_data.has_breakable_quads && size_type( map_index_ ) < maps_description.maps.size() )
+				if( cluster_draw_data.has_breakable_quads )
 				{
-					var MapsDescription::MapDescription& map_description=
-						maps_description.maps[ size_type( map_index_ ) ];
-					var MaterialsDescription::Block& materials_block=
-						materials_description_.deref().blocks[ map_description.materials_block ]; // Halts if not found.
-
 					temp_vertices_.clear();
 					temp_indices_.clear();
 
@@ -381,6 +384,60 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 						vertices_clipped1 );
 
 					stats.num_visible_breakable_triangles+= u32( temp_indices_.size() ) / 3u;
+				}
+
+				if( cluster_draw_data.has_glass_quads )
+				{
+					var size_type first_vertex= semitransparent_geometry_vertices_.size();
+					var size_type first_index= semitransparent_geometry_indices_.size();
+
+					CreateClusterGlassPolygons(
+						cluster,
+						quads,
+						drawing_info.broken_quad_bits,
+						zmap_lam_data,
+						materials_block,
+						semitransparent_geometry_vertices_,
+						semitransparent_geometry_indices_ );
+
+					// Process all vertices of cluster glass polygons as belonging to single quad.
+					// It may lead to too large texture coordinates biasing, but it's not a huge problem.
+					PrepareQuadVertexTextureCoordinates(
+						semitransparent_geometry_vertices_.range().subrange_start( first_vertex ) );
+
+					// Glass triangles should be visible from both sides.
+					// So, flip back-facing triangles to prevent their furter rejecting.
+					FlipBackFacingTriangles(
+						semitransparent_geometry_vertices_,
+						semitransparent_geometry_indices_.range().subrange_start( first_index ),
+						drawing_info.camera_params.position );
+				}
+
+				if( cluster_draw_data.has_liquid_quads )
+				{
+					var size_type first_vertex= semitransparent_geometry_vertices_.size();
+					var size_type first_index= semitransparent_geometry_indices_.size();
+
+					CreateClusterLiquidPolygons(
+						cluster,
+						quads,
+						zmap_lam_data,
+						materials_block,
+						drawing_info.game_time_s,
+						semitransparent_geometry_vertices_,
+						semitransparent_geometry_indices_ );
+
+					// Process all vertices of cluster liquid polygons as belonging to single quad.
+					// It may lead to too large texture coordinates biasing, but it's not a huge problem.
+					PrepareQuadVertexTextureCoordinates(
+						semitransparent_geometry_vertices_.range().subrange_start( first_vertex ) );
+
+					// Liquid triangles should be visible from both sides.
+					// So, flip back-facing triangles to prevent their furter rejecting.
+					FlipBackFacingTriangles(
+						semitransparent_geometry_vertices_,
+						semitransparent_geometry_indices_.range().subrange_start( first_index ),
+						drawing_info.camera_params.position );
 				}
 			}
 
@@ -455,6 +512,89 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 			vertices_clipped0,
 			vertices_clipped1,
 			stats );
+
+		// Add glass polygons of dynamic cluster objects with translation.
+		// This seems to be needed only for the end elevator on map 29.
+		if( map_data.clusters_draw_data[ size_type( dynamic_cluster_object.cluster_index ) ].has_glass_quads )
+		{
+			var size_type first_vertex= semitransparent_geometry_vertices_.size();
+			var size_type first_index= semitransparent_geometry_indices_.size();
+
+			CreateClusterGlassPolygons(
+				cluster,
+				quads,
+				drawing_info.broken_quad_bits,
+				zmap_lam_data,
+				materials_block,
+				semitransparent_geometry_vertices_,
+				semitransparent_geometry_indices_ );
+
+			// Glass triangles should be visible from both sides.
+			// So, flip back-facing triangles to prevent their furter rejecting.
+			FlipBackFacingTriangles(
+				semitransparent_geometry_vertices_,
+				semitransparent_geometry_indices_.range().subrange_start( first_index ),
+				drawing_info.camera_params.position );
+
+			auto vertices_range= semitransparent_geometry_vertices_.range().subrange_start( first_vertex );
+
+			// Process all vertices of cluster glass polygons as belonging to single quad.
+			// It may lead to too large texture coordinates biasing, but it's not a huge problem.
+			PrepareQuadVertexTextureCoordinates( vertices_range );
+
+			foreach( &mut v : vertices_range )
+			{
+				v.position[0]+= dynamic_cluster_object.translation.x;
+				v.position[1]+= dynamic_cluster_object.translation.y;
+				v.position[2]+= dynamic_cluster_object.translation.z;
+			}
+		}
+	}
+
+	foreach( &light_shafts_box : zmap_data.light_shaft_boxes )
+	{
+		if( light_shafts_box.enabled_flag <= 0 )
+		{
+			continue;
+		}
+
+		var BBox3f bbox
+		{
+			.min(
+				f32( light_shafts_box.center[0] - light_shafts_box.bounding_box_half_size[0] ),
+				f32( light_shafts_box.center[1] - light_shafts_box.bounding_box_half_size[1] ),
+				f32( light_shafts_box.center[2] - light_shafts_box.bounding_box_half_size[2] ) ),
+			.max(
+				f32( light_shafts_box.center[0] + light_shafts_box.bounding_box_half_size[0] ),
+				f32( light_shafts_box.center[1] + light_shafts_box.bounding_box_half_size[1] ),
+				f32( light_shafts_box.center[2] + light_shafts_box.bounding_box_half_size[2] ) ),
+		};
+
+		var [ Vec3f, 8 ] bbox_corner_vertices= bbox.CreateCornerVertices();
+
+		if( !visibility_calculator.IsBoxVisible( bbox_corner_vertices ) ||
+			AreBoxVerticesClippedByAtLeastOneCameraClipPlane( camera_clip_planes, bbox_corner_vertices ) )
+		{
+			continue;
+		}
+
+		var size_type first_vertex= semitransparent_geometry_vertices_.size();
+		var size_type first_index= semitransparent_geometry_indices_.size();
+
+		CreateLightShaftsBoxPolygons(
+			light_shafts_box, semitransparent_geometry_vertices_, semitransparent_geometry_indices_ );
+
+		// Process all vertices of a light shafts box as a single quad.
+		// It may lead to too large texture coordinates biasing, but it's not a huge problem.
+		PrepareQuadVertexTextureCoordinates(
+			semitransparent_geometry_vertices_.range().subrange_start( first_vertex ) );
+
+		// Light shaft box triangles should be visible from both sides.
+		// So, flip back-facing triangles to prevent their furter rejecting.
+		FlipBackFacingTriangles(
+			semitransparent_geometry_vertices_,
+			semitransparent_geometry_indices_.range().subrange_start( first_index ),
+			drawing_info.camera_params.position );
 	}
 
 	foreach( &model_object : drawing_info.model_objects ) label for_model_objects
@@ -744,6 +884,28 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 					ust::make_array( test_line.color[0], test_line.color[1], test_line.color[2], 0u8 ) ) );
 		}
 	}
+
+	SortTrianglesFarToNearOrder(
+		drawing_info.camera_params.position,
+		semitransparent_geometry_vertices_,
+		semitransparent_geometry_indices_,
+		triangles_for_sorting_ );
+
+	// Draw semitransparent geometry after all opaque geometry.
+
+	DrawSemitransparentMapTriangles(
+		rasterizer,
+		camera_position_for_fog.as_ref(),
+		view_matrix,
+		frustum_side_clip_planes,
+		map_data.textures,
+		semitransparent_geometry_vertices_,
+		semitransparent_geometry_indices_,
+		ust::empty_range, // Don't apply dynamic light to semitransparent polygons.
+		transformed_vertices_,
+		vertex_lights_,
+		vertices_clipped0,
+		vertices_clipped1 );
 
 	return stats;
 }
@@ -1483,7 +1645,26 @@ fn DrawMapClusterTriangles(
 	stats.num_visible_map_triangles+= u32( cluster_indices.size() ) / 3u;
 }
 
-fn DrawMapTriangles(
+var ( fn(
+		Rasterizer& rasterizer,
+		ust::optional_ref_imut</Vec3f/> camera_position_for_fog,
+		Mat4f& view_matrix,
+		FrustumSideClipPlanes& frustum_side_clip_planes,
+		ust::array_view_imut</Color32WorldTextureWithMips/> textures,
+		ust::array_view_imut</MapVertex/> vertices,
+		ust::array_view_imut</u16/> indices,
+		ust::array_view_imut</ DynamicLightSourceSoft /> dynamic_light_sources,
+		ust::vector</Vec3f/> &mut vertices_transformed,
+		ust::vector</ VertexLightWithFog /> &mut vertex_lights,
+		TriangleVerticesClipped &mut vertices_clipped0,
+		TriangleVerticesClipped &mut vertices_clipped1 ) )
+	// For regular triangles use no blending and write into depth buffer.
+	DrawMapTriangles( DrawMapTrianglesTemplated</ Rasterizer::BlendingMode::None, Rasterizer::DepthWriteMode::Yes /> ),
+	// For semitransparent trinagles use blending and don't write into depth buffer.
+	DrawSemitransparentMapTriangles( DrawMapTrianglesTemplated</ Rasterizer::BlendingMode::PremultipliedAlpha, Rasterizer::DepthWriteMode::No /> );
+
+template</ Rasterizer::BlendingMode blending_mode, Rasterizer::DepthWriteMode depth_write_mode />
+fn DrawMapTrianglesTemplated(
 	Rasterizer& rasterizer,
 	ust::optional_ref_imut</Vec3f/> camera_position_for_fog,
 	Mat4f& view_matrix,
@@ -1558,7 +1739,7 @@ fn DrawMapTriangles(
 
 		for( auto mut i= 2s; i < num_vertices; ++i )
 		{
-			RasterizeTriangleWithSubdivisionAndInterpolationMethodSelection(
+			RasterizeTriangleWithSubdivisionAndInterpolationMethodSelection</ blending_mode, depth_write_mode />(
 				rasterizer,
 				cast_imut(vertices_clipped1)[0],
 				cast_imut(vertices_clipped1)[ i - 1s ],
@@ -1606,7 +1787,10 @@ fn DrawModelTrianglesWithoutFrustumPlanesClipping(
 			debug_assert( v[1].position.z > 0.0f );
 			debug_assert( v[2].position.z > 0.0f );
 
-			RasterizeTriangleWithSubdivisionAndInterpolationMethodSelection( rasterizer, v[0], v[1], v[2], texture );
+			RasterizeTriangleWithSubdivisionAndInterpolationMethodSelection</
+				Rasterizer::BlendingMode::None,
+				Rasterizer::DepthWriteMode::Yes />(
+				rasterizer, v[0], v[1], v[2], texture );
 		}
 	}
 }
@@ -1661,13 +1845,38 @@ fn DrawModelTrianglesWithFrustumPlanesClipping(
 
 			for( auto mut i= 2s; i < num_vertices; ++i )
 			{
-				RasterizeTriangleWithSubdivisionAndInterpolationMethodSelection(
+				RasterizeTriangleWithSubdivisionAndInterpolationMethodSelection</
+					Rasterizer::BlendingMode::None,
+					Rasterizer::DepthWriteMode::Yes />(
 					rasterizer,
 					cast_imut(vertices_clipped1)[0],
 					cast_imut(vertices_clipped1)[ i - 1s ],
 					cast_imut(vertices_clipped1)[ i ],
 					texture );
 			}
+		}
+	}
+}
+
+fn FlipBackFacingTriangles(
+	ust::array_view_imut</MapVertex/> vertices, ust::array_view_mut</ u16 /> indices, Vec3f& camera_position )
+{
+	for( auto mut t= 0s; t + 3s <= indices.size(); t+= 3s )
+	{
+		var MapVertex& v0= vertices[ size_type( indices[ t + 0s ] ) ];
+		var MapVertex& v1= vertices[ size_type( indices[ t + 1s ] ) ];
+		var MapVertex& v2= vertices[ size_type( indices[ t + 2s ] ) ];
+
+		var Vec3f edge0= Vec3f( v1.position ) - Vec3f( v0.position );
+		var Vec3f edge1= Vec3f( v2.position ) - Vec3f( v1.position );
+
+		var Vec3f normal= edge0.Cross( edge1 );
+
+		var Vec3f vec_to_camera= camera_position - Vec3f( v0.position );
+
+		if( vec_to_camera.Dot( normal ) < 0.0f )
+		{
+			indices.swap( t + 0s, t + 2s );
 		}
 	}
 }
@@ -1721,7 +1930,7 @@ fn ClipPolygonByNearZAndFrustumSidePlanes(
 	return num_vertices;
 }
 
-template</ type TextureType />
+template</ Rasterizer::BlendingMode blending_mode, Rasterizer::DepthWriteMode depth_write_mode, type TextureType />
 fn RasterizeTriangleWithSubdivisionAndInterpolationMethodSelection(
 	Rasterizer& rasterizer,
 	Rasterizer::Vertex& v0,
@@ -1767,7 +1976,8 @@ fn RasterizeTriangleWithSubdivisionAndInterpolationMethodSelection(
 		// Can't use affine rasterization for this triangle or even subdivision.
 		// Use perspective-corrected rasterization.
 		rasterizer.RasterizeTrianlge</
-			Rasterizer::AttributesInterpolationMode::PerspectiveCorrected />( v0, v1, v2, texture );
+			Rasterizer::AttributesInterpolationMode::PerspectiveCorrected, blending_mode, depth_write_mode />(
+			v0, v1, v2, texture );
 
 		if( use_debug_lines_visualization )
 		{
@@ -1802,13 +2012,17 @@ fn RasterizeTriangleWithSubdivisionAndInterpolationMethodSelection(
 
 				var Rasterizer::Vertex v20= ( v2 + v0 ) * 0.5f;
 
-				rasterizer.RasterizeTrianlge</ Rasterizer::AttributesInterpolationMode::Affine />(
+				rasterizer.RasterizeTrianlge</
+					Rasterizer::AttributesInterpolationMode::Affine, blending_mode, depth_write_mode />(
 					 v0, v01, v20, texture );
-				rasterizer.RasterizeTrianlge</ Rasterizer::AttributesInterpolationMode::Affine />(
+				rasterizer.RasterizeTrianlge</
+					Rasterizer::AttributesInterpolationMode::Affine, blending_mode, depth_write_mode />(
 					 v1, v12, v01, texture );
-				rasterizer.RasterizeTrianlge</ Rasterizer::AttributesInterpolationMode::Affine />(
+				rasterizer.RasterizeTrianlge</
+					Rasterizer::AttributesInterpolationMode::Affine, blending_mode, depth_write_mode />(
 					 v2, v20, v12, texture );
-				rasterizer.RasterizeTrianlge</ Rasterizer::AttributesInterpolationMode::Affine />(
+				rasterizer.RasterizeTrianlge</
+					Rasterizer::AttributesInterpolationMode::Affine, blending_mode, depth_write_mode />(
 					v01, v12, v20, texture );
 
 				if( use_debug_lines_visualization )
@@ -1823,11 +2037,14 @@ fn RasterizeTriangleWithSubdivisionAndInterpolationMethodSelection(
 			}
 			else
 			{
-				rasterizer.RasterizeTrianlge</ Rasterizer::AttributesInterpolationMode::Affine />(
+				rasterizer.RasterizeTrianlge</
+					Rasterizer::AttributesInterpolationMode::Affine, blending_mode, depth_write_mode />(
 					v01,  v1, v12, texture );
-				rasterizer.RasterizeTrianlge</ Rasterizer::AttributesInterpolationMode::Affine />(
+				rasterizer.RasterizeTrianlge</
+					Rasterizer::AttributesInterpolationMode::Affine, blending_mode, depth_write_mode />(
 					 v0, v01, v12, texture );
-				rasterizer.RasterizeTrianlge</ Rasterizer::AttributesInterpolationMode::Affine />(
+				rasterizer.RasterizeTrianlge</
+					Rasterizer::AttributesInterpolationMode::Affine, blending_mode, depth_write_mode />(
 					 v0, v12,  v2, texture );
 
 				if( use_debug_lines_visualization )
@@ -1846,11 +2063,14 @@ fn RasterizeTriangleWithSubdivisionAndInterpolationMethodSelection(
 			{
 				var Rasterizer::Vertex v20= ( v2 + v0 ) * 0.5f;
 
-				rasterizer.RasterizeTrianlge</ Rasterizer::AttributesInterpolationMode::Affine />(
+				rasterizer.RasterizeTrianlge</
+					Rasterizer::AttributesInterpolationMode::Affine, blending_mode, depth_write_mode />(
 					v20,  v0, v01, texture );
-				rasterizer.RasterizeTrianlge</ Rasterizer::AttributesInterpolationMode::Affine />(
+				rasterizer.RasterizeTrianlge</
+					Rasterizer::AttributesInterpolationMode::Affine, blending_mode, depth_write_mode />(
 					 v2, v20, v01, texture );
-				rasterizer.RasterizeTrianlge</ Rasterizer::AttributesInterpolationMode::Affine />(
+				rasterizer.RasterizeTrianlge</
+					Rasterizer::AttributesInterpolationMode::Affine, blending_mode, depth_write_mode />(
 					 v2, v01,  v1, texture );
 
 				if( use_debug_lines_visualization )
@@ -1864,9 +2084,11 @@ fn RasterizeTriangleWithSubdivisionAndInterpolationMethodSelection(
 			}
 			else
 			{
-				rasterizer.RasterizeTrianlge</ Rasterizer::AttributesInterpolationMode::Affine />(
+				rasterizer.RasterizeTrianlge</
+					Rasterizer::AttributesInterpolationMode::Affine, blending_mode, depth_write_mode />(
 					 v0, v01,  v2, texture );
-				rasterizer.RasterizeTrianlge</ Rasterizer::AttributesInterpolationMode::Affine />(
+				rasterizer.RasterizeTrianlge</
+					Rasterizer::AttributesInterpolationMode::Affine, blending_mode, depth_write_mode />(
 					 v2, v01,  v1, texture );
 
 				if( use_debug_lines_visualization )
@@ -1889,11 +2111,14 @@ fn RasterizeTriangleWithSubdivisionAndInterpolationMethodSelection(
 			{
 				var Rasterizer::Vertex v20= ( v2 + v0 ) * 0.5f;
 
-				rasterizer.RasterizeTrianlge</ Rasterizer::AttributesInterpolationMode::Affine />(
+				rasterizer.RasterizeTrianlge</
+					Rasterizer::AttributesInterpolationMode::Affine, blending_mode, depth_write_mode />(
 					v12,  v2, v20, texture );
-				rasterizer.RasterizeTrianlge</ Rasterizer::AttributesInterpolationMode::Affine />(
+				rasterizer.RasterizeTrianlge</
+					Rasterizer::AttributesInterpolationMode::Affine, blending_mode, depth_write_mode />(
 					 v1, v12, v20, texture );
-				rasterizer.RasterizeTrianlge</ Rasterizer::AttributesInterpolationMode::Affine />(
+				rasterizer.RasterizeTrianlge</
+					Rasterizer::AttributesInterpolationMode::Affine, blending_mode, depth_write_mode />(
 					 v1, v20,  v0, texture );
 
 				if( use_debug_lines_visualization )
@@ -1907,9 +2132,11 @@ fn RasterizeTriangleWithSubdivisionAndInterpolationMethodSelection(
 			}
 			else
 			{
-				rasterizer.RasterizeTrianlge</ Rasterizer::AttributesInterpolationMode::Affine />(
+				rasterizer.RasterizeTrianlge</
+					Rasterizer::AttributesInterpolationMode::Affine, blending_mode, depth_write_mode />(
 					 v1, v12,  v0, texture );
-				rasterizer.RasterizeTrianlge</ Rasterizer::AttributesInterpolationMode::Affine />(
+				rasterizer.RasterizeTrianlge</
+					Rasterizer::AttributesInterpolationMode::Affine, blending_mode, depth_write_mode />(
 					 v0, v12,  v2, texture );
 
 				if( use_debug_lines_visualization )
@@ -1927,9 +2154,11 @@ fn RasterizeTriangleWithSubdivisionAndInterpolationMethodSelection(
 			{
 				var Rasterizer::Vertex v20= ( v2 + v0 ) * 0.5f;
 
-				rasterizer.RasterizeTrianlge</ Rasterizer::AttributesInterpolationMode::Affine />(
+				rasterizer.RasterizeTrianlge</
+					Rasterizer::AttributesInterpolationMode::Affine, blending_mode, depth_write_mode />(
 					 v1, v20,  v0, texture );
-				rasterizer.RasterizeTrianlge</ Rasterizer::AttributesInterpolationMode::Affine />(
+				rasterizer.RasterizeTrianlge</
+					Rasterizer::AttributesInterpolationMode::Affine, blending_mode, depth_write_mode />(
 					 v2, v20,  v1, texture );
 
 				if( use_debug_lines_visualization )
@@ -1944,7 +2173,8 @@ fn RasterizeTriangleWithSubdivisionAndInterpolationMethodSelection(
 			{
 				// No subdivision is necessary at all.
 				// Can use affine rasterization for this triangle - interpolation error isn't large.
-				rasterizer.RasterizeTrianlge</ Rasterizer::AttributesInterpolationMode::Affine />(
+				rasterizer.RasterizeTrianlge</
+					Rasterizer::AttributesInterpolationMode::Affine, blending_mode, depth_write_mode />(
 					v0, v1, v2, texture );
 			}
 		}
@@ -2074,6 +2304,9 @@ fn LoadMapTextures(
 			return LoadImageBMP( f, console_out );
 		};
 
+	var ust::optional</ImageData/> mut texture_31_image_data_opt;
+	var ust::optional</ImageData/> mut texture_32_image_data_opt;
+
 	for( var size_type mut t= 0s; t < materials_block.textures.size(); ++t )
 	{
 		result_match( game_filesystem.LoadFile( materials_block.textures[t].mips[1], load_image ) )
@@ -2087,46 +2320,21 @@ fn LoadMapTextures(
 					continue;
 				}
 
-				// TODO - care about alpha here, including some special textures.
+				SetMapTextureAlpha( materials_block, t, image_data );
 
-				for( auto mut tile_y= 0u; tile_y < MaterialsDescription::c_texture_file_num_tiles_y; ++tile_y )
+				ConvertAndSplitMapTextureIntoLayers( image_data, u32(t), result_textures );
+
+				if( t == 31s )
 				{
-					var u32 src_offset_y= ( MaterialsDescription::c_texture_file_num_tiles_y - 1u - tile_y ) * MaterialsDescription::c_texture_size;
-
-					for( auto mut tile_x= 0u; tile_x < MaterialsDescription::c_texture_file_num_tiles_x; ++tile_x )
-					{
-						var u32 src_offset_x= tile_x * MaterialsDescription::c_texture_size;
-
-						var u32 dst_layer=
-							u32(t) * ( MaterialsDescription::c_texture_file_num_tiles_x * MaterialsDescription::c_texture_file_num_tiles_y )  +
-							tile_y * MaterialsDescription::c_texture_file_num_tiles_x +
-							tile_x;
-
-						var Color32WorldTextureWithMips &mut dst_texture= result_textures[ size_type( dst_layer ) ];
-
-						for( auto mut y= 0u; y < MaterialsDescription::c_texture_size; ++y )
-						{
-							// Perform here vertical flipping while copying data into destination tile.
-
-							auto src_line= image_data.pixels.range().subrange_start(
-								size_type( src_offset_x + ( src_offset_y + MaterialsDescription::c_texture_size - 1u - y ) * image_data.size[0] ) );
-
-							var ust::array_view_mut</Color32/> dst_line( dst_texture[0][y] );
-
-							foreach( pair : dst_line.iter().zip( src_line.iter() ) )
-							{
-								pair.first= Color32FromComponents( pair.second );
-							}
-						}
-
-						BuildTextureMip( dst_texture[1], dst_texture[0] );
-						BuildTextureMip( dst_texture[2], dst_texture[1] );
-						BuildTextureMip( dst_texture[3], dst_texture[2] );
-						BuildTextureMip( dst_texture[4], dst_texture[3] );
-						BuildTextureMip( dst_texture[5], dst_texture[4] );
-						BuildTextureMip( dst_texture[6], dst_texture[5] );
-						BuildTextureMip( dst_texture[7], dst_texture[6] );
-					}
+					texture_31_image_data_opt= move( image_data );
+				}
+				else if( t == 32s )
+				{
+					texture_32_image_data_opt= move( image_data );
+				}
+				else
+				{
+					move( image_data );
 				}
 			},
 			Err(e) ->
@@ -2137,7 +2345,155 @@ fn LoadMapTextures(
 		}
 	}
 
+	if_var( &mut texture_31_image_data : texture_31_image_data_opt )
+	{
+		// Create alpha-texted version of texture 31.
+		MakeMapTexture31AlphaTested( texture_31_image_data );
+		ConvertAndSplitMapTextureIntoLayers(
+			texture_31_image_data, u32( materials_block.textures.size() ), result_textures );
+
+		// Create black version of texture 31.
+		MakeMapTexture31Black( texture_31_image_data );
+		ConvertAndSplitMapTextureIntoLayers(
+			texture_31_image_data, u32( materials_block.textures.size() + 1s ), result_textures );
+	}
+
+	// Handle specially tiles in texture 32.
+	// Upload each tile in lower and upper rows of the 4x4 grid into a separate texture layer.
+	// It's necessary to avoid leaking due to texture filtering.
+	if_var( &mut texture_32_image_data : texture_32_image_data_opt )
+	{
+		var [ RGBAColor, MaterialsDescription::c_texture_size * MaterialsDescription::c_texture_size ] mut texture_data= zero_init;
+
+		var u32 subtile_size= MaterialsDescription::c_texture_size / 2u;
+
+		for( auto mut row= 0u; row < 2u; ++row )
+		{
+			var u32 subtile_y= row * 3u;
+			for( auto mut subtile_x= 0u; subtile_x < 4u; ++subtile_x )
+			{
+				for( auto mut y= 0u; y < subtile_size; ++y )
+				{
+					for( auto mut x= 0u; x < subtile_size; ++x )
+					{
+						// TODO - speed-up this, copy whole lines.
+
+						var u32 src_x= subtile_x * subtile_size + x;
+						var u32 src_y=
+							MaterialsDescription::c_texture_size * MaterialsDescription::c_texture_file_num_tiles_x
+							- 1u
+							- ( subtile_y * subtile_size + y );
+
+						var [ u8, 4 ] pixel=
+							texture_32_image_data.pixels[ size_type(
+								src_x +
+								src_y * ( MaterialsDescription::c_texture_size * MaterialsDescription::c_texture_file_num_tiles_x ) ) ];
+
+						texture_data[ x + y * MaterialsDescription::c_texture_size ]= pixel;
+						texture_data[ ( x + subtile_size ) + y * MaterialsDescription::c_texture_size ]= pixel;
+						texture_data[ x + ( y + subtile_size ) * MaterialsDescription::c_texture_size ]= pixel;
+						texture_data[ ( x + subtile_size ) + ( y + subtile_size ) * MaterialsDescription::c_texture_size ]= pixel;
+					}
+				}
+
+				if( row > 0u && subtile_x > 0u )
+				{
+					// Make black color to transparent for textures used as decals.
+					foreach( &mut pixel : texture_data )
+					{
+						var u8 almost_black= 8u8;
+						if( pixel[0] <= almost_black & pixel[1] <= almost_black & pixel[2] <= almost_black )
+						{
+							pixel[3]= 0u8;
+						}
+						else
+						{
+							pixel[3]= 255u8;
+						}
+					}
+				}
+
+				var u32 dst_layer=
+					u32( materials_block.textures.size() + 2s ) *
+						( MaterialsDescription::c_texture_file_num_tiles_x * MaterialsDescription::c_texture_file_num_tiles_y ) +
+					row * 4u +
+					subtile_x;
+
+				var Color32WorldTextureWithMips &mut dst_texture= result_textures[ size_type( dst_layer ) ];
+
+				for( auto mut y= 0u; y < MaterialsDescription::c_texture_size; ++y )
+				{
+					// Perform here vertical flipping while copying data into destination tile.
+
+					auto src_line= ust::array_view_imut</RGBAColor/>(texture_data).subrange_start(
+						size_type( ( MaterialsDescription::c_texture_size - 1u - y ) * MaterialsDescription::c_texture_size ) );
+
+					var ust::array_view_mut</Color32/> dst_line( dst_texture[0][y] );
+
+					foreach( pair : dst_line.iter().zip( src_line.iter() ) )
+					{
+						pair.first= Color32FromComponents( pair.second );
+					}
+				}
+
+				BuildTextureMip( dst_texture[1], dst_texture[0] );
+				BuildTextureMip( dst_texture[2], dst_texture[1] );
+				BuildTextureMip( dst_texture[3], dst_texture[2] );
+				BuildTextureMip( dst_texture[4], dst_texture[3] );
+				BuildTextureMip( dst_texture[5], dst_texture[4] );
+				BuildTextureMip( dst_texture[6], dst_texture[5] );
+				BuildTextureMip( dst_texture[7], dst_texture[6] );
+			}
+		}
+	}
+
 	return result_textures;
+}
+
+fn ConvertAndSplitMapTextureIntoLayers(
+	ImageData& image_data,
+	u32 texture_index,
+	ust::array_view_mut</ Color32WorldTextureWithMips /> result_textures )
+{
+	for( auto mut tile_y= 0u; tile_y < MaterialsDescription::c_texture_file_num_tiles_y; ++tile_y )
+	{
+		var u32 src_offset_y= ( MaterialsDescription::c_texture_file_num_tiles_y - 1u - tile_y ) * MaterialsDescription::c_texture_size;
+
+		for( auto mut tile_x= 0u; tile_x < MaterialsDescription::c_texture_file_num_tiles_x; ++tile_x )
+		{
+			var u32 src_offset_x= tile_x * MaterialsDescription::c_texture_size;
+
+			var u32 dst_layer=
+				texture_index * ( MaterialsDescription::c_texture_file_num_tiles_x * MaterialsDescription::c_texture_file_num_tiles_y )  +
+				tile_y * MaterialsDescription::c_texture_file_num_tiles_x +
+				tile_x;
+
+			var Color32WorldTextureWithMips &mut dst_texture= result_textures[ size_type( dst_layer ) ];
+
+			for( auto mut y= 0u; y < MaterialsDescription::c_texture_size; ++y )
+			{
+				// Perform here vertical flipping while copying data into destination tile.
+
+				auto src_line= image_data.pixels.range().subrange_start(
+					size_type( src_offset_x + ( src_offset_y + MaterialsDescription::c_texture_size - 1u - y ) * image_data.size[0] ) );
+
+				var ust::array_view_mut</Color32/> dst_line( dst_texture[0][y] );
+
+				foreach( pair : dst_line.iter().zip( src_line.iter() ) )
+				{
+					pair.first= Color32FromComponents( pair.second );
+				}
+			}
+
+			BuildTextureMip( dst_texture[1], dst_texture[0] );
+			BuildTextureMip( dst_texture[2], dst_texture[1] );
+			BuildTextureMip( dst_texture[3], dst_texture[2] );
+			BuildTextureMip( dst_texture[4], dst_texture[3] );
+			BuildTextureMip( dst_texture[5], dst_texture[4] );
+			BuildTextureMip( dst_texture[6], dst_texture[5] );
+			BuildTextureMip( dst_texture[7], dst_texture[6] );
+		}
+	}
 }
 
 fn CalculateViewSpaceFrustumSideClipPlanes( [ u32, 2 ]& viewport_size ) : [ Planef, 4 ]

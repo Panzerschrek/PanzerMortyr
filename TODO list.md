@@ -111,20 +111,16 @@ PanzerMortyr software rendering:
 * Try seeeding-up rasterization code by using depth buffer in u32 or even u16 format.
 * Try speeding-up rasterization by correcting color and depth equations, so that it's not need to clamp interpolated color and depth values.
 * Draw test primitives.
-* Prepare alpha of map textures, including special ones (for liquids, atlases).
 * Prepare special textures used by billboards and decals.
 * Draw highlighted clusters.
 * Draw map quads with caustics.
-* Draw glass geometry.
-* Draw liquids.
-* Draw light shafts.
 * Draw first-person weapon models specially, so that they are always drawn atop other geometry.
 * Draw billboards.
 * Draw decals.
 * Draw snow.
 * Draw rain.
 * Draw water circles.
-* Apply global fog to liquids, glass, light shafts, broken glass, billboards, snow, rain.
+* Apply global fog to broken glass, billboards, snow, rain.
 * Draw local fog.
 * Apply dynamic lighting to decals.
 * Apply global fog to decals.
@@ -141,6 +137,7 @@ PanzerMortyr software rendering:
 * Consider optimizing vertices transformations and other heavy calculations by using "fma" instructions.
 * Consider optimizing code calculating per-vertex light for models using bit-hacky fast inverse square root.
 * Consider using textures dithering (as Unreal does).
+* Consider using a 4-byte array for color type for textures/framebuffer instead of u32. It may give some performance boost due to better compiler optimizations.
 * Draw fullscreen blending effect (for pain, burning and other similar effects).
 * Consider speeding-up software world drawing by performing drawing using multiple threads, when each thread writes into its own framebuffer and the master thread then combines these buffers together.
 
