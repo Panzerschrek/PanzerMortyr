@@ -192,7 +192,7 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 		.light[ 0.0f ... ]
 	};
 
-	var TriangleVerticesClipped mut vertices_clipped0[ dummy_vertex ... ], mut vertices_clipped1[ dummy_vertex ... ];
+	var TriangleVerticesClippedPair mut vertices_clipped[ [ dummy_vertex ... ], [ dummy_vertex ... ] ];
 
 	var MapVisibilityCalculator::VisibleRoomClusterFlags visible_room_cluster_flags=
 		visibility_calculator.GetVisibleRoomClusterFlags();
@@ -222,8 +222,7 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 				frustum_side_clip_planes,
 				map_data,
 				transformed_vertices_,
-				vertices_clipped0,
-				vertices_clipped1 );
+				vertices_clipped );
 		}
 	}
 
@@ -298,8 +297,7 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 					cluster_dynamic_light_sources_,
 					transformed_vertices_,
 					vertex_lights_,
-					vertices_clipped0,
-					vertices_clipped1,
+					vertices_clipped,
 					stats );
 
 				var ClusterDrawDataSoft& cluster_draw_data= map_data.clusters_draw_data[ cluster_index ];
@@ -332,8 +330,7 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 						cluster_dynamic_light_sources_,
 						transformed_vertices_,
 						vertex_lights_,
-						vertices_clipped0,
-						vertices_clipped1 );
+						vertices_clipped );
 
 					stats.num_visible_map_triangles+= u32( indices.size() ) / 3u;
 				}
@@ -366,8 +363,7 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 						cluster_dynamic_light_sources_,
 						transformed_vertices_,
 						vertex_lights_,
-						vertices_clipped0,
-						vertices_clipped1 );
+						vertices_clipped );
 
 					stats.num_visible_map_triangles+= u32( indices.size() ) / 3u;
 				}
@@ -402,8 +398,7 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 						cluster_dynamic_light_sources_,
 						transformed_vertices_,
 						vertex_lights_,
-						vertices_clipped0,
-						vertices_clipped1 );
+						vertices_clipped );
 
 					stats.num_visible_breakable_triangles+= u32( temp_indices_.size() ) / 3u;
 				}
@@ -531,8 +526,7 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 			cluster_dynamic_light_sources_,
 			transformed_vertices_,
 			vertex_lights_,
-			vertices_clipped0,
-			vertices_clipped1,
+			vertices_clipped,
 			stats );
 
 		// Add glass polygons of dynamic cluster objects with translation.
@@ -848,8 +842,7 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 				model,
 				vertices_transformed,
 				vertex_lights,
-				vertices_clipped0,
-				vertices_clipped1 );
+				vertices_clipped );
 		}
 
 		++stats.num_visible_models;
@@ -975,8 +968,7 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 		ust::empty_range, // Don't apply dynamic light to semitransparent polygons.
 		transformed_vertices_,
 		vertex_lights_,
-		vertices_clipped0,
-		vertices_clipped1 );
+		vertices_clipped );
 
 	stats.num_visible_semitransparent_triangles+= u32( semitransparent_geometry_indices_.size() ) / 3u;
 
@@ -1503,9 +1495,8 @@ fn DrawSky(
 	var SkyRasterizer mut sky_rasterizer( surface );
 
 	var SkyVertex dummy_sky_vertex{ .position= Vec3f::MakeZero() };
-	var [ SkyVertex, 16 ]
-		mut vertices_clipped0[ dummy_sky_vertex ... ],
-		mut vertices_clipped1[ dummy_sky_vertex ... ];
+	var tup[ [ SkyVertex, 16 ], [ SkyVertex, 16 ] ]
+		mut vertices_clipped[ [ dummy_sky_vertex ... ], [ dummy_sky_vertex ... ] ];
 
 	var bool mut has_sky_quads_in_view= false;
 
@@ -1582,7 +1573,7 @@ fn DrawSky(
 					}
 
 					foreach( pair :
-							ust::array_view_mut</SkyVertex/>( vertices_clipped0 )
+							ust::array_view_mut</SkyVertex/>( vertices_clipped[0] )
 							.iter().zip( ust::array_view_imut</ [ i16, 3 ] />( quad.vertices ).iter() ) )
 					{
 						pair.first.position=
@@ -1593,22 +1584,21 @@ fn DrawSky(
 					}
 
 					var size_type num_vertices=
-						ClipPolygonByNearZAndFrustumSidePlanes(
-							frustum_side_clip_planes, 4s, vertices_clipped0, vertices_clipped1 );
+						ClipPolygonByNearZAndFrustumSidePlanes( frustum_side_clip_planes, 4s, vertices_clipped );
 
 					if( num_vertices < 3s )
 					{
 						continue;
 					}
 
-					var Vec3f& v0= cast_imut(vertices_clipped1)[0].position;
+					var Vec3f& v0= cast_imut(vertices_clipped[1])[0].position;
 					debug_assert( v0.z > 0.0f );
 					var Vec2f v0_projected= v0.xy() / v0.z;
 
 					for( auto mut i= 2s; i < num_vertices; ++i )
 					{
-						var Vec3f& v1= cast_imut(vertices_clipped1)[ i - 1s ].position;
-						var Vec3f& v2= cast_imut(vertices_clipped1)[ i ].position;
+						var Vec3f& v1= cast_imut(vertices_clipped[1])[ i - 1s ].position;
+						var Vec3f& v2= cast_imut(vertices_clipped[1])[ i ].position;
 						debug_assert( v1.z > 0.0f );
 						debug_assert( v2.z > 0.0f );
 						sky_rasterizer.AddSkyTriangle( v0_projected, v1.xy() / v1.z, v2.xy() / v2.z );
@@ -1691,8 +1681,7 @@ fn DrawMoonAndStars(
 	FrustumSideClipPlanes& frustum_side_clip_planes,
 	MapDrawDataSoft& map_data,
 	ust::vector</Vec3f/> &mut vertices_transformed,
-	TriangleVerticesClipped &mut vertices_clipped0,
-	TriangleVerticesClipped &mut vertices_clipped1 )
+	TriangleVerticesClippedPair &mut vertices_clipped )
 {
 	auto vertices= map_data.moon_and_stars_buffer[0].range();
 	auto indices= map_data.moon_and_stars_buffer[1].range();
@@ -1720,7 +1709,7 @@ fn DrawMoonAndStars(
 		var MapVertex& v1= vertices[ size_type( triangle_indices[1] ) ];
 		var MapVertex& v2= vertices[ size_type( triangle_indices[2] ) ];
 
-		vertices_clipped0[0]=
+		vertices_clipped[0][0]=
 			Rasterizer::Vertex
 			{
 				.position= vertices_transformed_range[ size_type( triangle_indices[0] ) ],
@@ -1728,7 +1717,7 @@ fn DrawMoonAndStars(
 				.light= light,
 			};
 
-		vertices_clipped0[1]=
+		vertices_clipped[0][1]=
 			Rasterizer::Vertex
 			{
 				.position= vertices_transformed_range[ size_type( triangle_indices[1] ) ],
@@ -1736,7 +1725,7 @@ fn DrawMoonAndStars(
 				.light= light,
 			};
 
-		vertices_clipped0[2]=
+		vertices_clipped[0][2]=
 			Rasterizer::Vertex
 			{
 				.position= vertices_transformed_range[ size_type( triangle_indices[2] ) ],
@@ -1745,8 +1734,7 @@ fn DrawMoonAndStars(
 			};
 
 		var size_type num_vertices=
-			ClipPolygonByNearZAndFrustumSidePlanes(
-				frustum_side_clip_planes, 3s, vertices_clipped0, vertices_clipped1 );
+			ClipPolygonByNearZAndFrustumSidePlanes( frustum_side_clip_planes, 3s, vertices_clipped );
 
 		if( num_vertices < 3s )
 		{
@@ -1761,9 +1749,9 @@ fn DrawMoonAndStars(
 				Rasterizer::BlendingMode::PremultipliedAlpha,
 				Rasterizer::DepthWriteMode::No />(
 				rasterizer,
-				cast_imut(vertices_clipped1)[0],
-				cast_imut(vertices_clipped1)[ i - 1s ],
-				cast_imut(vertices_clipped1)[ i ],
+				cast_imut(vertices_clipped[1])[0],
+				cast_imut(vertices_clipped[1])[ i - 1s ],
+				cast_imut(vertices_clipped[1])[ i ],
 				texture );
 		}
 	}
@@ -1772,6 +1760,8 @@ fn DrawMoonAndStars(
 type FrustumSideClipPlanes= [ Planef, 4 ];
 
 type TriangleVerticesClipped= [ Rasterizer::Vertex, 16 ];
+
+type TriangleVerticesClippedPair= tup[ TriangleVerticesClipped, TriangleVerticesClipped ];
 
 fn DrawMapClusterTriangles(
 	Rasterizer& rasterizer,
@@ -1783,8 +1773,7 @@ fn DrawMapClusterTriangles(
 	ust::array_view_imut</ DynamicLightSourceSoft /> dynamic_light_sources,
 	ust::vector</Vec3f/> &mut vertices_transformed,
 	ust::vector</ VertexLightWithFog /> &mut vertex_lights,
-	TriangleVerticesClipped &mut vertices_clipped0,
-	TriangleVerticesClipped &mut vertices_clipped1,
+	TriangleVerticesClippedPair &mut vertices_clipped,
 	WorldDrawingStats &mut stats )
 {
 	var ClusterDrawDataSoft& cluster_draw_data= map_data.clusters_draw_data[ cluster_index ];
@@ -1812,8 +1801,7 @@ fn DrawMapClusterTriangles(
 		dynamic_light_sources,
 		vertices_transformed,
 		vertex_lights,
-		vertices_clipped0,
-		vertices_clipped1 );
+		vertices_clipped );
 
 	++stats.num_total_visible_clusters;
 	stats.num_visible_map_triangles+= u32( cluster_indices.size() ) / 3u;
@@ -1830,8 +1818,7 @@ var ( fn(
 		ust::array_view_imut</ DynamicLightSourceSoft /> dynamic_light_sources,
 		ust::vector</Vec3f/> &mut vertices_transformed,
 		ust::vector</ VertexLightWithFog /> &mut vertex_lights,
-		TriangleVerticesClipped &mut vertices_clipped0,
-		TriangleVerticesClipped &mut vertices_clipped1 ) )
+		TriangleVerticesClippedPair &mut vertices_clipped ) )
 	// For regular triangles use no blending and write into depth buffer.
 	DrawMapTriangles( DrawMapTrianglesTemplated</ Rasterizer::BlendingMode::None, Rasterizer::DepthWriteMode::Yes /> ),
 	// For semitransparent trinagles use blending and don't write into depth buffer.
@@ -1849,8 +1836,7 @@ fn DrawMapTrianglesTemplated(
 	ust::array_view_imut</ DynamicLightSourceSoft /> dynamic_light_sources,
 	ust::vector</Vec3f/> &mut vertices_transformed,
 	ust::vector</ VertexLightWithFog /> &mut vertex_lights,
-	TriangleVerticesClipped &mut vertices_clipped0,
-	TriangleVerticesClipped &mut vertices_clipped1 )
+	TriangleVerticesClippedPair &mut vertices_clipped )
 {
 	// Transform all vertices and apply light for them first.
 	// Do this in separate loop to be able to read transformed and lit vertices for more than one triangle.
@@ -1876,7 +1862,7 @@ fn DrawMapTrianglesTemplated(
 		var MapVertex& v1= vertices[ size_type( triangle_indices[1] ) ];
 		var MapVertex& v2= vertices[ size_type( triangle_indices[2] ) ];
 
-		vertices_clipped0[0]=
+		vertices_clipped[0][0]=
 			Rasterizer::Vertex
 			{
 				.position= vertices_transformed_range[ size_type( triangle_indices[0] ) ],
@@ -1884,7 +1870,7 @@ fn DrawMapTrianglesTemplated(
 				.light= vertex_lights_range[ size_type( triangle_indices[0] ) ],
 			};
 
-		vertices_clipped0[1]=
+		vertices_clipped[0][1]=
 			Rasterizer::Vertex
 			{
 				.position= vertices_transformed_range[ size_type( triangle_indices[1] ) ],
@@ -1892,7 +1878,7 @@ fn DrawMapTrianglesTemplated(
 				.light= vertex_lights_range[ size_type( triangle_indices[1] ) ],
 			};
 
-		vertices_clipped0[2]=
+		vertices_clipped[0][2]=
 			Rasterizer::Vertex
 			{
 				.position= vertices_transformed_range[ size_type( triangle_indices[2] ) ],
@@ -1901,8 +1887,7 @@ fn DrawMapTrianglesTemplated(
 			};
 
 		var size_type num_vertices=
-			ClipPolygonByNearZAndFrustumSidePlanes(
-				frustum_side_clip_planes, 3s, vertices_clipped0, vertices_clipped1 );
+			ClipPolygonByNearZAndFrustumSidePlanes( frustum_side_clip_planes, 3s, vertices_clipped );
 
 		if( num_vertices < 3s )
 		{
@@ -1915,9 +1900,9 @@ fn DrawMapTrianglesTemplated(
 		{
 			RasterizeTriangleWithSubdivisionAndInterpolationMethodSelection</ blending_mode, depth_write_mode />(
 				rasterizer,
-				cast_imut(vertices_clipped1)[0],
-				cast_imut(vertices_clipped1)[ i - 1s ],
-				cast_imut(vertices_clipped1)[ i ],
+				cast_imut(vertices_clipped[1])[0],
+				cast_imut(vertices_clipped[1])[ i - 1s ],
+				cast_imut(vertices_clipped[1])[ i ],
 				texture );
 		}
 	}
@@ -1975,12 +1960,11 @@ fn DrawModelTrianglesWithFrustumPlanesClipping(
 	ModelSoft& model,
 	ust::array_view_imut</Vec3f/> vertices_transformed,
 	ust::array_view_imut</ VertexLightWithFog /> vertex_light,
-	TriangleVerticesClipped &mut vertices_clipped0,
-	TriangleVerticesClipped &mut vertices_clipped1 )
+	TriangleVerticesClippedPair &mut vertices_clipped )
 {
 	foreach( &triangle : model.triangles )
 	{
-		vertices_clipped0[0]=
+		vertices_clipped[0][0]=
 			Rasterizer::Vertex
 			{
 				.position= vertices_transformed[ size_type( triangle[0] ) ],
@@ -1988,7 +1972,7 @@ fn DrawModelTrianglesWithFrustumPlanesClipping(
 				.light= vertex_light[ size_type( triangle[0] ) ],
 			};
 
-		vertices_clipped0[1]=
+		vertices_clipped[0][1]=
 			Rasterizer::Vertex
 			{
 				.position= vertices_transformed[ size_type( triangle[1] ) ],
@@ -1996,7 +1980,7 @@ fn DrawModelTrianglesWithFrustumPlanesClipping(
 				.light= vertex_light[ size_type( triangle[1] ) ],
 			};
 
-		vertices_clipped0[2]=
+		vertices_clipped[0][2]=
 			Rasterizer::Vertex
 			{
 				.position= vertices_transformed[ size_type( triangle[2] ) ],
@@ -2005,8 +1989,7 @@ fn DrawModelTrianglesWithFrustumPlanesClipping(
 			};
 
 		var size_type num_vertices=
-			ClipPolygonByNearZAndFrustumSidePlanes(
-				frustum_side_clip_planes, 3s, vertices_clipped0, vertices_clipped1 );
+			ClipPolygonByNearZAndFrustumSidePlanes( frustum_side_clip_planes, 3s, vertices_clipped );
 
 		if( num_vertices < 3s )
 		{
@@ -2023,9 +2006,9 @@ fn DrawModelTrianglesWithFrustumPlanesClipping(
 					Rasterizer::BlendingMode::None,
 					Rasterizer::DepthWriteMode::Yes />(
 					rasterizer,
-					cast_imut(vertices_clipped1)[0],
-					cast_imut(vertices_clipped1)[ i - 1s ],
-					cast_imut(vertices_clipped1)[ i ],
+					cast_imut(vertices_clipped[1])[0],
+					cast_imut(vertices_clipped[1])[ i - 1s ],
+					cast_imut(vertices_clipped[1])[ i ],
 					texture );
 			}
 		}
@@ -2055,20 +2038,19 @@ fn FlipBackFacingTriangles(
 	}
 }
 
-// Polygon vertices should be placed in "vertices_clipped0". Result will be placed in "vertices_clipped1".
+// Polygon vertices should be placed in "vertices_clipped[0]". Result will be placed in "vertices_clipped[1]".
 // Returns result number of vertices.
 template</ type VertexType, size_type buffer_size />
 fn ClipPolygonByNearZAndFrustumSidePlanes(
 	FrustumSideClipPlanes& frustum_side_clip_planes,
 	size_type mut num_vertices,
-	[ VertexType, buffer_size ] &mut vertices_clipped0,
-	[ VertexType, buffer_size ] &mut vertices_clipped1 ) : size_type
+	tup[ [ VertexType, buffer_size ], [ VertexType, buffer_size ] ] &mut vertices_clipped ) : size_type
 {
 	num_vertices=
 		ClipPolygonByZNearPlane(
 			c_z_near_for_clipping,
-			ust::array_view_imut</VertexType/>( vertices_clipped0 ).subrange_end( num_vertices ),
-			vertices_clipped1 );
+			ust::array_view_imut</VertexType/>( vertices_clipped[0] ).subrange_end( num_vertices ),
+			vertices_clipped[1] );
 
 	if( num_vertices < 3s )
 	{
@@ -2081,8 +2063,8 @@ fn ClipPolygonByNearZAndFrustumSidePlanes(
 		num_vertices=
 			ClipPolygon(
 				frustum_side_clip_planes[ i * 2s + 0s ],
-				ust::array_view_imut</VertexType/>( vertices_clipped1 ).subrange_end( num_vertices ),
-				vertices_clipped0 );
+				ust::array_view_imut</VertexType/>( vertices_clipped[1] ).subrange_end( num_vertices ),
+				vertices_clipped[0] );
 
 		if( num_vertices < 3s )
 		{
@@ -2092,8 +2074,8 @@ fn ClipPolygonByNearZAndFrustumSidePlanes(
 		num_vertices=
 			ClipPolygon(
 				frustum_side_clip_planes[ i * 2s + 1s ],
-				ust::array_view_imut</VertexType/>( vertices_clipped0 ).subrange_end( num_vertices ),
-				vertices_clipped1 );
+				ust::array_view_imut</VertexType/>( vertices_clipped[0] ).subrange_end( num_vertices ),
+				vertices_clipped[1] );
 
 		if( num_vertices < 3s )
 		{
