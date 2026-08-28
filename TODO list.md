@@ -91,18 +91,17 @@ PanzerMortyr rendering:
 * Consider drawing blob shadows under models (as some sort of decal?).
 * Consider limiting the number of active dynamic light sources - to avoid huge performance drops.
 * Consider applying dynamic light to glass and water quads.
-* Allow turning global fog for snow/rain off.
 * Allow turning breaking glass particles off.
 * Modyfy pixels of alpha-tested textures having zero alpha, so that their color is equal to average color of adjacent pixels with non-zero alpha. This is needed to avoid black borders on alpha-tested billboards and decals.
 * Allow switching to a fullscreen mode with refresh rate change.
 * Implement visual effect specific for omni protection item (multiplayer-only power-up).
+* Consider speeding-up rain and snow particles fetching by cutting the fetch bbox by the view frustum.
 
 PanzerMortyr OpenGL rendering:
 
 * Add support for MSAA (with proper support of fullscreen effects like fog).
 * Consider drawing map polygons with detail textures (generate such textures somehow).
 * Consider optimizing dynamic lighting even more by using stencil test for them.
-* Use the same code for rain and snow as in software mode - this should allow proper sorting.
 * Fall-back to software rendering if failed to create OpenGL context.
 
 PanzerMortyr software rendering:
@@ -130,7 +129,6 @@ PanzerMortyr software rendering:
 * Consider using a 4-byte array for color type for textures/framebuffer instead of u32. It may give some performance boost due to better compiler optimizations.
 * Draw fullscreen blending effect (for pain, burning and other similar effects).
 * Consider speeding-up software world drawing by performing drawing using multiple threads, when each thread writes into its own framebuffer and the master thread then combines these buffers together.
-* Consider speeding-up raind and snow particles fetching by cutting the fetch bbox by view frustum.
 
 PanzerMortyr menus and HUD:
 
