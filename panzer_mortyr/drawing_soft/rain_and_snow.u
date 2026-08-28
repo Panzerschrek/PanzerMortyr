@@ -1,0 +1,302 @@
+import "/common_lib/materials_file.iu"
+import "../billboards.iu"
+import "../bounding_boxes_hierarchy_visiting.iu"
+import "../precipitation_constants.iu"
+import "rain_and_snow.iu"
+
+namespace PM
+{
+
+fn CreateRainTriangles(
+	RainSnowHierarchy& rain_snow_hierarchy,
+	BillboardsDescription& billboards_description,
+	f32 time_s,
+	Vec3f& camera_position,
+	ust::vector</MapVertex/> &mut vertices,
+	ust::vector</u16/> &mut indices )
+{
+	if( size_type( BillboardConstants::c_id_rain ) >= billboards_description.size() )
+	{
+		return;
+	}
+
+	var BillboardDescription& billboard_description=
+		billboards_description[ size_type( BillboardConstants::c_id_rain ) ];
+
+	var Vec2f droplet_size( f32( billboard_description.dx ), f32( billboard_description.dy ) );
+
+	auto [ tc_start, tc_end ]= CreateTexCoords( billboard_description );
+
+	var f32 texture_layer= GetBillboardTextureLayer( billboard_description );
+
+	var [ [ f32, 3 ], 3 ] tex_coordinates
+	[
+		[ 0.5f * ( tc_start.x + tc_start.y ), tc_end.y, texture_layer ],
+		[ tc_start.x, tc_start.y, texture_layer ],
+		[ tc_end.x, tc_start.y, texture_layer ]
+	];
+
+	var f32 total_move_distance= time_s * PrecipitationConstants::rain_speed;
+
+	VisitBoundingBoxesHierarchyForBBox(
+		rain_snow_hierarchy,
+		CreateFetchBBox( camera_position ),
+		lambda[
+			// Capture simple scalars, vectors and arrays by value.
+			total_move_distance,
+			camera_position,
+			droplet_size,
+			tex_coordinates,
+			// Capture reference to output containers.
+			&vertices,
+			&indices ]( RainSnowParticleInHierarchy& rain_particle )
+		{
+			var f32 normalized_phase=
+				f32( rain_particle.movement_distance_phase ) * ( PrecipitationConstants::max_path_length / 65536.0f );
+
+			var f32 movement_distance=
+				( total_move_distance + normalized_phase ) % PrecipitationConstants::max_path_length;
+
+			if( movement_distance >= f32( rain_particle.max_movement_distance ) )
+			{
+				return;
+			}
+
+			var Vec3f position=
+				Vec3f( rain_particle.position ) + movement_distance * Vec3f( PrecipitationConstants::move_vector );
+
+			var Vec3f vec_to_camera= position - camera_position;
+
+			var f32 square_distance_to_camera= vec_to_camera.SquareLength();
+
+			if( square_distance_to_camera >= c_max_distance_to_camera * c_max_distance_to_camera )
+			{
+				return;
+			}
+
+			var Vec3f side_vector= vec_to_camera.Cross( Vec3f( PrecipitationConstants::move_vector ) );
+			var Vec3f side_vector_scaled= side_vector * ( droplet_size.x / ust::max( 0.00001f, side_vector.Length() ) );
+
+			var Vec3f v0= position + Vec3f( PrecipitationConstants::move_vector ) * ( -40.0f * droplet_size.y );
+			var Vec3f v1= position + side_vector_scaled;
+			var Vec3f v2= position - side_vector_scaled;
+
+			var f32 fade= CalculateParticleFade( square_distance_to_camera );
+
+			var u8 light( ust::max( 0.0f, ust::min( c_rain_light_scale * fade, 255.0f ) ) );
+			var [ u8, 4 ] light_components[ light, light, light, 255u8 ];
+
+			var size_type base_vertex= vertices.size();
+
+			vertices.push_back(
+				MapVertex
+				{
+					.position[ v0.x, v0.y, v0.z ],
+					.light= light_components,
+					.tex_coordinates= tex_coordinates[0],
+					.fog_params= zero_init,
+				} );
+
+			vertices.push_back(
+				MapVertex
+				{
+					.position[ v1.x, v1.y, v1.z ],
+					.light= light_components,
+					.tex_coordinates= tex_coordinates[1],
+					.fog_params= zero_init,
+				} );
+
+			vertices.push_back(
+				MapVertex
+				{
+					.position[ v2.x, v2.y, v2.z ],
+					.light= light_components,
+					.tex_coordinates= tex_coordinates[2],
+					.fog_params= zero_init,
+				} );
+
+			indices.push_back( u16( base_vertex + 0s ) );
+			indices.push_back( u16( base_vertex + 1s ) );
+			indices.push_back( u16( base_vertex + 2s ) );
+		} );
+}
+
+fn CreateSnowTriangles(
+	RainSnowHierarchy& rain_snow_hierarchy,
+	f32 time_s,
+	Vec3f& camera_position,
+	ust::vector</MapVertex/> &mut vertices,
+	ust::vector</u16/> &mut indices )
+{
+	var BillboardDescription& billboard_description= BillboardConstants::c_snowflake_billboard_description;
+
+	var Vec2f droplet_size( f32( billboard_description.dx ), f32( billboard_description.dy ) );
+
+	auto [ tc_start, tc_end ]= CreateTexCoords( billboard_description );
+
+	var f32 texture_layer= GetBillboardTextureLayer( billboard_description );
+
+	var [ [ f32, 3 ], 4 ] tex_coordinates
+	[
+		[   tc_end.x, tc_start.y, texture_layer ],
+		[   tc_end.x,   tc_end.y, texture_layer ],
+		[ tc_start.x, tc_start.y, texture_layer ],
+		[ tc_start.x,   tc_end.y, texture_layer ],
+	];
+
+	var f32 total_move_distance= time_s * PrecipitationConstants::snow_speed;
+
+	VisitBoundingBoxesHierarchyForBBox(
+		rain_snow_hierarchy,
+		CreateFetchBBox( camera_position ),
+		lambda[
+			// Capture simple scalars, vectors and arrays by value.
+			total_move_distance,
+			camera_position,
+			droplet_size,
+			tex_coordinates,
+			// Capture reference to output containers.
+			&vertices,
+			&indices ]( RainSnowParticleInHierarchy& rain_particle )
+		{
+			var f32 normalized_phase=
+				f32( rain_particle.movement_distance_phase ) * ( PrecipitationConstants::max_path_length / 65536.0f );
+
+			var f32 movement_distance=
+				( total_move_distance + normalized_phase ) % PrecipitationConstants::max_path_length;
+
+			if( movement_distance >= f32( rain_particle.max_movement_distance ) )
+			{
+				return;
+			}
+
+			var Vec3f base_position=
+				Vec3f( rain_particle.position ) + movement_distance * Vec3f( PrecipitationConstants::move_vector );
+
+			var Vec3f vec_to_camera= base_position - camera_position;
+
+			var f32 square_distance_to_camera= vec_to_camera.SquareLength();
+
+			if( square_distance_to_camera >= c_max_distance_to_camera * c_max_distance_to_camera )
+			{
+				return;
+			}
+
+			// Add some small spiral movement.
+			var f32 spiral_movement_phase= base_position.Dot( Vec3f( c_snow_spiral_movement_spatial_frequency ) );
+			var Vec3f position(
+				base_position.x + c_snow_spiral_movement_amplitude * ust::cos( spiral_movement_phase ),
+				base_position.y + c_snow_spiral_movement_amplitude * ust::sin( spiral_movement_phase ),
+				base_position.z );
+
+			var Vec3f u_vector= Vec3f( -vec_to_camera.y, vec_to_camera.x, 0.0f );
+			var Vec3f u_vector_scaled= u_vector * ( droplet_size.x / ust::max( 0.00001f, u_vector.Length() ) );
+
+			var Vec3f v_vector= u_vector.Cross( vec_to_camera );
+			var Vec3f v_vector_scaled= v_vector * ( droplet_size.y / ust::max( 0.00001f, v_vector.Length() ) );
+
+			var Vec3f v0= position + u_vector_scaled - v_vector_scaled;
+			var Vec3f v1= position + u_vector_scaled + v_vector_scaled;
+			var Vec3f v2= position - u_vector_scaled - v_vector_scaled;
+			var Vec3f v3= position - u_vector_scaled + v_vector_scaled;
+
+			var f32 fade= CalculateParticleFade( square_distance_to_camera );
+
+			var u8 light( ust::max( 0.0f, ust::min( c_snow_light_scale * fade, 255.0f ) ) );
+			var [ u8, 4 ] light_components[ light, light, light, 255u8 ];
+
+			var size_type base_vertex= vertices.size();
+
+			vertices.push_back(
+				MapVertex
+				{
+					.position[ v0.x, v0.y, v0.z ],
+					.light= light_components,
+					.tex_coordinates= tex_coordinates[0],
+					.fog_params= zero_init,
+				} );
+
+			vertices.push_back(
+				MapVertex
+				{
+					.position[ v1.x, v1.y, v1.z ],
+					.light= light_components,
+					.tex_coordinates= tex_coordinates[1],
+					.fog_params= zero_init,
+				} );
+
+			vertices.push_back(
+				MapVertex
+				{
+					.position[ v2.x, v2.y, v2.z ],
+					.light= light_components,
+					.tex_coordinates= tex_coordinates[2],
+					.fog_params= zero_init,
+				} );
+
+			vertices.push_back(
+				MapVertex
+				{
+					.position[ v3.x, v3.y, v3.z ],
+					.light= light_components,
+					.tex_coordinates= tex_coordinates[3],
+					.fog_params= zero_init,
+				} );
+
+			indices.push_back( u16( base_vertex + 0s ) );
+			indices.push_back( u16( base_vertex + 1s ) );
+			indices.push_back( u16( base_vertex + 2s ) );
+			indices.push_back( u16( base_vertex + 3s ) );
+			indices.push_back( u16( base_vertex + 2s ) );
+			indices.push_back( u16( base_vertex + 1s ) );
+		} );
+}
+
+fn CreateTexCoords( BillboardDescription& billboard_description ) : [ Vec2f, 2 ]
+{
+	var Vec2f tc_start(
+		f32( billboard_description.xp % MaterialsDescription::c_texture_size ),
+		f32( billboard_description.yp % MaterialsDescription::c_texture_size ) );
+
+	var Vec2f tc_end=
+		tc_start +
+		Vec2f(
+			f32( billboard_description.xk - billboard_description.xp ),
+			f32( billboard_description.yk - billboard_description.yp ) );
+
+	return ust::make_array( tc_start, tc_end );
+}
+
+fn CreateFetchBBox( Vec3f& camera_position ) : BBox3f
+{
+	var Vec3f fetch_bbox_half_size( c_max_distance_to_camera, c_max_distance_to_camera, c_max_distance_to_camera );
+	return BBox3f{ .min= camera_position - fetch_bbox_half_size, .max= camera_position + fetch_bbox_half_size };
+}
+
+fn CalculateParticleFade( f32 square_distance_to_camera ) : f32
+{
+	if( square_distance_to_camera > c_fade_start_distance * c_fade_start_distance )
+	{
+		var f32 distance_to_camera= ust::sqrt( square_distance_to_camera );
+		return
+			1.0f -
+			( distance_to_camera - c_fade_start_distance ) *
+				( 1.0f / ( c_max_distance_to_camera - c_fade_start_distance ) );
+	}
+
+	return 1.0f;
+}
+
+// Rain texture is too bright. Make rain droplets darker.
+// They still can be seen with such brightness, since additive blending is used for them.
+var f32 c_rain_light_scale= 64.0f;
+
+var f32 c_snow_light_scale= 255.0f;
+
+var [ f32, 3 ] c_snow_spiral_movement_spatial_frequency[ -0.01f, 0.02f, 0.03f ];
+var f32 c_snow_spiral_movement_amplitude= 8.0f;
+
+var f32 c_max_distance_to_camera= 1536.0f;
+var f32 c_fade_start_distance= c_max_distance_to_camera * 2.0f / 3.0f;
+
+} // namespace PM
