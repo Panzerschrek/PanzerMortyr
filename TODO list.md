@@ -122,8 +122,6 @@ PanzerMortyr software rendering:
 * Draw local fog.
 * Apply dynamic lighting to decals.
 * Apply global fog to decals.
-* Draw sun/moon.
-* Draw stars.
 * Draw mirrors.
 * Draw models covered with blood.
 * Draw burning models.
