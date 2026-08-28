@@ -1,5 +1,6 @@
 import "/common_lib/materials_file.iu"
 import "../billboards.iu"
+import "../bounding_boxes_hierarchy_visiting.iu"
 import "../precipitation_constants.iu"
 import "rain_and_snow.iu"
 
@@ -7,7 +8,7 @@ namespace PM
 {
 
 fn CreateRainTriangles(
-	ZmapLamData& zmap_lam_data,
+	RainSnowHierarchy& rain_snow_hierarchy,
 	BillboardsDescription& billboards_description,
 	f32 time_s,
 	Vec3f& camera_position,
@@ -36,10 +37,6 @@ fn CreateRainTriangles(
 
 	var f32 texture_layer= GetBillboardTextureLayer( billboard_description );
 
-	// Rain texture is too bright. Make rain droplets darker.
-	// They still can be seen with such brightness, since additive blending is used for them.
-	var f32 light_scale= 64.0f;
-
 	var [ [ f32, 3 ], 3 ] tex_coordinates
 	[
 		[
@@ -61,85 +58,102 @@ fn CreateRainTriangles(
 
 	var f32 total_move_distance= time_s * PrecipitationConstants::rain_speed;
 
-	foreach( &rain_droplet : zmap_lam_data.rain_droplets )
-	{
-		var f32 normalized_phase=
-			PrecipitationConstants::max_path_length *
-			f32( rain_droplet.movement_phase ) /
-			f32( rain_droplet.travel_distance );
+	var Vec3f fetch_bbox_half_size( c_max_distance_to_camera, c_max_distance_to_camera, c_max_distance_to_camera );
 
-		var f32 movement_distance= ( total_move_distance + normalized_phase ) % PrecipitationConstants::max_path_length;
-
-		if( movement_distance >= f32( rain_droplet.travel_distance ) )
+	VisitBoundingBoxesHierarchyForBBox(
+		rain_snow_hierarchy,
+		BBox3f{ .min= camera_position - fetch_bbox_half_size, .max= camera_position + fetch_bbox_half_size },
+		lambda[
+			// Capture simple scalars, vectors and arrays by value.
+			total_move_distance,
+			camera_position,
+			droplet_size,
+			tex_coordinates,
+			// Capture reference to output containers.
+			&vertices,
+			&indices ]( RainSnowParticleInHierarchy& rain_particle )
 		{
-			continue;
-		}
+			var f32 normalized_phase=
+				f32( rain_particle.movement_distance_phase ) * ( PrecipitationConstants::max_path_length / 65536.0f );
 
-		var Vec3f position=
-			Vec3f( rain_droplet.position ) + movement_distance * Vec3f( PrecipitationConstants::move_vector );
+			var f32 movement_distance=
+				( total_move_distance + normalized_phase ) % PrecipitationConstants::max_path_length;
 
-		var Vec3f vec_to_camera= position - camera_position;
-
-		var f32 square_distance_to_camera= vec_to_camera.SquareLength();
-
-		if( square_distance_to_camera >= c_max_distance_to_camera * c_max_distance_to_camera )
-		{
-			continue;
-		}
-
-		var Vec3f side_vector= vec_to_camera.Cross( Vec3f( PrecipitationConstants::move_vector ) );
-		var Vec3f side_vector_scaled= side_vector * ( droplet_size.x / ust::max( 0.00001f, side_vector.Length() ) );
-
-		var Vec3f v0= position + Vec3f( PrecipitationConstants::move_vector ) * ( -40.0f * droplet_size.y );
-		var Vec3f v1= position + side_vector_scaled;
-		var Vec3f v2= position - side_vector_scaled;
-
-		var f32 mut fade= 1.0f;
-		if( square_distance_to_camera > c_fade_start_distance * c_fade_start_distance )
-		{
-			var f32 distance_to_camera= ust::sqrt( square_distance_to_camera );
-			fade=
-				1.0f -
-				( distance_to_camera - c_fade_start_distance ) * ( 1.0f / ( c_max_distance_to_camera - c_fade_start_distance ) );
-		}
-
-		var u8 light( ust::max( 0.0f, ust::min( light_scale * fade, 255.0f ) ) );
-		var [ u8, 4 ] light_components[ light, light, light, 255u8 ];
-
-		var size_type base_vertex= vertices.size();
-
-		vertices.push_back(
-			MapVertex
+			if( movement_distance >= f32( rain_particle.max_movement_distance ) )
 			{
-				.position[ v0.x, v0.y, v0.z ],
-				.light= light_components,
-				.tex_coordinates= tex_coordinates[0],
-				.fog_params= zero_init,
-			} );
+				return;
+			}
 
-		vertices.push_back(
-			MapVertex
+			var Vec3f position=
+				Vec3f( rain_particle.position ) + movement_distance * Vec3f( PrecipitationConstants::move_vector );
+
+			var Vec3f vec_to_camera= position - camera_position;
+
+			var f32 square_distance_to_camera= vec_to_camera.SquareLength();
+
+			if( square_distance_to_camera >= c_max_distance_to_camera * c_max_distance_to_camera )
 			{
-				.position[ v1.x, v1.y, v1.z ],
-				.light= light_components,
-				.tex_coordinates= tex_coordinates[1],
-				.fog_params= zero_init,
-			} );
+				return;
+			}
 
-		vertices.push_back(
-			MapVertex
+			var Vec3f side_vector= vec_to_camera.Cross( Vec3f( PrecipitationConstants::move_vector ) );
+			var Vec3f side_vector_scaled= side_vector * ( droplet_size.x / ust::max( 0.00001f, side_vector.Length() ) );
+
+			var Vec3f v0= position + Vec3f( PrecipitationConstants::move_vector ) * ( -40.0f * droplet_size.y );
+			var Vec3f v1= position + side_vector_scaled;
+			var Vec3f v2= position - side_vector_scaled;
+
+			var f32 mut fade= 1.0f;
+			if( square_distance_to_camera > c_fade_start_distance * c_fade_start_distance )
 			{
-				.position[ v2.x, v2.y, v2.z ],
-				.light= light_components,
-				.tex_coordinates= tex_coordinates[2],
-				.fog_params= zero_init,
-			} );
+				var f32 distance_to_camera= ust::sqrt( square_distance_to_camera );
+				fade=
+					1.0f -
+					( distance_to_camera - c_fade_start_distance ) *
+						( 1.0f / ( c_max_distance_to_camera - c_fade_start_distance ) );
+			}
 
-		indices.push_back( u16( base_vertex + 0s ) );
-		indices.push_back( u16( base_vertex + 1s ) );
-		indices.push_back( u16( base_vertex + 2s ) );
-	}
+			var u8 light( ust::max( 0.0f, ust::min( c_rain_light_scale * fade, 255.0f ) ) );
+			var [ u8, 4 ] light_components[ light, light, light, 255u8 ];
+
+			var size_type base_vertex= vertices.size();
+
+			vertices.push_back(
+				MapVertex
+				{
+					.position[ v0.x, v0.y, v0.z ],
+					.light= light_components,
+					.tex_coordinates= tex_coordinates[0],
+					.fog_params= zero_init,
+				} );
+
+			vertices.push_back(
+				MapVertex
+				{
+					.position[ v1.x, v1.y, v1.z ],
+					.light= light_components,
+					.tex_coordinates= tex_coordinates[1],
+					.fog_params= zero_init,
+				} );
+
+			vertices.push_back(
+				MapVertex
+				{
+					.position[ v2.x, v2.y, v2.z ],
+					.light= light_components,
+					.tex_coordinates= tex_coordinates[2],
+					.fog_params= zero_init,
+				} );
+
+			indices.push_back( u16( base_vertex + 0s ) );
+			indices.push_back( u16( base_vertex + 1s ) );
+			indices.push_back( u16( base_vertex + 2s ) );
+		} );
 }
+
+// Rain texture is too bright. Make rain droplets darker.
+// They still can be seen with such brightness, since additive blending is used for them.
+var f32 c_rain_light_scale= 64.0f;
 
 var f32 c_max_distance_to_camera= 1536.0f;
 var f32 c_fade_start_distance= c_max_distance_to_camera * 2.0f / 3.0f;
