@@ -114,14 +114,11 @@ PanzerMortyr software rendering:
 * Draw highlighted clusters.
 * Draw map quads with caustics.
 * Draw first-person weapon models specially, so that they are always drawn atop other geometry.
-* Draw decals.
 * Draw snow.
 * Draw rain.
 * Draw water circles.
 * Apply global fog to snow, rain.
 * Draw local fog.
-* Apply dynamic lighting to decals.
-* Apply global fog to decals.
 * Draw mirrors.
 * Draw models covered with blood.
 * Draw burning models.
