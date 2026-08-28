@@ -874,6 +874,33 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 		// It the worst case we just offset texture coordinates a little bit more.
 		PrepareQuadVertexTextureCoordinates( temp_vertices_ );
 
+		// Since we may have a lot of decals and dynamic lights,
+		// calculating lighting for decals from all lights may be too costly.
+		// So, apply no more than one light.
+		// Select single the most influential light source.
+		// Prefer close ones and/or bright ones.
+
+		var ust::optional</DynamicLightSourceSoft/> mut most_influential_light_source;
+		var f32 mut most_influential_light_source_score= 0.0f;
+		foreach( &light_soruce : dynamic_light_sources )
+		{
+			var f32 score=
+				light_soruce.GetRadius() /
+				ust::max( 1.0f, ( light_soruce.GetPosition() - drawing_info.camera_params.position ).SquareLength() );
+
+			if( score > most_influential_light_source_score )
+			{
+				most_influential_light_source_score= score;
+				most_influential_light_source= light_soruce;
+			}
+		}
+
+		auto decal_light_sources_range=
+			( most_influential_light_source.empty()
+				? ust::array_view_imut</DynamicLightSourceSoft/>()
+				: ust::array_view_imut</DynamicLightSourceSoft/>(
+					ust::single_element_array_view( most_influential_light_source.try_deref() ) ) );
+
 		// Draw decals as semitransparent triangles, so that they are blended nicely.
 		DrawSemitransparentMapTriangles(
 			rasterizer,
@@ -883,10 +910,7 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 			map_data.textures,
 			temp_vertices_,
 			temp_indices_,
-			// Apply all dynamic lights to decals.
-			// It may be a little bit costly if there is a lot of decals and dynamic light sources.
-			// But usually it's not the case.
-			dynamic_light_sources,
+			decal_light_sources_range,
 			transformed_vertices_,
 			vertex_lights_,
 			vertices_clipped );
