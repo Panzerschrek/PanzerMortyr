@@ -102,7 +102,7 @@ PanzerMortyr OpenGL rendering:
 * Add support for MSAA (with proper support of fullscreen effects like fog).
 * Consider drawing map polygons with detail textures (generate such textures somehow).
 * Consider optimizing dynamic lighting even more by using stencil test for them.
-* Consider optimizing drawing snow/rain - reject snow/rain particles for non-visible clusters and clusters located far away.
+* Use the same code for rain and snow as in software mode - this should allow proper sorting.
 * Fall-back to software rendering if failed to create OpenGL context.
 
 PanzerMortyr software rendering:
@@ -114,10 +114,7 @@ PanzerMortyr software rendering:
 * Draw highlighted clusters.
 * Draw map quads with caustics.
 * Draw first-person weapon models specially, so that they are always drawn atop other geometry.
-* Draw snow.
-* Draw rain.
 * Draw water circles.
-* Apply global fog to snow, rain.
 * Draw local fog.
 * Draw mirrors.
 * Draw models covered with blood.
@@ -133,6 +130,7 @@ PanzerMortyr software rendering:
 * Consider using a 4-byte array for color type for textures/framebuffer instead of u32. It may give some performance boost due to better compiler optimizations.
 * Draw fullscreen blending effect (for pain, burning and other similar effects).
 * Consider speeding-up software world drawing by performing drawing using multiple threads, when each thread writes into its own framebuffer and the master thread then combines these buffers together.
+* Consider speeding-up raind and snow particles fetching by cutting the fetch bbox by view frustum.
 
 PanzerMortyr menus and HUD:
 
