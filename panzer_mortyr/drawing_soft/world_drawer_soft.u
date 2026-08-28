@@ -6,6 +6,7 @@ import "../breaking_glass.iu"
 import "../camera_utils.iu"
 import "../clipping.iu"
 import "../cluster_utils.iu"
+import "../decals.iu"
 import "../fog.iu"
 import "../image_loading.iu"
 import "../map_quad_utils.iu"
@@ -184,6 +185,9 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 			{
 				return DynamicLightSourceSoft( s, game_params );
 			} ) );
+
+	// Count all light sources as visible.
+	stats.num_visible_dynamic_lights= u32( dynamic_light_sources.size() );
 
 	var Rasterizer::Vertex dummy_vertex
 	{
@@ -849,6 +853,71 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 		stats.num_visible_model_triangles+= u32( model.triangles.size() );
 	}
 
+	if( settings_.lock_imut().deref().r_decals_enabled )
+	{
+		temp_vertices_.clear();
+		temp_indices_.clear();
+
+		CreateDecalPolygons(
+			drawing_info.decals,
+			drawing_info.dynamic_cluster_objects,
+			map_data.zvox_data.deref().clusters,
+			map_data.zmap_data.deref().quads,
+			drawing_info.broken_quad_bits,
+			map_data.zmap_lam_data.deref(),
+			map_data.quads_hierarchy.deref(),
+			drawing_info.camera_params.position,
+			temp_vertices_,
+			temp_indices_ );
+
+		// For scaling and biasing process all decals as one quad.
+		// It the worst case we just offset texture coordinates a little bit more.
+		PrepareQuadVertexTextureCoordinates( temp_vertices_ );
+
+		// Since we may have a lot of decals and dynamic lights,
+		// calculating lighting for decals from all lights may be too costly.
+		// So, apply no more than one light.
+		// Select single the most influential light source.
+		// Prefer close ones and/or bright ones.
+
+		var ust::optional</DynamicLightSourceSoft/> mut most_influential_light_source;
+		var f32 mut most_influential_light_source_score= 0.0f;
+		foreach( &light_soruce : dynamic_light_sources )
+		{
+			var f32 score=
+				light_soruce.GetRadius() /
+				ust::max( 1.0f, ( light_soruce.GetPosition() - drawing_info.camera_params.position ).SquareLength() );
+
+			if( score > most_influential_light_source_score )
+			{
+				most_influential_light_source_score= score;
+				most_influential_light_source= light_soruce;
+			}
+		}
+
+		auto decal_light_sources_range=
+			( most_influential_light_source.empty()
+				? ust::array_view_imut</DynamicLightSourceSoft/>()
+				: ust::array_view_imut</DynamicLightSourceSoft/>(
+					ust::single_element_array_view( most_influential_light_source.try_deref() ) ) );
+
+		// Draw decals as semitransparent triangles, so that they are blended nicely.
+		DrawSemitransparentMapTriangles(
+			rasterizer,
+			camera_position_for_fog.as_ref(),
+			view_matrix,
+			frustum_side_clip_planes,
+			map_data.textures,
+			temp_vertices_,
+			temp_indices_,
+			decal_light_sources_range,
+			transformed_vertices_,
+			vertex_lights_,
+			vertices_clipped );
+
+		stats.num_decals+= u32( drawing_info.decals.size() );
+	}
+
 	{
 		var size_type first_vertex= semitransparent_geometry_vertices_.size();
 
@@ -1395,6 +1464,7 @@ fn WorldDrawerSoft::SetMap( mut this, u32 map_index )
 				.zmap_lam_data= zmap_lam_data_ptr,
 				.zmap_lem_data= zmap_lem_data_ptr,
 				.room_clusters_hierarchy= room_clusters_hierarchy_ptr,
+				.quads_hierarchy= quads_hierarchy_ptr,
 				.room_clusters_bsp_tree= room_clusters_bsp_tree,
 				.light_sources= move(light_sources),
 				.clusters_draw_data= move(clusters_draw_data),
