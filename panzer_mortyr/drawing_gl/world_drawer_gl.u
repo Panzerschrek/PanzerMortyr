@@ -15,6 +15,7 @@ import "../map_quad_utils.iu"
 import "../map_visibility_visualization.iu"
 import "../material_utils.iu"
 import "../precipitation_constants.iu"
+import "../rain_and_snow.iu"
 import "../room_clusters_bsp_tree_visualization.iu"
 import "../sky_common.iu"
 import "../texture_common.iu"
@@ -1091,13 +1092,11 @@ fn WorldDrawerGL::DrawPartial(
 		}
 	}
 
-	// Draw snow/rain before other simitransparent geometry.
-	// It's not fully correct, since it may produce wrong polygons order (not strick back-to-front order).
-	// But we have no other way of doing this.
-	// There are too many snow/rain particles to process and sort them on CPU.
-	// So, process them (generate geometry) on GPU and draw them.
+	ResetDynamicPolygonsBuffer( semitransparent_polygons_buffer_ );
+
 	if( settings_.lock_imut().deref().r_rain_snow_enabled &&
-		size_type( map_index_ ) < maps_description.maps.size() )
+		size_type( map_index_ ) < maps_description.maps.size() &&
+		!map_data.rain_snow_hierarchy.nodes.empty() )
 	{
 		var MapsDescription::MapDescription& map_description= maps_description.maps[ size_type( map_index_ ) ];
 
@@ -1106,17 +1105,26 @@ fn WorldDrawerGL::DrawPartial(
 			MapsDescription::MapDescription::c_precipitation_kind_none -> {},
 			MapsDescription::MapDescription::c_precipitation_kind_snow ->
 			{
-				// TODO
+				CreateSnowTriangles(
+					map_data.rain_snow_hierarchy,
+					drawing_info.game_time_s,
+					camera_position,
+					semitransparent_polygons_buffer_.vertices,
+					semitransparent_polygons_buffer_.indices );
 			},
 			MapsDescription::MapDescription::c_precipitation_kind_rain ->
 			{
-				// TODO
+				CreateRainTriangles(
+					map_data.rain_snow_hierarchy,
+					billboards_description_,
+					drawing_info.game_time_s,
+					camera_position,
+					semitransparent_polygons_buffer_.vertices,
+					semitransparent_polygons_buffer_.indices );
 			},
 			default -> {},
 		}
 	}
-
-	ResetDynamicPolygonsBuffer( semitransparent_polygons_buffer_ );
 
 	drawing_stats.num_visible_billboards+=
 		BuildBillboardPolygons(
@@ -1626,6 +1634,13 @@ fn WorldDrawerGL::SetMap( mut this, u32 map_index )
 	var ust::shared_ptr_final</RoomClustersBSPTree/> room_clusters_bsp_tree(
 		BuildRoomClustersBSPTree( zvox_data.clusters ) );
 
+	var RainSnowHierarchy mut rain_snow_hierarchy;
+	if( map_description.precipitation_kind == MapsDescription::MapDescription::c_precipitation_kind_rain ||
+		map_description.precipitation_kind == MapsDescription::MapDescription::c_precipitation_kind_snow )
+	{
+		rain_snow_hierarchy= BuildRainSnowHierarchy( zmap_lam_data.rain_droplets);
+	}
+
 	var BitArray mut wet_material_bits= CreateWetMaterialsBitArray( materials_properties_ptr.deref(), materials_block );
 
 	var WaterCirclesHierarchy mut water_circles_heirarchy;
@@ -1675,6 +1690,7 @@ fn WorldDrawerGL::SetMap( mut this, u32 map_index )
 					f32( map_description.fog_color[0] ) / 255.0f
 				],
 				.global_fog_enabled= map_description.linear_fog_enabled,
+				.rain_snow_hierarchy= move(rain_snow_hierarchy),
 				.breakable_material_bits= move(breakable_material_bits),
 				.wet_material_bits= move(wet_material_bits),
 				.water_circles_heirarchy= move(water_circles_heirarchy),
