@@ -196,30 +196,35 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 	var MapVisibilityCalculator::VisibleRoomClusterFlags visible_room_cluster_flags=
 		visibility_calculator.GetVisibleRoomClusterFlags();
 
-	// Draw sky before any other geometry.
-	// It's needed, since sky drawing uses no depth test.
-	DrawSky(
-		map_data,
-		drawing_info,
-		visible_room_cluster_flags,
-		rotation_matrix,
-		camera_clip_planes,
-		view_aspect,
-		view_matrix,
-		frustum_side_clip_planes,
-		rasterizer );
+	{
+		// Draw sky before any other geometry.
+		// It's needed, since sky drawing uses no depth test.
+		var bool sky_drawn=
+			DrawSky(
+				map_data,
+				drawing_info,
+				visible_room_cluster_flags,
+				rotation_matrix,
+				camera_clip_planes,
+				view_aspect,
+				view_matrix,
+				frustum_side_clip_planes,
+				rasterizer );
 
-	// Draw moon and stars after sky with clouds.
-	// It doesn't really matter if it's drawn after clouds, since additive blending is used anyway.
-	// TODO - don't draw them if no sky is visible.
-	DrawMoonAndStars(
-		rasterizer,
-		rotation_and_projection_matrix * viewport_transformation_matrix,
-		frustum_side_clip_planes,
-		map_data,
-		transformed_vertices_,
-		vertices_clipped0,
-		vertices_clipped1 );
+		// Draw moon and stars after sky with clouds.
+		// It doesn't really matter if it's drawn after clouds, since additive blending is used anyway.
+		if( sky_drawn )
+		{
+			DrawMoonAndStars(
+				rasterizer,
+				rotation_and_projection_matrix * viewport_transformation_matrix,
+				frustum_side_clip_planes,
+				map_data,
+				transformed_vertices_,
+				vertices_clipped0,
+				vertices_clipped1 );
+		}
+	}
 
 	for( auto mut i= 0s; i < map_data.clusters_draw_data.size(); )
 	{
@@ -1442,6 +1447,7 @@ fn PrepareQuadVertexTextureCoordinates( ust::array_view_mut</MapVertex/> quad_ve
 	}
 }
 
+// Returns true if some sky was drawn.
 fn DrawSky(
 	MapDrawDataSoft& map_data,
 	WorldDrawingInfo& drawing_info,
@@ -1451,11 +1457,11 @@ fn DrawSky(
 	f32 view_aspect,
 	Mat4f& view_matrix,
 	FrustumSideClipPlanes& frustum_side_clip_planes,
-	Rasterizer& rasterizer )
+	Rasterizer& rasterizer ) : bool
 {
 	if( size_type( map_data.clouds_texture_layer ) >= map_data.textures.size() )
 	{
-		return;
+		return false;
 	}
 
 	var Color32SquareTexture</ 7s />& texture0= map_data.textures[ size_type( map_data.clouds_texture_layer ) ][0];
@@ -1470,6 +1476,8 @@ fn DrawSky(
 	var [ SkyVertex, 16 ]
 		mut vertices_clipped0[ dummy_sky_vertex ... ],
 		mut vertices_clipped1[ dummy_sky_vertex ... ];
+
+	var bool mut has_sky_quads_in_view= false;
 
 	for( auto mut i= 0s; i < map_data.clusters_draw_data.size(); )
 	{
@@ -1575,11 +1583,18 @@ fn DrawSky(
 						debug_assert( v2.z > 0.0f );
 						sky_rasterizer.AddSkyTriangle( v0_projected, v1.xy() / v1.z, v2.xy() / v2.z );
 					}
+
+					has_sky_quads_in_view= true;
 				}
 			}
 		}
 
 		i+= num_clusters_in_group;
+	}
+
+	if( !has_sky_quads_in_view )
+	{
+		return false;
 	}
 
 	var Mat3f viewport_inverse_transformation_matrix
@@ -1636,6 +1651,8 @@ fn DrawSky(
 		sky_rasterizer.FillSky</ false /* use single texture */ />(
 			texture0, texture0, texture_shift, map_data.sky_colors, sky_inverse_transformation_matrix );
 	}
+
+	return true;
 }
 
 fn DrawMoonAndStars(
