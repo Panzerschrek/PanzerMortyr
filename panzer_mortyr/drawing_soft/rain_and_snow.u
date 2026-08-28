@@ -1,3 +1,5 @@
+import "/common_lib/materials_file.iu"
+import "../billboards.iu"
 import "../precipitation_constants.iu"
 import "rain_and_snow.iu"
 
@@ -6,15 +8,55 @@ namespace PM
 
 fn CreateRainTriangles(
 	ZmapLamData& zmap_lam_data,
+	BillboardsDescription& billboards_description,
 	Vec3f& camera_position,
 	ust::vector</MapVertex/> &mut vertices,
 	ust::vector</u16/> &mut indices )
 {
-	var [ u8, 4 ] light[ 255u8 ... ]; // TODO - set proper light.
+	if( size_type( BillboardConstants::c_id_rain ) >= billboards_description.size() )
+	{
+		return;
+	}
 
-	var f32 texture_layer= 17.0f; // TODO - use proper layer.
+	var BillboardDescription& billboard_description=
+		billboards_description[ size_type( BillboardConstants::c_id_rain ) ];
 
-	var Vec2f droplet_size( 1.0f, 1.0f );
+	var Vec2f droplet_size( f32( billboard_description.dx ), f32( billboard_description.dy ) );
+
+	var Vec2f texture_coordinates_start(
+		f32( billboard_description.xp % MaterialsDescription::c_texture_size ),
+		f32( billboard_description.yp % MaterialsDescription::c_texture_size ) );
+
+	var Vec2f texture_coordinates_end=
+		texture_coordinates_start +
+		Vec2f(
+			f32( billboard_description.xk - billboard_description.xp ),
+			f32( billboard_description.yk - billboard_description.yp ) );
+
+	var f32 texture_layer= GetBillboardTextureLayer( billboard_description );
+
+	// Rain texture is too bright. Make rain droplets darker.
+	// They still can be seen with such brightness, since additive blending is used for them.
+	var [ u8, 4 ] light[ 64u8, 64u8, 64u8, 255u8 ];
+
+	var [ [ f32, 3 ], 3 ] tex_coordinates
+	[
+		[
+			0.5f * ( texture_coordinates_start.x + texture_coordinates_start.y ),
+			texture_coordinates_end.y,
+			texture_layer,
+		],
+		[
+			texture_coordinates_start.x,
+			texture_coordinates_start.y,
+			texture_layer,
+		],
+		[
+			texture_coordinates_end.x,
+			texture_coordinates_start.y,
+			texture_layer,
+		]
+	];
 
 	foreach( &rain_droplet : zmap_lam_data.rain_droplets )
 	{
@@ -43,7 +85,7 @@ fn CreateRainTriangles(
 			{
 				.position[ v0.x, v0.y, v0.z ],
 				.light= light,
-				.tex_coordinates[ 0.0f, 0.0f, texture_layer ],
+				.tex_coordinates= tex_coordinates[0],
 				.fog_params= zero_init,
 			} );
 
@@ -52,7 +94,7 @@ fn CreateRainTriangles(
 			{
 				.position[ v1.x, v1.y, v1.z ],
 				.light= light,
-				.tex_coordinates[ 0.0f, 0.0f, texture_layer ],
+				.tex_coordinates= tex_coordinates[1],
 				.fog_params= zero_init,
 			} );
 
@@ -61,7 +103,7 @@ fn CreateRainTriangles(
 			{
 				.position[ v2.x, v2.y, v2.z ],
 				.light= light,
-				.tex_coordinates[ 0.0f, 0.0f, texture_layer ],
+				.tex_coordinates= tex_coordinates[2],
 				.fog_params= zero_init,
 			} );
 
