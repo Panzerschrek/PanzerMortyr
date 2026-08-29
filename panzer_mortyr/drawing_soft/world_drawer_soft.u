@@ -997,7 +997,30 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 			default -> {},
 		}
 
-		// For scaling and biasing process all breaking rain and snow triangles as one quad.
+		// For scaling and biasing process all rain and snow triangles as one quad.
+		// It the worst case we just offset texture coordinates a little bit more.
+		PrepareQuadVertexTextureCoordinates(
+			semitransparent_geometry_vertices_.range().subrange_start( first_vertex ) );
+	}
+
+	if( settings_.lock_imut().deref().r_water_circle_decals_enabled )
+	{
+		var size_type first_vertex= semitransparent_geometry_vertices_.size();
+
+		// Water circle decals use blending. So, put them into the buffer with other semitransparent polygons.
+		CreateWaterCircleDecalPolygons(
+			drawing_info.game_time_s,
+			map_data.water_circles_heirarchy,
+			map_data.zvox_data.deref().clusters,
+			map_data.zmap_data.deref().quads,
+			map_data.zmap_lam_data.deref(),
+			map_data.quads_hierarchy.deref(),
+			map_data.wet_material_bits,
+			drawing_info.camera_params.position,
+			semitransparent_geometry_vertices_,
+			semitransparent_geometry_indices_ );
+
+		// For scaling and biasing process all water circle triangles as one quad.
 		// It the worst case we just offset texture coordinates a little bit more.
 		PrepareQuadVertexTextureCoordinates(
 			semitransparent_geometry_vertices_.range().subrange_start( first_vertex ) );
@@ -1497,6 +1520,15 @@ fn WorldDrawerSoft::SetMap( mut this, u32 map_index )
 		rain_snow_hierarchy= BuildRainSnowHierarchy( zmap_lam_data.rain_droplets);
 	}
 
+	var BitArray mut wet_material_bits= CreateWetMaterialsBitArray( materials_properties_ptr.deref(), materials_block );
+
+	var WaterCirclesHierarchy mut water_circles_heirarchy;
+	if( map_description.precipitation_kind == MapsDescription::MapDescription::c_precipitation_kind_rain )
+	{
+		water_circles_heirarchy=
+			BuildWaterCirclesHierarchy( zmap_lam_data.rain_droplets, zmap_data.quads, wet_material_bits );
+	}
+
 	map_data_.reset(
 		MapFullDrawDataSoft
 		{
@@ -1544,6 +1576,8 @@ fn WorldDrawerSoft::SetMap( mut this, u32 map_index )
 				.global_fog_enabled= map_description.linear_fog_enabled,
 				.rain_snow_hierarchy= move(rain_snow_hierarchy),
 				.breakable_material_bits= move(breakable_material_bits),
+				.wet_material_bits= move(wet_material_bits),
+				.water_circles_heirarchy= move(water_circles_heirarchy),
 			},
 			.map_visibility_calculator( room_clusters_bsp_tree ),
 		} );
