@@ -834,7 +834,19 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 			}
 		}
 
-		if( is_fully_inside_view_frustum )
+		if( model_object.first_person_weapon )
+		{
+			// Process first person weapon models specially, so that they are drawn atop of all other geometry
+			// and Z near for them is much smaller.
+			DrawFirstPersonWeaponModelTriangles(
+				rasterizer,
+				frustum_side_clip_planes,
+				model,
+				vertices_transformed,
+				vertex_lights,
+				vertices_clipped );
+		}
+		else if( is_fully_inside_view_frustum )
 		{
 			// This model object is fully inside view frustum. Don't need to perform clipping for each of its triangles.
 			DrawModelTrianglesWithoutFrustumPlanesClipping( rasterizer, model, vertices_transformed, vertex_lights );
@@ -2147,6 +2159,76 @@ fn DrawModelTrianglesWithFrustumPlanesClipping(
 			if( num_vertices < 3s )
 			{
 				continue;
+			}
+
+			for( auto mut i= 2s; i < num_vertices; ++i )
+			{
+				RasterizeTriangleWithSubdivisionAndInterpolationMethodSelection</
+					Rasterizer::BlendingMode::None,
+					Rasterizer::DepthWriteMode::Yes />(
+					rasterizer,
+					cast_imut(vertices_clipped[1])[0],
+					cast_imut(vertices_clipped[1])[ i - 1s ],
+					cast_imut(vertices_clipped[1])[ i ],
+					texture );
+			}
+		}
+	}
+}
+
+fn DrawFirstPersonWeaponModelTriangles(
+	Rasterizer& rasterizer,
+	FrustumSideClipPlanes& frustum_side_clip_planes,
+	ModelSoft& model,
+	ust::array_view_imut</Vec3f/> vertices_transformed,
+	ust::array_view_imut</ VertexLightWithFog /> vertex_light,
+	TriangleVerticesClippedPair &mut vertices_clipped )
+{
+	variant_visit( &texture_ptr : model.texture )
+	{
+		auto& texture= texture_ptr.deref();
+
+		foreach( &triangle : model.triangles )
+		{
+			vertices_clipped[0][0]=
+				Rasterizer::Vertex
+				{
+					.position= vertices_transformed[ size_type( triangle[0] ) ],
+					.tex_coord= model.texture_coordinates[ size_type( triangle[0] ) ],
+					.light= vertex_light[ size_type( triangle[0] ) ],
+				};
+
+			vertices_clipped[0][1]=
+				Rasterizer::Vertex
+				{
+					.position= vertices_transformed[ size_type( triangle[1] ) ],
+					.tex_coord= model.texture_coordinates[ size_type( triangle[1] ) ],
+					.light= vertex_light[ size_type( triangle[1] ) ],
+				};
+
+			vertices_clipped[0][2]=
+				Rasterizer::Vertex
+				{
+					.position= vertices_transformed[ size_type( triangle[2] ) ],
+					.tex_coord= model.texture_coordinates[ size_type( triangle[2] ) ],
+					.light= vertex_light[ size_type( triangle[2] ) ],
+				};
+
+			var size_type num_vertices=
+				ClipPolygonByNearZAndFrustumSidePlanes( frustum_side_clip_planes, 3s, vertices_clipped );
+
+			if( num_vertices < 3s )
+			{
+				continue;
+			}
+
+			// Perform scaling down after clipping.
+			// Doing so we ensure that much smaller near Z is used for first person weapon models.
+			// Also we ensure that 1/z stored in depth buffer is much larger for first person weapon models.
+			foreach( &mut v :
+				ust::array_view_mut</Rasterizer::Vertex/>( vertices_clipped[1] ).subrange_end( num_vertices ) )
+			{
+				v.position *= 1.0f / 64.0f;
 			}
 
 			for( auto mut i= 2s; i < num_vertices; ++i )
