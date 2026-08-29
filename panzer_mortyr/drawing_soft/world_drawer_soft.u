@@ -114,7 +114,17 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 
 	var MapVisibilityCalculator &mut visibility_calculator= map_data_full.map_visibility_calculator;
 
-	var Rasterizer rasterizer( surface, depth_buffer_, map_data.fog_color );
+	var LightingModifiers lighting_modifiers=
+		CalculateLightingModifiers( settings_.lock_imut().deref(), drawing_info.fullscreen_effect );
+
+	var Rasterizer rasterizer(
+		surface,
+		depth_buffer_,
+		ust::make_array(
+			map_data.fog_color[0] * lighting_modifiers.map.scale[0] + lighting_modifiers.map.add[0] * 255.0f,
+			map_data.fog_color[1] * lighting_modifiers.map.scale[1] + lighting_modifiers.map.add[1] * 255.0f,
+			map_data.fog_color[2] * lighting_modifiers.map.scale[2] + lighting_modifiers.map.add[2] * 255.0f,
+			map_data.fog_color[3] ) );
 
 	var Mat4f rotation_matrix=
 		CalculateCameraRotationMatrix( drawing_info.camera_params.azimuth, drawing_info.camera_params.elevation );
@@ -210,6 +220,7 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 			DrawSky(
 				map_data,
 				drawing_info,
+				lighting_modifiers.map,
 				visible_room_cluster_flags,
 				rotation_matrix,
 				camera_clip_planes,
@@ -224,6 +235,7 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 		{
 			DrawMoonAndStars(
 				rasterizer,
+				lighting_modifiers.map,
 				rotation_and_projection_matrix * viewport_transformation_matrix,
 				frustum_side_clip_planes,
 				map_data,
@@ -288,7 +300,8 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 
 						if( cluster_bbox.InstersectsOrTouches( light_bbox ) )
 						{
-							cluster_dynamic_light_sources_.push_back( dynamic_light_source );
+							cluster_dynamic_light_sources_.push_back(
+								DynamicLightSourceSoft( dynamic_light_source, lighting_modifiers.map.scale ) );
 						}
 					}
 				}
@@ -300,6 +313,7 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 					frustum_side_clip_planes,
 					map_data,
 					cluster_index,
+					lighting_modifiers.map,
 					cluster_dynamic_light_sources_,
 					transformed_vertices_,
 					vertex_lights_,
@@ -333,6 +347,7 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 						map_data.textures,
 						vertices,
 						indices,
+						lighting_modifiers.map,
 						cluster_dynamic_light_sources_,
 						transformed_vertices_,
 						vertex_lights_,
@@ -366,6 +381,7 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 						map_data.textures,
 						vertices,
 						indices,
+						lighting_modifiers.map,
 						cluster_dynamic_light_sources_,
 						transformed_vertices_,
 						vertex_lights_,
@@ -401,6 +417,7 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 						map_data.textures,
 						temp_vertices_,
 						temp_indices_,
+						lighting_modifiers.map,
 						cluster_dynamic_light_sources_,
 						transformed_vertices_,
 						vertex_lights_,
@@ -510,7 +527,9 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 				{
 					// Translate dynamic light sources so that light is applied properly for translated dynamic clusters.
 					cluster_dynamic_light_sources_.push_back(
-						DynamicLightSourceSoft( dynamic_light_source, -dynamic_cluster_object.translation ) );
+						DynamicLightSourceSoft(
+							DynamicLightSourceSoft( dynamic_light_source, lighting_modifiers.map.scale ),
+							-dynamic_cluster_object.translation ) );
 				}
 			}
 		}
@@ -529,6 +548,7 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 			frustum_side_clip_planes,
 			map_data,
 			size_type( dynamic_cluster_object.cluster_index ),
+			lighting_modifiers.map,
 			cluster_dynamic_light_sources_,
 			transformed_vertices_,
 			vertex_lights_,
@@ -730,11 +750,23 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 
 		auto vertex_lights= EnsureVertexLightsCapacity( vertex_lights_, size_type( model.num_vertices ) );
 
+		var LightingModifier& lighting_modifier=
+			( model_object.first_person_weapon
+				? lighting_modifiers.first_person_weapon_models : lighting_modifiers.models );
+
 		if( model_object.constant_lighting )
 		{
+			var VertexLightWithFog vertex_light
+			[
+				lighting_modifier.add[0] + lighting_modifier.scale[0],
+				lighting_modifier.add[1] + lighting_modifier.scale[1],
+				lighting_modifier.add[2] + lighting_modifier.scale[2],
+				0.0f /* set fog density to zero */
+			];
+
 			foreach( &mut l : vertex_lights )
 			{
-				l= ust::make_array( 1.0f, 1.0f, 1.0f, 0.0f /* set fog density to zero */ );
+				l= vertex_light;
 			}
 		}
 		else
@@ -783,6 +815,19 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 					// Always give some light for first-person weapon.
 					ust::max_assign( l.constant_component, 1.0f / 16.0f );
 				}
+			}
+
+			for( auto mut i= 0s; i < 3s; ++i )
+			{
+				var SphericalHarmonics& mut l= light[i];
+				var f32 light_scale= lighting_modifier.scale[i];
+				var f32 light_add= lighting_modifier.add[i];
+
+				l.constant_component*= light_scale;
+				l.constant_component+= light_add;
+
+				l.directional_components*= light_scale;
+				// Don't need adding constant factor to directional components.
 			}
 
 			if( frames.frame0 == frames.frame1 )
@@ -905,7 +950,7 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 			if( score > most_influential_light_source_score )
 			{
 				most_influential_light_source_score= score;
-				most_influential_light_source= light_soruce;
+				most_influential_light_source= DynamicLightSourceSoft( light_soruce, lighting_modifiers.map.scale );
 			}
 		}
 
@@ -924,6 +969,7 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 			map_data.textures,
 			temp_vertices_,
 			temp_indices_,
+			lighting_modifiers.map,
 			decal_light_sources_range,
 			transformed_vertices_,
 			vertex_lights_,
@@ -1106,6 +1152,12 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 		map_data.textures,
 		semitransparent_geometry_vertices_,
 		semitransparent_geometry_indices_,
+		// Since mostly additive blending is used for semitransparent geometry, only scale light for it, but not add.
+		LightingModifier
+		{
+			.add[ 0.0f, 0.0f, 0.0f ],
+			.scale= lighting_modifiers.map.scale,
+		},
 		ust::empty_range, // Don't apply dynamic light to semitransparent polygons.
 		transformed_vertices_,
 		vertex_lights_,
@@ -1634,6 +1686,7 @@ fn PrepareQuadVertexTextureCoordinates( ust::array_view_mut</MapVertex/> quad_ve
 fn DrawSky(
 	MapDrawDataSoft& map_data,
 	WorldDrawingInfo& drawing_info,
+	LightingModifier& lighting_modifier,
 	MapVisibilityCalculator::VisibleRoomClusterFlags visible_room_cluster_flags,
 	Mat4f& rotation_matrix,
 	CameraClipPlanes& camera_clip_planes,
@@ -1818,6 +1871,21 @@ fn DrawSky(
 
 	var f32 texture_shift= drawing_info.game_time_s * c_clouds_scroll_speed;
 
+	// Scale sky light, but not add constant factor. Black sky should remain black.
+	var [ [ f32, 3 ], 2 ] sky_colors_scaled
+	[
+		[
+			map_data.sky_colors[0][0] * lighting_modifier.scale[0],
+			map_data.sky_colors[0][1] * lighting_modifier.scale[1],
+			map_data.sky_colors[0][2] * lighting_modifier.scale[2],
+		],
+		[
+			map_data.sky_colors[1][0] * lighting_modifier.scale[0],
+			map_data.sky_colors[1][1] * lighting_modifier.scale[1],
+			map_data.sky_colors[1][2] * lighting_modifier.scale[2],
+		],
+	];
+
 	if( map_data.use_two_cloud_layers &&
 		size_type( map_data.clouds_texture_layer + 1u ) < map_data.textures.size() )
 	{
@@ -1825,12 +1893,12 @@ fn DrawSky(
 			map_data.textures[size_type( map_data.clouds_texture_layer + 1u ) ][0];
 
 		sky_rasterizer.FillSky</ true /* use two textures */ />(
-			texture0, texture1, texture_shift, map_data.sky_colors, sky_inverse_transformation_matrix );
+			texture0, texture1, texture_shift, sky_colors_scaled, sky_inverse_transformation_matrix );
 	}
 	else
 	{
 		sky_rasterizer.FillSky</ false /* use single texture */ />(
-			texture0, texture0, texture_shift, map_data.sky_colors, sky_inverse_transformation_matrix );
+			texture0, texture0, texture_shift, sky_colors_scaled, sky_inverse_transformation_matrix );
 	}
 
 	return true;
@@ -1838,6 +1906,7 @@ fn DrawSky(
 
 fn DrawMoonAndStars(
 	Rasterizer& rasterizer,
+	LightingModifier& lighting_modifier,
 	Mat4f& view_matrix_without_translation,
 	FrustumSideClipPlanes& frustum_side_clip_planes,
 	MapDrawDataSoft& map_data,
@@ -1856,9 +1925,9 @@ fn DrawMoonAndStars(
 	// Flat lighting is used for moon and stars.
 	var [ f32, 4 ] light
 	[
-		c_moon_and_stars_light_scale,
-		c_moon_and_stars_light_scale,
-		c_moon_and_stars_light_scale,
+		c_moon_and_stars_light_scale * lighting_modifier.scale[0],
+		c_moon_and_stars_light_scale * lighting_modifier.scale[1],
+		c_moon_and_stars_light_scale * lighting_modifier.scale[2],
 		0.0f
 	];
 
@@ -1931,6 +2000,7 @@ fn DrawMapClusterTriangles(
 	FrustumSideClipPlanes& frustum_side_clip_planes,
 	MapDrawDataSoft& map_data,
 	size_type cluster_index,
+	LightingModifier& static_lighting_modifier,
 	ust::array_view_imut</ DynamicLightSourceSoft /> dynamic_light_sources,
 	ust::vector</Vec3f/> &mut vertices_transformed,
 	ust::vector</ VertexLightWithFog /> &mut vertex_lights,
@@ -1959,6 +2029,7 @@ fn DrawMapClusterTriangles(
 		map_data.textures,
 		cluster_vertices,
 		cluster_indices,
+		static_lighting_modifier,
 		dynamic_light_sources,
 		vertices_transformed,
 		vertex_lights,
@@ -1976,6 +2047,7 @@ var ( fn(
 		ust::array_view_imut</Color32WorldTextureWithMips/> textures,
 		ust::array_view_imut</MapVertex/> vertices,
 		ust::array_view_imut</u16/> indices,
+		LightingModifier& static_lighting_modifier,
 		ust::array_view_imut</ DynamicLightSourceSoft /> dynamic_light_sources,
 		ust::vector</Vec3f/> &mut vertices_transformed,
 		ust::vector</ VertexLightWithFog /> &mut vertex_lights,
@@ -1994,6 +2066,7 @@ fn DrawMapTrianglesTemplated(
 	ust::array_view_imut</Color32WorldTextureWithMips/> textures,
 	ust::array_view_imut</MapVertex/> vertices,
 	ust::array_view_imut</u16/> indices,
+	LightingModifier& static_lighting_modifier,
 	ust::array_view_imut</ DynamicLightSourceSoft /> dynamic_light_sources,
 	ust::vector</Vec3f/> &mut vertices_transformed,
 	ust::vector</ VertexLightWithFog /> &mut vertex_lights,
@@ -2006,7 +2079,7 @@ fn DrawMapTrianglesTemplated(
 	TransformMapVertices( vertices, vertices_transformed_range, view_matrix );
 
 	auto vertex_lights_range= EnsureVertexLightsCapacity( vertex_lights, vertices.size() );
-	CalculateLightForMapVertices( vertices, vertex_lights_range, dynamic_light_sources );
+	CalculateLightForMapVertices( vertices, vertex_lights_range, static_lighting_modifier, dynamic_light_sources );
 
 	if_var( &camera_position : camera_position_for_fog )
 	{

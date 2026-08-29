@@ -84,6 +84,8 @@ PanzerMortyr multiplayer game logic:
 
 PanzerMortyr rendering:
 
+* Support restarting video subsystem (in order to apply settings).
+* On first launch select one of two available rendering options (OpenGL or software) randomly and save it into settings. Use a chance around 25% or so for software rendering.
 * Support performing camera roll rotation (needed for death camera).
 * Apply additional tessellation for tessellated polygons in order to perform smoother light values interpolation (naively triangulating them doesn't produce good result always).
 * Somehow distort/colorize the whole image while swimming in water. Maybe even add or alter global fog if camera is in water volume.
@@ -116,9 +118,7 @@ PanzerMortyr software rendering:
 * Draw mirrors.
 * Draw models covered with blood.
 * Draw burning models.
-* Implement night vision mode.
 * Implement infrared vision mode.
-* Apply world brightness setting.
 * Fix issues with hall-of-mirrors effect visible at some places on some maps where sky quads are missing or aren't large enough to cover the entire sky.
 * Consider optimizing vertices transformation code by producing 4-component position vectors and thus ensuring vector instructions are used.
 * Consider optimizing vertices transformations and other heavy calculations by using "fma" instructions.

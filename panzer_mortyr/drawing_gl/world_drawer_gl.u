@@ -242,59 +242,8 @@ fn WorldDrawerGL::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDrawin
 		return drawing_stats;
 	}
 
-	var GlobalLightParams mut global_light_params{ .light_add[ 0.0f ... ], .light_scale[ 1.0f ... ] };
-	var GlobalLightParams mut model_light_params= global_light_params;
-	var GlobalLightParams mut first_person_weapon_model_light_params= model_light_params;
-
-	switch( drawing_info.fullscreen_effect )
-	{
-		WorldDrawingInfo::FullscreenEffect::None -> {},
-		WorldDrawingInfo::FullscreenEffect::NightVision ->
-		{
-			// For night vision set red and blue components to zero, add some light to green component and scale it up.
-			global_light_params.light_add= ust::make_array( 0.0f, 0.3f, 0.0f );
-			global_light_params.light_scale= ust::make_array( 0.0f, 1.3f, 0.0f );
-
-			// Models have the same light params as the rest of the world in night vision mode.
-			model_light_params= global_light_params;
-			first_person_weapon_model_light_params= model_light_params;
-		},
-		WorldDrawingInfo::FullscreenEffect::InfraredVision ->
-		{
-			// For infrared vision make anything red.
-			global_light_params.light_add= ust::make_array( 0.0f, 0.0f, 0.0f );
-			global_light_params.light_scale= ust::make_array( 1.5f, 0.0f, 0.0f );
-
-			// But draw models with constant orange light.
-			model_light_params.light_scale= ust::make_array( 0.0f, 0.0f, 0.0f );
-			model_light_params.light_add= ust::make_array( 1.0f, 0.4f, 0.1f );
-
-			// Draw first person weapon as the rest of the world.
-			first_person_weapon_model_light_params= global_light_params;
-		}
-	}
-
-	if( settings_.lock_imut().deref().r_fullbright )
-	{
-		global_light_params.light_add= ust::make_array( 1.0f, 1.0f, 1.0f );
-		global_light_params.light_scale= ust::make_array( 0.0f, 0.0f, 0.0f );
-		model_light_params= global_light_params;
-		first_person_weapon_model_light_params= model_light_params;
-	}
-	else
-	{
-		// Apply here brightness scale.
-		var f32 brightness_scale= ust::max( 0.5f, ust::min( settings_.lock_imut().deref().r_brightness_scale, 2.5f ) );
-		for( auto mut i= 0s; i < 3s; ++i )
-		{
-			global_light_params.light_add[i]*= brightness_scale;
-			global_light_params.light_scale[i]*= brightness_scale;
-			model_light_params.light_add[i]*= brightness_scale;
-			model_light_params.light_scale[i]*= brightness_scale;
-			first_person_weapon_model_light_params.light_add[i]*= brightness_scale;
-			first_person_weapon_model_light_params.light_scale[i]*= brightness_scale;
-		}
-	}
+	var LightingModifiers lighting_modifiers=
+		CalculateLightingModifiers( settings_.lock_imut().deref(), drawing_info.fullscreen_effect );
 
 	var Mat4f rotation_matrix=
 		CalculateCameraRotationMatrix( drawing_info.camera_params.azimuth, drawing_info.camera_params.elevation );
@@ -441,9 +390,7 @@ fn WorldDrawerGL::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDrawin
 				camera_clip_planes_mirrored,
 				false, // Don't draw first person weapon in mirrors.
 				false, // Don't enable fog in mirrors. For now it can't be calculated properly.
-				global_light_params,
-				model_light_params,
-				first_person_weapon_model_light_params,
+				lighting_modifiers,
 				true,
 				drawing_stats );
 
@@ -471,7 +418,7 @@ fn WorldDrawerGL::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDrawin
 			map_mirror_shader_,
 			mirror_polygons_buffer_,
 			view_matrix,
-			global_light_params,
+			lighting_modifiers.map,
 			mirror_alpha );
 
 		if( settings_.lock_imut().deref().r_dynamic_lights_enabled )
@@ -494,9 +441,9 @@ fn WorldDrawerGL::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDrawin
 			// Scale dynamic light power by mirror alpha.
 			var [ f32, 3 ] light_scale
 			[
-				global_light_params.light_scale[0] * mirror_alpha,
-				global_light_params.light_scale[1] * mirror_alpha,
-				global_light_params.light_scale[2] * mirror_alpha,
+				lighting_modifiers.map.scale[0] * mirror_alpha,
+				lighting_modifiers.map.scale[1] * mirror_alpha,
+				lighting_modifiers.map.scale[2] * mirror_alpha,
 			];
 
 			DrawDynamicPolygonsWithDynamicLights(
@@ -531,9 +478,7 @@ fn WorldDrawerGL::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDrawin
 		camera_clip_planes,
 		true, // Draw first person weapon.
 		fog_enabled,
-		global_light_params,
-		model_light_params,
-		first_person_weapon_model_light_params,
+		lighting_modifiers,
 		false,
 		drawing_stats );
 
@@ -566,9 +511,7 @@ fn WorldDrawerGL::DrawPartial(
 	CameraClipPlanes& camera_clip_planes,
 	bool draw_first_person_weapon_models,
 	bool fog_enabled,
-	GlobalLightParams& global_light_params,
-	GlobalLightParams& model_light_params,
-	GlobalLightParams& first_person_weapon_model_light_params,
+	LightingModifiers& lighting_modifiers,
 	bool mirrored,
 	WorldDrawingStats &mut drawing_stats )
 {
@@ -648,7 +591,7 @@ fn WorldDrawerGL::DrawPartial(
 		camera_matrices.view_matrix,
 		draw_water_clusters_as_normal,
 		drawing_info.game_time_s,
-		global_light_params,
+		lighting_modifiers.map,
 		mirrored,
 		drawing_stats );
 
@@ -661,13 +604,18 @@ fn WorldDrawerGL::DrawPartial(
 			map_caustics_shader_,
 			camera_matrices.view_matrix,
 			drawing_info.game_time_s,
-			global_light_params,
+			lighting_modifiers.map,
 			mirrored,
 			drawing_stats );
 	}
 
 	DrawDecalPolygons(
-		map_data, decal_polygons_buffer_, decals_shader_, camera_matrices.view_matrix, global_light_params, mirrored );
+		map_data,
+		decal_polygons_buffer_,
+		decals_shader_,
+		camera_matrices.view_matrix,
+		lighting_modifiers.map,
+		mirrored );
 
 	var bool dynamic_lights_enabled= settings_.lock_imut().deref().r_dynamic_lights_enabled;
 
@@ -696,7 +644,7 @@ fn WorldDrawerGL::DrawPartial(
 			drawing_info.game_time_s,
 			drawing_info.dynamic_light_sources,
 			dynamic_light_scissor_rects,
-			global_light_params.light_scale,
+			lighting_modifiers.map.scale,
 			mirrored,
 			drawing_stats );
 
@@ -711,7 +659,7 @@ fn WorldDrawerGL::DrawPartial(
 				camera_matrices.view_matrix,
 				drawing_info.dynamic_light_sources,
 				dynamic_light_scissor_rects,
-				global_light_params.light_scale,
+				lighting_modifiers.map.scale,
 				mirrored );
 		}
 
@@ -726,7 +674,7 @@ fn WorldDrawerGL::DrawPartial(
 				camera_matrices.view_matrix,
 				drawing_info.dynamic_light_sources,
 				dynamic_light_scissor_rects,
-				global_light_params.light_scale,
+				lighting_modifiers.map.scale,
 				mirrored );
 		}
 	}
@@ -852,16 +800,17 @@ fn WorldDrawerGL::DrawPartial(
 			}
 		}
 
-		// Apply lighting params for model ligth.
+		// Apply lighting params for model light.
 		{
-			var GlobalLightParams& light_params=
-				( model_object.first_person_weapon ? first_person_weapon_model_light_params : model_light_params );
+			var LightingModifier& lighting_modifier=
+				( model_object.first_person_weapon
+					? lighting_modifiers.first_person_weapon_models : lighting_modifiers.models );
 
 			for( auto mut i= 0s; i < 3s; ++i )
 			{
 				var SphericalHarmonics& mut l= light[i];
-				var f32 light_scale= light_params.light_scale[i];
-				var f32 light_add= light_params.light_add[i];
+				var f32 light_scale= lighting_modifier.scale[i];
+				var f32 light_add= lighting_modifier.add[i];
 
 				l.constant_component*= light_scale;
 				l.constant_component+= light_add;
@@ -923,7 +872,7 @@ fn WorldDrawerGL::DrawPartial(
 			models_to_draw_,
 			model_burning_shader_,
 			caustics_and_fire_texture_,
-			model_light_params.light_scale,
+			lighting_modifiers.models.scale,
 			mirrored,
 			drawing_info.game_time_s );
 	}
@@ -1029,16 +978,16 @@ fn WorldDrawerGL::DrawPartial(
 
 	var [ f32, 3 ] fog_color
 	[
-		map_data.fog_color[0] * global_light_params.light_scale[0] + global_light_params.light_add[0],
-		map_data.fog_color[1] * global_light_params.light_scale[1] + global_light_params.light_add[1],
-		map_data.fog_color[2] * global_light_params.light_scale[2] + global_light_params.light_add[2],
+		map_data.fog_color[0] * lighting_modifiers.map.scale[0] + lighting_modifiers.map.add[0],
+		map_data.fog_color[1] * lighting_modifiers.map.scale[1] + lighting_modifiers.map.add[1],
+		map_data.fog_color[2] * lighting_modifiers.map.scale[2] + lighting_modifiers.map.add[2],
 	];
 
 	var [ f32, 3 ] fog_color_additive
 	[
-		map_data.fog_color[0] * global_light_params.light_scale[0],
-		map_data.fog_color[1] * global_light_params.light_scale[1],
-		map_data.fog_color[2] * global_light_params.light_scale[2],
+		map_data.fog_color[0] * lighting_modifiers.map.scale[0],
+		map_data.fog_color[1] * lighting_modifiers.map.scale[1],
+		map_data.fog_color[2] * lighting_modifiers.map.scale[2],
 	];
 
 	if( fog_enabled && map_data.global_fog_enabled )
@@ -1058,7 +1007,7 @@ fn WorldDrawerGL::DrawPartial(
 		map_data.clouds_texture_layer,
 		camera_matrices.rotation_and_projection_matrix,
 		// Scale sky light but not add constant factor. Black sky should remain black.
-		global_light_params.light_scale,
+		lighting_modifiers.map.scale,
 		drawing_info.game_time_s );
 
 	// Draw moon/stars AFTER clouds.
@@ -1069,7 +1018,7 @@ fn WorldDrawerGL::DrawPartial(
 		map_data.map_textures_array,
 		camera_matrices.rotation_and_projection_matrix,
 		// Scale stars and sun light, but not add constant factor, since additive blending is used for them.
-		global_light_params.light_scale );
+		lighting_modifiers.map.scale );
 
 	// Draw local fog after sky and global fog.
 	// It's not fully correct, since a local fog volume can be far away and be partially covered by global fog.
@@ -1220,7 +1169,7 @@ fn WorldDrawerGL::DrawPartial(
 		map_data.map_textures_array,
 		camera_matrices.view_matrix,
 		// Only scale light for semitransparent polygons, but not add it.
-		global_light_params.light_scale,
+		lighting_modifiers.map.scale,
 		fog_color,
 		fog_color_additive );
 
@@ -2002,7 +1951,7 @@ fn DrawMapPolygons(
 	Mat4f& view_matrix,
 	bool draw_water_clusters_as_normal,
 	f32 time_s,
-	GlobalLightParams& global_light_params,
+	LightingModifier& lighting_modifier,
 	bool mirrored,
 	WorldDrawingStats &mut drawing_stats )
 {
@@ -2029,8 +1978,8 @@ fn DrawMapPolygons(
 	shader.SetUniform( "vu_matrix", view_matrix );
 	shader.SetUniform( "fu_texture", texture_slot );
 
-	shader.SetUniform( "vu_light_add", Vec3f( global_light_params.light_add ) );
-	shader.SetUniform( "vu_light_scale", Vec3f( global_light_params.light_scale ) );
+	shader.SetUniform( "vu_light_add", Vec3f( lighting_modifier.add ) );
+	shader.SetUniform( "vu_light_scale", Vec3f( lighting_modifier.scale ) );
 
 	map_data.vertex_array_object.Bind();
 	map_data.index_buffer.Bind();
@@ -2119,7 +2068,7 @@ fn DrawMapPolygons(
 	// since highlighting is only used for note clusters (maximum a couple of such clusters per map).
 	{
 		var f32 light_scale= 2.0f + ust::sin( time_s * 6.0f );
-		shader.SetUniform( "vu_light_scale", Vec3f( global_light_params.light_scale ) * light_scale );
+		shader.SetUniform( "vu_light_scale", Vec3f( lighting_modifier.scale ) * light_scale );
 
 		foreach( cluster_index : highlighted_cluster_indices )
 		{
@@ -2132,7 +2081,7 @@ fn DrawMapPolygons(
 		}
 	}
 
-	shader.SetUniform( "vu_light_scale", Vec3f( global_light_params.light_scale ) );
+	shader.SetUniform( "vu_light_scale", Vec3f( lighting_modifier.scale ) );
 
 	// Draw breakable polygons prepared prior to this function.
 	breakable_polygons_buffer.vertex_array_object.Bind();
@@ -2152,7 +2101,7 @@ fn DrawMapPolygonsWithCaustics(
 	ShaderProgram &mut shader,
 	Mat4f& view_matrix,
 	f32 time_s,
-	GlobalLightParams& global_light_params,
+	LightingModifier& lighting_modifier,
 	bool mirrored,
 	WorldDrawingStats &mut drawing_stats )
 {
@@ -2186,8 +2135,8 @@ fn DrawMapPolygonsWithCaustics(
 	shader.SetUniform( "fu_caustics_texture", caustics_texture_slot );
 	shader.SetUniform( "fu_caustics_layer", time_s * c_caustics_speed );
 
-	shader.SetUniform( "vu_light_add", Vec3f( global_light_params.light_add ) );
-	shader.SetUniform( "vu_light_scale", Vec3f( global_light_params.light_scale ) );
+	shader.SetUniform( "vu_light_add", Vec3f( lighting_modifier.add ) );
+	shader.SetUniform( "vu_light_scale", Vec3f( lighting_modifier.scale ) );
 
 	map_data.vertex_array_object.Bind();
 	map_data.index_buffer.Bind();
@@ -2469,7 +2418,7 @@ fn DrawDecalPolygons(
 	DynamicPolygonsBuffer& decal_polygons_buffer,
 	ShaderProgram &mut shader,
 	Mat4f& view_matrix,
-	GlobalLightParams& global_light_params,
+	LightingModifier& lighting_modifier,
 	bool mirrored )
 {
 	if( mirrored )
@@ -2490,8 +2439,8 @@ fn DrawDecalPolygons(
 	shader.SetUniform( "vu_matrix", view_matrix );
 	shader.SetUniform( "fu_texture", texture_slot );
 
-	shader.SetUniform( "vu_light_add", Vec3f( global_light_params.light_add ) );
-	shader.SetUniform( "vu_light_scale", Vec3f( global_light_params.light_scale ) );
+	shader.SetUniform( "vu_light_add", Vec3f( lighting_modifier.add ) );
+	shader.SetUniform( "vu_light_scale", Vec3f( lighting_modifier.scale ) );
 
 	decal_polygons_buffer.vertex_array_object.Bind();
 	decal_polygons_buffer.index_buffer.Bind();
@@ -2922,7 +2871,7 @@ fn DrawMirrorPolygons(
 	ShaderProgram &mut shader,
 	DynamicPolygonsBuffer& mirror_polygons,
 	Mat4f& view_matrix,
-	GlobalLightParams& global_light_params,
+	LightingModifier& lighting_modifier,
 	f32 mirror_alpha )
 {
 	var GLState mut gl_state= g_mirror_polygons_drawing_gl_state;
@@ -2937,8 +2886,8 @@ fn DrawMirrorPolygons(
 	shader.SetUniform( "vu_matrix", view_matrix );
 	shader.SetUniform( "fu_texture", texture_slot );
 
-	shader.SetUniform( "vu_light_add", Vec3f( global_light_params.light_add ) );
-	shader.SetUniform( "vu_light_scale", Vec3f( global_light_params.light_scale ) );
+	shader.SetUniform( "vu_light_add", Vec3f( lighting_modifier.add ) );
+	shader.SetUniform( "vu_light_scale", Vec3f( lighting_modifier.scale ) );
 
 	shader.SetUniform( "fu_mirror_alpha", mirror_alpha );
 
