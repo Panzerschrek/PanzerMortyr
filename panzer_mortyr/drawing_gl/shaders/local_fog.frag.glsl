@@ -11,8 +11,6 @@ uniform mat4 fu_inverse_view_matrix;
 uniform vec3 fu_camera_position;
 uniform vec3 fu_fog_color;
 
-in vec3 f_position;
-
 out vec4 color;
 
 const float inf= 99999999.0;
@@ -164,10 +162,6 @@ void main()
 	float depth_value_symmetric= depth_buffer_value * 2.0 - 1.0; // in -1 to 1 range
 	vec4 clip_space_position= vec4( ( screen_coords * 2.0 - vec2( 1.0, 1.0 ) ), depth_value_symmetric, 1.0 );
 	vec4 view_space_position= clip_space_position * fu_inverse_view_matrix;
-
-	//float linear_fragment_distance= length( view_space_position.xyz ) / view_space_position.w;
-
-	//vec3 view_ray_normalized= normalize( f_position - fu_camera_position );
 
 	vec3 box_space_position= ( ( view_space_position.xyz / view_space_position.w ) - vu_fog_volume_offset ) / vu_fog_volume_scale;
 
