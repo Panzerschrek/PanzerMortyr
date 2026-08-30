@@ -6,7 +6,7 @@ uniform vec3 vu_fog_volume_offset;
 
 uniform vec2 fu_inverse_viewport_size;
 uniform sampler2D fu_depth_texture;
-uniform mat4 fu_inverse_view_matrix;
+uniform mat4 fu_box_space_matrix;
 
 uniform vec3 fu_camera_position;
 uniform vec3 fu_fog_color;
@@ -161,9 +161,8 @@ void main()
 	float depth_buffer_value= texture( fu_depth_texture, screen_coords ).r;
 	float depth_value_symmetric= depth_buffer_value * 2.0 - 1.0; // in -1 to 1 range
 	vec4 clip_space_position= vec4( ( screen_coords * 2.0 - vec2( 1.0, 1.0 ) ), depth_value_symmetric, 1.0 );
-	vec4 view_space_position= clip_space_position * fu_inverse_view_matrix;
-
-	vec3 box_space_position= ( ( view_space_position.xyz / view_space_position.w ) - vu_fog_volume_offset ) / vu_fog_volume_scale;
+	vec4 box_space_position4= clip_space_position * fu_box_space_matrix;
+	vec3 box_space_position= box_space_position4.xyz / box_space_position4.w;
 
 	// Perform calculations in space of the box, so that it's assumed that we search for intersection with a cube or sphere with min/max dimensions equal to [-1;1].
 	// It seems like the original game does the same.
