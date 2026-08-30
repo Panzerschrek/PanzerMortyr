@@ -28,11 +28,8 @@ const int c_indeces[c_num_indices]= int[c_num_indices]
 );
 
 uniform mat4 vu_matrix;
-uniform vec3 vu_fog_volume_scale;
-uniform vec3 vu_fog_volume_offset;
 
 void main()
 {
-	vec3 pos= c_vertices[ c_indeces[ gl_VertexID ] ] * vu_fog_volume_scale + vu_fog_volume_offset;
-	gl_Position= vec4( pos, 1.0 ) * vu_matrix;
+	gl_Position= vec4( c_vertices[ c_indeces[ gl_VertexID ] ], 1.0 ) * vu_matrix;
 }
