@@ -63,18 +63,22 @@ fn WorldDrawerSoft::constructor(
 
 fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDrawingStats
 {
-	if( map_index_ != drawing_info.map_index )
+	// Load models in use if switching to a new map.
+	var bool need_loading_models= map_index_ != drawing_info.map_index;
+
+		// Ensure we have actual map data.
+	SetMap( drawing_info.map_index );
+
+	if( need_loading_models && !map_data_.empty() )
 	{
 		// Load models in use if switching to a new map.
 		LoadModels(
 			drawing_info.used_models,
 			caching_game_resources_loader_ptr_.lock_imut().deref().GetGameFilesystem(),
 			console_out_,
+			map_data_.try_deref().map_draw_data.textures,
 			models_ );
 	}
-
-	// Ensure we have actual map data.
-	SetMap( drawing_info.map_index );
 
 	auto mut window_lock= window_.lock_mut();
 	var Color32ImageView surface= window_lock.deref().GetSurface();
@@ -2781,6 +2785,7 @@ fn LoadModels(
 	ust::array_view_imut</UsedModel/> model_list,
 	GameFilesystemPtr& game_filesystem_ptr,
 	ConsoleOutPtr& console_out_ptr,
+	ust::array_view_imut</Color32WorldTextureWithMips/> map_textures,
 	ModelsMapSoft &mut models )
 {
 	// Populate new models table and take existing models from the old one (if can).
@@ -2820,43 +2825,61 @@ fn LoadModels(
 
 	models= move( new_models );
 
-	// Prepare blood-covered textures.
-	foreach( &used_model : model_list )
+	// TODO - remove copypaste.
+	var u32 constexpr blood_texture_layer_medium= 134u;
+	var u32 constexpr blood_texture_layer_large= blood_texture_layer_medium + 1u;
+
+	if( size_type( blood_texture_layer_medium ) < map_textures.size() &&
+		size_type( blood_texture_layer_large ) < map_textures.size() )
 	{
-		if_var( &mut model_ext : models.find( used_model.file_name ) )
+		var Color32SquareTexture</ 7s />& blood_texture_medium=
+			map_textures[ size_type( blood_texture_layer_medium ) ][0];
+
+		var Color32SquareTexture</ 7s />& blood_texture_large=
+			map_textures[ size_type( blood_texture_layer_large ) ][0];
+
+
+		// Prepare blood-covered textures.
+		foreach( &used_model : model_list )
 		{
-			if( !used_model.blood_coverage_needed )
+			if_var( &mut model_ext : models.find( used_model.file_name ) )
 			{
-				model_ext.blood_covered_textures.reset();
-			}
-			else
-			{
-				model_ext.blood_covered_textures.reset(
-					ust::make_array(
-						CreateBloodCoveredModelTexture( model_ext.model.texture ),
-						CreateBloodCoveredModelTexture( model_ext.model.texture ) ) );
+				if( !used_model.blood_coverage_needed )
+				{
+					model_ext.blood_covered_textures.reset();
+				}
+				else
+				{
+					model_ext.blood_covered_textures.reset(
+						ust::make_array(
+							CreateBloodCoveredModelTexture( model_ext.model.texture, blood_texture_medium ),
+							CreateBloodCoveredModelTexture( model_ext.model.texture, blood_texture_large ) ) );
+				}
 			}
 		}
 	}
 }
 
-fn CreateBloodCoveredModelTexture( ModelSoft::Texture& texture ) : ModelSoft::Texture
+fn CreateBloodCoveredModelTexture(
+	ModelSoft::Texture& texture, Color32SquareTexture</ 7s />& blood_texture ) : ModelSoft::Texture
 {
 	variant_visit( &t : texture )
 	{
-		return CreateBloodCoveredModelTextureImpl( t.deref() );
+		return CreateBloodCoveredModelTextureImpl( t.deref(), blood_texture );
 	}
 	halt;
 }
 
-fn CreateBloodCoveredModelTextureImpl( ModelSoft::Texture64WithMips& texture ) : ust::box</ ModelSoft::Texture64WithMips />
+fn CreateBloodCoveredModelTextureImpl(
+	ModelSoft::Texture64WithMips& texture,
+	Color32SquareTexture</ 7s />& blood_texture ) : ust::box</ ModelSoft::Texture64WithMips />
 {
 	auto mut result_texture_ptr= ust::make_box( texture );
 
 	{
 		var ModelSoft::Texture64WithMips &mut out_texture= result_texture_ptr.deref();
 
-		CreateBloodCoveredModelTextureMip0( out_texture[0] );
+		CreateBloodCoveredModelTextureMip0( out_texture[0], blood_texture );
 		BuildTextureMip( out_texture[1], out_texture[0] );
 		BuildTextureMip( out_texture[2], out_texture[1] );
 		BuildTextureMip( out_texture[3], out_texture[2] );
@@ -2868,14 +2891,16 @@ fn CreateBloodCoveredModelTextureImpl( ModelSoft::Texture64WithMips& texture ) :
 	return result_texture_ptr;
 }
 
-fn CreateBloodCoveredModelTextureImpl( ModelSoft::Texture128WithMips& texture ) : ust::box</ ModelSoft::Texture128WithMips />
+fn CreateBloodCoveredModelTextureImpl(
+	ModelSoft::Texture128WithMips& texture,
+	Color32SquareTexture</ 7s />& blood_texture ) : ust::box</ ModelSoft::Texture128WithMips />
 {
 	auto mut result_texture_ptr= ust::make_box( texture );
 
 	{
 		var ModelSoft::Texture128WithMips &mut out_texture= result_texture_ptr.deref();
 
-		CreateBloodCoveredModelTextureMip0( out_texture[0] );
+		CreateBloodCoveredModelTextureMip0( out_texture[0], blood_texture );
 		BuildTextureMip( out_texture[1], out_texture[0] );
 		BuildTextureMip( out_texture[2], out_texture[1] );
 		BuildTextureMip( out_texture[3], out_texture[2] );
@@ -2888,14 +2913,16 @@ fn CreateBloodCoveredModelTextureImpl( ModelSoft::Texture128WithMips& texture ) 
 	return result_texture_ptr;
 }
 
-fn CreateBloodCoveredModelTextureImpl( ModelSoft::Texture256WithMips& texture ) : ust::box</ ModelSoft::Texture256WithMips />
+fn CreateBloodCoveredModelTextureImpl(
+	ModelSoft::Texture256WithMips& texture,
+	Color32SquareTexture</ 7s />& blood_texture ) : ust::box</ ModelSoft::Texture256WithMips />
 {
 	auto mut result_texture_ptr= ust::make_box( texture );
 
 	{
 		var ModelSoft::Texture256WithMips &mut out_texture= result_texture_ptr.deref();
 
-		CreateBloodCoveredModelTextureMip0( out_texture[0] );
+		CreateBloodCoveredModelTextureMip0( out_texture[0], blood_texture );
 		BuildTextureMip( out_texture[1], out_texture[0] );
 		BuildTextureMip( out_texture[2], out_texture[1] );
 		BuildTextureMip( out_texture[3], out_texture[2] );
@@ -2909,17 +2936,30 @@ fn CreateBloodCoveredModelTextureImpl( ModelSoft::Texture256WithMips& texture ) 
 	return result_texture_ptr;
 }
 
-// TODO - apply real blood here.
 template</ size_type size />
-fn CreateBloodCoveredModelTextureMip0( [ [ Color32, size ], size ] &mut texture )
+fn CreateBloodCoveredModelTextureMip0(
+	[ [ Color32, size ], size ] &mut texture,
+	Color32SquareTexture</ 7s />& blood_texture )
 {
-	foreach( &mut row : texture )
+	// Alpha-blend blood textures atop of source texture.
+	// Use nearest filtering.
+	// TODO - try linear filtering instead?
+
+	var size_type src_size= typeinfo</ typeof( blood_texture ) />.element_count;
+
+	for( auto mut dst_y= 0s; dst_y < size; ++dst_y )
 	{
-		foreach( &mut pixel : row )
+		var [ Color32, size ] &mut dst_line= texture[ dst_y ];
+
+		var size_type src_y= dst_y * src_size / size;
+
+		var [ Color32, src_size ]& src_line= blood_texture[ src_y ];
+
+		for( auto mut dst_x= 0s; dst_x < size; ++dst_x )
 		{
-			var RGBAColor mut components= Color32ToComponents( pixel );
-			components[0]= 255u8;
-			pixel= Color32FromComponents( components );
+			var size_type src_x= dst_x * src_size / size;
+
+			Color32AlphaBlend( dst_line[ dst_x ], src_line[ src_x ] );
 		}
 	}
 }
