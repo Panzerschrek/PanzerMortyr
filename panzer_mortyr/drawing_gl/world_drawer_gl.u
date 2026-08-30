@@ -1001,7 +1001,7 @@ fn WorldDrawerGL::DrawPartial(
 	{
 		if_var( &m : camera_matrices.camera_inverse_projection_matrix )
 		{
-			DrawGlobalFog( depth_buffer_copy_texture_, global_fog_shader_, m, fog_color );
+			DrawGlobalFog( depth_buffer_copy_texture_, global_fog_shader_, viewport_size, m, fog_color );
 		}
 	}
 
@@ -3296,6 +3296,7 @@ fn PrepareVertexArrayObjectWithMapVertexFormat(
 fn DrawGlobalFog(
 	Texture &mut depth_buffer_copy_texture,
 	ShaderProgram &mut shader,
+	[ u32, 2 ] viewport_size,
 	Mat4f& camera_inverse_projection_matrix,
 	[ f32, 3 ]& fog_color )
 {
@@ -3308,7 +3309,19 @@ fn DrawGlobalFog(
 
 	shader.Bind();
 	shader.SetUniform( "fu_depth_texture", texture_slot );
-	shader.SetUniform( "fu_inverse_projection_matrix", camera_inverse_projection_matrix );
+
+	var Mat4f full_matrix=
+		// Encode viewport transformation.
+		Mat4f::MakeScale( Vec3f( 2.0f / f32( viewport_size[0] ), 2.0f / f32( viewport_size[1] ), 1.0f ) ) *
+		Mat4f::MakeTranslation( Vec3f( -1.0f, -1.0f, 0.0f ) ) *
+		// Map depth values from range [ 0; 1 ] to range [ -1; 1 ].
+		Mat4f::MakeScale( Vec3f( 1.0f, 1.0f, 2.0f ) ) *
+		Mat4f::MakeTranslation( Vec3f( 0.0f, 0.0f, -1.0f ) ) *
+		// Convert into world space.
+		camera_inverse_projection_matrix;
+
+	shader.SetUniform( "fu_inverse_projection_matrix", full_matrix );
+
 	shader.SetUniform( "fu_fog_distance_scale", c_global_exponential_fog_distance_scale );
 	shader.SetUniform( "fu_fog_color", Vec3f( fog_color ) );
 
@@ -3360,7 +3373,7 @@ fn DrawLocalFog(
 			Mat4f::MakeScale( Vec3f( 1.0f / box_scale.x, 1.0f / box_scale.y, 1.0f / box_scale.z ) );
 
 		var Mat4f full_matrix=
-			// Encode viewport transformation
+			// Encode viewport transformation.
 			Mat4f::MakeScale( Vec3f( 2.0f / f32( viewport_size[0] ), 2.0f / f32( viewport_size[1] ), 1.0f ) ) *
 			Mat4f::MakeTranslation( Vec3f( -1.0f, -1.0f, 0.0f ) ) *
 			// Map depth values from range [ 0; 1 ] to range [ -1; 1 ].
