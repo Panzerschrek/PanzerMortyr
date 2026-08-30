@@ -115,7 +115,6 @@ PanzerMortyr software rendering:
 * Draw map quads with caustics.
 * Draw local fog.
 * Draw mirrors.
-* Draw models covered with blood.
 * Draw burning models.
 * Fix issues with hall-of-mirrors effect visible at some places on some maps where sky quads are missing or aren't large enough to cover the entire sky.
 * Consider optimizing vertices transformation code by producing 4-component position vectors and thus ensuring vector instructions are used.

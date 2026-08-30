@@ -1,0 +1,152 @@
+import "model_blood_coverage.iu"
+
+namespace PM
+{
+
+fn CreateBloodCoveredModelTexture(
+	ModelSoft::Texture& texture, Color32WorldTextureMip0& blood_texture ) : ModelSoft::Texture
+{
+	variant_visit( &t : texture )
+	{
+		return CreateBloodCoveredModelTextureImpl( t.deref(), blood_texture );
+	}
+	halt;
+}
+
+fn CreateBloodCoveredModelTextureImpl(
+	ModelSoft::Texture64WithMips& texture,
+	Color32WorldTextureMip0& blood_texture ) : ust::box</ ModelSoft::Texture64WithMips />
+{
+	auto mut result_texture_ptr= ust::make_box( texture );
+
+	{
+		var ModelSoft::Texture64WithMips &mut out_texture= result_texture_ptr.deref();
+
+		CreateBloodCoveredModelTextureMip0( out_texture[0], blood_texture );
+		BuildTextureMip( out_texture[1], out_texture[0] );
+		BuildTextureMip( out_texture[2], out_texture[1] );
+		BuildTextureMip( out_texture[3], out_texture[2] );
+		BuildTextureMip( out_texture[4], out_texture[3] );
+		BuildTextureMip( out_texture[5], out_texture[4] );
+		BuildTextureMip( out_texture[6], out_texture[5] );
+	}
+
+	return result_texture_ptr;
+}
+
+fn CreateBloodCoveredModelTextureImpl(
+	ModelSoft::Texture128WithMips& texture,
+	Color32WorldTextureMip0& blood_texture ) : ust::box</ ModelSoft::Texture128WithMips />
+{
+	auto mut result_texture_ptr= ust::make_box( texture );
+
+	{
+		var ModelSoft::Texture128WithMips &mut out_texture= result_texture_ptr.deref();
+
+		CreateBloodCoveredModelTextureMip0( out_texture[0], blood_texture );
+		BuildTextureMip( out_texture[1], out_texture[0] );
+		BuildTextureMip( out_texture[2], out_texture[1] );
+		BuildTextureMip( out_texture[3], out_texture[2] );
+		BuildTextureMip( out_texture[4], out_texture[3] );
+		BuildTextureMip( out_texture[5], out_texture[4] );
+		BuildTextureMip( out_texture[6], out_texture[5] );
+		BuildTextureMip( out_texture[7], out_texture[6] );
+	}
+
+	return result_texture_ptr;
+}
+
+fn CreateBloodCoveredModelTextureImpl(
+	ModelSoft::Texture256WithMips& texture,
+	Color32WorldTextureMip0& blood_texture ) : ust::box</ ModelSoft::Texture256WithMips />
+{
+	auto mut result_texture_ptr= ust::make_box( texture );
+
+	{
+		var ModelSoft::Texture256WithMips &mut out_texture= result_texture_ptr.deref();
+
+		CreateBloodCoveredModelTextureMip0( out_texture[0], blood_texture );
+		BuildTextureMip( out_texture[1], out_texture[0] );
+		BuildTextureMip( out_texture[2], out_texture[1] );
+		BuildTextureMip( out_texture[3], out_texture[2] );
+		BuildTextureMip( out_texture[4], out_texture[3] );
+		BuildTextureMip( out_texture[5], out_texture[4] );
+		BuildTextureMip( out_texture[6], out_texture[5] );
+		BuildTextureMip( out_texture[7], out_texture[6] );
+		BuildTextureMip( out_texture[8], out_texture[7] );
+	}
+
+	return result_texture_ptr;
+}
+
+template</ size_type dst_size />
+fn CreateBloodCoveredModelTextureMip0(
+	[ [ Color32, dst_size ], dst_size ] &mut texture, Color32WorldTextureMip0& blood_texture )
+{
+	// Alpha-blend blood texture atop of destination texture.
+
+	var size_type src_size= typeinfo</ typeof( blood_texture ) />.element_count;
+
+	static_if( dst_size == src_size )
+	{
+		// Textures have identical size - use simple 1 to 1 texels match.
+
+		for( auto mut y= 0s; y < dst_size; ++y )
+		{
+			var [ Color32, dst_size ] &mut dst_line= texture[y];
+			var [ Color32, src_size ]& src_line= blood_texture[y];
+
+			for( auto mut x= 0s; x < dst_size; ++x )
+			{
+				Color32AlphaBlend( dst_line[x], src_line[x] );
+			}
+		}
+	}
+	else static_if( dst_size == src_size * 2s )
+	{
+		// Special case - 2x resize. It's used actually very often, so, apply simple linear interpolation.
+
+		for( auto mut src_y= 0s; src_y < src_size; ++src_y )
+		{
+			for( auto mut src_x= 0s; src_x < src_size; ++src_x )
+			{
+				var Color32 mix_src00= blood_texture[ src_y ][ src_x ];
+				var Color32 mix_src01= blood_texture[ src_y ][ ( src_x + 1s ) % src_size ];
+				var Color32 mix_src10= blood_texture[ ( src_y + 1s ) % src_size ][ src_x ];
+				var Color32 mix_src11= blood_texture[ ( src_y + 1s ) % src_size ][ ( src_x + 1s ) % src_size ];
+
+				var Color32 mixed00= mix_src00;
+				var Color32 mixed01= Color32Average( mix_src00, mix_src01 );
+				var Color32 mixed10= Color32Average( mix_src00, mix_src10 );
+				var Color32 mixed11=
+					Color32Average( Color32Average( mix_src00, mix_src01 ), Color32Average( mix_src10, mix_src11 ) );
+
+				Color32AlphaBlend( texture[ src_y * 2s + 0s ][ src_x * 2s + 0s ], mixed00 );
+				Color32AlphaBlend( texture[ src_y * 2s + 0s ][ src_x * 2s + 1s ], mixed01 );
+				Color32AlphaBlend( texture[ src_y * 2s + 1s ][ src_x * 2s + 0s ], mixed10 );
+				Color32AlphaBlend( texture[ src_y * 2s + 1s ][ src_x * 2s + 1s ], mixed11 );
+			}
+		}
+	}
+	else
+	{
+		// General case - apply nearest filtration.
+		for( auto mut dst_y= 0s; dst_y < dst_size; ++dst_y )
+		{
+			var [ Color32, dst_size ] &mut dst_line= texture[ dst_y ];
+
+			var size_type src_y= dst_y * src_size / dst_size;
+
+			var [ Color32, src_size ]& src_line= blood_texture[ src_y ];
+
+			for( auto mut dst_x= 0s; dst_x < dst_size; ++dst_x )
+			{
+				var size_type src_x= dst_x * src_size / dst_size;
+
+				Color32AlphaBlend( dst_line[ dst_x ], src_line[ src_x ] );
+			}
+		}
+	}
+}
+
+} // namespace PM

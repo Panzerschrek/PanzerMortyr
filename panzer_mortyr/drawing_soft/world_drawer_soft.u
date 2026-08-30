@@ -17,6 +17,7 @@ import "../rain_and_snow.iu"
 import "../room_clusters_bsp_tree_visualization.iu"
 import "../sky_common.iu"
 import "../texture_common.iu"
+import "model_blood_coverage.iu"
 import "rasterizer.iu"
 import "sky_rasterizer.iu"
 import "vertex_transformations.iu"
@@ -63,18 +64,22 @@ fn WorldDrawerSoft::constructor(
 
 fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDrawingStats
 {
-	if( map_index_ != drawing_info.map_index )
+	// Load models in use if switching to a new map.
+	var bool need_loading_models= map_index_ != drawing_info.map_index;
+
+	// Ensure we have actual map data.
+	SetMap( drawing_info.map_index );
+
+	if( need_loading_models && !map_data_.empty() )
 	{
 		// Load models in use if switching to a new map.
 		LoadModels(
 			drawing_info.used_models,
 			caching_game_resources_loader_ptr_.lock_imut().deref().GetGameFilesystem(),
 			console_out_,
+			map_data_.try_deref().map_draw_data.textures,
 			models_ );
 	}
-
-	// Ensure we have actual map data.
-	SetMap( drawing_info.map_index );
 
 	auto mut window_lock= window_.lock_mut();
 	var Color32ImageView surface= window_lock.deref().GetSurface();
@@ -666,14 +671,15 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 
 	foreach( &model_object : drawing_info.model_objects ) label for_model_objects
 	{
-		var ust::optional_ref_imut</ ModelSoft /> model_opt= models_.find( model_object.model_file_name );
+		var ust::optional_ref_imut</ ModelSoftExt /> model_ext_opt= models_.find( model_object.model_file_name );
 
-		if( model_opt.empty() )
+		if( model_ext_opt.empty() )
 		{
 			continue;
 		}
 
-		var ModelSoft& model= model_opt.try_deref();
+		var ModelSoftExt& model_ext= model_ext_opt.try_deref();
+		var ModelSoft& model= model_ext.model;
 
 		var Mat4f rotation_matrix=
 			Mat4f::MakeRotationX( model_object.elevation ) *
@@ -942,15 +948,22 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 		}
 		else
 		{
-			variant_visit( &texture_ptr : model.texture )
+			var ModelSoft::Texture& texture=
+				( ( model_object.blood_coverage > 0u8 && !model_ext.blood_covered_textures.empty() )
+					? ( model_object.blood_coverage == 1u8
+						? model_ext.blood_covered_textures.try_deref()[0u]
+						: model_ext.blood_covered_textures.try_deref()[1u] )
+					: model.texture );
+
+			variant_visit( &texture_variant_ptr : texture )
 			{
-				auto& texture= texture_ptr.deref();
+				auto& texture_variant= texture_variant_ptr.deref();
 
 				if( is_fully_inside_view_frustum )
 				{
 					// This model object is fully inside view frustum. Don't need to perform clipping for each of its triangles.
 					DrawModelTrianglesWithoutFrustumPlanesClipping(
-						rasterizer, model, texture, vertices_transformed, vertex_lights );
+						rasterizer, model, texture_variant, vertices_transformed, vertex_lights );
 				}
 				else
 				{
@@ -959,7 +972,7 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 						rasterizer,
 						frustum_side_clip_planes,
 						model,
-						texture,
+						texture_variant,
 						vertices_transformed,
 						vertex_lights,
 						vertices_clipped );
@@ -1760,7 +1773,7 @@ fn DrawSky(
 		return false;
 	}
 
-	var Color32SquareTexture</ 7s />& texture0= map_data.textures[ size_type( map_data.clouds_texture_layer ) ][0];
+	var Color32WorldTextureMip0& texture0= map_data.textures[ size_type( map_data.clouds_texture_layer ) ][0];
 
 	auto clusters= map_data.zvox_data.deref().clusters.range();
 	auto quads= map_data.zmap_data.deref().quads.range();
@@ -1949,7 +1962,7 @@ fn DrawSky(
 	if( map_data.use_two_cloud_layers &&
 		size_type( map_data.clouds_texture_layer + 1u ) < map_data.textures.size() )
 	{
-		var Color32SquareTexture</ 7s />& texture1=
+		var Color32WorldTextureMip0& texture1=
 			map_data.textures[size_type( map_data.clouds_texture_layer + 1u ) ][0];
 
 		sky_rasterizer.FillSky</ true /* use two textures */ />(
@@ -2770,9 +2783,10 @@ fn LoadBillboardsDescription(
 }
 
 fn LoadModels(
-	ust::array_view_imut</ResourceString/> model_list,
+	ust::array_view_imut</UsedModel/> model_list,
 	GameFilesystemPtr& game_filesystem_ptr,
 	ConsoleOutPtr& console_out_ptr,
+	ust::array_view_imut</Color32WorldTextureWithMips/> map_textures,
 	ModelsMapSoft &mut models )
 {
 	// Populate new models table and take existing models from the old one (if can).
@@ -2782,20 +2796,20 @@ fn LoadModels(
 	auto mut fs_lock= game_filesystem_ptr.lock_mut();
 	var ( fn( ust::file_readable &mut f ) : ust::io_result</ModelData/> ) constexpr load_model_fn( LoadModel );
 
-	foreach( &file_name : model_list )
+	foreach( &used_model : model_list )
 	{
-		auto mut prev_model= models.remove_if_exists( file_name );
+		auto mut prev_model= models.remove_if_exists( used_model.file_name );
 		if( !prev_model.empty() )
 		{
-			new_models.insert_new( file_name, prev_model.try_take() );
+			new_models.insert_new( used_model.file_name, prev_model.try_take() );
 			continue;
 		}
 
-		result_match( fs_lock.deref().LoadFile( file_name, load_model_fn ) )
+		result_match( fs_lock.deref().LoadFile( used_model.file_name, load_model_fn ) )
 		{
 			Ok(m) ->
 			{
-				new_models.insert_new( file_name, CreateModelSoft( m ) );
+				new_models.insert_new( used_model.file_name, ModelSoftExt{ .model= CreateModelSoft( m ) } );
 			},
 			Err(e) ->
 			{
@@ -2803,7 +2817,7 @@ fn LoadModels(
 					console_out_ptr,
 					ust::concat(
 						"Failed to load model file \"",
-						ConvertResourceStringToStringView( file_name ),
+						ConvertResourceStringToStringView( used_model.file_name ),
 						"\"! Error: ",
 						ust::enum_to_string( e ) ) );
 			},
@@ -2811,6 +2825,37 @@ fn LoadModels(
 	}
 
 	models= move( new_models );
+
+	// Prepare blood-covered textures.
+	// Do this each time models are loaded, even for models which are already present in memory.
+	// This is needed since blood textures are defined on per-map basis and thus it may be needed to re-apply them.
+
+	if( size_type( c_blood_texture_layer_medium ) < map_textures.size() &&
+		size_type( c_blood_texture_layer_large ) < map_textures.size() )
+	{
+		var Color32WorldTextureMip0& blood_texture_medium=
+			map_textures[ size_type( c_blood_texture_layer_medium ) ][0];
+
+		var Color32WorldTextureMip0& blood_texture_large=
+			map_textures[ size_type( c_blood_texture_layer_large ) ][0];
+
+		foreach( &used_model : model_list )
+		{
+			if_var( &mut model_ext : models.find( used_model.file_name ) )
+			{
+				// Reset old textures before creating new ones.
+				model_ext.blood_covered_textures.reset();
+
+				if( used_model.blood_coverage_needed )
+				{
+					model_ext.blood_covered_textures.reset(
+						ust::make_array(
+							CreateBloodCoveredModelTexture( model_ext.model.texture, blood_texture_medium ),
+							CreateBloodCoveredModelTexture( model_ext.model.texture, blood_texture_large ) ) );
+				}
+			}
+		}
+	}
 }
 
 fn LoadMapTextures(

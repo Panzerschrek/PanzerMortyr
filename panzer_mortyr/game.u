@@ -968,7 +968,7 @@ fn CreateNoteVolumesList( ust::array_view_imut</ZvoxCluster/> clusters ) : ust::
 
 fn CreateMapUsedModelsList(
 	ust::array_view_imut</ZpozEntity/> zpoz_entities,
-	EntitiesDescription& entities_description ) : ust::vector</ResourceString/>
+	EntitiesDescription& entities_description ) : ust::vector</UsedModel/>
 {
 	scoped_array bool mut used_entity_kinds[ entities_description.entities.size() ]( false );
 
@@ -1007,6 +1007,7 @@ fn CreateMapUsedModelsList(
 	}
 
 	scoped_array bool mut used_animations[ entities_description.animations.size() ]( false );
+	scoped_array bool mut animations_blood_flags[ entities_description.animations.size() ]( false );
 
 	// Mark animations used by entities.
 	foreach( pair : entities_description.entities.iter().zip( used_entity_kinds.iter() ) )
@@ -1016,7 +1017,11 @@ fn CreateMapUsedModelsList(
 			continue;
 		}
 
-		foreach( &operation : pair.first.operations )
+		var EntitiesDescription::EntityDescription& entity_description= pair.first;
+
+		var bool can_be_covered_with_blood= entity_description.susceptible != 0u;
+
+		foreach( &operation : entity_description.operations )
 		{
 			if( operation.animation.num_steps != 0u )
 			{
@@ -1024,6 +1029,11 @@ fn CreateMapUsedModelsList(
 				if( index < used_animations.size() )
 				{
 					used_animations[index]= true;
+
+					if( can_be_covered_with_blood )
+					{
+						animations_blood_flags[index]= true;
+					}
 				}
 			}
 
@@ -1033,6 +1043,11 @@ fn CreateMapUsedModelsList(
 				if( index < used_animations.size() )
 				{
 					used_animations[index]= true;
+
+					if( can_be_covered_with_blood )
+					{
+						animations_blood_flags[index]= true;
+					}
 				}
 			}
 		}
@@ -1074,21 +1089,30 @@ fn CreateMapUsedModelsList(
 		used_animations[ size_type( entities_description.rat_animation_index ) ]= true;
 	}
 
-	var ust::vector</ResourceString/> mut used_models;
+	var ust::vector</UsedModel/> mut used_models;
 
 	// Collect all used model file names.
-	foreach( pair : entities_description.animations.iter().zip( used_animations.iter() ) )
+	for( auto mut i= 0s; i < entities_description.animations.size(); ++i )
 	{
-		if( !pair.second )
+		if( used_animations[i] )
 		{
-			continue;
+			used_models.push_back(
+				UsedModel
+				{
+					.file_name= entities_description.animations[i].model_file_name,
+					.blood_coverage_needed= animations_blood_flags[i],
+				} );
 		}
-
-		used_models.push_back( pair.first.model_file_name );
 	}
 
 	// Make sure we have no duplicated models.
-	ust::sort( used_models.range(), ResourceStringCompare() );
+	ust::sort(
+		used_models.range(),
+		lambda( UsedModel& l, UsedModel& r ) : bool
+		{
+			return ResourceStringCompare()( l.file_name, r.file_name );
+		} );
+
 	used_models.remove_adjacent_duplicates();
 
 	return used_models;
