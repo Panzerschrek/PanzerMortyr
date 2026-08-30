@@ -2,13 +2,12 @@
 
 // Use the same uniforms as in the corresponding vertex shader.
 uniform vec3 vu_fog_volume_scale;
-uniform vec3 vu_fog_volume_offset;
+uniform vec3 fu_box_space_camera_position;
 
 uniform vec2 fu_inverse_viewport_size;
 uniform sampler2D fu_depth_texture;
 uniform mat4 fu_box_space_matrix;
 
-uniform vec3 fu_camera_position;
 uniform vec3 fu_fog_color;
 
 out vec4 color;
@@ -168,8 +167,7 @@ void main()
 	// It seems like the original game does the same.
 	// Doing so allows reducing fog density while tracing along the longest axis of a box and preserving density when tracing along the shortest axis.
 
-	vec3 box_space_camera_position= ( fu_camera_position - vu_fog_volume_offset ) / vu_fog_volume_scale;
-	vec3 box_space_ray= box_space_position - box_space_camera_position;
+	vec3 box_space_ray= box_space_position - fu_box_space_camera_position;
 	vec3 box_space_ray_normalized= normalize( box_space_ray );
 	float box_space_fragment_distance= length( box_space_ray );
 
@@ -183,7 +181,7 @@ void main()
 		// Find near/far distance of ray with box intersection.
 		// The difference between these two values is distance travelled within this fog volume.
 		intersection_near_far_distances=
-			CalculateRayIntersectionWithUnitBBox( box_space_camera_position, box_space_ray_normalized );
+			CalculateRayIntersectionWithUnitBBox( fu_box_space_camera_position, box_space_ray_normalized );
 
 		// For box-shaped fog use constant density scale.
 		fog_density_scale= 0.5;
@@ -191,7 +189,7 @@ void main()
 	else
 	{
 		intersection_near_far_distances=
-			CalculateRayUnitSphereIntersection( box_space_camera_position, box_space_ray_normalized );
+			CalculateRayUnitSphereIntersection( fu_box_space_camera_position, box_space_ray_normalized );
 
 		// For elliptical fog make density depending on distance travelled within fog boundaries.
 		// Otherwise fog edges look too sharp.
