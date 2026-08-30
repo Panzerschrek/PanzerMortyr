@@ -79,9 +79,9 @@ fn CreateBloodCoveredModelTextureImpl(
 	return result_texture_ptr;
 }
 
-template</ size_type size />
+template</ size_type dst_size />
 fn CreateBloodCoveredModelTextureMip0(
-	[ [ Color32, size ], size ] &mut texture, Color32WorldTextureMip0& blood_texture )
+	[ [ Color32, dst_size ], dst_size ] &mut texture, Color32WorldTextureMip0& blood_texture )
 {
 	// Alpha-blend blood textures atop of source texture.
 	// Use nearest filtering.
@@ -89,19 +89,46 @@ fn CreateBloodCoveredModelTextureMip0(
 
 	var size_type src_size= typeinfo</ typeof( blood_texture ) />.element_count;
 
-	for( auto mut dst_y= 0s; dst_y < size; ++dst_y )
+	static_if( dst_size == src_size * 2s )
 	{
-		var [ Color32, size ] &mut dst_line= texture[ dst_y ];
-
-		var size_type src_y= dst_y * src_size / size;
-
-		var [ Color32, src_size ]& src_line= blood_texture[ src_y ];
-
-		for( auto mut dst_x= 0s; dst_x < size; ++dst_x )
+		for( auto mut src_y= 0s; src_y < src_size; ++src_y )
 		{
-			var size_type src_x= dst_x * src_size / size;
+			for( auto mut src_x= 0s; src_x < src_size; ++src_x )
+			{
+				var Color32 mix_src00= blood_texture[ src_y ][ src_x ];
+				var Color32 mix_src01= blood_texture[ src_y ][ ( src_x + 1s ) % src_size ];
+				var Color32 mix_src10= blood_texture[ ( src_y + 1s ) % src_size ][ src_x ];
+				var Color32 mix_src11= blood_texture[ ( src_y + 1s ) % src_size ][ ( src_x + 1s ) % src_size ];
 
-			Color32AlphaBlend( dst_line[ dst_x ], src_line[ src_x ] );
+				var Color32 mixed00= mix_src00;
+				var Color32 mixed01= Color32Average( mix_src00, mix_src01 );
+				var Color32 mixed10= Color32Average( mix_src00, mix_src10 );
+				var Color32 mixed11=
+					Color32Average( Color32Average( mix_src00, mix_src01 ), Color32Average( mix_src10, mix_src11 ) );
+
+				Color32AlphaBlend( texture[ src_y * 2s + 0s ][ src_x * 2s + 0s ], mixed00 );
+				Color32AlphaBlend( texture[ src_y * 2s + 0s ][ src_x * 2s + 1s ], mixed01 );
+				Color32AlphaBlend( texture[ src_y * 2s + 1s ][ src_x * 2s + 0s ], mixed10 );
+				Color32AlphaBlend( texture[ src_y * 2s + 1s ][ src_x * 2s + 1s ], mixed11 );
+			}
+		}
+	}
+	else
+	{
+		for( auto mut dst_y= 0s; dst_y < dst_size; ++dst_y )
+		{
+			var [ Color32, dst_size ] &mut dst_line= texture[ dst_y ];
+
+			var size_type src_y= dst_y * src_size / dst_size;
+
+			var [ Color32, src_size ]& src_line= blood_texture[ src_y ];
+
+			for( auto mut dst_x= 0s; dst_x < dst_size; ++dst_x )
+			{
+				var size_type src_x= dst_x * src_size / dst_size;
+
+				Color32AlphaBlend( dst_line[ dst_x ], src_line[ src_x ] );
+			}
 		}
 	}
 }
