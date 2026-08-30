@@ -248,19 +248,18 @@ fn WorldDrawerGL::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDrawin
 	var Mat4f rotation_matrix=
 		CalculateCameraRotationMatrix( drawing_info.camera_params.azimuth, drawing_info.camera_params.elevation );
 
+	// Use transpose for the rotation matrix since for such kind of matrix it's equivalent but faster way of inversion.
+	var Mat4f inverse_rotation_matrix= rotation_matrix.Transpose();
+
 	var [ u32, 2 ] viewport_size= viewport_size_;
 	var f32 view_aspect= f32( viewport_size_[0] ) / f32( viewport_size_[1] );
 
 	var Mat4f camera_projection_matrix=
 		Mat4f::MakePerspective( view_aspect, drawing_info.camera_params.fov_x, c_z_near, c_z_far );
 
-	var Mat4f camera_inverse_projection_matrix=
-		Mat4f::MakeInversePerspective( view_aspect, drawing_info.camera_params.fov_x, c_z_near, c_z_far );
-
-	var Mat4f camera_inverse_view_matrix=
-		camera_inverse_projection_matrix *
-		rotation_matrix.Transpose() *
-		Mat4f::MakeTranslation( drawing_info.camera_params.position );
+	var Mat4f camera_inverse_rotation_and_projection_matrix=
+		Mat4f::MakeInversePerspective( view_aspect, drawing_info.camera_params.fov_x, c_z_near, c_z_far ) *
+		inverse_rotation_matrix;
 
 	var Mat4f rotation_and_projection_matrix= rotation_matrix * camera_projection_matrix;
 
@@ -269,9 +268,8 @@ fn WorldDrawerGL::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDrawin
 	var Mat4f camera_space_matrix= translation_matrix * rotation_matrix;
 
 	// A matrix inverse to a space matrix performs opposite rotation and movement.
-	// Use transpose for the rotation matrix since for such kind of matrix it's equivalent but faster way of inversion.
 	var Mat4f camera_inverse_space_matrix=
-		rotation_matrix.Transpose() * Mat4f::MakeTranslation( drawing_info.camera_params.position );
+		inverse_rotation_matrix * Mat4f::MakeTranslation( drawing_info.camera_params.position );
 
 	var Mat4f camera_space_planes_matrix= camera_inverse_space_matrix.Transpose();
 
@@ -390,8 +388,7 @@ fn WorldDrawerGL::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDrawin
 					.rotation_and_projection_matrix= mirror_rotation_matrix * rotation_matrix * projection_matrix_for_mirrored_geometry,
 					.camera_projection_matrix= projection_matrix_for_mirrored_geometry,
 					.view_matrix= view_matrix_for_mirrored_geometry,
-					.camera_inverse_projection_matrix= ust::null_optional, // For now can't calculate such matrix.
-					.camera_inverse_view_matrix= ust::null_optional,
+					.camera_inverse_rotation_and_projection_matrix= ust::null_optional, // For now can't calculate such matrix.
 				},
 				camera_clip_planes_mirrored,
 				false, // Don't draw first person weapon in mirrors.
@@ -479,8 +476,7 @@ fn WorldDrawerGL::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDrawin
 			.rotation_and_projection_matrix= rotation_and_projection_matrix,
 			.camera_projection_matrix= camera_projection_matrix,
 			.view_matrix= view_matrix,
-			.camera_inverse_projection_matrix= camera_inverse_projection_matrix,
-			.camera_inverse_view_matrix= camera_inverse_view_matrix,
+			.camera_inverse_rotation_and_projection_matrix= camera_inverse_rotation_and_projection_matrix,
 		},
 		camera_clip_planes,
 		true, // Draw first person weapon.
@@ -999,7 +995,7 @@ fn WorldDrawerGL::DrawPartial(
 
 	if( fog_enabled && map_data.global_fog_enabled )
 	{
-		if_var( &m : camera_matrices.camera_inverse_projection_matrix )
+		if_var( &m : camera_matrices.camera_inverse_rotation_and_projection_matrix )
 		{
 			DrawGlobalFog( depth_buffer_copy_texture_, global_fog_shader_, viewport_size, m, fog_color );
 		}
@@ -1033,7 +1029,7 @@ fn WorldDrawerGL::DrawPartial(
 	// On all maps of the original game local fog volumes look mostly fine even considering incorrect interaction with global fog.
 	if( fog_enabled && !visible_local_fog_volumes_.empty() )
 	{
-		if_var( &m : camera_matrices.camera_inverse_view_matrix )
+		if_var( &m : camera_matrices.camera_inverse_rotation_and_projection_matrix )
 		{
 			DrawLocalFog(
 				depth_buffer_copy_texture_,
@@ -3297,7 +3293,7 @@ fn DrawGlobalFog(
 	Texture &mut depth_buffer_copy_texture,
 	ShaderProgram &mut shader,
 	[ u32, 2 ] viewport_size,
-	Mat4f& camera_inverse_projection_matrix,
+	Mat4f& camera_inverse_rotation_and_projection_matrix,
 	[ f32, 3 ]& fog_color )
 {
 	var u32 texture_slot= 0u;
@@ -3317,8 +3313,8 @@ fn DrawGlobalFog(
 		// Map depth values from range [ 0; 1 ] to range [ -1; 1 ].
 		Mat4f::MakeScale( Vec3f( 1.0f, 1.0f, 2.0f ) ) *
 		Mat4f::MakeTranslation( Vec3f( 0.0f, 0.0f, -1.0f ) ) *
-		// Convert into world space.
-		camera_inverse_projection_matrix;
+		// Convert into world space (except camera translation).
+		camera_inverse_rotation_and_projection_matrix;
 
 	shader.SetUniform( "fu_inverse_projection_matrix", full_matrix );
 
@@ -3336,7 +3332,7 @@ fn DrawLocalFog(
 	[ u32, 2 ] viewport_size,
 	Vec3f& camera_position,
 	Mat4f& view_matrix,
-	Mat4f& camera_inverse_view_matrix,
+	Mat4f& camera_inverse_rotation_and_projection_matrix,
 	bool mirrored,
 	[ f32, 3 ]& fog_color_additive )
 {
@@ -3380,7 +3376,8 @@ fn DrawLocalFog(
 			Mat4f::MakeScale( Vec3f( 1.0f, 1.0f, 2.0f ) ) *
 			Mat4f::MakeTranslation( Vec3f( 0.0f, 0.0f, -1.0f ) ) *
 			// Convert into world space.
-			camera_inverse_view_matrix *
+			camera_inverse_rotation_and_projection_matrix *
+			Mat4f::MakeTranslation( camera_position ) *
 			// Convert into box space.
 			box_space_matrix;
 
