@@ -1,7 +1,7 @@
 #version 330
 
 // Use the same uniforms as in the corresponding vertex shader.
-uniform vec3 vu_fog_volume_scale;
+uniform bool fu_use_box_shaped_fog;
 uniform vec3 fu_box_space_camera_position;
 
 uniform vec2 fu_inverse_viewport_size;
@@ -174,9 +174,7 @@ void main()
 	vec2 intersection_near_far_distances;
 	float fog_density_scale;
 
-	// HACK! In the original game all fog volumes are ellipsoids.
-	// But we use cubes for flat volumes, used on some maps. Ellipsoids for them look ugly.
-	if( vu_fog_volume_scale.z * 2.0 < min( vu_fog_volume_scale.x, vu_fog_volume_scale.y ) )
+	if( fu_use_box_shaped_fog )
 	{
 		// Find near/far distance of ray with box intersection.
 		// The difference between these two values is distance travelled within this fog volume.
