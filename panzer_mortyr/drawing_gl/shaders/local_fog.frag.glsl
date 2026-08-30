@@ -1,11 +1,11 @@
 #version 330
 
-// Use the same uniforms as in the corresponding vertex shader.
-uniform bool fu_use_box_shaped_fog;
-uniform vec3 fu_box_space_camera_position;
-
 uniform sampler2D fu_depth_texture;
 uniform mat4 fu_box_space_matrix;
+
+uniform vec3 fu_box_space_camera_position;
+
+uniform bool fu_use_box_shaped_fog;
 
 uniform vec3 fu_fog_color;
 
@@ -153,8 +153,7 @@ void main()
 	//
 
 	float depth_buffer_value= texelFetch( fu_depth_texture, ivec2( gl_FragCoord.xy ), 0 ).r;
-	vec4 clip_space_position= vec4( gl_FragCoord.xy, depth_buffer_value, 1.0 );
-	vec4 box_space_position4= clip_space_position * fu_box_space_matrix;
+	vec4 box_space_position4= vec4( gl_FragCoord.xy, depth_buffer_value, 1.0 ) * fu_box_space_matrix;
 	vec3 box_space_position= box_space_position4.xyz / box_space_position4.w;
 
 	// Perform calculations in space of the box, so that it's assumed that we search for intersection with a cube or sphere with min/max dimensions equal to [-1;1].
@@ -162,8 +161,8 @@ void main()
 	// Doing so allows reducing fog density while tracing along the longest axis of a box and preserving density when tracing along the shortest axis.
 
 	vec3 box_space_ray= box_space_position - fu_box_space_camera_position;
-	vec3 box_space_ray_normalized= normalize( box_space_ray );
 	float box_space_fragment_distance= length( box_space_ray );
+	vec3 box_space_ray_normalized= box_space_ray / box_space_fragment_distance;
 
 	vec2 intersection_near_far_distances;
 	float fog_density_scale;
