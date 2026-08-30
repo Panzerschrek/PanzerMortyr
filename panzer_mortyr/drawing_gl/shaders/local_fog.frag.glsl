@@ -165,18 +165,20 @@ void main()
 	vec4 clip_space_position= vec4( ( screen_coords * 2.0 - vec2( 1.0, 1.0 ) ), depth_value_symmetric, 1.0 );
 	vec4 view_space_position= clip_space_position * fu_inverse_projection_matrix;
 
-	float linear_fragment_distance= length( view_space_position.xyz ) / view_space_position.w;
+	//float linear_fragment_distance= length( view_space_position.xyz ) / view_space_position.w;
 
-	vec3 view_ray_normalized= normalize( f_position - fu_camera_position );
+	//vec3 view_ray_normalized= normalize( f_position - fu_camera_position );
+
+	vec3 box_space_position= ( ( view_space_position.xyz / view_space_position.w ) - vu_fog_volume_offset ) / vu_fog_volume_scale;
 
 	// Perform calculations in space of the box, so that it's assumed that we search for intersection with a cube or sphere with min/max dimensions equal to [-1;1].
 	// It seems like the original game does the same.
 	// Doing so allows reducing fog density while tracing along the longest axis of a box and preserving density when tracing along the shortest axis.
 
-	vec3 box_space_ray= view_ray_normalized / vu_fog_volume_scale;
-	vec3 box_space_ray_normalized= normalize( box_space_ray );
 	vec3 box_space_camera_position= ( fu_camera_position - vu_fog_volume_offset ) / vu_fog_volume_scale;
-	float box_space_fragment_distance= linear_fragment_distance * length( box_space_ray );
+	vec3 box_space_ray= box_space_position - box_space_camera_position;
+	vec3 box_space_ray_normalized= normalize( box_space_ray );
+	float box_space_fragment_distance= length( box_space_ray );
 
 	vec2 intersection_near_far_distances;
 	float fog_density_scale;
