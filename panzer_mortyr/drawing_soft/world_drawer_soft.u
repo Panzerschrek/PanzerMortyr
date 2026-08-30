@@ -916,21 +916,55 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 				vertex_lights,
 				vertices_clipped );
 		}
-		else if( is_fully_inside_view_frustum )
+		else if( drawing_info.fullscreen_effect == WorldDrawingInfo::FullscreenEffect::InfraredVision )
 		{
-			// This model object is fully inside view frustum. Don't need to perform clipping for each of its triangles.
-			DrawModelTrianglesWithoutFrustumPlanesClipping( rasterizer, model, vertices_transformed, vertex_lights );
+			// If infrared vision effect is active, draw all models with stub white texture.
+
+			auto& texture= c_white_texture_1x1;
+			if( is_fully_inside_view_frustum )
+			{
+				// This model object is fully inside view frustum. Don't need to perform clipping for each of its triangles.
+				DrawModelTrianglesWithoutFrustumPlanesClipping(
+					rasterizer, model, texture, vertices_transformed, vertex_lights );
+			}
+			else
+			{
+				// Require frustum clipping.
+				DrawModelTrianglesWithFrustumPlanesClipping(
+					rasterizer,
+					frustum_side_clip_planes,
+					model,
+					texture,
+					vertices_transformed,
+					vertex_lights,
+					vertices_clipped );
+			}
 		}
 		else
 		{
-			// Require frustum clipping.
-			DrawModelTrianglesWithFrustumPlanesClipping(
-				rasterizer,
-				frustum_side_clip_planes,
-				model,
-				vertices_transformed,
-				vertex_lights,
-				vertices_clipped );
+			variant_visit( &texture_ptr : model.texture )
+			{
+				auto& texture= texture_ptr.deref();
+
+				if( is_fully_inside_view_frustum )
+				{
+					// This model object is fully inside view frustum. Don't need to perform clipping for each of its triangles.
+					DrawModelTrianglesWithoutFrustumPlanesClipping(
+						rasterizer, model, texture, vertices_transformed, vertex_lights );
+				}
+				else
+				{
+					// Require frustum clipping.
+					DrawModelTrianglesWithFrustumPlanesClipping(
+						rasterizer,
+						frustum_side_clip_planes,
+						model,
+						texture,
+						vertices_transformed,
+						vertex_lights,
+						vertices_clipped );
+				}
+			}
 		}
 
 		++stats.num_visible_models;
@@ -2171,106 +2205,106 @@ fn DrawMapTrianglesTemplated(
 // This function is optimized for case where no frustum planes clipping is necessary for the given model.
 // Its triangles are just passed directly into rasterization code.
 // Vertices of given model should have positive Z and their projection should be roughly within screen bounds!
+template</type TextureType/>
 fn DrawModelTrianglesWithoutFrustumPlanesClipping(
 	Rasterizer& rasterizer,
 	ModelSoft& model,
+	TextureType& texture,
 	ust::array_view_imut</Vec3f/> vertices_transformed,
 	ust::array_view_imut</ VertexLightWithFog /> vertex_light )
 {
-	variant_visit( &texture_ptr : model.texture )
+	debug_assert( model.texture_coordinates.size() == vertices_transformed.size() );
+	debug_assert( model.texture_coordinates.size() == vertex_light.size() );
+
+	foreach( &triangle : model.triangles )
 	{
-		auto& texture= texture_ptr.deref();
+		var [ Rasterizer::Vertex, 3 ] v
+		[
+			{
+				.position= vertices_transformed[ size_type( triangle[0] ) ],
+				.tex_coord= model.texture_coordinates[ size_type( triangle[0] ) ],
+				.light= vertex_light[ size_type( triangle[0] ) ],
+			},
+			{
+				.position= vertices_transformed[ size_type( triangle[1] ) ],
+				.tex_coord= model.texture_coordinates[ size_type( triangle[1] ) ],
+				.light= vertex_light[ size_type( triangle[1] ) ],
+			},
+			{
+				.position= vertices_transformed[ size_type( triangle[2] ) ],
+				.tex_coord= model.texture_coordinates[ size_type( triangle[2] ) ],
+				.light= vertex_light[ size_type( triangle[2] ) ],
+			},
+		];
 
-		foreach( &triangle : model.triangles )
-		{
-			var [ Rasterizer::Vertex, 3 ] v
-			[
-				{
-					.position= vertices_transformed[ size_type( triangle[0] ) ],
-					.tex_coord= model.texture_coordinates[ size_type( triangle[0] ) ],
-					.light= vertex_light[ size_type( triangle[0] ) ],
-				},
-				{
-					.position= vertices_transformed[ size_type( triangle[1] ) ],
-					.tex_coord= model.texture_coordinates[ size_type( triangle[1] ) ],
-					.light= vertex_light[ size_type( triangle[1] ) ],
-				},
-				{
-					.position= vertices_transformed[ size_type( triangle[2] ) ],
-					.tex_coord= model.texture_coordinates[ size_type( triangle[2] ) ],
-					.light= vertex_light[ size_type( triangle[2] ) ],
-				},
-			];
+		debug_assert( v[0].position.z > 0.0f );
+		debug_assert( v[1].position.z > 0.0f );
+		debug_assert( v[2].position.z > 0.0f );
 
-			debug_assert( v[0].position.z > 0.0f );
-			debug_assert( v[1].position.z > 0.0f );
-			debug_assert( v[2].position.z > 0.0f );
-
-			RasterizeTriangleWithSubdivisionAndInterpolationMethodSelection</
-				Rasterizer::BlendingMode::None,
-				Rasterizer::DepthWriteMode::Yes />(
-				rasterizer, v[0], v[1], v[2], texture );
-		}
+		RasterizeTriangleWithSubdivisionAndInterpolationMethodSelection</
+			Rasterizer::BlendingMode::None,
+			Rasterizer::DepthWriteMode::Yes />(
+			rasterizer, v[0], v[1], v[2], texture );
 	}
 }
 
+template</type TextureType/>
 fn DrawModelTrianglesWithFrustumPlanesClipping(
 	Rasterizer& rasterizer,
 	FrustumSideClipPlanes& frustum_side_clip_planes,
 	ModelSoft& model,
+	TextureType& texture,
 	ust::array_view_imut</Vec3f/> vertices_transformed,
 	ust::array_view_imut</ VertexLightWithFog /> vertex_light,
 	TriangleVerticesClippedPair &mut vertices_clipped )
 {
-	variant_visit( &texture_ptr : model.texture )
+	debug_assert( model.texture_coordinates.size() == vertices_transformed.size() );
+	debug_assert( model.texture_coordinates.size() == vertex_light.size() );
+
+	foreach( &triangle : model.triangles )
 	{
-		auto& texture= texture_ptr.deref();
+		vertices_clipped[0][0]=
+			Rasterizer::Vertex
+			{
+				.position= vertices_transformed[ size_type( triangle[0] ) ],
+				.tex_coord= model.texture_coordinates[ size_type( triangle[0] ) ],
+				.light= vertex_light[ size_type( triangle[0] ) ],
+			};
 
-		foreach( &triangle : model.triangles )
+		vertices_clipped[0][1]=
+			Rasterizer::Vertex
+			{
+				.position= vertices_transformed[ size_type( triangle[1] ) ],
+				.tex_coord= model.texture_coordinates[ size_type( triangle[1] ) ],
+				.light= vertex_light[ size_type( triangle[1] ) ],
+			};
+
+		vertices_clipped[0][2]=
+			Rasterizer::Vertex
+			{
+				.position= vertices_transformed[ size_type( triangle[2] ) ],
+				.tex_coord= model.texture_coordinates[ size_type( triangle[2] ) ],
+				.light= vertex_light[ size_type( triangle[2] ) ],
+			};
+
+		var size_type num_vertices=
+			ClipPolygonByNearZAndFrustumSidePlanes( frustum_side_clip_planes, 3s, vertices_clipped );
+
+		if( num_vertices < 3s )
 		{
-			vertices_clipped[0][0]=
-				Rasterizer::Vertex
-				{
-					.position= vertices_transformed[ size_type( triangle[0] ) ],
-					.tex_coord= model.texture_coordinates[ size_type( triangle[0] ) ],
-					.light= vertex_light[ size_type( triangle[0] ) ],
-				};
+			continue;
+		}
 
-			vertices_clipped[0][1]=
-				Rasterizer::Vertex
-				{
-					.position= vertices_transformed[ size_type( triangle[1] ) ],
-					.tex_coord= model.texture_coordinates[ size_type( triangle[1] ) ],
-					.light= vertex_light[ size_type( triangle[1] ) ],
-				};
-
-			vertices_clipped[0][2]=
-				Rasterizer::Vertex
-				{
-					.position= vertices_transformed[ size_type( triangle[2] ) ],
-					.tex_coord= model.texture_coordinates[ size_type( triangle[2] ) ],
-					.light= vertex_light[ size_type( triangle[2] ) ],
-				};
-
-			var size_type num_vertices=
-				ClipPolygonByNearZAndFrustumSidePlanes( frustum_side_clip_planes, 3s, vertices_clipped );
-
-			if( num_vertices < 3s )
-			{
-				continue;
-			}
-
-			for( auto mut i= 2s; i < num_vertices; ++i )
-			{
-				RasterizeTriangleWithSubdivisionAndInterpolationMethodSelection</
-					Rasterizer::BlendingMode::None,
-					Rasterizer::DepthWriteMode::Yes />(
-					rasterizer,
-					cast_imut(vertices_clipped[1])[0],
-					cast_imut(vertices_clipped[1])[ i - 1s ],
-					cast_imut(vertices_clipped[1])[ i ],
-					texture );
-			}
+		for( auto mut i= 2s; i < num_vertices; ++i )
+		{
+			RasterizeTriangleWithSubdivisionAndInterpolationMethodSelection</
+				Rasterizer::BlendingMode::None,
+				Rasterizer::DepthWriteMode::Yes />(
+				rasterizer,
+				cast_imut(vertices_clipped[1])[0],
+				cast_imut(vertices_clipped[1])[ i - 1s ],
+				cast_imut(vertices_clipped[1])[ i ],
+				texture );
 		}
 	}
 }
@@ -3034,5 +3068,7 @@ fn CalculateViewSpaceFrustumSideClipPlanes( [ u32, 2 ]& viewport_size ) : [ Plan
 
 // Move Z near plane a little bit forward so that no actual geometry can lay on it.
 var f32 constexpr c_z_near_for_clipping= 1.25f;
+
+var tup[ Color32SquareTexture</ 0s /> ] c_white_texture_1x1[ [ [ 0xFFFFFFFFu ] ] ] ;
 
 } // namespace PM
