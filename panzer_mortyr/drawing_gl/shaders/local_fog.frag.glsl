@@ -4,7 +4,6 @@
 uniform bool fu_use_box_shaped_fog;
 uniform vec3 fu_box_space_camera_position;
 
-uniform vec2 fu_inverse_viewport_size;
 uniform sampler2D fu_depth_texture;
 uniform mat4 fu_box_space_matrix;
 
@@ -153,13 +152,8 @@ void main()
 	// This code should be kept synchronized with code calculating local fog for semitransparent geometry!
 	//
 
-	// Calculate linear distance to the fragment stored in the depth buffer.
-
-	vec2 screen_coords= gl_FragCoord.xy * fu_inverse_viewport_size;
-
 	float depth_buffer_value= texelFetch( fu_depth_texture, ivec2( gl_FragCoord.xy ), 0 ).r;
-	float depth_value_symmetric= depth_buffer_value * 2.0 - 1.0; // in -1 to 1 range
-	vec4 clip_space_position= vec4( ( screen_coords * 2.0 - vec2( 1.0, 1.0 ) ), depth_value_symmetric, 1.0 );
+	vec4 clip_space_position= vec4( gl_FragCoord.xy, depth_buffer_value, 1.0 );
 	vec4 box_space_position4= clip_space_position * fu_box_space_matrix;
 	vec3 box_space_position= box_space_position4.xyz / box_space_position4.w;
 
