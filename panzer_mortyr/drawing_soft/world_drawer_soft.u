@@ -122,6 +122,8 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 
 	var ust::array_view_mut</bool/> highlighted_cluster_flags= map_data_full.highlighted_cluster_flags;
 
+	auto &mut textures_with_applied_caustics= map_data_full.textures_with_applied_caustics;
+
 	var LightingModifiers lighting_modifiers=
 		CalculateLightingModifiers( settings_.lock_imut().deref(), drawing_info.fullscreen_effect );
 
@@ -252,6 +254,17 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 		}
 	}
 
+	foreach( pair : textures_with_applied_caustics )
+	{
+		var Color32WorldTextureWithMips& src_texture= map_data.textures[ size_type( pair.key() ) ];
+
+		var Color32WorldTextureWithMips &mut dst_texture= pair.value().deref();
+
+		// TODO - apply caustics properly.
+
+		dst_texture[0]= src_texture[0];
+	}
+
 	foreach( &mut flag : highlighted_cluster_flags )
 	{
 		flag= false;
@@ -281,6 +294,8 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 
 		if( visible_room_cluster_flags[ i ] )
 		{
+			var bool draw_with_caustics= room_cluster.contents == ZvoxCluster::c_contents_water;
+
 			for( auto mut j= 0s; j < num_clusters_in_group; ++j )
 			{
 				var size_type cluster_index= i + j;
@@ -337,19 +352,55 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 					}
 				}
 
-				DrawMapClusterTriangles(
-					rasterizer,
-					camera_position_for_fog.as_ref(),
-					view_matrix,
-					frustum_side_clip_planes,
-					map_data,
-					cluster_index,
-					static_lighting_modifier,
-					cluster_dynamic_light_sources_,
-					transformed_vertices_,
-					vertex_lights_,
-					vertices_clipped,
-					stats );
+				if( draw_with_caustics )
+				{
+					var ClusterDrawDataSoft& cluster_draw_data= map_data.clusters_draw_data[ cluster_index ];
+
+					auto cluster_vertices=
+						map_data.vertices.range().subrange(
+							size_type( cluster_draw_data.geometry_buffer_chunk.first_vertex_index ),
+							size_type( cluster_draw_data.geometry_buffer_chunk.first_vertex_index +
+								cluster_draw_data.geometry_buffer_chunk.num_vertices ) );
+
+					auto cluster_indices=
+						map_data.indices.range().subrange(
+							size_type( cluster_draw_data.geometry_buffer_chunk.first_index ),
+							size_type( cluster_draw_data.geometry_buffer_chunk.first_index +
+								cluster_draw_data.geometry_buffer_chunk.num_indices ) );
+
+					DrawMapTrianglesWithCaustics(
+						rasterizer,
+						camera_position_for_fog.as_ref(),
+						view_matrix,
+						frustum_side_clip_planes,
+						textures_with_applied_caustics,
+						cluster_vertices,
+						cluster_indices,
+						static_lighting_modifier,
+						dynamic_light_sources,
+						transformed_vertices_,
+						vertex_lights_,
+						vertices_clipped );
+
+					++stats.num_total_visible_clusters;
+					stats.num_visible_map_triangles+= u32( cluster_indices.size() ) / 3u;
+				}
+				else
+				{
+					DrawMapClusterTriangles(
+						rasterizer,
+						camera_position_for_fog.as_ref(),
+						view_matrix,
+						frustum_side_clip_planes,
+						map_data,
+						cluster_index,
+						static_lighting_modifier,
+						cluster_dynamic_light_sources_,
+						transformed_vertices_,
+						vertex_lights_,
+						vertices_clipped,
+						stats );
+				}
 
 				var ClusterDrawDataSoft& cluster_draw_data= map_data.clusters_draw_data[ cluster_index ];
 
@@ -2255,6 +2306,91 @@ fn DrawMapTrianglesTemplated(
 		for( auto mut i= 2s; i < num_vertices; ++i )
 		{
 			RasterizeTriangleWithSubdivisionAndInterpolationMethodSelection</ blending_mode, depth_write_mode />(
+				rasterizer,
+				cast_imut(vertices_clipped[1])[0],
+				cast_imut(vertices_clipped[1])[ i - 1s ],
+				cast_imut(vertices_clipped[1])[ i ],
+				texture );
+		}
+	}
+}
+
+fn DrawMapTrianglesWithCaustics(
+	Rasterizer& rasterizer,
+	ust::optional_ref_imut</Vec3f/> camera_position_for_fog,
+	Mat4f& view_matrix,
+	FrustumSideClipPlanes& frustum_side_clip_planes,
+	ust::hash_map</ u32, ust::box</ Color32WorldTextureWithMips /> />& textures,
+	ust::array_view_imut</MapVertex/> vertices,
+	ust::array_view_imut</u16/> indices,
+	LightingModifier& static_lighting_modifier,
+	ust::array_view_imut</ DynamicLightSourceSoft /> dynamic_light_sources,
+	ust::vector</Vec3f/> &mut vertices_transformed,
+	ust::vector</ VertexLightWithFog /> &mut vertex_lights,
+	TriangleVerticesClippedPair &mut vertices_clipped )
+{
+	// Transform all vertices and apply light for them first.
+	// Do this in separate loop to be able to read transformed and lit vertices for more than one triangle.
+
+	auto vertices_transformed_range= EnsureTransformedVerticesCapacity( vertices_transformed, vertices.size() );
+	TransformMapVertices( vertices, vertices_transformed_range, view_matrix );
+
+	auto vertex_lights_range= EnsureVertexLightsCapacity( vertex_lights, vertices.size() );
+	CalculateLightForMapVertices( vertices, vertex_lights_range, static_lighting_modifier, dynamic_light_sources );
+
+	if_var( &camera_position : camera_position_for_fog )
+	{
+		CalculateFogDensityForMapVertices( vertices, vertex_lights_range, camera_position );
+	}
+
+	// After positions and light is prepared, draw triangles.
+
+	for( auto mut t= 0s; t + 3s <= indices.size(); t+= 3s )
+	{
+		var [ u16, 3 ] triangle_indices[ indices[ t + 0s ], indices[ t + 1s ], indices[ t + 2s ] ];
+
+		var MapVertex& v0= vertices[ size_type( triangle_indices[0] ) ];
+		var MapVertex& v1= vertices[ size_type( triangle_indices[1] ) ];
+		var MapVertex& v2= vertices[ size_type( triangle_indices[2] ) ];
+
+		vertices_clipped[0][0]=
+			Rasterizer::Vertex
+			{
+				.position= vertices_transformed_range[ size_type( triangle_indices[0] ) ],
+				.tex_coord( v0.tex_coordinates[0], v0.tex_coordinates[1] ),
+				.light= vertex_lights_range[ size_type( triangle_indices[0] ) ],
+			};
+
+		vertices_clipped[0][1]=
+			Rasterizer::Vertex
+			{
+				.position= vertices_transformed_range[ size_type( triangle_indices[1] ) ],
+				.tex_coord( v1.tex_coordinates[0], v1.tex_coordinates[1] ),
+				.light= vertex_lights_range[ size_type( triangle_indices[1] ) ],
+			};
+
+		vertices_clipped[0][2]=
+			Rasterizer::Vertex
+			{
+				.position= vertices_transformed_range[ size_type( triangle_indices[2] ) ],
+				.tex_coord( v2.tex_coordinates[0], v2.tex_coordinates[1] ),
+				.light= vertex_lights_range[ size_type( triangle_indices[2] ) ],
+			};
+
+		var size_type num_vertices=
+			ClipPolygonByNearZAndFrustumSidePlanes( frustum_side_clip_planes, 3s, vertices_clipped );
+
+		if( num_vertices < 3s )
+		{
+			continue;
+		}
+
+		var Color32WorldTextureWithMips& texture= textures[ u32( v0.tex_coordinates[2] ) ].deref();
+
+		for( auto mut i= 2s; i < num_vertices; ++i )
+		{
+			RasterizeTriangleWithSubdivisionAndInterpolationMethodSelection</
+				Rasterizer::BlendingMode::None, Rasterizer::DepthWriteMode::Yes />(
 				rasterizer,
 				cast_imut(vertices_clipped[1])[0],
 				cast_imut(vertices_clipped[1])[ i - 1s ],
