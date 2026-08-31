@@ -98,6 +98,7 @@ PanzerMortyr rendering:
 * Allow switching to a fullscreen mode with refresh rate change.
 * Implement visual effect specific for omni protection item (multiplayer-only power-up).
 * Consider speeding-up rain and snow particles fetching by cutting the fetch bbox by the view frustum.
+* Consider reducing power of local fog volumes (additive) due to global fog.
 
 PanzerMortyr OpenGL rendering:
 
