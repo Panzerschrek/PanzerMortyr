@@ -9,26 +9,63 @@ fn ApplyCausticsTexture(
 	Color32WorldTextureWithMips &mut dst_texture )
 {
 	var size_type dst_size= typeinfo</ Color32WorldTextureMip0 />.element_count;
-	for( auto mut dst_y= 0s; dst_y < dst_size; ++dst_y )
+
+	// Caustics texture is 2 times smaller than map texture.
+	// Use this fact to write optimized loop doing caustics application.
+	// Read a value from caustics texture, prepare it and apply it to each pixel in a 2x2 region.
+	//
+	// This code is well-optimized by the compiler (vector instructions are used).
+
+	static_assert( size_type( c_caustics_texture_size ) * 2s == dst_size );
+
+	for( auto mut src_y= 0s; src_y < size_type( c_caustics_texture_size ); ++src_y )
 	{
-		var size_type src_y= dst_y * size_type( c_caustics_texture_size ) / dst_size;
-
-		for( auto mut dst_x= 0s; dst_x < dst_size; ++dst_x )
+		for( auto mut src_x= 0s; src_x < size_type( c_caustics_texture_size ); ++src_x )
 		{
-			var size_type src_x= dst_x * size_type( c_caustics_texture_size ) / dst_size;
-
-			var RGBAColor src_color= Color32ToComponents( src_texture[ dst_y ][ dst_x ] );
 			var u8 caustics_value= caustics_texture[ src_y ][ src_x ];
-
 			var u32 scale= u32( caustics_value ) * 205u + 13261u;
 
-			var RGBAColor mut dst_color= zero_init;
-			for( auto mut c= 0u; c < 4u; ++c )
-			{
-				dst_color[c]= u8( ( u32( src_color[c] ) * scale ) >> 16 );
-			}
+			var RGBAColor c00= Color32ToComponents( src_texture[ src_y * 2s + 0s ][ src_x * 2s + 0s ] );
+			var RGBAColor c01= Color32ToComponents( src_texture[ src_y * 2s + 0s ][ src_x * 2s + 1s ] );
+			var RGBAColor c10= Color32ToComponents( src_texture[ src_y * 2s + 1s ][ src_x * 2s + 0s ] );
+			var RGBAColor c11= Color32ToComponents( src_texture[ src_y * 2s + 1s ][ src_x * 2s + 1s ] );
 
-			dst_texture[0][ dst_y ][ dst_x ]=  Color32FromComponents( dst_color );
+			var RGBAColor dst00
+			[
+				( ( u32( c00[0] ) * scale ) >> 16 ),
+				( ( u32( c00[1] ) * scale ) >> 16 ),
+				( ( u32( c00[2] ) * scale ) >> 16 ),
+				( ( u32( c00[3] ) * scale ) >> 16 ),
+			];
+
+			var RGBAColor dst01
+			[
+				( ( u32( c01[0] ) * scale ) >> 16 ),
+				( ( u32( c01[1] ) * scale ) >> 16 ),
+				( ( u32( c01[2] ) * scale ) >> 16 ),
+				( ( u32( c01[3] ) * scale ) >> 16 ),
+			];
+
+			var RGBAColor dst10
+			[
+				( ( u32( c10[0] ) * scale ) >> 16 ),
+				( ( u32( c10[1] ) * scale ) >> 16 ),
+				( ( u32( c10[2] ) * scale ) >> 16 ),
+				( ( u32( c10[3] ) * scale ) >> 16 ),
+			];
+
+			var RGBAColor dst11
+			[
+				( ( u32( c11[0] ) * scale ) >> 16 ),
+				( ( u32( c11[1] ) * scale ) >> 16 ),
+				( ( u32( c11[2] ) * scale ) >> 16 ),
+				( ( u32( c11[3] ) * scale ) >> 16 ),
+			];
+
+			dst_texture[0][ src_y * 2s + 0s ][ src_x * 2s + 0s ]= Color32FromComponents( dst00 );
+			dst_texture[0][ src_y * 2s + 0s ][ src_x * 2s + 1s ]= Color32FromComponents( dst01 );
+			dst_texture[0][ src_y * 2s + 1s ][ src_x * 2s + 0s ]= Color32FromComponents( dst10 );
+			dst_texture[0][ src_y * 2s + 1s ][ src_x * 2s + 1s ]= Color32FromComponents( dst11 );
 		}
 	}
 
