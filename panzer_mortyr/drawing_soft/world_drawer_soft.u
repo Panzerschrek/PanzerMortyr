@@ -232,6 +232,8 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 			materials_block,
 			mirror_vertices_,
 			mirror_indices_ );
+
+		PrepareQuadVertexTextureCoordinates( mirror_vertices_ );
 	}
 
 	if_var( &mirror_plane : CalculateMirrorPlane( mirror_vertices_, mirror_indices_ ) )
@@ -302,6 +304,49 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 				TriangleVerticesOrder::Inverse,
 				stats );
 		}
+
+		auto vertices_transformed_range= EnsureTransformedVerticesCapacity( transformed_vertices_, mirror_vertices_.size() );
+		TransformMapVertices( mirror_vertices_, vertices_transformed_range, view_matrix );
+
+		auto vertex_lights_range= EnsureVertexLightsCapacity( vertex_lights_, mirror_indices_.size() );
+		CalculateLightForMapVertices(
+			mirror_vertices_,
+			vertex_lights_range,
+			lighting_modifiers.map,
+			// TODO - apply dynamic light to mirrors.
+			ust::empty_range );
+
+		// TODO - calculate fog for mirror.
+
+		var MapDrawDataSoft& map_data= map_data_.try_deref().map_draw_data;
+
+		var Rasterizer rasterizer(
+			surface,
+			depth_buffer_,
+			ust::make_array(
+				map_data.fog_color[0] * lighting_modifiers.map.scale[0] + lighting_modifiers.map.add[0] * 255.0f,
+				map_data.fog_color[1] * lighting_modifiers.map.scale[1] + lighting_modifiers.map.add[1] * 255.0f,
+				map_data.fog_color[2] * lighting_modifiers.map.scale[2] + lighting_modifiers.map.add[2] * 255.0f,
+				map_data.fog_color[3] ) );
+
+		var Rasterizer::Vertex dummy_vertex
+		{
+			.position= Vec3f::MakeZero(),
+			.tex_coord= Vec2f::MakeZero(),
+			.light[ 0.0f ... ]
+		};
+
+		var TriangleVerticesClippedPair mut vertices_clipped[ [ dummy_vertex ... ], [ dummy_vertex ... ] ];
+
+		DrawMirrorTriangles(
+			rasterizer,
+			frustum_clip_planes,
+			map_data.textures[ size_type( mirror_vertices_.front().tex_coordinates[2] ) ],
+			mirror_vertices_,
+			vertices_transformed_range,
+			vertex_lights_range,
+			mirror_indices_,
+			vertices_clipped );
 	}
 
 	DrawPartial(
@@ -2739,6 +2784,68 @@ fn DrawPreparedMapTrianglesWithCaustics(
 		}
 
 		var Color32WorldTextureWithMips& texture= textures[ u32( v0.tex_coordinates[2] ) ].deref();
+
+		for( auto mut i= 2s; i < num_vertices; ++i )
+		{
+			RasterizeTriangleWithSubdivisionAndInterpolationMethodSelection</
+				Rasterizer::BlendingMode::None, Rasterizer::DepthWriteMode::Yes />(
+				rasterizer,
+				cast_imut(vertices_clipped[1])[0],
+				cast_imut(vertices_clipped[1])[ i - 1s ],
+				cast_imut(vertices_clipped[1])[ i ],
+				texture );
+		}
+	}
+}
+
+fn DrawMirrorTriangles(
+	Rasterizer& rasterizer,
+	FrustumClipPlanes& frustum_clip_planes,
+	Color32WorldTextureWithMips& texture,
+	ust::array_view_imut</MapVertex/> vertices,
+	ust::array_view_imut</Vec3f/> vertices_transformed,
+	ust::array_view_imut</VertexLightWithFog/> vertex_lights,
+	ust::array_view_imut</u16/> indices,
+	TriangleVerticesClippedPair &mut vertices_clipped )
+{
+	for( auto mut t= 0s; t + 3s <= indices.size(); t+= 3s )
+	{
+		var [ u16, 3 ] triangle_indices[ indices[ t + 0s ], indices[ t + 1s ], indices[ t + 2s ] ];
+
+		var MapVertex& v0= vertices[ size_type( triangle_indices[0] ) ];
+		var MapVertex& v1= vertices[ size_type( triangle_indices[1] ) ];
+		var MapVertex& v2= vertices[ size_type( triangle_indices[2] ) ];
+
+		vertices_clipped[0][0]=
+			Rasterizer::Vertex
+			{
+				.position= vertices_transformed[ size_type( triangle_indices[0] ) ],
+				.tex_coord( v0.tex_coordinates[0], v0.tex_coordinates[1] ),
+				.light= vertex_lights[ size_type( triangle_indices[0] ) ],
+			};
+
+		vertices_clipped[0][1]=
+			Rasterizer::Vertex
+			{
+				.position= vertices_transformed[ size_type( triangle_indices[1] ) ],
+				.tex_coord( v1.tex_coordinates[0], v1.tex_coordinates[1] ),
+				.light= vertex_lights[ size_type( triangle_indices[1] ) ],
+			};
+
+		vertices_clipped[0][2]=
+			Rasterizer::Vertex
+			{
+				.position= vertices_transformed[ size_type( triangle_indices[2] ) ],
+				.tex_coord( v2.tex_coordinates[0], v2.tex_coordinates[1] ),
+				.light= vertex_lights[ size_type( triangle_indices[2] ) ],
+			};
+
+		var size_type num_vertices= ClipPolygonByFrustumClipPlanes( frustum_clip_planes, 3s, vertices_clipped );
+
+		if( num_vertices < 3s )
+		{
+			continue;
+		}
 
 		for( auto mut i= 2s; i < num_vertices; ++i )
 		{
