@@ -107,7 +107,8 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 
 	var f32 view_aspect= f32( surface.size[0] ) / f32( surface.size[1] );
 
-	var f32 half_fov_inv_tan= 1.0f / ust::tan( drawing_info.camera_params.fov_x * 0.5f );
+	var f32 half_fov_tan= ust::tan( drawing_info.camera_params.fov_x * 0.5f );
+	var f32 half_fov_inv_tan= 1.0f / half_fov_tan;
 
 	// Build slightly different version of perspective matrix, since we divide coordinates by Z, not by W.
 	var Mat4f camera_projection_matrix
@@ -139,7 +140,8 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 
 	var Mat4f view_matrix= translation_matrix * rotation_and_projection_matrix * viewport_transformation_matrix;
 
-	var f32 half_fov_tan= ust::tan( drawing_info.camera_params.fov_x * 0.5f );
+	var Mat4f camera_space_planes_matrix=
+		( rotation_matrix.Transpose() * Mat4f::MakeTranslation( drawing_info.camera_params.position ) ).Transpose();
 
 	var Mat3f perspective_inverse_matrix
 	{
@@ -212,65 +214,72 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 
 	if_var( &mirror_plane : CalculateMirrorPlane( mirror_vertices_, mirror_indices_ ) )
 	{
-		// Temporary clear color buffer.
-		// TODO - remove this code after mirrors are fully-functional.
-		foreach( &mut pixel : surface.pixels )
+		var Planef camera_space_mirror_plane= mirror_plane * camera_space_planes_matrix;
+
+		if( camera_space_mirror_plane.distance > c_z_near_for_clipping )
 		{
-			pixel= Color32FromComponents( ust::make_array( 0u8, 0u8, 0u8, 0u8 ) );
-		}
-
-		var Mat4f mirror_matrix= Mat4f::MakeMirroring( mirror_plane );
-
-		// Mirror matrix is it's own inverse. So, calculating planes martrix for mirror matrix requires only transposing it.
-		var Mat4f mirror_planes_matrix= mirror_matrix.Transpose();
-
-		var Mat3f mirror_inverse_rotation_matrix
-		{
-			.values
-			[
-				[ mirror_matrix.values[0][0], mirror_matrix.values[1][0], mirror_matrix.values[2][0] ],
-				[ mirror_matrix.values[0][1], mirror_matrix.values[1][1], mirror_matrix.values[2][1] ],
-				[ mirror_matrix.values[0][2], mirror_matrix.values[1][2], mirror_matrix.values[2][2] ],
-			],
-		};
-
-		var CameraClipPlanes camera_clip_planes_mirrored
-		[
-			camera_clip_planes[0] * mirror_planes_matrix,
-			camera_clip_planes[1] * mirror_planes_matrix,
-			camera_clip_planes[2] * mirror_planes_matrix,
-			camera_clip_planes[3] * mirror_planes_matrix,
-			camera_clip_planes[4] * mirror_planes_matrix,
-		];
-
-		var Vec3f camera_position_mirrored= drawing_info.camera_params.position * mirror_matrix;
-
-		var Mat4f view_matrix_for_mirrored_geometry= mirror_matrix * view_matrix;
-
-		// Calculate visibility from mirror point.
-		var size_type visibility_calculator_index= 1s;
-		map_data_.try_deref().map_visibility_calculators[ visibility_calculator_index ].CalculateVisibilityForMirror(
-			CalculateMirrorBounds( mirror_vertices_ ),
-			camera_position_mirrored,
-			view_matrix_for_mirrored_geometry,
-			whole_screen_bounds );
-
-		DrawPartial(
-			surface,
-			visibility_calculator_index,
-			drawing_info,
-			camera_position_mirrored,
-			CameraMatrices
+			// Temporary clear color buffer.
+			// TODO - remove this code after mirrors are fully-functional.
+			foreach( &mut pixel : surface.pixels )
 			{
-				.view_matrix= view_matrix_for_mirrored_geometry,
-				.sky_inverse_transformation_matrix= sky_inverse_transformation_matrix * mirror_inverse_rotation_matrix,
-				.moon_and_stars_matrix= mirror_matrix * rotation_and_projection_matrix * viewport_transformation_matrix,
-			},
-			camera_clip_planes_mirrored,
-			frustum_clip_planes, // TODO - provide modified frustum clip planes.
-			lighting_modifiers,
-			TriangleVerticesOrder::Inverse,
-			stats );
+				pixel= Color32FromComponents( ust::make_array( 0u8, 0u8, 0u8, 0u8 ) );
+			}
+
+			var Mat4f mirror_matrix= Mat4f::MakeMirroring( mirror_plane );
+
+			// Mirror matrix is it's own inverse. So, calculating planes martrix for mirror matrix requires only transposing it.
+			var Mat4f mirror_planes_matrix= mirror_matrix.Transpose();
+
+			var Mat3f mirror_inverse_rotation_matrix
+			{
+				.values
+				[
+					[ mirror_matrix.values[0][0], mirror_matrix.values[1][0], mirror_matrix.values[2][0] ],
+					[ mirror_matrix.values[0][1], mirror_matrix.values[1][1], mirror_matrix.values[2][1] ],
+					[ mirror_matrix.values[0][2], mirror_matrix.values[1][2], mirror_matrix.values[2][2] ],
+				],
+			};
+
+			var CameraClipPlanes camera_clip_planes_mirrored
+			[
+				camera_clip_planes[0] * mirror_planes_matrix,
+				camera_clip_planes[1] * mirror_planes_matrix,
+				camera_clip_planes[2] * mirror_planes_matrix,
+				camera_clip_planes[3] * mirror_planes_matrix,
+				camera_clip_planes[4] * mirror_planes_matrix,
+			];
+
+			var Vec3f camera_position_mirrored= drawing_info.camera_params.position * mirror_matrix;
+
+			var Mat4f view_matrix_for_mirrored_geometry= mirror_matrix * view_matrix;
+
+			// Calculate visibility from mirror point.
+			var size_type visibility_calculator_index= 1s;
+			map_data_.try_deref().map_visibility_calculators[ visibility_calculator_index ].CalculateVisibilityForMirror(
+				CalculateMirrorBounds( mirror_vertices_ ),
+				camera_position_mirrored,
+				view_matrix_for_mirrored_geometry,
+				whole_screen_bounds );
+
+			DrawPartial(
+				surface,
+				visibility_calculator_index,
+				drawing_info,
+				camera_position_mirrored,
+				CameraMatrices
+				{
+					.view_matrix= view_matrix_for_mirrored_geometry,
+					.sky_inverse_transformation_matrix= sky_inverse_transformation_matrix * mirror_inverse_rotation_matrix,
+					.moon_and_stars_matrix= mirror_matrix * rotation_and_projection_matrix * viewport_transformation_matrix,
+				},
+				camera_clip_planes_mirrored,
+				ust::make_tuple(
+					frustum_clip_planes[0],
+					frustum_clip_planes[1] ),
+				lighting_modifiers,
+				TriangleVerticesOrder::Inverse,
+				stats );
+		}
 	}
 
 	DrawPartial(
