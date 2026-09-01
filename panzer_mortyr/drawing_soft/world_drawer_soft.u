@@ -269,6 +269,7 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 			camera_clip_planes_mirrored,
 			frustum_clip_planes, // TODO - provide modified frustum clip planes.
 			lighting_modifiers,
+			TriangleVerticesOrder::Inverse,
 			stats );
 	}
 
@@ -286,6 +287,7 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 		camera_clip_planes,
 		frustum_clip_planes,
 		lighting_modifiers,
+		TriangleVerticesOrder::Direct,
 		stats );
 
 	return stats;
@@ -301,6 +303,7 @@ fn WorldDrawerSoft::DrawPartial(
 	CameraClipPlanes& camera_clip_planes,
 	FrustumClipPlanes& frustum_clip_planes,
 	LightingModifiers& lighting_modifiers,
+	TriangleVerticesOrder vertices_order,
 	WorldDrawingStats &mut stats )
 {
 	if( map_data_.empty() )
@@ -551,6 +554,7 @@ fn WorldDrawerSoft::DrawPartial(
 
 					DrawMapTrianglesWithCaustics(
 						rasterizer,
+						vertices_order,
 						camera_position_for_fog.as_ref(),
 						camera_matrices.view_matrix,
 						frustum_clip_planes,
@@ -570,6 +574,7 @@ fn WorldDrawerSoft::DrawPartial(
 				{
 					DrawMapClusterTriangles(
 						rasterizer,
+						vertices_order,
 						camera_position_for_fog.as_ref(),
 						camera_matrices.view_matrix,
 						frustum_clip_planes,
@@ -593,6 +598,7 @@ fn WorldDrawerSoft::DrawPartial(
 
 					DrawMapTriangles(
 						rasterizer,
+						vertices_order,
 						camera_position_for_fog.as_ref(),
 						camera_matrices.view_matrix,
 						frustum_clip_planes,
@@ -618,6 +624,7 @@ fn WorldDrawerSoft::DrawPartial(
 
 					DrawMapTriangles(
 						rasterizer,
+						vertices_order,
 						camera_position_for_fog.as_ref(),
 						camera_matrices.view_matrix,
 						frustum_clip_planes,
@@ -654,6 +661,7 @@ fn WorldDrawerSoft::DrawPartial(
 
 					DrawMapTriangles(
 						rasterizer,
+						vertices_order,
 						camera_position_for_fog.as_ref(),
 						camera_matrices.view_matrix,
 						frustum_clip_planes,
@@ -786,6 +794,7 @@ fn WorldDrawerSoft::DrawPartial(
 
 		DrawMapClusterTriangles(
 			rasterizer,
+			vertices_order,
 			cluster_camera_position_for_fog.as_ref(),
 			Mat4f::MakeTranslation( dynamic_cluster_object.translation ) * camera_matrices.view_matrix,
 			frustum_clip_planes,
@@ -1248,6 +1257,7 @@ fn WorldDrawerSoft::DrawPartial(
 		// Draw decals as semitransparent triangles, so that they are blended nicely.
 		DrawSemitransparentMapTriangles(
 			rasterizer,
+			vertices_order,
 			camera_position_for_fog.as_ref(),
 			camera_matrices.view_matrix,
 			frustum_clip_planes,
@@ -1430,6 +1440,7 @@ fn WorldDrawerSoft::DrawPartial(
 
 	DrawSemitransparentMapTriangles(
 		rasterizer,
+		vertices_order,
 		camera_position_for_fog.as_ref(),
 		camera_matrices.view_matrix,
 		frustum_clip_planes,
@@ -2300,6 +2311,7 @@ type TriangleVerticesClippedPair= tup[ TriangleVerticesClipped, TriangleVertices
 
 fn DrawMapClusterTriangles(
 	Rasterizer& rasterizer,
+	TriangleVerticesOrder vertices_order,
 	ust::optional_ref_imut</Vec3f/> camera_position_for_fog,
 	Mat4f& view_matrix,
 	FrustumClipPlanes& frustum_clip_planes,
@@ -2319,6 +2331,7 @@ fn DrawMapClusterTriangles(
 
 	DrawMapTriangles(
 		rasterizer,
+		vertices_order,
 		camera_position_for_fog,
 		view_matrix,
 		frustum_clip_planes,
@@ -2337,6 +2350,7 @@ fn DrawMapClusterTriangles(
 
 var ( fn(
 		Rasterizer& rasterizer,
+		TriangleVerticesOrder vertices_order,
 		ust::optional_ref_imut</Vec3f/> camera_position_for_fog,
 		Mat4f& view_matrix,
 		FrustumClipPlanes& frustum_clip_planes,
@@ -2356,6 +2370,7 @@ var ( fn(
 template</ Rasterizer::BlendingMode blending_mode, Rasterizer::DepthWriteMode depth_write_mode />
 fn DrawMapTrianglesTemplated(
 	Rasterizer& rasterizer,
+	TriangleVerticesOrder vertices_order,
 	ust::optional_ref_imut</Vec3f/> camera_position_for_fog,
 	Mat4f& view_matrix,
 	FrustumClipPlanes& frustum_clip_planes,
@@ -2384,9 +2399,56 @@ fn DrawMapTrianglesTemplated(
 
 	// After positions and light is prepared, draw triangles.
 
+	if( vertices_order == TriangleVerticesOrder::Direct )
+	{
+		DrawPreparedMapTriangles</ TriangleVerticesOrder::Direct, blending_mode, depth_write_mode />(
+			rasterizer,
+			frustum_clip_planes,
+			textures,
+			vertices,
+			vertices_transformed_range,
+			vertex_lights_range,
+			indices,
+			vertices_clipped );
+	}
+	else
+	{
+		DrawPreparedMapTriangles</ TriangleVerticesOrder::Inverse, blending_mode, depth_write_mode />(
+			rasterizer,
+			frustum_clip_planes,
+			textures,
+			vertices,
+			vertices_transformed_range,
+			vertex_lights_range,
+			indices,
+			vertices_clipped );
+	}
+}
+
+template</
+	TriangleVerticesOrder vertices_order,
+	Rasterizer::BlendingMode blending_mode,
+	Rasterizer::DepthWriteMode depth_write_mode />
+fn DrawPreparedMapTriangles(
+	Rasterizer& rasterizer,
+	FrustumClipPlanes& frustum_clip_planes,
+	ust::array_view_imut</Color32WorldTextureWithMips/> textures,
+	ust::array_view_imut</MapVertex/> vertices,
+	ust::array_view_imut</Vec3f/> vertices_transformed,
+	ust::array_view_imut</VertexLightWithFog/> vertex_lights,
+	ust::array_view_imut</u16/> indices,
+	TriangleVerticesClippedPair &mut vertices_clipped )
+{
 	for( auto mut t= 0s; t + 3s <= indices.size(); t+= 3s )
 	{
-		var [ u16, 3 ] triangle_indices[ indices[ t + 0s ], indices[ t + 1s ], indices[ t + 2s ] ];
+		var [ u16, 3 ] mut triangle_indices[ indices[ t + 0s ], indices[ t + 1s ], indices[ t + 2s ] ];
+
+		if( vertices_order == TriangleVerticesOrder::Inverse )
+		{
+			auto tmp= triangle_indices[0];
+			triangle_indices[0]= triangle_indices[2];
+			triangle_indices[2]= tmp;
+		}
 
 		var MapVertex& v0= vertices[ size_type( triangle_indices[0] ) ];
 		var MapVertex& v1= vertices[ size_type( triangle_indices[1] ) ];
@@ -2395,25 +2457,25 @@ fn DrawMapTrianglesTemplated(
 		vertices_clipped[0][0]=
 			Rasterizer::Vertex
 			{
-				.position= vertices_transformed_range[ size_type( triangle_indices[0] ) ],
+				.position= vertices_transformed[ size_type( triangle_indices[0] ) ],
 				.tex_coord( v0.tex_coordinates[0], v0.tex_coordinates[1] ),
-				.light= vertex_lights_range[ size_type( triangle_indices[0] ) ],
+				.light= vertex_lights[ size_type( triangle_indices[0] ) ],
 			};
 
 		vertices_clipped[0][1]=
 			Rasterizer::Vertex
 			{
-				.position= vertices_transformed_range[ size_type( triangle_indices[1] ) ],
+				.position= vertices_transformed[ size_type( triangle_indices[1] ) ],
 				.tex_coord( v1.tex_coordinates[0], v1.tex_coordinates[1] ),
-				.light= vertex_lights_range[ size_type( triangle_indices[1] ) ],
+				.light= vertex_lights[ size_type( triangle_indices[1] ) ],
 			};
 
 		vertices_clipped[0][2]=
 			Rasterizer::Vertex
 			{
-				.position= vertices_transformed_range[ size_type( triangle_indices[2] ) ],
+				.position= vertices_transformed[ size_type( triangle_indices[2] ) ],
 				.tex_coord( v2.tex_coordinates[0], v2.tex_coordinates[1] ),
-				.light= vertex_lights_range[ size_type( triangle_indices[2] ) ],
+				.light= vertex_lights[ size_type( triangle_indices[2] ) ],
 			};
 
 		var size_type num_vertices= ClipPolygonByFrustumClipPlanes( frustum_clip_planes, 3s, vertices_clipped );
@@ -2439,6 +2501,7 @@ fn DrawMapTrianglesTemplated(
 
 fn DrawMapTrianglesWithCaustics(
 	Rasterizer& rasterizer,
+	TriangleVerticesOrder vertices_order,
 	ust::optional_ref_imut</Vec3f/> camera_position_for_fog,
 	Mat4f& view_matrix,
 	FrustumClipPlanes& frustum_clip_planes,
@@ -2467,9 +2530,53 @@ fn DrawMapTrianglesWithCaustics(
 
 	// After positions and light is prepared, draw triangles.
 
+	if( vertices_order == TriangleVerticesOrder::Direct )
+	{
+		DrawPreparedMapTrianglesWithCaustics</ TriangleVerticesOrder::Direct />(
+			rasterizer,
+			frustum_clip_planes,
+			textures,
+			vertices,
+			vertices_transformed_range,
+			vertex_lights_range,
+			indices,
+			vertices_clipped );
+	}
+	else
+	{
+		DrawPreparedMapTrianglesWithCaustics</ TriangleVerticesOrder::Inverse />(
+			rasterizer,
+			frustum_clip_planes,
+			textures,
+			vertices,
+			vertices_transformed_range,
+			vertex_lights_range,
+			indices,
+			vertices_clipped );
+	}
+}
+
+template</ TriangleVerticesOrder vertices_order />
+fn DrawPreparedMapTrianglesWithCaustics(
+	Rasterizer& rasterizer,
+	FrustumClipPlanes& frustum_clip_planes,
+	TexturesWithAppliedCaustics& textures,
+	ust::array_view_imut</MapVertex/> vertices,
+	ust::array_view_imut</Vec3f/> vertices_transformed,
+	ust::array_view_imut</VertexLightWithFog/> vertex_lights,
+	ust::array_view_imut</u16/> indices,
+	TriangleVerticesClippedPair &mut vertices_clipped )
+{
 	for( auto mut t= 0s; t + 3s <= indices.size(); t+= 3s )
 	{
-		var [ u16, 3 ] triangle_indices[ indices[ t + 0s ], indices[ t + 1s ], indices[ t + 2s ] ];
+		var [ u16, 3 ] mut triangle_indices[ indices[ t + 0s ], indices[ t + 1s ], indices[ t + 2s ] ];
+
+		if( vertices_order == TriangleVerticesOrder::Inverse )
+		{
+			auto tmp= triangle_indices[0];
+			triangle_indices[0]= triangle_indices[2];
+			triangle_indices[2]= tmp;
+		}
 
 		var MapVertex& v0= vertices[ size_type( triangle_indices[0] ) ];
 		var MapVertex& v1= vertices[ size_type( triangle_indices[1] ) ];
@@ -2478,25 +2585,25 @@ fn DrawMapTrianglesWithCaustics(
 		vertices_clipped[0][0]=
 			Rasterizer::Vertex
 			{
-				.position= vertices_transformed_range[ size_type( triangle_indices[0] ) ],
+				.position= vertices_transformed[ size_type( triangle_indices[0] ) ],
 				.tex_coord( v0.tex_coordinates[0], v0.tex_coordinates[1] ),
-				.light= vertex_lights_range[ size_type( triangle_indices[0] ) ],
+				.light= vertex_lights[ size_type( triangle_indices[0] ) ],
 			};
 
 		vertices_clipped[0][1]=
 			Rasterizer::Vertex
 			{
-				.position= vertices_transformed_range[ size_type( triangle_indices[1] ) ],
+				.position= vertices_transformed[ size_type( triangle_indices[1] ) ],
 				.tex_coord( v1.tex_coordinates[0], v1.tex_coordinates[1] ),
-				.light= vertex_lights_range[ size_type( triangle_indices[1] ) ],
+				.light= vertex_lights[ size_type( triangle_indices[1] ) ],
 			};
 
 		vertices_clipped[0][2]=
 			Rasterizer::Vertex
 			{
-				.position= vertices_transformed_range[ size_type( triangle_indices[2] ) ],
+				.position= vertices_transformed[ size_type( triangle_indices[2] ) ],
 				.tex_coord( v2.tex_coordinates[0], v2.tex_coordinates[1] ),
-				.light= vertex_lights_range[ size_type( triangle_indices[2] ) ],
+				.light= vertex_lights[ size_type( triangle_indices[2] ) ],
 			};
 
 		var size_type num_vertices= ClipPolygonByFrustumClipPlanes( frustum_clip_planes, 3s, vertices_clipped );
