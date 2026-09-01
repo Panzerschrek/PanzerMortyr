@@ -91,6 +91,46 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 		return stats;
 	}
 
+	// Perform per-frame calculations independent on view point.
+	{
+		var MapFullDrawDataSoft &mut map_data_full= map_data_.try_deref();
+		var MapDrawDataSoft& map_data= map_data_full.map_draw_data;
+
+		var ust::array_view_mut</bool/> highlighted_cluster_flags= map_data_full.highlighted_cluster_flags;
+
+		var TexturesWithAppliedCaustics &mut textures_with_applied_caustics=
+			map_data_full.textures_with_applied_caustics;
+
+		foreach( &mut flag : highlighted_cluster_flags )
+		{
+			flag= false;
+		}
+
+		foreach( cluster_index : drawing_info.highlighted_cluster_indices )
+		{
+			if( size_type( cluster_index ) < highlighted_cluster_flags.size() )
+			{
+				highlighted_cluster_flags[ size_type( cluster_index ) ]= true;
+			}
+		}
+
+		if( settings_.lock_imut().deref().r_caustics_enabled && !textures_with_applied_caustics.empty() )
+		{
+			// Just update all textures affected by caustics each frame.
+			// We have not so many of such textures (no more than 10) and code doing so is pretty-fast.
+
+			FetchInterpolatedCausticsTextureLayer(
+				caustics_texture_, drawing_info.game_time_s, interpolated_caustics_layer_ );
+
+			foreach( pair : textures_with_applied_caustics )
+			{
+				var Color32WorldTextureWithMips& src_texture= map_data.textures[ size_type( pair.key() ) ];
+				var Color32WorldTextureWithMips &mut dst_texture= pair.value().deref();
+				ApplyCausticsTexture( interpolated_caustics_layer_, src_texture[0], dst_texture );
+			}
+		}
+	}
+
 	auto window= window_;
 	auto mut window_lock= window.lock_mut();
 	var Color32ImageView surface= window_lock.deref().GetSurface();
@@ -433,9 +473,9 @@ fn WorldDrawerSoft::DrawPartial(
 	var MapVisibilityCalculator &mut visibility_calculator=
 		map_data_full.map_visibility_calculators[ visibility_calculator_index ];
 
-	var ust::array_view_mut</bool/> highlighted_cluster_flags= map_data_full.highlighted_cluster_flags;
+	var ust::array_view_imut</bool/> highlighted_cluster_flags= map_data_full.highlighted_cluster_flags;
 
-	var TexturesWithAppliedCaustics &mut textures_with_applied_caustics= map_data_full.textures_with_applied_caustics;
+	var TexturesWithAppliedCaustics& textures_with_applied_caustics= map_data_full.textures_with_applied_caustics;
 
 	var Rasterizer rasterizer(
 		surface,
@@ -538,36 +578,7 @@ fn WorldDrawerSoft::DrawPartial(
 
 	var bool caustics_enabled= settings_.lock_imut().deref().r_caustics_enabled;
 
-	if( caustics_enabled && !textures_with_applied_caustics.empty() )
-	{
-		// Just update all textures affected by caustics each frame.
-		// We have not so many of such textures (no more than 10) and code doing so is pretty-fast.
-
-		FetchInterpolatedCausticsTextureLayer(
-			caustics_texture_, drawing_info.game_time_s, interpolated_caustics_layer_ );
-
-		foreach( pair : textures_with_applied_caustics )
-		{
-			var Color32WorldTextureWithMips& src_texture= map_data.textures[ size_type( pair.key() ) ];
-			var Color32WorldTextureWithMips &mut dst_texture= pair.value().deref();
-			ApplyCausticsTexture( interpolated_caustics_layer_, src_texture[0], dst_texture );
-		}
-	}
-
-	foreach( &mut flag : highlighted_cluster_flags )
-	{
-		flag= false;
-	}
-
-	foreach( cluster_index : drawing_info.highlighted_cluster_indices )
-	{
-		if( size_type( cluster_index ) < highlighted_cluster_flags.size() )
-		{
-			highlighted_cluster_flags[ size_type( cluster_index ) ]= true;
-		}
-	}
-
-	var f32 highlighted_clusters_light_scale=  2.0f + ust::sin( drawing_info.game_time_s * 6.0f );
+	var f32 highlighted_clusters_light_scale= 2.0f + ust::sin( drawing_info.game_time_s * 6.0f );
 
 	for( auto mut i= 0s; i < map_data.clusters_draw_data.size(); )
 	{
