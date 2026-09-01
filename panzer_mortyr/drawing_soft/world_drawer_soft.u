@@ -3,7 +3,6 @@ import "/scoped_array.iu"
 import "/string_conversions.iu"
 import "../billboards.iu"
 import "../breaking_glass.iu"
-import "../camera_utils.iu"
 import "../clipping.iu"
 import "../cluster_utils.iu"
 import "../decals.iu"
@@ -139,18 +138,58 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 
 	var Mat4f view_matrix= translation_matrix * rotation_and_projection_matrix * viewport_transformation_matrix;
 
+	var f32 half_fov_tan= ust::tan( drawing_info.camera_params.fov_x * 0.5f );
+
+	var Mat3f perspective_inverse_matrix
+	{
+		.values
+		[
+			[ half_fov_tan,                       0.0f, 0.0f ],
+			[         0.0f, half_fov_tan / view_aspect, 0.0f ],
+			[         0.0f,                       0.0f, 1.0f ],
+		]
+	};
+
+	var Mat3f viewport_inverse_transformation_matrix
+	{
+		.values
+		[
+			[ 2.0f / f32( surface.size[0] ),                           0.0f, 0.0f ],
+			[                          0.0f, -2.0f / f32( surface.size[1] ), 0.0f ],
+			[                         -1.0f,                           1.0f, 1.0f ],
+		],
+	};
+
+	// For rotation transpose matrix is inverse matrix.
+	var Mat3f rotation_inverse_matrix
+	{
+		.values
+		[
+			[ rotation_matrix.values[0][0], rotation_matrix.values[1][0], rotation_matrix.values[2][0] ],
+			[ rotation_matrix.values[0][1], rotation_matrix.values[1][1], rotation_matrix.values[2][1] ],
+			[ rotation_matrix.values[0][2], rotation_matrix.values[1][2], rotation_matrix.values[2][2] ],
+		]
+	};
+
+	var Mat3f sky_inverse_transformation_matrix=
+		viewport_inverse_transformation_matrix *
+		perspective_inverse_matrix *
+		rotation_inverse_matrix;
+
+	// World-space clip planes.
+	var CameraClipPlanes camera_clip_planes= CreateCameraClipPlanes( drawing_info.camera_params, view_aspect );
+
 	DrawPartial(
 		surface,
 		drawing_info,
 		drawing_info.camera_params.position,
 		CameraMatrices
 		{
-			.view_aspect= view_aspect,
-			.rotation_matrix= rotation_matrix,
-			.rotation_and_projection_matrix= rotation_and_projection_matrix,
-			.viewport_transformation_matrix= viewport_transformation_matrix,
 			.view_matrix= view_matrix,
+			.sky_inverse_transformation_matrix= sky_inverse_transformation_matrix,
+			.moon_and_stars_matrix= rotation_and_projection_matrix * viewport_transformation_matrix,
 		},
+		camera_clip_planes,
 		lighting_modifiers,
 		stats );
 
@@ -163,6 +202,7 @@ fn WorldDrawerSoft::DrawPartial(
 	WorldDrawingInfo& drawing_info,
 	Vec3f& camera_position,
 	CameraMatrices& camera_matrices,
+	CameraClipPlanes& camera_clip_planes,
 	LightingModifiers& lighting_modifiers,
 	WorldDrawingStats &mut stats )
 {
@@ -207,11 +247,6 @@ fn WorldDrawerSoft::DrawPartial(
 			map_data.fog_color[1] * lighting_modifiers.map.scale[1] + lighting_modifiers.map.add[1] * 255.0f,
 			map_data.fog_color[2] * lighting_modifiers.map.scale[2] + lighting_modifiers.map.add[2] * 255.0f,
 			map_data.fog_color[3] ) );
-
-
-	// World-space clip planes.
-	var CameraClipPlanes camera_clip_planes=
-		CreateCameraClipPlanes( drawing_info.camera_params, camera_matrices.view_aspect );
 
 	visibility_calculator.CalculateVisibility(
 		camera_position,
@@ -271,10 +306,9 @@ fn WorldDrawerSoft::DrawPartial(
 				drawing_info,
 				lighting_modifiers.map,
 				visible_room_cluster_flags,
-				camera_matrices.rotation_matrix,
 				camera_clip_planes,
-				camera_matrices.view_aspect,
 				camera_matrices.view_matrix,
+				camera_matrices.sky_inverse_transformation_matrix,
 				frustum_clip_planes,
 				rasterizer );
 
@@ -285,7 +319,7 @@ fn WorldDrawerSoft::DrawPartial(
 			DrawMoonAndStars(
 				rasterizer,
 				lighting_modifiers.map,
-				camera_matrices.rotation_and_projection_matrix * camera_matrices.viewport_transformation_matrix,
+				camera_matrices.moon_and_stars_matrix,
 				frustum_clip_planes,
 				map_data,
 				transformed_vertices_,
@@ -1901,10 +1935,9 @@ fn DrawSky(
 	WorldDrawingInfo& drawing_info,
 	LightingModifier& lighting_modifier,
 	MapVisibilityCalculator::VisibleRoomClusterFlags visible_room_cluster_flags,
-	Mat4f& rotation_matrix,
 	CameraClipPlanes& camera_clip_planes,
-	f32 view_aspect,
 	Mat4f& view_matrix,
+	Mat3f& sky_inverse_transformation_matrix,
 	FrustumClipPlanes& frustum_clip_planes,
 	Rasterizer& rasterizer ) : bool
 {
@@ -2043,44 +2076,6 @@ fn DrawSky(
 	{
 		return false;
 	}
-
-	var Mat3f viewport_inverse_transformation_matrix
-	{
-		.values
-		[
-			[ 2.0f / f32( surface.size[0] ),                           0.0f, 0.0f ],
-			[                          0.0f, -2.0f / f32( surface.size[1] ), 0.0f ],
-			[                         -1.0f,                           1.0f, 1.0f ],
-		],
-	};
-
-	var f32 half_fov_tan= ust::tan( drawing_info.camera_params.fov_x * 0.5f );
-
-	var Mat3f perspective_inverse_matrix
-	{
-		.values
-		[
-			[ half_fov_tan,                       0.0f, 0.0f ],
-			[         0.0f, half_fov_tan / view_aspect, 0.0f ],
-			[         0.0f,                       0.0f, 1.0f ],
-		]
-	};
-
-	// For rotation transpose matrix is inverse matrix.
-	var Mat3f rotation_inverse_matrix
-	{
-		.values
-		[
-			[ rotation_matrix.values[0][0], rotation_matrix.values[1][0], rotation_matrix.values[2][0] ],
-			[ rotation_matrix.values[0][1], rotation_matrix.values[1][1], rotation_matrix.values[2][1] ],
-			[ rotation_matrix.values[0][2], rotation_matrix.values[1][2], rotation_matrix.values[2][2] ],
-		]
-	};
-
-	var Mat3f sky_inverse_transformation_matrix=
-		viewport_inverse_transformation_matrix *
-		perspective_inverse_matrix *
-		rotation_inverse_matrix;
 
 	var f32 texture_shift= drawing_info.game_time_s * c_clouds_scroll_speed;
 
