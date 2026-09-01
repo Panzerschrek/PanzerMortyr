@@ -316,16 +316,17 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 
 		var u8 mirror_alpha_u8( mirror_alpha * 255.0f );
 
-		foreach( &mut mip : map_data_full.mirror_texture )
-		{
-			foreach( &mut row : mip )
-			{
-				foreach( &mut pixel : row )
-				{
-					Color32SetAlpha( pixel, mirror_alpha_u8 );
-				}
-			}
-		}
+		var Color32WorldTextureWithMips& mirror_texture_src= map_data.textures[ map_data.mirror_texture_index ];
+		var Color32WorldTextureWithMips &mut mirror_texture_dst= map_data_full.mirror_texture;
+
+		UpdateMirrorTextureMip( mirror_texture_src[0], mirror_texture_dst[0], mirror_alpha_u8 );
+		UpdateMirrorTextureMip( mirror_texture_src[1], mirror_texture_dst[1], mirror_alpha_u8 );
+		UpdateMirrorTextureMip( mirror_texture_src[2], mirror_texture_dst[2], mirror_alpha_u8 );
+		UpdateMirrorTextureMip( mirror_texture_src[3], mirror_texture_dst[3], mirror_alpha_u8 );
+		UpdateMirrorTextureMip( mirror_texture_src[4], mirror_texture_dst[4], mirror_alpha_u8 );
+		UpdateMirrorTextureMip( mirror_texture_src[5], mirror_texture_dst[5], mirror_alpha_u8 );
+		UpdateMirrorTextureMip( mirror_texture_src[6], mirror_texture_dst[6], mirror_alpha_u8 );
+		UpdateMirrorTextureMip( mirror_texture_src[7], mirror_texture_dst[7], mirror_alpha_u8 );
 
 		auto vertices_transformed_range= EnsureTransformedVerticesCapacity( transformed_vertices_, mirror_vertices_.size() );
 		TransformMapVertices( mirror_vertices_, vertices_transformed_range, view_matrix );
@@ -361,7 +362,7 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 		DrawMirrorTriangles(
 			rasterizer,
 			frustum_clip_planes,
-			map_data_full.mirror_texture,
+			mirror_texture_dst,
 			mirror_vertices_,
 			vertices_transformed_range,
 			vertex_lights_range,
@@ -2125,7 +2126,6 @@ fn WorldDrawerSoft::SetMap( mut this, u32 map_index )
 	map_data_.reset(
 		MapFullDrawDataSoft
 		{
-			.mirror_texture= textures[ mirror_texture_index ],
 			.map_draw_data
 			{
 				.zmap_data= zmap_data_ptr,
@@ -2170,11 +2170,13 @@ fn WorldDrawerSoft::SetMap( mut this, u32 map_index )
 				.rain_snow_hierarchy= move(rain_snow_hierarchy),
 				.breakable_material_bits= move(breakable_material_bits),
 				.wet_material_bits= move(wet_material_bits),
+				.mirror_texture_index= mirror_texture_index,
 				.water_circles_heirarchy= move(water_circles_heirarchy),
 			},
 			.map_visibility_calculators[ ( room_clusters_bsp_tree ), ( room_clusters_bsp_tree ) ],
 			.highlighted_cluster_flags( zvox_data.clusters.size(), false ),
 			.textures_with_applied_caustics= move( textures_with_applied_caustics ),
+			.mirror_texture= zero_init, // Set later if needed.
 		} );
 }
 
@@ -2886,6 +2888,28 @@ fn DrawMirrorTriangles(
 				cast_imut(vertices_clipped[1])[ i - 1s ],
 				cast_imut(vertices_clipped[1])[ i ],
 				texture );
+		}
+	}
+}
+
+template</ size_type size />
+fn UpdateMirrorTextureMip( [ [ Color32, size ], size ]& src, [ [ Color32, size ], size ] &mut dst, u8 alpha )
+{
+	for( auto mut y= 0s; y < size; ++y )
+	{
+		for( auto mut x= 0s; x < size; ++x )
+		{
+			var RGBAColor c= Color32ToComponents( src[y][x] );
+
+			var RGBAColor c_premultiplied
+			[
+				( u32( c[0] ) * u32( alpha ) / 255u ),
+				( u32( c[1] ) * u32( alpha ) / 255u ),
+				( u32( c[2] ) * u32( alpha ) / 255u ),
+				alpha,
+			];
+
+			dst[y][x]= Color32FromComponents( c_premultiplied );
 		}
 	}
 }
