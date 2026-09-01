@@ -102,10 +102,55 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 	var LightingModifiers lighting_modifiers=
 		CalculateLightingModifiers( settings_.lock_imut().deref(), drawing_info.fullscreen_effect );
 
+	var Mat4f rotation_matrix=
+		CalculateCameraRotationMatrix( drawing_info.camera_params.azimuth, drawing_info.camera_params.elevation );
+
+	var f32 view_aspect= f32( surface.size[0] ) / f32( surface.size[1] );
+
+	var f32 half_fov_inv_tan= 1.0f / ust::tan( drawing_info.camera_params.fov_x * 0.5f );
+
+	// Build slightly different version of perspective matrix, since we divide coordinates by Z, not by W.
+	var Mat4f camera_projection_matrix
+	{
+		.values
+		[
+			[ half_fov_inv_tan,                           0.0f, 0.0f, 0.0f ],
+			[             0.0f, half_fov_inv_tan * view_aspect, 0.0f, 0.0f ],
+			[             0.0f,                           0.0f, 1.0f, 1.0f ],
+			[             0.0f,                           0.0f, 0.0f, 0.0f ],
+		]
+	};
+
+	var Mat4f rotation_and_projection_matrix= rotation_matrix * camera_projection_matrix;
+
+	var Mat4f translation_matrix= Mat4f::MakeTranslation( -drawing_info.camera_params.position );
+
+	// Maps normalized -1 to 1 coordinates to 0 to size coordinates and flips vertically.
+	var Mat4f viewport_transformation_matrix
+	{
+		.values
+		[
+			[ 0.5f * f32( surface.size[0] ),                           0.0f, 0.0f, 0.0f ],
+			[                          0.0f, -0.5f * f32( surface.size[1] ), 0.0f, 0.0f ],
+			[ 0.5f * f32( surface.size[0] ),  0.5f * f32( surface.size[1] ), 1.0f, 0.0f ],
+			[                          0.0f,                           0.0f, 0.0f, 1.0f ],
+		],
+	};
+
+	var Mat4f view_matrix= translation_matrix * rotation_and_projection_matrix * viewport_transformation_matrix;
+
 	DrawPartial(
 		surface,
 		drawing_info,
 		drawing_info.camera_params.position,
+		CameraMatrices
+		{
+			.view_aspect= view_aspect,
+			.rotation_matrix= rotation_matrix,
+			.rotation_and_projection_matrix= rotation_and_projection_matrix,
+			.viewport_transformation_matrix= viewport_transformation_matrix,
+			.view_matrix= view_matrix,
+		},
 		lighting_modifiers,
 		stats );
 
@@ -117,6 +162,7 @@ fn WorldDrawerSoft::DrawPartial(
 	Color32ImageView surface,
 	WorldDrawingInfo& drawing_info,
 	Vec3f& camera_position,
+	CameraMatrices& camera_matrices,
 	LightingModifiers& lighting_modifiers,
 	WorldDrawingStats &mut stats )
 {
@@ -162,49 +208,14 @@ fn WorldDrawerSoft::DrawPartial(
 			map_data.fog_color[2] * lighting_modifiers.map.scale[2] + lighting_modifiers.map.add[2] * 255.0f,
 			map_data.fog_color[3] ) );
 
-	var Mat4f rotation_matrix=
-		CalculateCameraRotationMatrix( drawing_info.camera_params.azimuth, drawing_info.camera_params.elevation );
-
-	var f32 view_aspect= f32( surface.size[0] ) / f32( surface.size[1] );
-
-	var f32 half_fov_inv_tan= 1.0f / ust::tan( drawing_info.camera_params.fov_x * 0.5f );
-
-	// Build slightly different version of perspective matrix, since we divide coordinates by Z, not by W.
-	var Mat4f camera_projection_matrix
-	{
-		.values
-		[
-			[ half_fov_inv_tan,                           0.0f, 0.0f, 0.0f ],
-			[             0.0f, half_fov_inv_tan * view_aspect, 0.0f, 0.0f ],
-			[             0.0f,                           0.0f, 1.0f, 1.0f ],
-			[             0.0f,                           0.0f, 0.0f, 0.0f ],
-		]
-	};
-
-	var Mat4f rotation_and_projection_matrix= rotation_matrix * camera_projection_matrix;
-
-	var Mat4f translation_matrix= Mat4f::MakeTranslation( -camera_position );
-
-	// Maps normalized -1 to 1 coordinates to 0 to size coordinates and flips vertically.
-	var Mat4f viewport_transformation_matrix
-	{
-		.values
-		[
-			[ 0.5f * f32( surface.size[0] ),                           0.0f, 0.0f, 0.0f ],
-			[                          0.0f, -0.5f * f32( surface.size[1] ), 0.0f, 0.0f ],
-			[ 0.5f * f32( surface.size[0] ),  0.5f * f32( surface.size[1] ), 1.0f, 0.0f ],
-			[                          0.0f,                           0.0f, 0.0f, 1.0f ],
-		],
-	};
-
-	var Mat4f view_matrix= translation_matrix * rotation_and_projection_matrix * viewport_transformation_matrix;
 
 	// World-space clip planes.
-	var CameraClipPlanes camera_clip_planes= CreateCameraClipPlanes( drawing_info.camera_params, view_aspect );
+	var CameraClipPlanes camera_clip_planes=
+		CreateCameraClipPlanes( drawing_info.camera_params, camera_matrices.view_aspect );
 
 	visibility_calculator.CalculateVisibility(
 		camera_position,
-		view_matrix,
+		camera_matrices.view_matrix,
 		ClippingPolygon::CreateFromBox(
 			// Use bounds for screen pixels.
 			Vec2f( 0.0f, 0.0f ), Vec2f( f32( surface.size[0] ), f32( surface.size[1] ) ) ) );
@@ -260,10 +271,10 @@ fn WorldDrawerSoft::DrawPartial(
 				drawing_info,
 				lighting_modifiers.map,
 				visible_room_cluster_flags,
-				rotation_matrix,
+				camera_matrices.rotation_matrix,
 				camera_clip_planes,
-				view_aspect,
-				view_matrix,
+				camera_matrices.view_aspect,
+				camera_matrices.view_matrix,
 				frustum_clip_planes,
 				rasterizer );
 
@@ -274,7 +285,7 @@ fn WorldDrawerSoft::DrawPartial(
 			DrawMoonAndStars(
 				rasterizer,
 				lighting_modifiers.map,
-				rotation_and_projection_matrix * viewport_transformation_matrix,
+				camera_matrices.rotation_and_projection_matrix * camera_matrices.viewport_transformation_matrix,
 				frustum_clip_planes,
 				map_data,
 				transformed_vertices_,
@@ -423,7 +434,7 @@ fn WorldDrawerSoft::DrawPartial(
 					DrawMapTrianglesWithCaustics(
 						rasterizer,
 						camera_position_for_fog.as_ref(),
-						view_matrix,
+						camera_matrices.view_matrix,
 						frustum_clip_planes,
 						textures_with_applied_caustics,
 						cluster_vertices,
@@ -442,7 +453,7 @@ fn WorldDrawerSoft::DrawPartial(
 					DrawMapClusterTriangles(
 						rasterizer,
 						camera_position_for_fog.as_ref(),
-						view_matrix,
+						camera_matrices.view_matrix,
 						frustum_clip_planes,
 						map_data,
 						cluster_index,
@@ -465,7 +476,7 @@ fn WorldDrawerSoft::DrawPartial(
 					DrawMapTriangles(
 						rasterizer,
 						camera_position_for_fog.as_ref(),
-						view_matrix,
+						camera_matrices.view_matrix,
 						frustum_clip_planes,
 						map_data.textures,
 						vertices,
@@ -490,7 +501,7 @@ fn WorldDrawerSoft::DrawPartial(
 					DrawMapTriangles(
 						rasterizer,
 						camera_position_for_fog.as_ref(),
-						view_matrix,
+						camera_matrices.view_matrix,
 						frustum_clip_planes,
 						map_data.textures,
 						vertices,
@@ -526,7 +537,7 @@ fn WorldDrawerSoft::DrawPartial(
 					DrawMapTriangles(
 						rasterizer,
 						camera_position_for_fog.as_ref(),
-						view_matrix,
+						camera_matrices.view_matrix,
 						frustum_clip_planes,
 						map_data.textures,
 						temp_vertices_,
@@ -658,7 +669,7 @@ fn WorldDrawerSoft::DrawPartial(
 		DrawMapClusterTriangles(
 			rasterizer,
 			cluster_camera_position_for_fog.as_ref(),
-			Mat4f::MakeTranslation( dynamic_cluster_object.translation ) * view_matrix,
+			Mat4f::MakeTranslation( dynamic_cluster_object.translation ) * camera_matrices.view_matrix,
 			frustum_clip_planes,
 			map_data,
 			size_type( dynamic_cluster_object.cluster_index ),
@@ -850,7 +861,7 @@ fn WorldDrawerSoft::DrawPartial(
 		auto vertices_transformed=
 			EnsureTransformedVerticesCapacity( transformed_vertices_, size_type( model.num_vertices ) );
 
-		var Mat4f model_full_matrix= model_transormation_matrix * view_matrix;
+		var Mat4f model_full_matrix= model_transormation_matrix * camera_matrices.view_matrix;
 
 		if( frames.frame0 == frames.frame1 )
 		{
@@ -959,7 +970,7 @@ fn WorldDrawerSoft::DrawPartial(
 
 		if( global_fog_enabled )
 		{
-			var Mat4f fog_space_matrix= model_transormation_matrix * translation_matrix;
+			var Mat4f fog_space_matrix= model_transormation_matrix * Mat4f::MakeTranslation( -camera_position );
 
 			var f32 distance_to_camera= ( frame_bbox.GetCenter() * fog_space_matrix ).Length();
 
@@ -1120,7 +1131,7 @@ fn WorldDrawerSoft::DrawPartial(
 		DrawSemitransparentMapTriangles(
 			rasterizer,
 			camera_position_for_fog.as_ref(),
-			view_matrix,
+			camera_matrices.view_matrix,
 			frustum_clip_planes,
 			map_data.textures,
 			temp_vertices_,
@@ -1243,7 +1254,7 @@ fn WorldDrawerSoft::DrawPartial(
 
 	if( !drawing_info.test_lines.empty() )
 	{
-		DrawTestLines( rasterizer, drawing_info.test_lines, view_matrix, frustum_clip_planes );
+		DrawTestLines( rasterizer, drawing_info.test_lines, camera_matrices.view_matrix, frustum_clip_planes );
 	}
 
 	if( settings_.lock_imut().deref().r_debug_show_room_clusters_bsp_tree )
@@ -1252,7 +1263,7 @@ fn WorldDrawerSoft::DrawPartial(
 
 		VisualizeRoomClustersBSPTree( map_data.room_clusters_bsp_tree.deref(), camera_position, lines );
 
-		DrawTestLines( rasterizer, lines, view_matrix, frustum_clip_planes );
+		DrawTestLines( rasterizer, lines, camera_matrices.view_matrix, frustum_clip_planes );
 	}
 	if( settings_.lock_imut().deref().r_debug_show_room_clusters_bsp_tree_projected_portals )
 	{
@@ -1302,7 +1313,7 @@ fn WorldDrawerSoft::DrawPartial(
 	DrawSemitransparentMapTriangles(
 		rasterizer,
 		camera_position_for_fog.as_ref(),
-		view_matrix,
+		camera_matrices.view_matrix,
 		frustum_clip_planes,
 		map_data.textures,
 		semitransparent_geometry_vertices_,
