@@ -1,0 +1,114 @@
+import "/math.iu"
+import "caustics.iu"
+
+namespace PM
+{
+
+fn FetchInterpolatedCausticsTextureLayer(
+	CausticsTextureData& caustics_texture, f32 time_s, CausticsTextureLayer &mut result )
+{
+	var f32 layer_f= time_s * ( f32( c_caustics_texture_num_layers ) * c_caustics_speed );
+	var f32 layer_f_floor= ust::floor( layer_f );
+	var f32 frame_mix= layer_f - layer_f_floor;
+
+	var u32 layer_index( layer_f_floor );
+	var u32 layer_index0= layer_index % c_caustics_texture_num_layers;
+	var u32 layer_index1= ( layer_index + 1u ) % c_caustics_texture_num_layers;
+
+	var u32 frame_mix_fixed8( ust::max( 0.0f, ust::min( frame_mix * 256.0f, 256.0f ) ) );
+	var u32 one_minus_frame_mix_fixed8= 256u - frame_mix_fixed8;
+
+	var CausticsTextureLayer& layer0= caustics_texture[ layer_index0 ];
+	var CausticsTextureLayer& layer1= caustics_texture[ layer_index1 ];
+
+	for( auto mut y= 0u; y < c_caustics_texture_size; ++y )
+	{
+		for( auto mut x= 0u; x < c_caustics_texture_size; ++x )
+		{
+			var u32 layer0_value( layer0[y][x] );
+			var u32 layer1_value( layer1[y][x] );
+			result[y][x]= u8( ( layer0_value * one_minus_frame_mix_fixed8 + layer1_value * frame_mix_fixed8 ) >> 8 );
+		}
+	}
+}
+
+fn ApplyCausticsTexture(
+	CausticsTextureLayer& caustics_texture,
+	Color32WorldTextureMip0& src_texture,
+	Color32WorldTextureWithMips &mut dst_texture )
+{
+	var size_type dst_size= typeinfo</ Color32WorldTextureMip0 />.element_count;
+
+	// Caustics texture is 2 times smaller than map texture.
+	// Use this fact to write optimized loop doing caustics application.
+	// Read a value from caustics texture, prepare it and apply it to each pixel in a 2x2 region.
+	//
+	// This code is well-optimized by the compiler (vector instructions are used).
+
+	static_assert( size_type( c_caustics_texture_size ) * 2s == dst_size );
+
+	for( auto mut src_y= 0s; src_y < size_type( c_caustics_texture_size ); ++src_y )
+	{
+		for( auto mut src_x= 0s; src_x < size_type( c_caustics_texture_size ); ++src_x )
+		{
+			var u8 caustics_value= caustics_texture[ src_y ][ src_x ];
+
+			var u32 constexpr multiplier( 65536.0f * c_caustics_light_scale / c_caustics_light_total_scale / 255.0f );
+			var u32 constexpr bias= 65536u - multiplier * 255u;
+
+			var u32 scale= u32( caustics_value ) * multiplier + bias;
+
+			var RGBAColor c00= Color32ToComponents( src_texture[ src_y * 2s + 0s ][ src_x * 2s + 0s ] );
+			var RGBAColor c01= Color32ToComponents( src_texture[ src_y * 2s + 0s ][ src_x * 2s + 1s ] );
+			var RGBAColor c10= Color32ToComponents( src_texture[ src_y * 2s + 1s ][ src_x * 2s + 0s ] );
+			var RGBAColor c11= Color32ToComponents( src_texture[ src_y * 2s + 1s ][ src_x * 2s + 1s ] );
+
+			var RGBAColor dst00
+			[
+				( ( u32( c00[0] ) * scale ) >> 16 ),
+				( ( u32( c00[1] ) * scale ) >> 16 ),
+				( ( u32( c00[2] ) * scale ) >> 16 ),
+				( ( u32( c00[3] ) * scale ) >> 16 ),
+			];
+
+			var RGBAColor dst01
+			[
+				( ( u32( c01[0] ) * scale ) >> 16 ),
+				( ( u32( c01[1] ) * scale ) >> 16 ),
+				( ( u32( c01[2] ) * scale ) >> 16 ),
+				( ( u32( c01[3] ) * scale ) >> 16 ),
+			];
+
+			var RGBAColor dst10
+			[
+				( ( u32( c10[0] ) * scale ) >> 16 ),
+				( ( u32( c10[1] ) * scale ) >> 16 ),
+				( ( u32( c10[2] ) * scale ) >> 16 ),
+				( ( u32( c10[3] ) * scale ) >> 16 ),
+			];
+
+			var RGBAColor dst11
+			[
+				( ( u32( c11[0] ) * scale ) >> 16 ),
+				( ( u32( c11[1] ) * scale ) >> 16 ),
+				( ( u32( c11[2] ) * scale ) >> 16 ),
+				( ( u32( c11[3] ) * scale ) >> 16 ),
+			];
+
+			dst_texture[0][ src_y * 2s + 0s ][ src_x * 2s + 0s ]= Color32FromComponents( dst00 );
+			dst_texture[0][ src_y * 2s + 0s ][ src_x * 2s + 1s ]= Color32FromComponents( dst01 );
+			dst_texture[0][ src_y * 2s + 1s ][ src_x * 2s + 0s ]= Color32FromComponents( dst10 );
+			dst_texture[0][ src_y * 2s + 1s ][ src_x * 2s + 1s ]= Color32FromComponents( dst11 );
+		}
+	}
+
+	BuildTextureMip( dst_texture[1], dst_texture[0] );
+	BuildTextureMip( dst_texture[2], dst_texture[1] );
+	BuildTextureMip( dst_texture[3], dst_texture[2] );
+	BuildTextureMip( dst_texture[4], dst_texture[3] );
+	BuildTextureMip( dst_texture[5], dst_texture[4] );
+	BuildTextureMip( dst_texture[6], dst_texture[5] );
+	BuildTextureMip( dst_texture[7], dst_texture[6] );
+}
+
+} // namespace PM

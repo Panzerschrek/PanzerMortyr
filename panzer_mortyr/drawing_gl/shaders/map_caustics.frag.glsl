@@ -15,6 +15,7 @@ void main()
 	vec3 texture_color= texture( fu_texture, vec3( f_texture_coordinates, f_texture_layer ) ).rgb;
 
 	float caustics_value= texture( fu_caustics_texture, vec3( f_texture_coordinates, fu_caustics_layer ) ).r;
+	// These parameters should match the same parameters in Ü code!
 	float light_scale= 0.5 + caustics_value * 2.0;
 
 	color= vec4( texture_color * ( f_light * light_scale ), 1.0 );
