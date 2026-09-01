@@ -84,9 +84,6 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 			models_ );
 	}
 
-	auto mut window_lock= window_.lock_mut();
-	var Color32ImageView surface= window_lock.deref().GetSurface();
-
 	var WorldDrawingStats mut stats= zero_init;
 
 	if( map_data_.empty() )
@@ -95,8 +92,37 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 	}
 
 	// Prepare and clear depth buffer.
-	depth_buffer_.clear();
-	depth_buffer_.resize( size_type( surface.size[1] * surface.stride ), 0.0f );
+	{
+		auto mut window_lock= window_.lock_mut();
+		var Color32ImageView surface= window_lock.deref().GetSurface();
+
+		depth_buffer_.clear();
+		depth_buffer_.resize( size_type( surface.size[1] * surface.stride ), 0.0f );
+	}
+
+	var LightingModifiers lighting_modifiers=
+		CalculateLightingModifiers( settings_.lock_imut().deref(), drawing_info.fullscreen_effect );
+
+	DrawPartial(
+		drawing_info,
+		drawing_info.camera_params.position,
+		lighting_modifiers,
+		stats );
+
+	return stats;
+}
+
+fn WorldDrawerSoft::DrawPartial(
+	mut this,
+	WorldDrawingInfo& drawing_info,
+	Vec3f& camera_position,
+	LightingModifiers& lighting_modifiers,
+	WorldDrawingStats &mut stats )
+{
+	if( map_data_.empty() )
+	{
+		return;
+	}
 
 	var MapFullDrawDataSoft &mut map_data_full= map_data_.try_deref();
 
@@ -126,8 +152,8 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 
 	var TexturesWithAppliedCaustics &mut textures_with_applied_caustics= map_data_full.textures_with_applied_caustics;
 
-	var LightingModifiers lighting_modifiers=
-		CalculateLightingModifiers( settings_.lock_imut().deref(), drawing_info.fullscreen_effect );
+	auto mut window_lock= window_.lock_mut();
+	var Color32ImageView surface= window_lock.deref().GetSurface();
 
 	var Rasterizer rasterizer(
 		surface,
@@ -159,7 +185,7 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 
 	var Mat4f rotation_and_projection_matrix= rotation_matrix * camera_projection_matrix;
 
-	var Mat4f translation_matrix= Mat4f::MakeTranslation( -drawing_info.camera_params.position );
+	var Mat4f translation_matrix= Mat4f::MakeTranslation( -camera_position );
 
 	// Maps normalized -1 to 1 coordinates to 0 to size coordinates and flips vertically.
 	var Mat4f viewport_transformation_matrix
@@ -179,7 +205,7 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 	var CameraClipPlanes camera_clip_planes= CreateCameraClipPlanes( drawing_info.camera_params, view_aspect );
 
 	visibility_calculator.CalculateVisibility(
-		drawing_info.camera_params.position,
+		camera_position,
 		view_matrix,
 		ClippingPolygon::CreateFromBox(
 			// Use bounds for screen pixels.
@@ -202,9 +228,7 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 	var bool global_fog_enabled= map_data.global_fog_enabled && settings_.lock_imut().deref().r_fog_enabled;
 
 	var ust::optional</Vec3f/> camera_position_for_fog=
-		( global_fog_enabled
-			? ust::optional</Vec3f/>( drawing_info.camera_params.position )
-			: ust::optional</Vec3f/>() );
+		( global_fog_enabled ? ust::optional</Vec3f/>( camera_position ) : ust::optional</Vec3f/>() );
 
 	// Convert dynamic light sources into our own format.
 	scoped_array DynamicLightSourceSoft dynamic_light_sources[ drawing_info.dynamic_light_sources.size() ](
@@ -542,7 +566,7 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 					FlipBackFacingTriangles(
 						semitransparent_geometry_vertices_,
 						semitransparent_geometry_indices_.range().subrange_start( first_index ),
-						drawing_info.camera_params.position );
+						camera_position );
 				}
 
 				if( cluster_draw_data.has_liquid_quads )
@@ -569,7 +593,7 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 					FlipBackFacingTriangles(
 						semitransparent_geometry_vertices_,
 						semitransparent_geometry_indices_.range().subrange_start( first_index ),
-						drawing_info.camera_params.position );
+						camera_position );
 				}
 			}
 
@@ -668,7 +692,7 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 			FlipBackFacingTriangles(
 				semitransparent_geometry_vertices_,
 				semitransparent_geometry_indices_.range().subrange_start( first_index ),
-				drawing_info.camera_params.position );
+				camera_position );
 
 			auto vertices_range= semitransparent_geometry_vertices_.range().subrange_start( first_vertex );
 
@@ -728,7 +752,7 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 		FlipBackFacingTriangles(
 			semitransparent_geometry_vertices_,
 			semitransparent_geometry_indices_.range().subrange_start( first_index ),
-			drawing_info.camera_params.position );
+			camera_position );
 	}
 
 	foreach( &model_object : drawing_info.model_objects ) label for_model_objects
@@ -1059,7 +1083,7 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 			drawing_info.broken_quad_bits,
 			zmap_lam_data,
 			quads_hierarchy,
-			drawing_info.camera_params.position,
+			camera_position,
 			temp_vertices_,
 			temp_indices_ );
 
@@ -1079,7 +1103,7 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 		{
 			var f32 score=
 				light_soruce.GetRadius() /
-				ust::max( 1.0f, ( light_soruce.GetPosition() - drawing_info.camera_params.position ).SquareLength() );
+				ust::max( 1.0f, ( light_soruce.GetPosition() - camera_position ).SquareLength() );
 
 			if( score > most_influential_light_source_score )
 			{
@@ -1119,7 +1143,7 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 			BuildBillboardPolygons(
 				drawing_info.billboards,
 				billboards_description_,
-				drawing_info.camera_params.position,
+				camera_position,
 				drawing_info.camera_params.fov_x,
 				camera_clip_planes,
 				visibility_calculator.GetVisibleLeafsBBox(),
@@ -1158,7 +1182,7 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 		FlipBackFacingTriangles(
 			semitransparent_geometry_vertices_,
 			semitransparent_geometry_indices_.range().subrange_start( first_index ),
-			drawing_info.camera_params.position );
+			camera_position );
 	}
 
 	if( settings_.lock_imut().deref().r_rain_snow_enabled && !map_data.rain_snow_hierarchy.nodes.empty() )
@@ -1173,7 +1197,7 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 				CreateSnowTriangles(
 					map_data.rain_snow_hierarchy,
 					drawing_info.game_time_s,
-					drawing_info.camera_params.position,
+					camera_position,
 					semitransparent_geometry_vertices_,
 					semitransparent_geometry_indices_ );
 			},
@@ -1183,7 +1207,7 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 					map_data.rain_snow_hierarchy,
 					billboards_description_,
 					drawing_info.game_time_s,
-					drawing_info.camera_params.position,
+					camera_position,
 					semitransparent_geometry_vertices_,
 					semitransparent_geometry_indices_ );
 			},
@@ -1209,7 +1233,7 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 			zmap_lam_data,
 			quads_hierarchy,
 			map_data.wet_material_bits,
-			drawing_info.camera_params.position,
+			camera_position,
 			semitransparent_geometry_vertices_,
 			semitransparent_geometry_indices_ );
 
@@ -1228,8 +1252,7 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 	{
 		var ust::vector</WorldDrawingInfo::TestLine/> mut lines;
 
-		VisualizeRoomClustersBSPTree(
-			map_data.room_clusters_bsp_tree.deref(), drawing_info.camera_params.position, lines );
+		VisualizeRoomClustersBSPTree( map_data.room_clusters_bsp_tree.deref(), camera_position, lines );
 
 		DrawTestLines( rasterizer, lines, view_matrix, frustum_clip_planes );
 	}
@@ -1271,7 +1294,7 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 	}
 
 	SortTrianglesFarToNearOrder(
-		drawing_info.camera_params.position,
+		camera_position,
 		semitransparent_geometry_vertices_,
 		semitransparent_geometry_indices_,
 		triangles_for_sorting_ );
@@ -1298,8 +1321,6 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 		vertices_clipped );
 
 	stats.num_visible_semitransparent_triangles+= u32( semitransparent_geometry_indices_.size() ) / 3u;
-
-	return stats;
 }
 
 fn WorldDrawerSoft::SetMap( mut this, u32 map_index )
