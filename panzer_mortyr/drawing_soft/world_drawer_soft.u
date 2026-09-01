@@ -304,6 +304,28 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 				TriangleVerticesOrder::Inverse,
 				stats );
 		}
+	}
+
+	if( !mirror_indices_.empty() )
+	{
+		var MapFullDrawDataSoft &mut map_data_full= map_data_.try_deref();
+		var MapDrawDataSoft& map_data= map_data_full.map_draw_data;
+
+		var f32 mirror_alpha=
+				ust::max( 0.05f, ust::min( settings_.lock_imut().deref().r_mirror_alpha, 0.95f ) );
+
+		var u8 mirror_alpha_u8( mirror_alpha * 255.0f );
+
+		foreach( &mut mip : map_data_full.mirror_texture )
+		{
+			foreach( &mut row : mip )
+			{
+				foreach( &mut pixel : row )
+				{
+					Color32SetAlpha( pixel, mirror_alpha_u8 );
+				}
+			}
+		}
 
 		auto vertices_transformed_range= EnsureTransformedVerticesCapacity( transformed_vertices_, mirror_vertices_.size() );
 		TransformMapVertices( mirror_vertices_, vertices_transformed_range, view_matrix );
@@ -317,8 +339,6 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 			ust::empty_range );
 
 		// TODO - calculate fog for mirror.
-
-		var MapDrawDataSoft& map_data= map_data_.try_deref().map_draw_data;
 
 		var Rasterizer rasterizer(
 			surface,
@@ -341,7 +361,7 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 		DrawMirrorTriangles(
 			rasterizer,
 			frustum_clip_planes,
-			map_data.textures[ size_type( mirror_vertices_.front().tex_coordinates[2] ) ],
+			map_data_full.mirror_texture,
 			mirror_vertices_,
 			vertices_transformed_range,
 			vertex_lights_range,
@@ -2092,9 +2112,20 @@ fn WorldDrawerSoft::SetMap( mut this, u32 map_index )
 			BuildWaterCirclesHierarchy( zmap_lam_data.rain_droplets, zmap_data.quads, wet_material_bits );
 	}
 
+	auto mut textures=
+		LoadMapTextures( materials_block, caching_game_resources_loader.GetGameFilesystem(), console_out_ );
+
+	var size_type mut mirror_texture_index(
+		materials_block.special_material_indices[ size_type( MaterialsDescription::SpecialMaterial::Mirror ) ] );
+	if( mirror_texture_index >= textures.size() )
+	{
+		mirror_texture_index= 0s;
+	}
+
 	map_data_.reset(
 		MapFullDrawDataSoft
 		{
+			.mirror_texture= textures[ mirror_texture_index ],
 			.map_draw_data
 			{
 				.zmap_data= zmap_data_ptr,
@@ -2108,8 +2139,7 @@ fn WorldDrawerSoft::SetMap( mut this, u32 map_index )
 				.clusters_draw_data= move(clusters_draw_data),
 				.vertices= move(vertices),
 				.indices= move(indices),
-				.textures=
-					LoadMapTextures( materials_block, caching_game_resources_loader.GetGameFilesystem(), console_out_ ),
+				.textures= move(textures),
 				.moon_and_stars_buffer= move( moon_and_stars_buffer ),
 				.clouds_texture_layer=
 					materials_block.special_material_indices[ size_type( MaterialsDescription::SpecialMaterial::Sky ) ],
@@ -2850,7 +2880,7 @@ fn DrawMirrorTriangles(
 		for( auto mut i= 2s; i < num_vertices; ++i )
 		{
 			RasterizeTriangleWithSubdivisionAndInterpolationMethodSelection</
-				Rasterizer::BlendingMode::None, Rasterizer::DepthWriteMode::Yes />(
+				Rasterizer::BlendingMode::PremultipliedAlpha, Rasterizer::DepthWriteMode::Yes />(
 				rasterizer,
 				cast_imut(vertices_clipped[1])[0],
 				cast_imut(vertices_clipped[1])[ i - 1s ],
