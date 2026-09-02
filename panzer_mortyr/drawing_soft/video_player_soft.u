@@ -3,11 +3,72 @@ import "video_player_soft.iu"
 namespace PM
 {
 
-fn VideoPlayerSoft::PlayVideo( mut this, ust::filesystem_path_view file_path, AudioProcessor &mut audio_processor )
+fn VideoPlayerSoft::constructor( ust::shared_ptr_mut</WindowSoft/> mut window, ConsoleOutPtr mut console_out )
+	( base( move( console_out ) ), window_= move( window ), frame_data_{ .size[ 0u, 0u ] } )
+{}
+
+fn VideoPlayerSoft::SetFrame( mut this, [ u32, 2 ] size, ust::array_view_imut</RGBAColor/> pixels )
 {
-	// TODO
-	ust::ignore_unused( file_path );
-	ust::ignore_unused( audio_processor );
+	frame_data_.size= size;
+	frame_data_.pixels.clear();
+	frame_data_.pixels.append_copy( pixels );
+}
+
+fn VideoPlayerSoft::DrawAndPresentFrame( mut this )
+{
+	if( frame_data_.size[0] == 0u | frame_data_.size[1] == 0u )
+	{
+		return;
+	}
+
+	auto mut window_lock= window_.lock_mut();
+	var WindowSoft &mut window= window_lock.deref();
+
+	window.Fill( ust::make_array( 0u8, 0u8, 0u8, 0u8 ) );
+
+	{
+		var Color32ImageView surface= window.GetSurface();
+
+		var [ u32, 2 ] mut out_size[ 0u, 0u ];
+
+		if( frame_data_.size[0] * surface.size[1] < frame_data_.size[1] * surface.size[0] )
+		{
+			out_size[0]= ust::min( surface.size[0], surface.size[1] * frame_data_.size[0] / frame_data_.size[1] );
+			out_size[1]= surface.size[1];
+		}
+		else
+		{
+			out_size[0]= surface.size[0];
+			out_size[1]= ust::min( surface.size[1], surface.size[0] * frame_data_.size[1] / frame_data_.size[0] );
+		}
+
+		var [ u32, 2 ] dst_offset
+		[
+			( ( surface.size[0] - out_size[0] ) >> 1 ),
+			( ( surface.size[1] - out_size[1] ) >> 1 ),
+		];
+
+		for( auto mut y= 0u; y < out_size[1]; ++y )
+		{
+			var u32 src_y= y * frame_data_.size[1] / out_size[1];
+
+			auto src_line= frame_data_.pixels.range().subrange(
+				size_type( frame_data_.size[0] * src_y ), size_type( frame_data_.size[0] * ( src_y + 1u ) ) );
+
+			auto dst_line= surface.pixels.subrange_start(
+				size_type( dst_offset[0] + surface.stride * ( y + dst_offset[1] ) ) );
+
+			var u32 scale_x_fixed16= ( frame_data_.size[0] << 16 ) / out_size[0];
+
+			for( auto mut x= 0u; x < out_size[0]; ++x )
+			{
+				var u32 src_x= ( x * scale_x_fixed16 ) >> 16;
+				dst_line[ size_type(x) ]= Color32FromComponents( src_line[ size_type( src_x ) ] );
+			}
+		}
+	}
+
+	window.SwapWindow();
 }
 
 } // namespace PM
