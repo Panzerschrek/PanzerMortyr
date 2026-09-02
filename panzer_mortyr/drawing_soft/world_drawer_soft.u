@@ -276,11 +276,13 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 		PrepareQuadVertexTextureCoordinates( mirror_vertices_ );
 	}
 
+	var bool mirrors_enabled= settings_.lock_imut().deref().r_mirrors_enabled;
+
 	if_var( &mirror_plane : CalculateMirrorPlane( mirror_vertices_, mirror_indices_ ) )
 	{
 		var Planef camera_space_mirror_plane= mirror_plane * camera_space_planes_matrix;
 
-		if( camera_space_mirror_plane.distance > c_z_near_for_clipping )
+		if( mirrors_enabled && camera_space_mirror_plane.distance > c_z_near_for_clipping )
 		{
 			var Mat4f mirror_matrix= Mat4f::MakeMirroring( mirror_plane );
 
@@ -351,23 +353,6 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 		var MapFullDrawDataSoft &mut map_data_full= map_data_.try_deref();
 		var MapDrawDataSoft& map_data= map_data_full.map_draw_data;
 
-		var f32 mirror_alpha=
-				ust::max( 0.05f, ust::min( settings_.lock_imut().deref().r_mirror_alpha, 0.95f ) );
-
-		var u8 mirror_alpha_u8( mirror_alpha * 255.0f );
-
-		var Color32WorldTextureWithMips& mirror_texture_src= map_data.textures[ map_data.mirror_texture_index ];
-		var Color32WorldTextureWithMips &mut mirror_texture_dst= map_data_full.mirror_texture;
-
-		UpdateMirrorTextureMip( mirror_texture_src[0], mirror_texture_dst[0], mirror_alpha_u8 );
-		UpdateMirrorTextureMip( mirror_texture_src[1], mirror_texture_dst[1], mirror_alpha_u8 );
-		UpdateMirrorTextureMip( mirror_texture_src[2], mirror_texture_dst[2], mirror_alpha_u8 );
-		UpdateMirrorTextureMip( mirror_texture_src[3], mirror_texture_dst[3], mirror_alpha_u8 );
-		UpdateMirrorTextureMip( mirror_texture_src[4], mirror_texture_dst[4], mirror_alpha_u8 );
-		UpdateMirrorTextureMip( mirror_texture_src[5], mirror_texture_dst[5], mirror_alpha_u8 );
-		UpdateMirrorTextureMip( mirror_texture_src[6], mirror_texture_dst[6], mirror_alpha_u8 );
-		UpdateMirrorTextureMip( mirror_texture_src[7], mirror_texture_dst[7], mirror_alpha_u8 );
-
 		auto vertices_transformed_range= EnsureTransformedVerticesCapacity( transformed_vertices_, mirror_vertices_.size() );
 		TransformMapVertices( mirror_vertices_, vertices_transformed_range, view_matrix );
 
@@ -399,15 +384,53 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 
 		var TriangleVerticesClippedPair mut vertices_clipped[ [ dummy_vertex ... ], [ dummy_vertex ... ] ];
 
-		DrawMirrorTriangles(
-			rasterizer,
-			frustum_clip_planes,
-			mirror_texture_dst,
-			mirror_vertices_,
-			vertices_transformed_range,
-			vertex_lights_range,
-			mirror_indices_,
-			vertices_clipped );
+		var Color32WorldTextureWithMips& mirror_texture_src= map_data.textures[ map_data.mirror_texture_index ];
+
+		if( mirrors_enabled )
+		{
+			// Mirrors are enable - draw mirrors with blending.
+
+			// Prepare mirror texture containing premultiplied alpha.
+			var f32 mirror_alpha=
+				ust::max( 0.05f, ust::min( settings_.lock_imut().deref().r_mirror_alpha, 0.95f ) );
+
+			var u8 mirror_alpha_u8( mirror_alpha * 255.0f );
+
+			var Color32WorldTextureWithMips &mut mirror_texture_dst= map_data_full.mirror_texture;
+
+			UpdateMirrorTextureMip( mirror_texture_src[0], mirror_texture_dst[0], mirror_alpha_u8 );
+			UpdateMirrorTextureMip( mirror_texture_src[1], mirror_texture_dst[1], mirror_alpha_u8 );
+			UpdateMirrorTextureMip( mirror_texture_src[2], mirror_texture_dst[2], mirror_alpha_u8 );
+			UpdateMirrorTextureMip( mirror_texture_src[3], mirror_texture_dst[3], mirror_alpha_u8 );
+			UpdateMirrorTextureMip( mirror_texture_src[4], mirror_texture_dst[4], mirror_alpha_u8 );
+			UpdateMirrorTextureMip( mirror_texture_src[5], mirror_texture_dst[5], mirror_alpha_u8 );
+			UpdateMirrorTextureMip( mirror_texture_src[6], mirror_texture_dst[6], mirror_alpha_u8 );
+			UpdateMirrorTextureMip( mirror_texture_src[7], mirror_texture_dst[7], mirror_alpha_u8 );
+
+			DrawMirrorTriangles(
+				rasterizer,
+				frustum_clip_planes,
+				mirror_texture_dst,
+				mirror_vertices_,
+				vertices_transformed_range,
+				vertex_lights_range,
+				mirror_indices_,
+				vertices_clipped );
+		}
+		else
+		{
+			// If mirrors are disabled, draw mirror geometry with initial texture.
+
+			DrawMirrorTriangles(
+				rasterizer,
+				frustum_clip_planes,
+				mirror_texture_src,
+				mirror_vertices_,
+				vertices_transformed_range,
+				vertex_lights_range,
+				mirror_indices_,
+				vertices_clipped );
+		}
 	}
 
 	DrawPartial(
