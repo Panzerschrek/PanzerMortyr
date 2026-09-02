@@ -142,7 +142,7 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 	// Count all light sources as visible.
 	stats.num_visible_dynamic_lights= u32( dynamic_light_sources.size() );
 
-	auto window= window_;
+	auto window= window_; // Copy shared pointer here, so that the lock object isn't linked to "this".
 	auto mut window_lock= window.lock_mut();
 	var Color32ImageView surface= window_lock.deref().GetSurface();
 
@@ -267,10 +267,11 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 	map_data_.try_deref().map_visibility_calculators[0].CalculateVisibility(
 		drawing_info.camera_params.position, view_matrix, whole_screen_bounds );
 
-	mirror_vertices_.clear();
-	mirror_indices_.clear();
-
+	// Extract mirror geometry.
 	{
+		mirror_vertices_.clear();
+		mirror_indices_.clear();
+
 		var MapsDescription::MapDescription& map_description= maps_description_.deref().maps[ size_type( map_index_ ) ];
 		var MaterialsDescription::Block& materials_block=
 			materials_description_.deref().blocks[ map_description.materials_block ]; // Halts if not found.
@@ -2974,37 +2975,6 @@ fn DrawMirrorTriangles(
 	}
 }
 
-fn UpdateMirrorTexture( Color32WorldTextureMip0& src, Color32WorldTextureWithMips &mut dst, u8 alpha )
-{
-	var size_type size= typeinfo</ Color32WorldTextureMip0 />.element_count;
-
-	for( auto mut y= 0s; y < size; ++y )
-	{
-		for( auto mut x= 0s; x < size; ++x )
-		{
-			var RGBAColor c= Color32ToComponents( src[y][x] );
-
-			var RGBAColor c_premultiplied
-			[
-				( u32( c[0] ) * u32( alpha ) / 255u ),
-				( u32( c[1] ) * u32( alpha ) / 255u ),
-				( u32( c[2] ) * u32( alpha ) / 255u ),
-				alpha,
-			];
-
-			dst[0][y][x]= Color32FromComponents( c_premultiplied );
-		}
-	}
-
-	BuildTextureMip( dst[1], dst[0] );
-	BuildTextureMip( dst[2], dst[1] );
-	BuildTextureMip( dst[3], dst[2] );
-	BuildTextureMip( dst[4], dst[3] );
-	BuildTextureMip( dst[5], dst[4] );
-	BuildTextureMip( dst[6], dst[5] );
-	BuildTextureMip( dst[7], dst[6] );
-}
-
 template</ type TextureType />
 fn DrawModelTrianglesWithoutFrustumPlanesClipping(
 	Rasterizer& rasterizer,
@@ -3274,6 +3244,7 @@ fn ClipPolygonByFrustumClipPlanes(
 	size_type mut num_vertices,
 	tup[ [ VertexType, buffer_size ], [ VertexType, buffer_size ] ] &mut vertices_clipped ) : size_type
 {
+	// Perform clipping by near clip plane.
 	num_vertices=
 		ClipPolygon(
 			frustum_clip_planes[0],
@@ -3285,7 +3256,7 @@ fn ClipPolygonByFrustumClipPlanes(
 		return num_vertices;
 	}
 
-	// Perform two pairs of clipping by two pairs of clip planes.
+	// Perform two pairs of clipping by two pairs of side clip planes.
 	for( auto mut i= 0s; i < 2s; ++i )
 	{
 		num_vertices=
@@ -4045,6 +4016,37 @@ fn CreateMirrorMapPolygons(
 
 		i+= num_clusters_in_group;
 	}
+}
+
+fn UpdateMirrorTexture( Color32WorldTextureMip0& src, Color32WorldTextureWithMips &mut dst, u8 alpha )
+{
+	var size_type size= typeinfo</ Color32WorldTextureMip0 />.element_count;
+
+	for( auto mut y= 0s; y < size; ++y )
+	{
+		for( auto mut x= 0s; x < size; ++x )
+		{
+			var RGBAColor c= Color32ToComponents( src[y][x] );
+
+			var RGBAColor c_premultiplied
+			[
+				( u32( c[0] ) * u32( alpha ) / 255u ),
+				( u32( c[1] ) * u32( alpha ) / 255u ),
+				( u32( c[2] ) * u32( alpha ) / 255u ),
+				alpha,
+			];
+
+			dst[0][y][x]= Color32FromComponents( c_premultiplied );
+		}
+	}
+
+	BuildTextureMip( dst[1], dst[0] );
+	BuildTextureMip( dst[2], dst[1] );
+	BuildTextureMip( dst[3], dst[2] );
+	BuildTextureMip( dst[4], dst[3] );
+	BuildTextureMip( dst[5], dst[4] );
+	BuildTextureMip( dst[6], dst[5] );
+	BuildTextureMip( dst[7], dst[6] );
 }
 
 fn CalculateViewSpaceFrustumSideClipPlanes( [ u32, 2 ]& viewport_size ) : FrustumSideClipPlanes
