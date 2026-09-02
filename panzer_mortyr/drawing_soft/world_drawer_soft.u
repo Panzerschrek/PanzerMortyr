@@ -287,6 +287,8 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 		PrepareQuadVertexTextureCoordinates( mirror_vertices_ );
 	}
 
+	var BBox3f mirror_bounds= CalculateMirrorBounds( mirror_vertices_ );
+
 	var bool mirrors_enabled= settings_.lock_imut().deref().r_mirrors_enabled;
 
 	if_var( &mirror_plane : CalculateMirrorPlane( mirror_vertices_, mirror_indices_ ) )
@@ -326,7 +328,7 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 			// Calculate visibility from mirror point.
 			var size_type visibility_calculator_index= 1s;
 			map_data_.try_deref().map_visibility_calculators[ visibility_calculator_index ].CalculateVisibilityForMirror(
-				CalculateMirrorBounds( mirror_vertices_ ),
+				mirror_bounds,
 				camera_position_mirrored,
 				view_matrix_for_mirrored_geometry,
 				whole_screen_bounds );
@@ -365,6 +367,29 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 		var MapFullDrawDataSoft &mut map_data_full= map_data_.try_deref();
 		var MapDrawDataSoft& map_data= map_data_full.map_draw_data;
 
+		// Collect dynamic light sources affecting mirror geometry.
+		cluster_dynamic_light_sources_.clear();
+		if( settings_.lock_imut().deref().r_dynamic_lights_enabled )
+		{
+			foreach( &dynamic_light_source : dynamic_light_sources )
+			{
+				var Vec3f& position= dynamic_light_source.GetPosition();
+				var f32 radius= dynamic_light_source.GetRadius();
+
+				var BBox3f light_bbox
+				{
+					.min= position - Vec3f( radius, radius, radius ),
+					.max= position + Vec3f( radius, radius, radius ),
+				};
+
+				if( mirror_bounds.InstersectsOrTouches( light_bbox ) )
+				{
+					cluster_dynamic_light_sources_.push_back(
+						DynamicLightSourceSoft( dynamic_light_source, lighting_modifiers.map.scale ) );
+				}
+			}
+		}
+
 		auto vertices_transformed_range= EnsureTransformedVerticesCapacity( transformed_vertices_, mirror_vertices_.size() );
 		TransformMapVertices( mirror_vertices_, vertices_transformed_range, view_matrix );
 
@@ -373,8 +398,7 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 			mirror_vertices_,
 			vertex_lights_range,
 			lighting_modifiers.map,
-			// TODO - apply dynamic light to mirrors.
-			ust::empty_range );
+			cluster_dynamic_light_sources_ );
 
 		// TODO - calculate fog for mirror.
 
