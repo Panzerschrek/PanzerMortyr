@@ -2,7 +2,6 @@ import "/assert.iu"
 import "/string_conversions.iu"
 import "../video_stream.iu"
 import "gl_state.iu"
-import "texture.u"
 import "video_player_gl.iu"
 
 namespace PM
@@ -12,7 +11,8 @@ fn VideoPlayerGL::constructor( ust::shared_ptr_mut</WindowGL/> mut window, Conso
 	(
 		window_= move(window),
 		console_out_= move(console_out),
-		shader_( embed</char8/>( "shaders/video.vert.glsl" ), embed</char8/>( "shaders/video.frag.glsl" ) )
+		shader_( embed</char8/>( "shaders/video.vert.glsl" ), embed</char8/>( "shaders/video.frag.glsl" ) ),
+		texture_= Texture::Create( GLenum( GL_TEXTURE_2D ) ),
 	)
 {}
 
@@ -53,8 +53,6 @@ fn VideoPlayerGL::PlayVideo( mut this, ust::filesystem_path_view file_path, Audi
 			? Vec2f( 2.0f * video_aspect_ratio / viewport_aspect_ratio, 2.0f )
 			: Vec2f( 2.0f, 2.0f * viewport_aspect_ratio / video_aspect_ratio ) );
 
-	var Texture mut texture= CreateVideoFrameTexture( video_size );
-
 	var bool mut has_texture_data= false;
 
 	var PerformanceCounter::TimePoint mut prev_time= performance_counter_.GetCurrentTime();
@@ -76,7 +74,7 @@ fn VideoPlayerGL::PlayVideo( mut this, ust::filesystem_path_view file_path, Audi
 
 			if_var( &frame_data : video_stream.Update() )
 			{
-				UpdateVideoFrameTexture( texture, video_size, frame_data );
+				SetFrame( video_size, frame_data );
 				has_texture_data= true;
 			}
 
@@ -113,7 +111,7 @@ fn VideoPlayerGL::PlayVideo( mut this, ust::filesystem_path_view file_path, Audi
 			 // Display a frame only if we received some. It may be not the case if we just started playing.
 			if( has_texture_data )
 			{
-				DrawVideoFrame( shader_, texture, normalized_scale );
+				DrawVideoFrame( shader_, texture_, normalized_scale );
 			}
 
 			with( mut lock : window_.lock_mut() )
@@ -142,7 +140,7 @@ fn VideoPlayerGL::PlayVideo( mut this, ust::filesystem_path_view file_path, Audi
 
 			if_var( &frame_data : video_stream.Update() )
 			{
-				UpdateVideoFrameTexture( texture, video_size, frame_data );
+				SetFrame( video_size, frame_data );
 				has_texture_data= true;
 			}
 
@@ -155,7 +153,7 @@ fn VideoPlayerGL::PlayVideo( mut this, ust::filesystem_path_view file_path, Audi
 			 // Display a frame only if we received some. It may be not the case if we just started playing.
 			if( has_texture_data )
 			{
-				DrawVideoFrame( shader_, texture, normalized_scale );
+				DrawVideoFrame( shader_, texture_, normalized_scale );
 			}
 
 			with( mut lock : window_.lock_mut() )
@@ -172,21 +170,20 @@ fn VideoPlayerGL::PlayVideo( mut this, ust::filesystem_path_view file_path, Audi
 	}
 }
 
-fn CreateVideoFrameTexture( [ u32, 2 ] video_size ) : Texture
+fn VideoPlayerGL::SetFrame( mut this, [ u32, 2 ] size, ust::array_view_imut</RGBAColor/> pixels )
 {
-	var Texture mut texture= Texture::Create( GLenum( GL_TEXTURE_2D ) );
-	texture.Bind();
+	texture_.Bind();
 
 	unsafe( glTexImage2D(
 		GLenum( GL_TEXTURE_2D ),
 		0,
 		GLint( GL_RGBA8 ),
-		GLsizei( video_size[0] ),
-		GLsizei( video_size[1] ),
+		GLsizei( size[0] ),
+		GLsizei( size[1] ),
 		0,
 		GLenum( GL_RGBA ),
 		GLenum( GL_UNSIGNED_BYTE ),
-		ust::nullptr</byte8/>() ) );
+		pixels.to_byte8_range().data() ) );
 
 	// Use linear filter.
 	unsafe( glTexParameteri( GLenum( GL_TEXTURE_2D ), GLenum( GL_TEXTURE_MIN_FILTER ), GLint( GL_LINEAR ) ) );
@@ -195,26 +192,6 @@ fn CreateVideoFrameTexture( [ u32, 2 ] video_size ) : Texture
 	// Clamp texture coordinates to edge.
 	unsafe( glTexParameteri( GLenum( GL_TEXTURE_2D ), GLenum( GL_TEXTURE_WRAP_S ), GLint( GL_CLAMP_TO_EDGE ) ) );
 	unsafe( glTexParameteri( GLenum( GL_TEXTURE_2D ), GLenum( GL_TEXTURE_WRAP_T ), GLint( GL_CLAMP_TO_EDGE ) ) );
-
-	return texture;
-}
-
-fn UpdateVideoFrameTexture( Texture &mut texture, [ u32, 2 ] video_size, IVideoStream::FrameData& frame_data )
-{
-	assert( frame_data.size() == size_type( video_size[0] * video_size[1] ) );
-
-	texture.Bind();
-
-	unsafe( glTexSubImage2D(
-		GLenum( GL_TEXTURE_2D ),
-		0,
-		0,
-		0,
-		GLsizei( video_size[0] ),
-		GLsizei( video_size[1] ),
-		GLenum( GL_RGBA ),
-		GLenum( GL_UNSIGNED_BYTE ),
-		ust::ptr_cast_to_byte8( frame_data.range().data() ) ) );
 }
 
 // Returns false if should stop playback.
