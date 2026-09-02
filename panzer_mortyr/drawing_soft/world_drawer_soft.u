@@ -302,6 +302,15 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 			// Mirror matrix is it's own inverse. So, calculating planes martrix for mirror matrix requires only transposing it.
 			var Mat4f mirror_planes_matrix= mirror_matrix.Transpose();
 
+			var CameraClipPlanes camera_clip_planes_for_mirror
+			[
+				-mirror_plane, // Use mirror plane as near Z.
+				camera_clip_planes[1] * mirror_planes_matrix,
+				camera_clip_planes[2] * mirror_planes_matrix,
+				camera_clip_planes[3] * mirror_planes_matrix,
+				camera_clip_planes[4] * mirror_planes_matrix,
+			];
+
 			var Mat3f mirror_inverse_rotation_matrix
 			{
 				.values
@@ -311,15 +320,6 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 					[ mirror_matrix.values[0][2], mirror_matrix.values[1][2], mirror_matrix.values[2][2] ],
 				],
 			};
-
-			var CameraClipPlanes camera_clip_planes_for_mirror
-			[
-				-mirror_plane, // Use mirror plane as near Z.
-				camera_clip_planes[1] * mirror_planes_matrix,
-				camera_clip_planes[2] * mirror_planes_matrix,
-				camera_clip_planes[3] * mirror_planes_matrix,
-				camera_clip_planes[4] * mirror_planes_matrix,
-			];
 
 			var Vec3f camera_position_mirrored= drawing_info.camera_params.position * mirror_matrix;
 
@@ -332,6 +332,8 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 				camera_position_mirrored,
 				view_matrix_for_mirrored_geometry,
 				whole_screen_bounds );
+
+			// Draw image in mirror.
 
 			DrawPartial(
 				surface,
@@ -351,7 +353,7 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 					frustum_clip_planes[1] ),
 				lighting_modifiers,
 				false, // Draw NO first person weapon models in mirrors.
-				TriangleVerticesOrder::Inverse,
+				TriangleVerticesOrder::Inverse, // Need inverse vertices order for mirrored geometry.
 				stats );
 
 			// Clear depth buffer.
@@ -365,6 +367,8 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 
 	if( !mirror_indices_.empty() )
 	{
+		// Draw mirror geometry itself.
+
 		var MapFullDrawDataSoft &mut map_data_full= map_data_.try_deref();
 		var MapDrawDataSoft& map_data= map_data_full.map_draw_data;
 
@@ -391,7 +395,8 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 			}
 		}
 
-		auto vertices_transformed_range= EnsureTransformedVerticesCapacity( transformed_vertices_, mirror_vertices_.size() );
+		auto vertices_transformed_range=
+			EnsureTransformedVerticesCapacity( transformed_vertices_, mirror_vertices_.size() );
 		TransformMapVertices( mirror_vertices_, vertices_transformed_range, view_matrix );
 
 		auto vertex_lights_range= EnsureVertexLightsCapacity( vertex_lights_, mirror_indices_.size() );
@@ -429,7 +434,7 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 
 		if( mirrors_enabled )
 		{
-			// Mirrors are enable - draw mirrors with blending.
+			// Mirrors are enabled - draw mirrors with blending.
 
 			// Prepare mirror texture containing premultiplied alpha.
 			var f32 mirror_alpha=
@@ -453,7 +458,7 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 		}
 		else
 		{
-			// If mirrors are disabled, draw mirror geometry with initial texture.
+			// If mirrors are disabled, draw mirror geometry with initial texture and no blending.
 
 			DrawMirrorTriangles</ Rasterizer::BlendingMode::None />(
 				rasterizer,
@@ -466,6 +471,8 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 				vertices_clipped );
 		}
 	}
+
+	// Draw main image.
 
 	DrawPartial(
 		surface,
