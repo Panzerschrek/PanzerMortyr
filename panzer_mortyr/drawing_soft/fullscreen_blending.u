@@ -7,14 +7,57 @@ fn ApplyFullscreenBlending( Color32ImageView surface )
 {
 	auto s= surface; // Take a copy to make sure it's not re-read on each loop iteration.
 
+	var [ f32, 2 ] center
+	[
+		f32( s.size[0] ) * 0.5f,
+		f32( s.size[1] ) * 0.5f,
+	];
+
+	var [ f32, 2 ] radial_scale
+	[
+		2.0f / f32( s.size[0] ),
+		2.0f / f32( s.size[1] ),
+	];
+
+	var RGBAColor blend_color
+	[
+		255u8,
+		0u8,
+		255u8,
+		0u8,
+	];
+
 	for( auto mut y= 0u; y < s.size[1]; ++y )
 	{
 		for( auto mut x= 0u; x < s.size[0]; ++x )
 		{
+			var [ f32, 2 ] pixel_pos[ f32(x) + 0.5f, f32(y) + 0.5f ];
+
+			var [ f32, 2 ] vec_to_center
+			[
+				radial_scale[0] * ( pixel_pos[0] - center[0] ),
+				radial_scale[1] * ( pixel_pos[1] - center[1] ),
+			];
+
+			var f32 square_distance_to_center=
+				vec_to_center[0] * vec_to_center[0] + vec_to_center[1] * vec_to_center[1];
+
+			var u32 blending_factor_fixed16( 65536.0f * ust::min( square_distance_to_center, 1.0f ) );
+			var u32 one_minus_blending_factor_fixed16= 65536u - blending_factor_fixed16;
+
 			var Color32 &mut dst_color= s.pixels[ size_type( x + y * s.stride ) ];
 
-			// TODO - apply proper color gradient.
-			dst_color= Color32Average( dst_color, Color32( 0x00FF00FFu ) );
+			var RGBAColor components= Color32ToComponents( dst_color );
+
+			var RGBAColor components_blended
+			[
+				( ( u32( components[0] ) * one_minus_blending_factor_fixed16 + u32( blend_color[0] ) * blending_factor_fixed16 ) >> 16 ),
+				( ( u32( components[1] ) * one_minus_blending_factor_fixed16 + u32( blend_color[1] ) * blending_factor_fixed16 ) >> 16 ),
+				( ( u32( components[2] ) * one_minus_blending_factor_fixed16 + u32( blend_color[2] ) * blending_factor_fixed16 ) >> 16 ),
+				( ( u32( components[3] ) * one_minus_blending_factor_fixed16 + u32( blend_color[3] ) * blending_factor_fixed16 ) >> 16 ),
+			];
+
+			dst_color= Color32FromComponents( components_blended );
 		}
 	}
 }
