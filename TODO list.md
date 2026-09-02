@@ -99,6 +99,7 @@ PanzerMortyr rendering:
 * Implement visual effect specific for omni protection item (multiplayer-only power-up).
 * Consider speeding-up rain and snow particles fetching by cutting the fetch bbox by the view frustum.
 * Consider reducing power of local fog volumes (additive) due to global fog.
+* Consider drawing mirror reflections in water surfaces.
 
 PanzerMortyr OpenGL rendering:
 
@@ -109,12 +110,12 @@ PanzerMortyr OpenGL rendering:
 
 PanzerMortyr software rendering:
 
+* Implement video player.
 * Try speeding-up rasterization code by using fixed-point arithmetic for edges calculation.
 * Try seeeding-up rasterization code by using depth buffer in u32 or even u16 format.
 * Try speeding-up rasterization by correcting color and depth equations, so that it's not need to clamp interpolated color and depth values.
 * Draw test primitives.
 * Draw local fog.
-* Draw mirrors.
 * Draw burning models.
 * Fix issues with hall-of-mirrors effect visible at some places on some maps where sky quads are missing or aren't large enough to cover the entire sky.
 * Consider optimizing vertices transformation code by producing 4-component position vectors and thus ensuring vector instructions are used.
