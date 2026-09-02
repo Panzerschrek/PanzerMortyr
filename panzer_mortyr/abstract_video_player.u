@@ -1,0 +1,198 @@
+import "/assert.iu"
+import "/string_conversions.iu"
+import "abstract_video_player.iu"
+import "video_stream.iu"
+
+namespace PM
+{
+
+fn AbstractVideoPlayer::constructor( ConsoleOutPtr mut console_out )
+	( console_out_= move( console_out ) )
+{}
+
+fn AbstractVideoPlayer::PlayVideo( mut this, ust::filesystem_path_view file_path, AudioProcessor &mut audio_processor )
+{
+	// Stop music if it's still playing.
+	audio_processor.StopMusic();
+
+	// Check if we already need to stop before even loading a video.
+	if( !ProcessSDLEventsInVideoPlayback( console_out_ ) )
+	{
+		return;
+	}
+
+	auto mut stream_pair_opt= OpenVideoStream( console_out_, file_path );
+	if( stream_pair_opt.empty() )
+	{
+		return;
+	}
+
+	auto [ mut video_stream_ptr, mut audio_stream_read_end ]= stream_pair_opt.try_take();
+
+	// Add the audio stream. This may fail, in such case we get the stream back.
+	var ust::optional</AudioStream::ReadEnd/> mut audio_stream_read_end_opt=
+		audio_processor.AddAudioStream( move( audio_stream_read_end ) );
+
+	var IVideoStream &mut video_stream= video_stream_ptr.deref();
+
+	var [ u32, 2 ] video_size= video_stream.GetSize();
+
+	var bool mut has_frame_data= false;
+
+	var PerformanceCounter::TimePoint mut prev_time= performance_counter_.GetCurrentTime();
+
+	if_var( &mut audio_stream_read_end : audio_stream_read_end_opt )
+	{
+		// A fallback for cases when we don't play sound for a video.
+		// Perform timer-based audio samples extraction to force play the video.
+
+		var [ AudioStream::SamplePairType, 128 ] mut audio_samples= zero_init;
+
+		while( !video_stream.IsFinished() )
+		{
+			// Process events while playing a video.
+			if( !ProcessSDLEventsInVideoPlayback( console_out_ ) )
+			{
+				break;
+			}
+
+			if_var( &frame_data : video_stream.Update() )
+			{
+				SetFrame( video_size, frame_data );
+				has_frame_data= true;
+			}
+
+			var PerformanceCounter::TimePoint cur_time= performance_counter_.GetCurrentTime();
+			var f32 time_delta_s= performance_counter_.CalculateDurationS( prev_time, cur_time );
+			prev_time= cur_time;
+
+			// Extract audio samples based on real time measurements to advance video playback.
+			{
+				var size_type samples_to_extract( time_delta_s * f32( audio_stream_read_end.GetFrequency() ) );
+
+				var size_type mut samples_extracted= 0s;
+				while( samples_extracted < samples_to_extract )
+				{
+					var size_type read_size=
+						ust::min(
+							samples_to_extract - samples_extracted,
+							typeinfo</ typeof( audio_samples ) />.element_count );
+
+					var size_type samples_read=
+						audio_stream_read_end.ReadSamples(
+							ust::array_view_mut</ AudioStream::SamplePairType />( audio_samples ).subrange_end( read_size ) );
+
+					if( samples_read < read_size )
+					{
+						break; // Can't read more samples - the stream's buffer is empty.
+					}
+					samples_extracted+= samples_read;
+				}
+			}
+
+			audio_processor.Update( /* pause world sounds */ true );
+
+			 // Display a frame only if we received some. It may be not the case if we just started playing.
+			if( has_frame_data )
+			{
+				DrawAndPresentFrame();
+			}
+
+			// If update frequency is too high (presumably no vsync is enabled), sleep a little bit.
+			if( time_delta_s < 4.0f / 1000.0f )
+			{
+				unsafe( SDL_Delay( 2u ) );
+			}
+		}
+	}
+	else
+	{
+		// Play the video assuming that the audio processor is resposible for reading audio data from the audio stream and thus advancing video playback.
+
+		while( !video_stream.IsFinished() )
+		{
+			// Process events while playing a video.
+			if( !ProcessSDLEventsInVideoPlayback( console_out_ ) )
+			{
+				break;
+			}
+
+			if_var( &frame_data : video_stream.Update() )
+			{
+				SetFrame( video_size, frame_data );
+				has_frame_data= true;
+			}
+
+			var PerformanceCounter::TimePoint cur_time= performance_counter_.GetCurrentTime();
+			var f32 time_delta_s= performance_counter_.CalculateDurationS( prev_time, cur_time );
+			prev_time= cur_time;
+
+			audio_processor.Update( /* pause world sounds */ true );
+
+			 // Display a frame only if we received some. It may be not the case if we just started playing.
+			if( has_frame_data )
+			{
+				DrawAndPresentFrame();
+			}
+
+			// If update frequency is too high (presumably no vsync is enabled), sleep a little bit.
+			if( time_delta_s < 4.0f / 1000.0f )
+			{
+				unsafe( SDL_Delay( 2u ) );
+			}
+		}
+	}
+}
+
+// Returns false if should stop playback.
+fn ProcessSDLEventsInVideoPlayback( ConsoleOutPtr& console_out ) : bool
+{
+	var SDL_Event mut event= zero_init;
+	while( unsafe( SDL_PollEvent( $<(event) ) ) != 0 )
+	{
+		switch( SDL_EventType( size_type( event.union_contents[0] ) ) )
+		{
+			SDL_QUIT ->
+			{
+				// If quiting is requested, abort playback and push the quit event back.
+				ConsoleOutAddTextLine( console_out, "Quit is requested - abort video playback" );
+				unsafe( SDL_PushEvent( $<( event ) ) );
+				return false;
+			},
+			SDL_WINDOWEVENT ->
+			{
+				var SDL_WindowEventID event_id( unsafe( cast_ref_unsafe</SDL_WindowEvent/>( event ) ).event );
+				if( event_id == SDL_WINDOWEVENT_CLOSE )
+				{
+					// If closing is requested, abort playback and push the close event back.
+					ConsoleOutAddTextLine( console_out, "Closing is requested - abort video playback" );
+					unsafe( SDL_PushEvent( $<( event ) ) );
+					return false;
+				}
+			},
+			SDL_KEYDOWN ->
+			{
+				// Abort video playback on pressing one of special keys.
+				auto scancode= unsafe( cast_ref_unsafe</SDL_KeyboardEvent/>( event ) ).keysym.scancode;
+				if( scancode == SDL_SCANCODE_ESCAPE ||
+					scancode == SDL_SCANCODE_RETURN ||
+					scancode == SDL_SCANCODE_SPACE )
+				{
+					ConsoleOutAddTextLine( console_out, "A key was pressed - abort video playback" );
+					return false;
+				}
+			},
+			SDL_MOUSEBUTTONDOWN ->
+			{
+				// Abort video playback on mouse button push.
+				ConsoleOutAddTextLine( console_out, "A mouse button was pushed - abort video playback" );
+				return false;
+			},
+			default -> {},
+		}
+	}
+
+	return true;
+}
+
+} // namespace PM
