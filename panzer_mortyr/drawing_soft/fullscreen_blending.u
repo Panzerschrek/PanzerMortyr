@@ -1,0 +1,76 @@
+import "fullscreen_blending.iu"
+
+namespace PM
+{
+
+fn ApplyFullscreenBlending( Color32ImageView surface, RGBAColor blend_color )
+{
+	// This function draws fullscreen blending effect.
+	// It blends given color using radial pattern from the center of the screen.
+	// Alpha is multiplied by normalized square distance to the screen center clamped to one.
+	//
+	// It's highly optimized, the compiler uses proper vectorization for it.
+	//
+
+	if( blend_color[3] <= 2u8 )
+	{
+		return;
+	}
+
+	// Take a copy of parameters to make sure they are not re-read on each loop iteration.
+	auto surface_copy= surface;
+	var RGBAColor blend_color_copy= blend_color;
+
+	var [ i32, 2 ] half_pixel_offset_minus_center_fixed1
+	[
+		1 - i32( surface_copy.size[0] ),
+		1 - i32( surface_copy.size[1] ),
+	];
+
+	var [ i32, 2 ] radial_scale_fixed23
+	[
+		( ( 2u << 23 ) / surface_copy.size[0] ),
+		( ( 2u << 23 ) / surface_copy.size[1] ),
+	];
+
+	var u32 alpha_scale_fixed8= ( u32( blend_color[3] ) << 8u ) / 255u;
+
+	for( auto mut y= 0u; y < surface_copy.size[1]; ++y )
+	{
+		var i32 radial_vector_y_fixed24=
+			radial_scale_fixed23[1] * ( ( i32(y) << 1 ) + half_pixel_offset_minus_center_fixed1[1] );
+		var i64 radial_vector_y_squared_fixed48= i64( radial_vector_y_fixed24 ) * i64( radial_vector_y_fixed24 );
+
+		auto dst_line=
+			surface_copy.pixels.subrange( size_type( surface.stride * y ), size_type( surface.stride * ( y + 1u ) ) );
+
+		var i32 mut radial_vector_x_fixed24= radial_scale_fixed23[0] * half_pixel_offset_minus_center_fixed1[0];
+
+		foreach( &mut dst_pixel : dst_line )
+		{
+			var i64 radial_vector_x_squared_fixed48= i64( radial_vector_x_fixed24 ) * i64( radial_vector_x_fixed24 );
+
+			var u32 square_distance_to_center_fixed16(
+				( radial_vector_x_squared_fixed48 + radial_vector_y_squared_fixed48 ) >> 32 );
+
+			var u32 mix_fixed24(
+				( alpha_scale_fixed8 * ust::min( square_distance_to_center_fixed16, 1u << 16 ) ) );
+
+			var RGBAColor components= Color32ToComponents( dst_pixel );
+
+			var RGBAColor components_blended
+			[
+				( ( u32( components[0] ) << 24 ) + ( mix_fixed24 * ( u32( blend_color_copy[0] ) - u32( components[0] ) ) ) >> 24 ),
+				( ( u32( components[1] ) << 24 ) + ( mix_fixed24 * ( u32( blend_color_copy[1] ) - u32( components[1] ) ) ) >> 24 ),
+				( ( u32( components[2] ) << 24 ) + ( mix_fixed24 * ( u32( blend_color_copy[2] ) - u32( components[2] ) ) ) >> 24 ),
+				( ( u32( components[3] ) << 24 ) + ( mix_fixed24 * ( u32( blend_color_copy[3] ) - u32( components[3] ) ) ) >> 24 ),
+			];
+
+			dst_pixel= Color32FromComponents( components_blended );
+
+			radial_vector_x_fixed24 += radial_scale_fixed23[0] * 2;
+		}
+	}
+}
+
+} // namespace PM
