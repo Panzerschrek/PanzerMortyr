@@ -121,7 +121,6 @@ PanzerMortyr software rendering:
 * Consider optimizing vertices transformations and other heavy calculations by using "fma" instructions.
 * Consider optimizing code calculating per-vertex light for models using bit-hacky fast inverse square root.
 * Consider using textures dithering (as Unreal does).
-* Consider using a 4-byte array for color type for textures/framebuffer instead of u32. It may give some performance boost due to better compiler optimizations.
 * Consider speeding-up software world drawing by performing drawing using multiple threads, when each thread writes into its own framebuffer and the master thread then combines these buffers together.
 
 PanzerMortyr menus and HUD:

@@ -152,7 +152,8 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 	depth_buffer_.resize( size_type( surface.size[1] * surface.stride ), 0.0f );
 
 	var LightingModifiers lighting_modifiers=
-		CalculateLightingModifiers( settings_.lock_imut().deref(), drawing_info.fullscreen_effect );
+		MakeLightingModifiersComponentOrderBGR(
+			CalculateLightingModifiers( settings_.lock_imut().deref(), drawing_info.fullscreen_effect ) );
 
 	var Mat4f rotation_matrix=
 		CalculateCameraRotationMatrix( drawing_info.camera_params.azimuth, drawing_info.camera_params.elevation );
@@ -287,6 +288,9 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 			mirror_indices_ );
 
 		PrepareQuadVertexTextureCoordinates( mirror_vertices_ );
+
+		// Ensure light components order is correct.
+		ConvertMapVertexLightComponentsOrder( mirror_vertices_ );
 	}
 
 	var BBox3f mirror_bounds= CalculateMirrorBounds( mirror_vertices_ );
@@ -831,6 +835,9 @@ fn WorldDrawerSoft::DrawPartial(
 					// It the worst case we just offset texture coordinates a little bit more.
 					PrepareQuadVertexTextureCoordinates( temp_vertices_ );
 
+					// Ensure light components order is correct.
+					ConvertMapVertexLightComponentsOrder( temp_vertices_ );
+
 					DrawMapTriangles(
 						rasterizer,
 						vertices_order,
@@ -1209,7 +1216,7 @@ fn WorldDrawerSoft::DrawPartial(
 			//
 			var Mat4f inverse_model_rotation_matrix= rotation_matrix.Transpose();
 
-			var SphericalHarmonicsRGB mut light=
+			var SphericalHarmonics3 mut light=
 				GetLightForPoint(
 					map_data.light_sources,
 					clusters,
@@ -1221,7 +1228,7 @@ fn WorldDrawerSoft::DrawPartial(
 
 			if( dynamic_lights_enabled )
 			{
-				var SphericalHarmonicsRGB dynamic_light=
+				var SphericalHarmonics3 dynamic_light=
 					GetLightForPointFromDynamicLightSources(
 						game_params_.deref(),
 						drawing_info.dynamic_light_sources,
@@ -1245,6 +1252,14 @@ fn WorldDrawerSoft::DrawPartial(
 					// Always give some light for first-person weapon.
 					ust::max_assign( l.constant_component, 1.0f / 16.0f );
 				}
+			}
+
+			// Swap components from RGB to BGR.
+			{
+				auto l0= light[0];
+				auto l2= light[2];
+				light[0]= l2;
+				light[2]= l0;
 			}
 
 			for( auto mut i= 0s; i < 3s; ++i )
@@ -1406,6 +1421,9 @@ fn WorldDrawerSoft::DrawPartial(
 		// For scaling and biasing process all decals as one quad.
 		// It the worst case we just offset texture coordinates a little bit more.
 		PrepareQuadVertexTextureCoordinates( temp_vertices_ );
+
+		// Ensure light components order is correct.
+		ConvertMapVertexLightComponentsOrder( temp_vertices_ );
 
 		// Since we may have a lot of decals and dynamic lights,
 		// calculating lighting for decals from all lights may be too costly.
@@ -1616,6 +1634,9 @@ fn WorldDrawerSoft::DrawPartial(
 		semitransparent_geometry_indices_,
 		triangles_for_sorting_ );
 
+	// Ensure light components order is correct.
+	ConvertMapVertexLightComponentsOrder( semitransparent_geometry_vertices_ );
+
 	// Draw semitransparent geometry after all opaque geometry.
 
 	DrawSemitransparentMapTriangles(
@@ -1812,7 +1833,7 @@ fn WorldDrawerSoft::SetMap( mut this, u32 map_index )
 
 					// Calculate per-vertex light as for dynamic objects.
 					// It's static (doesn't change when an object is moving), but it's mostly fine.
-					var SphericalHarmonicsRGB light=
+					var SphericalHarmonics3 light=
 						GetLightForPoint(
 							light_sources,
 							zvox_data.clusters,
@@ -2044,6 +2065,9 @@ fn WorldDrawerSoft::SetMap( mut this, u32 map_index )
 		}
 	}
 
+	// Ensure light components order is correct.
+	ConvertMapVertexLightComponentsOrder( vertices );
+
 	// Create table of textures with applied caustics.
 	var TexturesWithAppliedCaustics mut textures_with_applied_caustics;
 
@@ -2147,14 +2171,14 @@ fn WorldDrawerSoft::SetMap( mut this, u32 map_index )
 				.sky_colors
 				[
 					[
-						f32( map_description.sky_colors[0][2] ) / 255.0f,
-						f32( map_description.sky_colors[0][1] ) / 255.0f,
 						f32( map_description.sky_colors[0][0] ) / 255.0f,
+						f32( map_description.sky_colors[0][1] ) / 255.0f,
+						f32( map_description.sky_colors[0][2] ) / 255.0f,
 					],
 					[
-						f32( map_description.sky_colors[1][2] ) / 255.0f,
-						f32( map_description.sky_colors[1][1] ) / 255.0f,
 						f32( map_description.sky_colors[1][0] ) / 255.0f,
+						f32( map_description.sky_colors[1][1] ) / 255.0f,
+						f32( map_description.sky_colors[1][2] ) / 255.0f,
 					],
 				],
 				// Investigations of the original game have shown, that sky model 3 has two cloud layers.
@@ -2162,9 +2186,9 @@ fn WorldDrawerSoft::SetMap( mut this, u32 map_index )
 				.use_two_cloud_layers= map_description.sky_model == 3u,
 				.fog_color
 				[
-					f32( map_description.fog_color[2] ),
-					f32( map_description.fog_color[1] ),
 					f32( map_description.fog_color[0] ),
+					f32( map_description.fog_color[1] ),
+					f32( map_description.fog_color[2] ),
 					0.0f
 				],
 				.global_fog_enabled= map_description.linear_fog_enabled,
@@ -2212,6 +2236,17 @@ fn PrepareQuadVertexTextureCoordinates( ust::array_view_mut</MapVertex/> quad_ve
 	{
 		v.tex_coordinates[0]= ust::fma( v.tex_coordinates[0], texture_size[0], tc_bias[0] );
 		v.tex_coordinates[1]= ust::fma( v.tex_coordinates[1], texture_size[1], tc_bias[1] );
+	}
+}
+
+// Swaps RGBA to BRGA order.
+fn ConvertMapVertexLightComponentsOrder( ust::array_view_mut</MapVertex/> quad_vertices )
+{
+	foreach( &mut v : quad_vertices )
+	{
+		auto tmp= v.light[0];
+		v.light[0]= v.light[2];
+		v.light[2]= tmp;
 	}
 }
 
