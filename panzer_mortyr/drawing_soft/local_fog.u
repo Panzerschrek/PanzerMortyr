@@ -71,21 +71,20 @@ fn DrawLocalFogVolumeImpl(
 				}
 			}
 
+			var f32 inv_min_inv_z= 1.0f / ust::max( min_inv_z, 1.0f / 65536.0f );
+			var f32 inv_max_inv_z= 1.0f / ust::max( max_inv_z, 1.0f / 65536.0f );
+
 			var u32 block_center_x= block_x * block_size + block_size / 2u;
 			var u32 block_center_y= block_y * block_size + block_size / 2u;
 
-			var f32 z= 1.0f / ust::max( max_inv_z, 1.0f / 65536.0f );
+			var Vec3f box_space_ray= Vec3f( f32( block_center_x ), f32( block_center_y ), 1.0f ) * transform_matrix;
 
-			var Vec3f box_space_ray= Vec3f( f32( block_center_x ) * z, f32( block_center_y ) * z, z ) * transform_matrix;
+			var f32 box_space_ray_length= box_space_ray.Length();
 
-			var f32 box_space_distance= box_space_ray.Length();
+			var Vec3f box_space_ray_normalized= box_space_ray / box_space_ray_length;
 
-			if( box_space_distance == 0.0f )
-			{
-				continue;
-			}
-
-			var Vec3f box_space_ray_normalized= box_space_ray / box_space_distance;
+			var f32 box_space_min_distance= box_space_ray_length * inv_max_inv_z;
+			var f32 box_space_max_distance= box_space_ray_length * inv_min_inv_z;
 
 			var [ f32, 2 ] mut intersection_near_far_distances[ c_almost_inf, c_almost_inf ];
 			var f32 mut fog_density_scale= 0.0f;
@@ -111,34 +110,70 @@ fn DrawLocalFogVolumeImpl(
 			}
 
 			var f32 near_distance= ust::max( intersection_near_far_distances[0], 0.0f );
-			// Limit far distance to fragment depth.
-			var f32 far_distance=
-				ust::max( ust::min( intersection_near_far_distances[1], box_space_distance ), near_distance );
 
-			if( far_distance <= near_distance )
+			var f32 far_distance_min=
+				ust::max( ust::min( intersection_near_far_distances[1], box_space_min_distance ), near_distance );
+
+			var f32 far_distance_max=
+				ust::max( ust::min( intersection_near_far_distances[1], box_space_max_distance ), near_distance );
+
+			var f32 fog_density_min= ( far_distance_min - near_distance ) * fog_density_scale;
+			var f32 fog_density_max= ( far_distance_max - near_distance ) * fog_density_scale;
+
+			var f32 z_delta= inv_min_inv_z - inv_max_inv_z;
+			if( z_delta >= 0.01f )
 			{
-				continue;
-			}
-
-			var f32 fog_density= ( far_distance - near_distance ) * fog_density_scale;
-
-			for( auto mut dy= 0u; dy < block_size; ++dy )
-			{
-				for( auto mut dx= 0u; dx < block_size; ++dx )
+				var f32 inv_z_delta= 1.0f / z_delta;
+				for( auto mut dy= 0u; dy < block_size; ++dy )
 				{
-					var Color32 &mut pixel= surface.pixels[ size_type( block_x * block_size + dx + ( block_y * block_size + dy ) * surface.stride ) ];
+					for( auto mut dx= 0u; dx < block_size; ++dx )
+					{
+						var size_type pixel_address( block_x * block_size + dx + ( block_y * block_size + dy ) * surface.stride );
 
-					var BRGAColor color_components= Color32ReadRawComponents( pixel );
+						var f32 z= 1.0f / ust::max( depth_buffer[ pixel_address ], 1.0f / 65536.0f );
 
-					var BRGAColor color_mixed
-					[
-						( ust::max( 0.0f, ust::min( f32( color_components[0] ) + fog_density * fog_color[0], 255.0f ) ) ),
-						( ust::max( 0.0f, ust::min( f32( color_components[1] ) + fog_density * fog_color[1], 255.0f ) ) ),
-						( ust::max( 0.0f, ust::min( f32( color_components[2] ) + fog_density * fog_color[2], 255.0f ) ) ),
-						( ust::max( 0.0f, ust::min( f32( color_components[3] ) + fog_density * fog_color[3], 255.0f ) ) ),
-					];
+						var f32 mix_factor= ( z - inv_max_inv_z ) * inv_z_delta;
 
-					Color32WriteRawComponents( pixel, color_mixed );
+						var f32 fog_density= fog_density_max * mix_factor + fog_density_min * ( 1.0f - mix_factor );
+
+						var Color32 &mut pixel= surface.pixels[ pixel_address ];
+
+						var BRGAColor color_components= Color32ReadRawComponents( pixel );
+
+						var BRGAColor color_mixed
+						[
+							( ust::max( 0.0f, ust::min( f32( color_components[0] ) + fog_density * fog_color[0], 255.0f ) ) ),
+							( ust::max( 0.0f, ust::min( f32( color_components[1] ) + fog_density * fog_color[1], 255.0f ) ) ),
+							( ust::max( 0.0f, ust::min( f32( color_components[2] ) + fog_density * fog_color[2], 255.0f ) ) ),
+							( ust::max( 0.0f, ust::min( f32( color_components[3] ) + fog_density * fog_color[3], 255.0f ) ) ),
+						];
+
+						Color32WriteRawComponents( pixel, color_mixed );
+					}
+				}
+			}
+			else
+			{
+				for( auto mut dy= 0u; dy < block_size; ++dy )
+				{
+					for( auto mut dx= 0u; dx < block_size; ++dx )
+					{
+						var size_type pixel_address( block_x * block_size + dx + ( block_y * block_size + dy ) * surface.stride );
+
+						var Color32 &mut pixel= surface.pixels[ pixel_address ];
+
+						var BRGAColor color_components= Color32ReadRawComponents( pixel );
+
+						var BRGAColor color_mixed
+						[
+							( ust::max( 0.0f, ust::min( f32( color_components[0] ) + fog_density_max * fog_color[0], 255.0f ) ) ),
+							( ust::max( 0.0f, ust::min( f32( color_components[1] ) + fog_density_max * fog_color[1], 255.0f ) ) ),
+							( ust::max( 0.0f, ust::min( f32( color_components[2] ) + fog_density_max * fog_color[2], 255.0f ) ) ),
+							( ust::max( 0.0f, ust::min( f32( color_components[3] ) + fog_density_max * fog_color[3], 255.0f ) ) ),
+						];
+
+						Color32WriteRawComponents( pixel, color_mixed );
+					}
 				}
 			}
 		}
