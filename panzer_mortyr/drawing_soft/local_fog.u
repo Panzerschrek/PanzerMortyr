@@ -1,3 +1,4 @@
+import "/scoped_array.iu"
 import "../fog.iu"
 import "local_fog.iu"
 
@@ -55,21 +56,42 @@ fn DrawLocalFogVolumeImpl(
 
 	var u32 block_size= 4u;
 
-	for( auto mut block_y= 0u; block_y < surface.size[1] / block_size; ++block_y )
-	{
-		for( auto mut block_x= 0u; block_x < surface.size[0] / block_size; ++block_x )
-		{
-			var f32 mut min_inv_z= ust::plus_inf</f32/>(), mut max_inv_z= ust::minus_inf</f32/>();
+	var u32 num_blocks_x= surface.size[0] / block_size;
+	var u32 num_blocks_y= surface.size[1] / block_size;
 
-			for( auto mut dy= 0u; dy < block_size; ++dy )
+	scoped_array FogBlock mut blocks[ size_type( num_blocks_x ) ]( ust::make_zeroed</FogBlock/>() );
+
+	// Iterate over lines of blocks.
+	for( auto mut block_y= 0u; block_y < num_blocks_y; ++block_y )
+	{
+		// Reset min/max inv_z for each block.
+		foreach( &mut block : blocks )
+		{
+			block.min_inv_z= ust::plus_inf </f32/>();
+			block.max_inv_z= ust::minus_inf</f32/>();
+		}
+
+		// Iterate over all pixel lines within this line of blocks and set min/max inv_z.
+		for( auto mut dy= 0u; dy < block_size; ++dy )
+		{
+			var u32 y= block_y * block_size + dy;
+			auto depth_buffer_line=
+				depth_buffer.subrange( size_type( y * surface.stride ), size_type( ( y + 1u ) * surface.stride ) );
+
+			var u32 mut x= 0u;
+			foreach( inv_z : depth_buffer_line )
 			{
-				for( auto mut dx= 0u; dx < block_size; ++dx )
-				{
-					var f32 inv_z= depth_buffer[ size_type( block_x * block_size + dx + ( block_y * block_size + dy ) * surface.stride ) ];
-					ust::min_assign( min_inv_z, inv_z );
-					ust::max_assign( max_inv_z, inv_z );
-				}
+				var FogBlock &mut block= blocks[ size_type( x / block_size ) ];
+				ust::min_assign( block.min_inv_z, inv_z );
+				ust::max_assign( block.max_inv_z, inv_z );
+				++x;
 			}
+		}
+
+		// Iterate over all blocks in line and calculate fog params for them.
+		for( auto mut block_x= 0u; block_x < num_blocks_x; ++block_x )
+		{
+			var FogBlock &mut block= blocks[ size_type( block_x ) ];
 
 			var u32 block_center_x= block_x * block_size + block_size / 2u;
 			var u32 block_center_y= block_y * block_size + block_size / 2u;
@@ -80,8 +102,8 @@ fn DrawLocalFogVolumeImpl(
 
 			var Vec3f box_space_ray_normalized= box_space_ray / box_space_ray_length;
 
-			var f32 box_space_min_distance= box_space_ray_length / ust::max( max_inv_z, 1.0f / 65536.0f );
-			var f32 box_space_max_distance= box_space_ray_length / ust::max( min_inv_z, 1.0f / 65536.0f );
+			var f32 box_space_min_distance= box_space_ray_length / ust::max( block.max_inv_z, 1.0f / 65536.0f );
+			var f32 box_space_max_distance= box_space_ray_length / ust::max( block.min_inv_z, 1.0f / 65536.0f );
 
 			var [ f32, 2 ] mut intersection_near_far_distances[ c_almost_inf, c_almost_inf ];
 			var f32 mut fog_density_scale= 0.0f;
@@ -114,40 +136,56 @@ fn DrawLocalFogVolumeImpl(
 			var f32 far_distance_max=
 				ust::max( ust::min( intersection_near_far_distances[1], box_space_max_distance ), near_distance );
 
-			var f32 fog_density_min= ( far_distance_min - near_distance ) * fog_density_scale;
-			var f32 fog_density_max= ( far_distance_max - near_distance ) * fog_density_scale;
+			block.fog_density_min= ( far_distance_min - near_distance ) * fog_density_scale;
+			block.fog_density_max= ( far_distance_max - near_distance ) * fog_density_scale;
 
-			var f32 inv_z_inv_delta= 1.0f / ust::max( max_inv_z - min_inv_z, 1.0f / c_almost_inf );
+			block.inv_z_inv_delta= 1.0f / ust::max( block.max_inv_z - block.min_inv_z, 1.0f / c_almost_inf );
+		}
 
-			for( auto mut dy= 0u; dy < block_size; ++dy )
+		// Iterate over all pixels within this block line and apply fog.
+		for( auto mut dy= 0u; dy < block_size; ++dy )
+		{
+			var u32 y= block_y * block_size + dy;
+			var size_type offset_start( y * surface.stride ), offset_end( ( y + 1u ) * surface.stride );
+
+			auto color_line= surface.pixels.subrange( offset_start, offset_end );
+			auto depth_buffer_line= depth_buffer.subrange( offset_start, offset_end );
+
+			var u32 mut x= 0u;
+
+			foreach( &pair : depth_buffer_line.iter().zip( color_line.iter() ) )
 			{
-				for( auto mut dx= 0u; dx < block_size; ++dx )
-				{
-					var size_type pixel_address( block_x * block_size + dx + ( block_y * block_size + dy ) * surface.stride );
+				var FogBlock& block= blocks[ size_type( x / block_size ) ];
 
-					var f32 inv_z= depth_buffer[ pixel_address ];
+				var f32 mix_factor= ( pair.first - block.min_inv_z ) * block.inv_z_inv_delta;
 
-					var f32 mix_factor= ( inv_z - min_inv_z ) * inv_z_inv_delta;
+				var f32 fog_density= block.fog_density_min * mix_factor + block.fog_density_max * ( 1.0f - mix_factor );
 
-					var f32 fog_density= fog_density_min * mix_factor + fog_density_max * ( 1.0f - mix_factor );
+				var BRGAColor color_components= Color32ReadRawComponents( pair.second );
 
-					var Color32 &mut pixel= surface.pixels[ pixel_address ];
+				var BRGAColor color_mixed
+				[
+					( ust::max( 0.0f, ust::min( f32( color_components[0] ) + fog_density * fog_color[0], 255.0f ) ) ),
+					( ust::max( 0.0f, ust::min( f32( color_components[1] ) + fog_density * fog_color[1], 255.0f ) ) ),
+					( ust::max( 0.0f, ust::min( f32( color_components[2] ) + fog_density * fog_color[2], 255.0f ) ) ),
+					( ust::max( 0.0f, ust::min( f32( color_components[3] ) + fog_density * fog_color[3], 255.0f ) ) ),
+				];
 
-					var BRGAColor color_components= Color32ReadRawComponents( pixel );
+				Color32WriteRawComponents( pair.second, color_mixed );
 
-					var BRGAColor color_mixed
-					[
-						( ust::max( 0.0f, ust::min( f32( color_components[0] ) + fog_density * fog_color[0], 255.0f ) ) ),
-						( ust::max( 0.0f, ust::min( f32( color_components[1] ) + fog_density * fog_color[1], 255.0f ) ) ),
-						( ust::max( 0.0f, ust::min( f32( color_components[2] ) + fog_density * fog_color[2], 255.0f ) ) ),
-						( ust::max( 0.0f, ust::min( f32( color_components[3] ) + fog_density * fog_color[3], 255.0f ) ) ),
-					];
-
-					Color32WriteRawComponents( pixel, color_mixed );
-				}
+				++x;
 			}
 		}
 	}
+}
+
+struct FogBlock
+{
+	f32 min_inv_z;
+	f32 max_inv_z;
+	f32 fog_density_min;
+	f32 fog_density_max;
+	f32 inv_z_inv_delta;
 }
 
 // Returns near/far distance.
