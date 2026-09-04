@@ -59,10 +59,10 @@ fn DrawLocalFogVolumeImpl(
 
 	var Mat3f transform_matrix= inverse_perspective_and_rotation_matrix * Mat3f::MakeScale( inv_fog_volume_scale );
 
-	var u32 block_size= 4u;
+	var u32 constexpr c_block_size= 4u;
 
-	var u32 num_blocks_x= surface_local.size[0] / block_size;
-	var u32 num_blocks_y= surface_local.size[1] / block_size;
+	var u32 num_blocks_x= ( surface_local.size[0] + ( c_block_size - 1u ) ) / c_block_size;
+	var u32 num_blocks_y= ( surface_local.size[1] + ( c_block_size - 1u ) ) / c_block_size;
 
 	scoped_array FogBlock mut blocks[ size_type( num_blocks_x ) ]( ust::make_zeroed</FogBlock/>() );
 
@@ -77,9 +77,10 @@ fn DrawLocalFogVolumeImpl(
 		}
 
 		// Iterate over all pixel lines within this line of blocks and set min/max inv_z.
-		for( auto mut dy= 0u; dy < block_size; ++dy )
+		for( var u32 mut y= block_y * c_block_size, y_end= ust::min( block_y * c_block_size + c_block_size, surface_local.size[1] );
+			y < y_end;
+			++y )
 		{
-			var u32 y= block_y * block_size + dy;
 			auto depth_buffer_line=
 				depth_buffer_local.subrange(
 					size_type( y * surface_local.stride ), size_type( ( y + 1u ) * surface_local.stride ) );
@@ -87,7 +88,7 @@ fn DrawLocalFogVolumeImpl(
 			var u32 mut x= 0u;
 			foreach( inv_z : depth_buffer_line )
 			{
-				var FogBlock &mut block= blocks[ size_type( x / block_size ) ];
+				var FogBlock &mut block= blocks[ size_type( x / c_block_size ) ];
 				ust::min_assign( block.min_inv_z, inv_z );
 				ust::max_assign( block.max_inv_z, inv_z );
 				++x;
@@ -99,8 +100,8 @@ fn DrawLocalFogVolumeImpl(
 		{
 			var FogBlock &mut block= blocks[ size_type( block_x ) ];
 
-			var u32 block_center_x= block_x * block_size + block_size / 2u;
-			var u32 block_center_y= block_y * block_size + block_size / 2u;
+			var u32 block_center_x= block_x * c_block_size + c_block_size / 2u;
+			var u32 block_center_y= block_y * c_block_size + c_block_size / 2u;
 
 			var Vec3f box_space_ray= Vec3f( f32( block_center_x ), f32( block_center_y ), 1.0f ) * transform_matrix;
 
@@ -153,9 +154,10 @@ fn DrawLocalFogVolumeImpl(
 		}
 
 		// Iterate over all pixels within this block line and apply fog.
-		for( auto mut dy= 0u; dy < block_size; ++dy )
+		for( var u32 mut y= block_y * c_block_size, y_end= ust::min( block_y * c_block_size + c_block_size, surface_local.size[1] );
+			y < y_end;
+			++y )
 		{
-			var u32 y= block_y * block_size + dy;
 			var size_type offset_start( y * surface_local.stride ), offset_end( ( y + 1u ) * surface_local.stride );
 
 			auto color_line= surface_local.pixels.subrange( offset_start, offset_end );
@@ -165,7 +167,7 @@ fn DrawLocalFogVolumeImpl(
 
 			foreach( &pair : depth_buffer_line.iter().zip( color_line.iter() ) )
 			{
-				var FogBlock& block= blocks[ size_type( x / block_size ) ];
+				var FogBlock& block= blocks[ size_type( x / c_block_size ) ];
 
 				var f32 fog_density=
 					( pair.first - block.min_inv_z ) * block.fog_density_min_minus_max_div_inv_z_delta +
