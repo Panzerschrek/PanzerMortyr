@@ -162,27 +162,57 @@ fn DrawLocalFogVolumeImpl(
 			auto color_line= surface_local.pixels.subrange( offset_start, offset_end );
 			auto depth_buffer_line= depth_buffer_local.subrange( offset_start, offset_end );
 
-			var u32 mut x= 0u;
-
-			foreach( &pair : depth_buffer_line.iter().zip( color_line.iter() ) )
+			for( auto mut block_x= 0u; block_x < surface.size[0] / c_block_size; ++block_x )
 			{
-				var FogBlock& block= blocks[ size_type( x / c_block_size ) ];
+				var FogBlock& block= blocks[ size_type( block_x ) ];
+				for( auto mut dx= 0u; dx < c_block_size; ++dx )
+				{
+					var size_type pixel_address( block_x * c_block_size + dx );
+					var f32 depth_value= depth_buffer_line[ pixel_address ];
+					var Color32 &mut pixel= color_line[ pixel_address ];
 
-				var f32 fog_density= pair.first * block.fog_density_inv_z_scale + block.fog_density_bias;
+					var f32 fog_density= depth_value * block.fog_density_inv_z_scale + block.fog_density_bias;
 
-				var BRGAColor color_components= Color32ReadRawComponents( pair.second );
+					var BRGAColor color_components= Color32ReadRawComponents( pixel );
 
-				var BRGAColor color_mixed
-				[
-					( ust::min( f32( color_components[0] ) + fog_density * fog_color_local[0], 255.0f ) ),
-					( ust::min( f32( color_components[1] ) + fog_density * fog_color_local[1], 255.0f ) ),
-					( ust::min( f32( color_components[2] ) + fog_density * fog_color_local[2], 255.0f ) ),
-					( ust::min( f32( color_components[3] ) + fog_density * fog_color_local[3], 255.0f ) ),
-				];
+					var BRGAColor color_mixed
+					[
+						( ust::min( f32( color_components[0] ) + fog_density * fog_color_local[0], 255.0f ) ),
+						( ust::min( f32( color_components[1] ) + fog_density * fog_color_local[1], 255.0f ) ),
+						( ust::min( f32( color_components[2] ) + fog_density * fog_color_local[2], 255.0f ) ),
+						( ust::min( f32( color_components[3] ) + fog_density * fog_color_local[3], 255.0f ) ),
+					];
 
-				Color32WriteRawComponents( pair.second, color_mixed );
+					Color32WriteRawComponents( pixel, color_mixed );
 
-				++x;
+				}
+			}
+
+			var u32 num_remaining_pixels= surface.size[0] % c_block_size;
+			if( num_remaining_pixels != 0u )
+			{
+				var u32 block_x= num_blocks_x - 1u;
+				var FogBlock& block= blocks[ size_type( block_x ) ];
+				for( auto mut dx= 0u; dx < num_remaining_pixels; ++dx )
+				{
+					var size_type pixel_address( block_x * c_block_size + dx );
+					var f32 depth_value= depth_buffer_line[ pixel_address ];
+					var Color32 &mut pixel= color_line[ pixel_address ];
+
+					var f32 fog_density= depth_value * block.fog_density_inv_z_scale + block.fog_density_bias;
+
+					var BRGAColor color_components= Color32ReadRawComponents( pixel );
+
+					var BRGAColor color_mixed
+					[
+						( ust::min( f32( color_components[0] ) + fog_density * fog_color_local[0], 255.0f ) ),
+						( ust::min( f32( color_components[1] ) + fog_density * fog_color_local[1], 255.0f ) ),
+						( ust::min( f32( color_components[2] ) + fog_density * fog_color_local[2], 255.0f ) ),
+						( ust::min( f32( color_components[3] ) + fog_density * fog_color_local[3], 255.0f ) ),
+					];
+
+					Color32WriteRawComponents( pixel, color_mixed );
+				}
 			}
 		}
 	}
