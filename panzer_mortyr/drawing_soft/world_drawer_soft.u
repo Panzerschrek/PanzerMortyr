@@ -19,6 +19,7 @@ import "../sky_common.iu"
 import "../texture_common.iu"
 import "caustics.iu"
 import "fullscreen_blending.iu"
+import "local_fog.iu"
 import "model_blood_coverage.iu"
 import "rasterizer.iu"
 import "sky_rasterizer.iu"
@@ -1625,6 +1626,41 @@ fn WorldDrawerSoft::DrawPartial(
 				cast_imut(test_line.vertices)[1],
 				Color32FromComponents(
 					ust::make_array( test_line.color[0], test_line.color[1], test_line.color[2], 0u8 ) ) );
+		}
+	}
+
+	// Draw local fog volumes prior to drawing semitrensparent geometry.
+	if( true ) // TODO - allow disabling fog.
+	{
+		var [ f32, 4 ] fog_color_additive
+		[
+			map_data.fog_color[0] * lighting_modifiers.map.scale[0],
+			map_data.fog_color[1] * lighting_modifiers.map.scale[1],
+			map_data.fog_color[2] * lighting_modifiers.map.scale[2],
+			map_data.fog_color[3],
+		];
+
+		foreach( &fog_volume : zvox_data.fog_volumes )
+		{
+			var Vec3f center( f32( fog_volume.center[0] ), f32( fog_volume.center[1] ), f32( fog_volume.center[2] ) );
+
+			var Vec3f half_size(
+				f32( fog_volume.bounding_box_half_size[0] ),
+				f32( fog_volume.bounding_box_half_size[1] ),
+				f32( fog_volume.bounding_box_half_size[2] ) );
+
+			var BBox3f bbox
+			{
+				.min= center - half_size,
+				.max= center + half_size,
+			};
+
+			if( !AreBoxVerticesClippedByAtLeastOneCameraClipPlane( camera_clip_planes, bbox.CreateCornerVertices() ) &&
+				visibility_calculator.IsBoxVisible( bbox.CreateCornerVertices() ) )
+			{
+				auto [ surface, depth_buffer ]= rasterizer.GetSurfaceAndDepthBuffer();
+				DrawLocalFogVolume( surface, depth_buffer, fog_color_additive, bbox );
+			}
 		}
 	}
 
