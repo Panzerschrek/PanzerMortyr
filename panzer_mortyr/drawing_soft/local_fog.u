@@ -1,3 +1,5 @@
+import "../fog.iu"
+import "../geometry_utils.iu"
 import "local_fog.iu"
 
 namespace PM
@@ -7,25 +9,106 @@ fn DrawLocalFogVolume(
 	Color32ImageView surface,
 	ust::array_view_imut</f32/> depth_buffer,
 	[ f32, 4 ]& fog_color,
-	BBox3f& fog_volume_bbox )
+	BBox3f& fog_volume_bbox,
+	Mat3f& transform_matrix,
+	Vec3f& camera_position )
 {
-	// TODO - draw proper volume.
-	ust::ignore_unused( depth_buffer );
-	ust::ignore_unused( fog_volume_bbox );
+	var Vec3f fog_volume_scale= 0.5f * fog_volume_bbox.GetDimensions();
+	var Vec3f fog_volume_center= fog_volume_bbox.GetCenter();
 
-	foreach( &mut pixel : surface.pixels )
+	var Vec3f inv_fog_volume_scale(
+		1.0f / fog_volume_scale.x, 1.0f / fog_volume_scale.y, 1.0f / fog_volume_scale.z );
+
+	var Vec3f box_space_camera_position= ( camera_position - fog_volume_center ) * inv_fog_volume_scale;
+
+	var bool use_box_shaped_fog= BoxShapeShouldBeUsedForLocalFogVolume( fog_volume_bbox );
+
+	for( auto mut y= 0u; y < surface.size[1]; ++y )
 	{
-		var BRGAColor color_components= Color32ReadRawComponents( pixel );
+		for( auto mut  x= 0u; x < surface.size[0]; ++x )
+		{
+			var size_type pixel_index( x + y * surface.stride );
 
-		var BRGAColor color_mixed
-		[
-			( ust::max( 0.0f, ust::min( f32( color_components[0] ) + fog_color[0], 255.0f ) ) ),
-			( ust::max( 0.0f, ust::min( f32( color_components[1] ) + fog_color[1], 255.0f ) ) ),
-			( ust::max( 0.0f, ust::min( f32( color_components[2] ) + fog_color[2], 255.0f ) ) ),
-			( ust::max( 0.0f, ust::min( f32( color_components[3] ) + fog_color[3], 255.0f ) ) ),
-		];
+			var f32 inv_z= depth_buffer[ pixel_index ];
 
-		Color32WriteRawComponents( pixel, color_mixed );
+			if( inv_z <= 0.0f )
+			{
+				continue;
+			}
+
+			var f32 z= 1.0f / inv_z;
+
+			var Vec3f box_space_ray= ( Vec3f( f32(x), f32(y), z ) * transform_matrix ) * inv_fog_volume_scale;
+
+			var f32 box_space_distance= box_space_ray.Length();
+
+			if( box_space_distance == 0.0f )
+			{
+				continue;
+			}
+
+			var Vec3f box_space_ray_normalized= box_space_ray / box_space_distance;
+
+			var f32 mut near_distance= 99999999.0f;
+			var f32 mut far_distance= -99999999.0f;
+			var f32 mut fog_density_scale= 0.0f;
+
+			if( use_box_shaped_fog )
+			{
+				if_var( intersection_result :
+					FindRayBBoxIntersection(
+						box_space_camera_position,
+						box_space_ray_normalized,
+						BBox3f{ .min( -1.0f, -1.0f, -1.0f ), .max(  1.0f,  1.0f,  1.0f ) } ) )
+				{
+					near_distance= intersection_result.near_point_distance;
+					far_distance= intersection_result.far_point_distance;
+				}
+
+				fog_density_scale= 0.5f;
+			}
+			else
+			{
+				if_var( intersection_result :
+					FindRaySphereIntersectionResult(
+						box_space_camera_position,
+						box_space_ray_normalized,
+						Vec3f( 0.0f, 0.0f, 0.0f ),
+						1.0f ) )
+				{
+					near_distance= intersection_result.near_point_distance;
+					far_distance= intersection_result.far_point_distance;
+
+					fog_density_scale= 0.3f * ( far_distance - near_distance );
+				}
+			}
+
+			ust::max_assign( near_distance, 0.0f );
+			ust::min_assign( far_distance, box_space_distance );
+			ust::max_assign( far_distance, near_distance );
+			var f32 distance_in_fog_volume= far_distance - near_distance;
+
+			if( distance_in_fog_volume <= 0.0f )
+			{
+				continue;
+			}
+
+			var f32 fog_density= distance_in_fog_volume * fog_density_scale;
+
+			var Color32 &mut pixel= surface.pixels[ pixel_index ];
+
+			var BRGAColor color_components= Color32ReadRawComponents( pixel );
+
+			var BRGAColor color_mixed
+			[
+				( ust::max( 0.0f, ust::min( f32( color_components[0] ) + fog_density * fog_color[0], 255.0f ) ) ),
+				( ust::max( 0.0f, ust::min( f32( color_components[1] ) + fog_density * fog_color[1], 255.0f ) ) ),
+				( ust::max( 0.0f, ust::min( f32( color_components[2] ) + fog_density * fog_color[2], 255.0f ) ) ),
+				( ust::max( 0.0f, ust::min( f32( color_components[3] ) + fog_density * fog_color[3], 255.0f ) ) ),
+			];
+
+			Color32WriteRawComponents( pixel, color_mixed );
+		}
 	}
 }
 
