@@ -72,40 +72,40 @@ fn DrawLocalFogVolumeImpl(
 
 			var Vec3f box_space_ray_normalized= box_space_ray / box_space_distance;
 
-			var f32 mut near_distance= almost_inf;
-			var f32 mut far_distance= -almost_inf;
+			var [ f32, 2 ] mut intersection_near_far_distances[ c_almost_inf, c_almost_inf ];
 			var f32 mut fog_density_scale= 0.0f;
 
 			static_if( use_box_shaped_fog )
 			{
-				auto intersection_result=
+				// Find near/far distance of ray with box intersection.
+				// The difference between these two values is distance travelled within this fog volume.
+				intersection_near_far_distances=
 					CalculateRayIntersectionWithUnitBBox( box_space_camera_position, box_space_ray_normalized );
-				near_distance= intersection_result[0];
-				far_distance= intersection_result[1];
 
+				// For box-shaped fog use constant density scale.
 				fog_density_scale= 0.5f;
 			}
 			else
 			{
-				auto intersection_result=
+				intersection_near_far_distances=
 					CalculateRayUnitSphereIntersection( box_space_camera_position, box_space_ray_normalized );
-				near_distance= intersection_result[0];
-				far_distance= intersection_result[1];
 
-				fog_density_scale= 0.3f * ( far_distance - near_distance );
+				// For elliptical fog make density depending on distance travelled within fog boundaries.
+				// Otherwise fog edges look too sharp.
+				fog_density_scale= 0.3f * ( intersection_near_far_distances[1] - intersection_near_far_distances[0] );
 			}
 
-			ust::max_assign( near_distance, 0.0f );
-			ust::min_assign( far_distance, box_space_distance );
-			ust::max_assign( far_distance, near_distance );
-			var f32 distance_in_fog_volume= far_distance - near_distance;
+			var f32 near_distance= ust::max( intersection_near_far_distances[0], 0.0f );
+			// Limit far distance to fragment depth.
+			var f32 far_distance=
+				ust::max( ust::min( intersection_near_far_distances[1], box_space_distance ), near_distance );
 
-			if( distance_in_fog_volume <= 0.0f )
+			if( far_distance <= near_distance )
 			{
 				continue;
 			}
 
-			var f32 fog_density= distance_in_fog_volume * fog_density_scale;
+			var f32 fog_density= ( far_distance - near_distance ) * fog_density_scale;
 
 			var Color32 &mut pixel= surface.pixels[ pixel_index ];
 
@@ -127,7 +127,7 @@ fn DrawLocalFogVolumeImpl(
 // Returns near/far distance.
 fn CalculateRayIntersectionWithUnitBBox( Vec3f& ray_start, Vec3f& ray_direction ) : [ f32, 2 ]
 {
-	var f32 mut near_distance= -almost_inf, mut far_distance= almost_inf;
+	var f32 mut near_distance= -c_almost_inf, mut far_distance= c_almost_inf;
 
 	if( ray_direction.x > 0.0f )
 	{
@@ -141,7 +141,7 @@ fn CalculateRayIntersectionWithUnitBBox( Vec3f& ray_start, Vec3f& ray_direction 
 	}
 	else if( ray_start.x <= -1.0f | ray_start.x >= 1.0f )
 	{
-		return ust::make_array( almost_inf, -almost_inf );
+		return ust::make_array( c_almost_inf, -c_almost_inf );
 	}
 
 	if( ray_direction.y > 0.0f )
@@ -156,7 +156,7 @@ fn CalculateRayIntersectionWithUnitBBox( Vec3f& ray_start, Vec3f& ray_direction 
 	}
 	else if( ray_start.y <= -1.0f | ray_start.y >= 1.0f )
 	{
-		return ust::make_array( almost_inf, -almost_inf );
+		return ust::make_array( c_almost_inf, -c_almost_inf );
 	}
 
 	if( ray_direction.z > 0.0f )
@@ -171,13 +171,13 @@ fn CalculateRayIntersectionWithUnitBBox( Vec3f& ray_start, Vec3f& ray_direction 
 	}
 	else if( ray_start.z <= -1.0f | ray_start.z >= 1.0f )
 	{
-		return ust::make_array( almost_inf, -almost_inf );
+		return ust::make_array( c_almost_inf, -c_almost_inf );
 	}
 
 	return ust::make_array( near_distance, far_distance );
 }
 
-var f32 almost_inf= 99999999.0f;
+var f32 c_almost_inf= 99999999.0f;
 
 // Returns near/far distance.
 fn CalculateRayUnitSphereIntersection( Vec3f& ray_start, Vec3f& ray_normalized_direction ) : [ f32, 2 ]
