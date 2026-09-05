@@ -100,6 +100,7 @@ PanzerMortyr rendering:
 * Consider speeding-up rain and snow particles fetching by cutting the fetch bbox by the view frustum.
 * Consider reducing power of local fog volumes (additive) due to global fog.
 * Consider drawing mirror reflections in water surfaces.
+* Consider using the same code for local fog calculation for semitransparent geometry and for other geometry in software mode.
 
 PanzerMortyr OpenGL rendering:
 
@@ -114,8 +115,8 @@ PanzerMortyr software rendering:
 * Try seeeding-up rasterization code by using depth buffer in u32 or even u16 format.
 * Try speeding-up rasterization by correcting color and depth equations, so that it's not need to clamp interpolated color and depth values.
 * Draw test primitives.
-* Draw local fog.
 * Draw burning models.
+* Consider applying local fog to semitransparent geometry.
 * Fix issues with hall-of-mirrors effect visible at some places on some maps where sky quads are missing or aren't large enough to cover the entire sky.
 * Consider optimizing vertices transformation code by producing 4-component position vectors and thus ensuring vector instructions are used.
 * Consider optimizing vertices transformations and other heavy calculations by using "fma" instructions.
