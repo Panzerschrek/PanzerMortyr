@@ -1633,15 +1633,9 @@ fn WorldDrawerSoft::DrawPartial(
 	// Draw local fog volumes prior to drawing semitrensparent geometry.
 	if( fog_enabled )
 	{
-		var [ f32, 4 ] fog_color_additive
-		[
-			map_data.fog_color[0] * lighting_modifiers.map.scale[0],
-			map_data.fog_color[1] * lighting_modifiers.map.scale[1],
-			map_data.fog_color[2] * lighting_modifiers.map.scale[2],
-			map_data.fog_color[3],
-		];
+		local_fog_volumes_.clear();
 
-		foreach( &fog_volume : zvox_data.fog_volumes )
+		foreach( &fog_volume : zvox_data.fog_volumes ) label for_fog_volumes
 		{
 			var Vec3f center( f32( fog_volume.center[0] ), f32( fog_volume.center[1] ), f32( fog_volume.center[2] ) );
 
@@ -1659,18 +1653,48 @@ fn WorldDrawerSoft::DrawPartial(
 			if( !AreBoxVerticesClippedByAtLeastOneCameraClipPlane( camera_clip_planes, bbox.CreateCornerVertices() ) &&
 				visibility_calculator.IsBoxVisible( bbox.CreateCornerVertices() ) )
 			{
+				// HACK!
+				// There are a couple of places (like on map 34) where fog volumes are placed with intesection.
+				// Drawing such volumes may be pretty costly.
+				// So, combine them into single volume to gain some performance.
+				foreach( &mut prev_bbox : local_fog_volumes_ )
+				{
+					if( bbox.Instersects( prev_bbox ) )
+					{
+						prev_bbox.ExtendWithOther( bbox );
+						continue label for_fog_volumes;
+					}
+				}
+
+				local_fog_volumes_.push_back( bbox );
+			}
+		}
+
+		if( !local_fog_volumes_.empty() )
+		{
+
+			var [ f32, 4 ] fog_color_additive
+			[
+				map_data.fog_color[0] * lighting_modifiers.map.scale[0],
+				map_data.fog_color[1] * lighting_modifiers.map.scale[1],
+				map_data.fog_color[2] * lighting_modifiers.map.scale[2],
+				map_data.fog_color[3],
+			];
+
+			foreach( &local_fog_volume : local_fog_volumes_ )
+			{
 				auto [ surface, depth_buffer ]= rasterizer.GetSurfaceAndDepthBuffer();
 
-				local_fog_rasterizer_.DrawLocalFogVolume(
-					surface,
-					depth_buffer,
-					fog_color_additive,
-					bbox,
-					camera_matrices.view_matrix,
-					camera_matrices.sky_inverse_transformation_matrix,
-					camera_position );
+					local_fog_rasterizer_.DrawLocalFogVolume(
+						surface,
+						depth_buffer,
+						fog_color_additive,
+						local_fog_volume,
+						camera_matrices.view_matrix,
+						camera_matrices.sky_inverse_transformation_matrix,
+						camera_position );
 
-				++stats.num_visible_local_fog_volumes;
+					++stats.num_visible_local_fog_volumes;
 			}
 		}
 	}
