@@ -74,8 +74,11 @@ fn DrawLocalFogVolumeImpl(
 	var [ f32, 4 ] fog_color_local= fog_color;
 	var ClippingPolygon fog_volume_bbox_projected_local= fog_volume_bbox_projected;
 
-	var u32 num_blocks_x= ( surface_local.size[0] + ( c_block_size - 1u ) ) / c_block_size;
-	var u32 num_blocks_y= ( surface_local.size[1] + ( c_block_size - 1u ) ) / c_block_size;
+	// Round the number of blocks down.
+	// Don't care if there are a couple of pixels left on a border.
+	// In the majority of cases it shouldn't be the case, since screen resolutions are typically divisible by 8 or even 16.
+	var u32 num_blocks_x= surface_local.size[0] / c_block_size;
+	var u32 num_blocks_y= surface_local.size[1] / c_block_size;
 
 	var i32 start_block_y( ust::max( 0, i32( fog_volume_bbox_projected_local.y.min ) / i32( c_block_size ) ) );
 	var i32 end_block_y(
@@ -135,23 +138,10 @@ fn DrawLocalFogVolumeImpl(
 				depth_buffer_local.subrange(
 					size_type( y * surface_local.stride ), size_type( ( y + 1u ) * surface_local.stride ) );
 
-			for( auto mut block_x= u32( start_block_x ); block_x <= ust::min( surface.size[0] / c_block_size - 1u, u32( end_block_x ) ); ++block_x )
+			for( auto mut block_x= u32( start_block_x ); block_x <= u32( end_block_x ); ++block_x )
 			{
 				var FogBlock &mut block= blocks[ size_type( block_x ) ];
 				for( auto mut dx= 0u; dx < c_block_size; ++dx )
-				{
-					var f32 inv_z= depth_buffer_line[ size_type( block_x * c_block_size + dx ) ];
-					ust::min_assign( block.min_inv_z, inv_z );
-					ust::max_assign( block.max_inv_z, inv_z );
-				}
-			}
-
-			var u32 num_remaining_pixels= surface.size[0] % c_block_size;
-			if( num_remaining_pixels != 0u )
-			{
-				var u32 block_x= num_blocks_x - 1u;
-				var FogBlock &mut block= blocks[ size_type( block_x ) ];
-				for( auto mut dx= 0u; dx < num_remaining_pixels; ++dx )
 				{
 					var f32 inv_z= depth_buffer_line[ size_type( block_x * c_block_size + dx ) ];
 					ust::min_assign( block.min_inv_z, inv_z );
@@ -226,40 +216,10 @@ fn DrawLocalFogVolumeImpl(
 			auto color_line= surface_local.pixels.subrange( offset_start, offset_end );
 			auto depth_buffer_line= depth_buffer_local.subrange( offset_start, offset_end );
 
-			//  TODO - handle case when "end_block_x" is less than num blocks.
-
-			for( auto mut block_x= u32( start_block_x ); block_x <= ust::min( surface.size[0] / c_block_size - 1u, u32( end_block_x ) ); ++block_x )
+			for( auto mut block_x= u32( start_block_x ); block_x <= u32( end_block_x ); ++block_x )
 			{
 				var FogBlock& block= blocks[ size_type( block_x ) ];
 				for( auto mut dx= 0u; dx < c_block_size; ++dx )
-				{
-					var size_type pixel_address( block_x * c_block_size + dx );
-					var f32 depth_value= depth_buffer_line[ pixel_address ];
-					var Color32 &mut pixel= color_line[ pixel_address ];
-
-					var f32 fog_density= depth_value * block.fog_density_inv_z_scale + block.fog_density_bias;
-
-					var BRGAColor color_components= Color32ReadRawComponents( pixel );
-
-					var BRGAColor color_mixed
-					[
-						( ust::min( f32( color_components[0] ) + fog_density * fog_color_local[0], 255.0f ) ),
-						( ust::min( f32( color_components[1] ) + fog_density * fog_color_local[1], 255.0f ) ),
-						( ust::min( f32( color_components[2] ) + fog_density * fog_color_local[2], 255.0f ) ),
-						( ust::min( f32( color_components[3] ) + fog_density * fog_color_local[3], 255.0f ) ),
-					];
-
-					Color32WriteRawComponents( pixel, color_mixed );
-
-				}
-			}
-
-			var u32 num_remaining_pixels= surface.size[0] % c_block_size;
-			if( num_remaining_pixels != 0u )
-			{
-				var u32 block_x= num_blocks_x - 1u;
-				var FogBlock& block= blocks[ size_type( block_x ) ];
-				for( auto mut dx= 0u; dx < num_remaining_pixels; ++dx )
 				{
 					var size_type pixel_address( block_x * c_block_size + dx );
 					var f32 depth_value= depth_buffer_line[ pixel_address ];
