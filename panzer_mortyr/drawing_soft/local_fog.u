@@ -15,50 +15,6 @@ fn DrawLocalFogVolume(
 	Mat3f& inverse_perspective_and_rotation_matrix,
 	Vec3f& camera_position )
 {
-	if( BoxShapeShouldBeUsedForLocalFogVolume( fog_volume_bbox ) )
-	{
-		DrawLocalFogVolumeImpl</ true />(
-			surface,
-			depth_buffer,
-			fog_color,
-			fog_volume_bbox,
-			view_matrix,
-			inverse_perspective_and_rotation_matrix,
-			camera_position );
-	}
-	else
-	{
-		DrawLocalFogVolumeImpl</ false />(
-			surface,
-			depth_buffer,
-			fog_color,
-			fog_volume_bbox,
-			view_matrix,
-			inverse_perspective_and_rotation_matrix,
-			camera_position );
-	}
-}
-
-template</ bool use_box_shaped_fog />
-fn DrawLocalFogVolumeImpl(
-	Color32ImageView surface,
-	ust::array_view_imut</f32/> depth_buffer,
-	[ f32, 4 ]& fog_color,
-	BBox3f& fog_volume_bbox,
-	Mat4f& view_matrix,
-	Mat3f& inverse_perspective_and_rotation_matrix,
-	Vec3f& camera_position )
-{
-	var u32 constexpr c_block_size= 4u;
-
-	// Read some params into local variables to ensure they are not re-read on each loop iteration.
-	var Color32ImageView surface_local= surface;
-	var ust::array_view_imut</f32/> depth_buffer_local= depth_buffer;
-	var [ f32, 4 ] fog_color_local= fog_color;
-
-	var u32 num_blocks_x= ( surface_local.size[0] + ( c_block_size - 1u ) ) / c_block_size;
-	var u32 num_blocks_y= ( surface_local.size[1] + ( c_block_size - 1u ) ) / c_block_size;
-
 	var ust::optional</ClippingPolygon/> fog_volume_bbox_projected_opt=
 		ProjectBBox( fog_volume_bbox, camera_position, view_matrix );
 
@@ -69,16 +25,7 @@ fn DrawLocalFogVolumeImpl(
 
 	var ClippingPolygon& fog_volume_bbox_projected= fog_volume_bbox_projected_opt.try_deref();
 
-	var i32 start_block_y( ust::max( 0, i32( fog_volume_bbox_projected.y.min ) / i32( c_block_size ) ) );
-	var i32 end_block_y(
-		ust::min( i32( num_blocks_y - 1u ), i32( fog_volume_bbox_projected.y.max ) / i32( c_block_size ) ) );
-
-	if( start_block_y > end_block_y )
-	{
-		return;
-	}
-
-	var Vec3f fog_volume_scale= 0.5f * fog_volume_bbox.GetDimensions();
+		var Vec3f fog_volume_scale= 0.5f * fog_volume_bbox.GetDimensions();
 	var Vec3f fog_volume_center= fog_volume_bbox.GetCenter();
 
 	var Vec3f inv_fog_volume_scale(
@@ -87,6 +34,57 @@ fn DrawLocalFogVolumeImpl(
 	var Vec3f box_space_camera_position= ( camera_position - fog_volume_center ) * inv_fog_volume_scale;
 
 	var Mat3f transform_matrix= inverse_perspective_and_rotation_matrix * Mat3f::MakeScale( inv_fog_volume_scale );
+
+	if( BoxShapeShouldBeUsedForLocalFogVolume( fog_volume_bbox ) )
+	{
+		DrawLocalFogVolumeImpl</ true />(
+			surface,
+			depth_buffer,
+			fog_color,
+			fog_volume_bbox_projected,
+			transform_matrix,
+			box_space_camera_position );
+	}
+	else
+	{
+		DrawLocalFogVolumeImpl</ false />(
+			surface,
+			depth_buffer,
+			fog_color,
+			fog_volume_bbox_projected,
+			transform_matrix,
+			box_space_camera_position );
+	}
+}
+
+template</ bool use_box_shaped_fog />
+fn DrawLocalFogVolumeImpl(
+	Color32ImageView surface,
+	ust::array_view_imut</f32/> depth_buffer,
+	[ f32, 4 ]& fog_color,
+	ClippingPolygon& fog_volume_bbox_projected,
+	Mat3f& transform_matrix,
+	Vec3f& box_space_camera_position )
+{
+	var u32 constexpr c_block_size= 4u;
+
+	// Read some params into local variables to ensure they are not re-read on each loop iteration.
+	var Color32ImageView surface_local= surface;
+	var ust::array_view_imut</f32/> depth_buffer_local= depth_buffer;
+	var [ f32, 4 ] fog_color_local= fog_color;
+	var ClippingPolygon fog_volume_bbox_projected_local= fog_volume_bbox_projected;
+
+	var u32 num_blocks_x= ( surface_local.size[0] + ( c_block_size - 1u ) ) / c_block_size;
+	var u32 num_blocks_y= ( surface_local.size[1] + ( c_block_size - 1u ) ) / c_block_size;
+
+	var i32 start_block_y( ust::max( 0, i32( fog_volume_bbox_projected_local.y.min ) / i32( c_block_size ) ) );
+	var i32 end_block_y(
+		ust::min( i32( num_blocks_y - 1u ), i32( fog_volume_bbox_projected_local.y.max ) / i32( c_block_size ) ) );
+
+	if( start_block_y > end_block_y )
+	{
+		return;
+	}
 
 	var Vec3f block_center_offset_vec=
 		Vec3f( f32( c_block_size ) * 0.5f, f32( c_block_size ) * 0.5f, 1.0f ) * transform_matrix;
@@ -101,21 +99,20 @@ fn DrawLocalFogVolumeImpl(
 	{
 		var f32 start_x=
 			ust::max(
-				fog_volume_bbox_projected.x.min,
+				fog_volume_bbox_projected_local.x.min,
 				ust::max(
-					fog_volume_bbox_projected.x_plus_y .min - f32( block_y * c_block_size + c_block_size ),
-					fog_volume_bbox_projected.x_minus_y.min + f32( block_y * c_block_size ) ) );
+					fog_volume_bbox_projected_local.x_plus_y .min - f32( block_y * c_block_size + c_block_size ),
+					fog_volume_bbox_projected_local.x_minus_y.min + f32( block_y * c_block_size ) ) );
 
 		var f32 end_x=
 			ust::min(
-				fog_volume_bbox_projected.x.max,
+				fog_volume_bbox_projected_local.x.max,
 				ust::min(
-					fog_volume_bbox_projected.x_plus_y .max - f32( block_y * c_block_size ),
-					fog_volume_bbox_projected.x_minus_y.max + f32( block_y * c_block_size + c_block_size ) ) );
+					fog_volume_bbox_projected_local.x_plus_y .max - f32( block_y * c_block_size ),
+					fog_volume_bbox_projected_local.x_minus_y.max + f32( block_y * c_block_size + c_block_size ) ) );
 
 		var i32 start_block_x( ust::max( 0, i32( start_x ) / i32( c_block_size ) ) );
-		var i32 end_block_x(
-			ust::min( i32( num_blocks_x - 1u ), i32( end_x ) / i32( c_block_size ) ) );
+		var i32 end_block_x( ust::min( i32( num_blocks_x - 1u ), i32( end_x ) / i32( c_block_size ) ) );
 
 		if( start_block_x > end_block_x )
 		{
