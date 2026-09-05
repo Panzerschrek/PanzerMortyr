@@ -10,13 +10,81 @@ fn CreateDrawersGLAndSoft(
 	CachingGameResourcesLoaderPtr& caching_game_resources_loader,
 	ConsoleOutPtr& console_out ) : AbstractDrawers
 {
-	auto mut drawers_gl= CreateDrawersGL( settings, caching_game_resources_loader, console_out );
+	auto
+	{
+		mut window_gl : window,
+		mut image_drawer_gl : image_drawer,
+		mut hud_drawer_gl : hud_drawer,
+		mut text_drawer_gl : text_drawer,
+		mut world_drawer_gl : world_drawer,
+		mut video_player_gl :video_player
+	} = CreateDrawersGL( settings, caching_game_resources_loader, console_out );
 
-	auto mut drawers_soft= CreateDrawersSoft( settings, caching_game_resources_loader, console_out );
+		auto
+	{
+		mut window_soft : window,
+		mut image_drawer_soft : image_drawer,
+		mut hud_drawer_soft : hud_drawer,
+		mut text_drawer_soft : text_drawer,
+		mut world_drawer_soft : world_drawer,
+		mut video_player_soft :video_player
+	} = CreateDrawersSoft( settings, caching_game_resources_loader, console_out );
 
-	// TODO - combine them.
+	return AbstractDrawers
+	{
+		.window= ust::make_shared_ptr( WindowMultiplexed( ust::make_array( window_gl, window_soft ) ) ),
+		.image_drawer= move(image_drawer_gl),
+		.hud_drawer= move(hud_drawer_gl),
+		.text_drawer= move(text_drawer_gl),
+		.world_drawer= move(world_drawer_gl),
+		.video_player= move(video_player_gl),
+	};
+}
 
-	return drawers_gl;
+class WindowMultiplexed : AbstractWindow non_sync
+{
+	fn constructor( [ ust::shared_ptr_mut</AbstractWindow/>, 2 ] mut windows )
+		( windows_= move(windows) )
+	{}
+
+public: // AbstractWindow
+	fn virtual override GetViewportSize( this ) : [ u32, 2 ]
+	{
+		return windows_[0].lock_imut().deref().GetViewportSize();
+	}
+
+	fn virtual override SwapWindow( mut this )
+	{
+		foreach( &mut window_ptr : windows_ )
+		{
+			with( mut lock : window_ptr.lock_mut() )
+			{
+				lock.deref().SwapWindow();
+			}
+		}
+	}
+
+	fn virtual override MakeScreenshot( mut this ) : ImageData
+	{
+		with( mut lock : windows_[0].lock_mut() )
+		{
+			return lock.deref().MakeScreenshot();
+		}
+	}
+
+	fn virtual override Fill( mut this, RGBAColor& color )
+	{
+		foreach( &mut window_ptr : windows_ )
+		{
+			with( mut lock : window_ptr.lock_mut() )
+			{
+				lock.deref().Fill( color );
+			}
+		}
+	}
+
+private:
+	[ ust::shared_ptr_mut</AbstractWindow/>, 2 ] windows_;
 }
 
 } // namesapce PM
