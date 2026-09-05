@@ -25,7 +25,7 @@ fn LocalFogRasterizer::DrawLocalFogVolume(
 
 	var ClippingPolygon& fog_volume_bbox_projected= fog_volume_bbox_projected_opt.try_deref();
 
-		var Vec3f fog_volume_scale= 0.5f * fog_volume_bbox.GetDimensions();
+	var Vec3f fog_volume_scale= 0.5f * fog_volume_bbox.GetDimensions();
 	var Vec3f fog_volume_center= fog_volume_bbox.GetCenter();
 
 	var Vec3f inv_fog_volume_scale(
@@ -35,31 +35,89 @@ fn LocalFogRasterizer::DrawLocalFogVolume(
 
 	var Mat3f transform_matrix= inverse_perspective_and_rotation_matrix * Mat3f::MakeScale( inv_fog_volume_scale );
 
-	if( BoxShapeShouldBeUsedForLocalFogVolume( fog_volume_bbox ) )
+	var bool use_box_shaped_fog= BoxShapeShouldBeUsedForLocalFogVolume( fog_volume_bbox );
+
+	var [ u32, 2 ] covered_size
+	[
+		( ust::max(
+			0.0f,
+			ust::min( f32( surface.size[0] ), fog_volume_bbox_projected.x.max ) -
+				ust::max( 0.0f, fog_volume_bbox_projected.x.min ) ) ),
+		( ust::max(
+			0.0f,
+			ust::min( f32( surface.size[1] ), fog_volume_bbox_projected.y.max ) -
+				ust::max( 0.0f, fog_volume_bbox_projected.y.min ) ) ),
+	];
+
+	if( covered_size[0] <= surface.size[0] / 4u && covered_size[1] <= surface.size[1] / 4u )
 	{
-		DrawLocalFogVolumeImpl</ true />(
-			fog_blocks_storage_,
-			surface,
-			depth_buffer,
-			fog_color,
-			fog_volume_bbox_projected,
-			transform_matrix,
-			box_space_camera_position );
+		// The fog volume covers only a small fraction of the screen.
+		// Can use better quality without much performance impact.
+		( use_box_shaped_fog
+			? DrawLocalFogVolumeImpl</ 2u, true />(
+				fog_blocks_storage_,
+				surface,
+				depth_buffer,
+				fog_color,
+				fog_volume_bbox_projected,
+				transform_matrix,
+				box_space_camera_position )
+			: DrawLocalFogVolumeImpl</ 2u, false />(
+				fog_blocks_storage_,
+				surface,
+				depth_buffer,
+				fog_color,
+				fog_volume_bbox_projected,
+				transform_matrix,
+				box_space_camera_position ) );
+	}
+	else if( covered_size[0] >= surface.size[0] * 3u / 4u && covered_size[1] >= surface.size[1] * 3u / 4u )
+	{
+		// The fog volume covers almost the whole screen.
+		// Reduce quality to gain more performance, but only for sphere-shaped volumes.
+		// For box-shaped volumes still use medium quality, since low quality looks too ugly.
+		( use_box_shaped_fog
+			? DrawLocalFogVolumeImpl</ 4u, true />(
+				fog_blocks_storage_,
+				surface,
+				depth_buffer,
+				fog_color,
+				fog_volume_bbox_projected,
+				transform_matrix,
+				box_space_camera_position )
+			: DrawLocalFogVolumeImpl</ 8u, false />(
+				fog_blocks_storage_,
+				surface,
+				depth_buffer,
+				fog_color,
+				fog_volume_bbox_projected,
+				transform_matrix,
+				box_space_camera_position ) );
 	}
 	else
 	{
-		DrawLocalFogVolumeImpl</ false />(
-			fog_blocks_storage_,
-			surface,
-			depth_buffer,
-			fog_color,
-			fog_volume_bbox_projected,
-			transform_matrix,
-			box_space_camera_position );
+		// The fog volume isn't too small or too big. Use medium quality.
+		( use_box_shaped_fog
+			? DrawLocalFogVolumeImpl</ 4u, true />(
+				fog_blocks_storage_,
+				surface,
+				depth_buffer,
+				fog_color,
+				fog_volume_bbox_projected,
+				transform_matrix,
+				box_space_camera_position )
+			: DrawLocalFogVolumeImpl</ 4u, false />(
+				fog_blocks_storage_,
+				surface,
+				depth_buffer,
+				fog_color,
+				fog_volume_bbox_projected,
+				transform_matrix,
+				box_space_camera_position ) );
 	}
 }
 
-template</ bool use_box_shaped_fog />
+template</ u32 block_size, bool use_box_shaped_fog />
 fn DrawLocalFogVolumeImpl(
 	ust::vector</LocalFogRasterizer::FogBlock/> &mut blocks_vec,
 	Color32ImageView surface,
@@ -69,8 +127,6 @@ fn DrawLocalFogVolumeImpl(
 	Mat3f& transform_matrix,
 	Vec3f& box_space_camera_position )
 {
-	var u32 constexpr c_block_size= 4u;
-
 	// Read some params into local variables to ensure they are not re-read on each loop iteration.
 	var Color32ImageView surface_local= surface;
 	var ust::array_view_imut</f32/> depth_buffer_local= depth_buffer;
@@ -80,8 +136,8 @@ fn DrawLocalFogVolumeImpl(
 	// Round the number of blocks down.
 	// Don't care if there are a couple of pixels left on a border.
 	// In the majority of cases it shouldn't be the case, since screen resolutions are typically divisible by 8 or even 16.
-	var u32 num_blocks_x= surface_local.size[0] / c_block_size;
-	var u32 num_blocks_y= surface_local.size[1] / c_block_size;
+	var u32 num_blocks_x= surface_local.size[0] / block_size;
+	var u32 num_blocks_y= surface_local.size[1] / block_size;
 
 	if( blocks_vec.size() < size_type( num_blocks_x ) )
 	{
@@ -89,9 +145,9 @@ fn DrawLocalFogVolumeImpl(
 	}
 	auto blocks= blocks_vec.range().subrange_end( size_type( num_blocks_x ) );
 
-	var i32 start_block_y( ust::max( 0, i32( fog_volume_bbox_projected_local.y.min ) / i32( c_block_size ) ) );
+	var i32 start_block_y( ust::max( 0, i32( fog_volume_bbox_projected_local.y.min ) / i32( block_size ) ) );
 	var i32 end_block_y(
-		ust::min( i32( num_blocks_y - 1u ), i32( fog_volume_bbox_projected_local.y.max ) / i32( c_block_size ) ) );
+		ust::min( i32( num_blocks_y - 1u ), i32( fog_volume_bbox_projected_local.y.max ) / i32( block_size ) ) );
 
 	if( start_block_y > end_block_y )
 	{
@@ -99,10 +155,10 @@ fn DrawLocalFogVolumeImpl(
 	}
 
 	var Vec3f block_center_offset_vec=
-		Vec3f( f32( c_block_size ) * 0.5f, f32( c_block_size ) * 0.5f, 1.0f ) * transform_matrix;
+		Vec3f( f32( block_size ) * 0.5f, f32( block_size ) * 0.5f, 1.0f ) * transform_matrix;
 
-	var Vec3f block_vec_x= f32( c_block_size ) * Vec3f( transform_matrix.values[0] );
-	var Vec3f block_vec_y= f32( c_block_size ) * Vec3f( transform_matrix.values[1] );
+	var Vec3f block_vec_x= f32( block_size ) * Vec3f( transform_matrix.values[0] );
+	var Vec3f block_vec_y= f32( block_size ) * Vec3f( transform_matrix.values[1] );
 
 	// Iterate over lines of blocks.
 	for( auto mut block_y= u32( start_block_y ); block_y <= u32( end_block_y ); ++block_y )
@@ -111,18 +167,18 @@ fn DrawLocalFogVolumeImpl(
 			ust::max(
 				fog_volume_bbox_projected_local.x.min,
 				ust::max(
-					fog_volume_bbox_projected_local.x_plus_y .min - f32( block_y * c_block_size + c_block_size ),
-					fog_volume_bbox_projected_local.x_minus_y.min + f32( block_y * c_block_size ) ) );
+					fog_volume_bbox_projected_local.x_plus_y .min - f32( block_y * block_size + block_size ),
+					fog_volume_bbox_projected_local.x_minus_y.min + f32( block_y * block_size ) ) );
 
 		var f32 end_x=
 			ust::min(
 				fog_volume_bbox_projected_local.x.max,
 				ust::min(
-					fog_volume_bbox_projected_local.x_plus_y .max - f32( block_y * c_block_size ),
-					fog_volume_bbox_projected_local.x_minus_y.max + f32( block_y * c_block_size + c_block_size ) ) );
+					fog_volume_bbox_projected_local.x_plus_y .max - f32( block_y * block_size ),
+					fog_volume_bbox_projected_local.x_minus_y.max + f32( block_y * block_size + block_size ) ) );
 
-		var i32 start_block_x( ust::max( 0, i32( start_x ) / i32( c_block_size ) ) );
-		var i32 end_block_x( ust::min( i32( num_blocks_x - 1u ), i32( end_x ) / i32( c_block_size ) ) );
+		var i32 start_block_x( ust::max( 0, i32( start_x ) / i32( block_size ) ) );
+		var i32 end_block_x( ust::min( i32( num_blocks_x - 1u ), i32( end_x ) / i32( block_size ) ) );
 
 		if( start_block_x > end_block_x )
 		{
@@ -137,7 +193,7 @@ fn DrawLocalFogVolumeImpl(
 		}
 
 		// Iterate over all pixel lines within this line of blocks and set min/max inv_z.
-		for( var u32 mut y= block_y * c_block_size, y_end= block_y * c_block_size + c_block_size; y < y_end; ++y )
+		for( var u32 mut y= block_y * block_size, y_end= block_y * block_size + block_size; y < y_end; ++y )
 		{
 			auto depth_buffer_line=
 				depth_buffer_local.subrange(
@@ -146,9 +202,9 @@ fn DrawLocalFogVolumeImpl(
 			for( auto mut block_x= u32( start_block_x ); block_x <= u32( end_block_x ); ++block_x )
 			{
 				var LocalFogRasterizer::FogBlock &mut block= blocks[ size_type( block_x ) ];
-				for( auto mut dx= 0u; dx < c_block_size; ++dx )
+				for( auto mut dx= 0u; dx < block_size; ++dx )
 				{
-					var f32 inv_z= depth_buffer_line[ size_type( block_x * c_block_size + dx ) ];
+					var f32 inv_z= depth_buffer_line[ size_type( block_x * block_size + dx ) ];
 					ust::min_assign( block.min_inv_z, inv_z );
 					ust::max_assign( block.max_inv_z, inv_z );
 				}
@@ -212,7 +268,7 @@ fn DrawLocalFogVolumeImpl(
 		}
 
 		// Iterate over all pixels within this block line and apply fog.
-		for( var u32 mut y= block_y * c_block_size, y_end= block_y * c_block_size + c_block_size; y < y_end; ++y )
+		for( var u32 mut y= block_y * block_size, y_end= block_y * block_size + block_size; y < y_end; ++y )
 		{
 			var size_type offset_start( y * surface_local.stride ), offset_end( ( y + 1u ) * surface_local.stride );
 
@@ -222,9 +278,9 @@ fn DrawLocalFogVolumeImpl(
 			for( auto mut block_x= u32( start_block_x ); block_x <= u32( end_block_x ); ++block_x )
 			{
 				var LocalFogRasterizer::FogBlock& block= blocks[ size_type( block_x ) ];
-				for( auto mut dx= 0u; dx < c_block_size; ++dx )
+				for( auto mut dx= 0u; dx < block_size; ++dx )
 				{
-					var size_type pixel_address( block_x * c_block_size + dx );
+					var size_type pixel_address( block_x * block_size + dx );
 					var f32 depth_value= depth_buffer_line[ pixel_address ];
 					var Color32 &mut pixel= color_line[ pixel_address ];
 
