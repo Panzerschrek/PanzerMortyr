@@ -69,16 +69,11 @@ fn DrawLocalFogVolumeImpl(
 
 	var ClippingPolygon& fog_volume_bbox_projected= fog_volume_bbox_projected_opt.try_deref();
 
-	// TODO - make shure rounding here is correct.
-	var i32 block_begin_x( ust::max( 0, i32( fog_volume_bbox_projected.x.min ) / i32( c_block_size ) ) );
-	var i32 block_end_x(
-		ust::min( i32( num_blocks_x ), 1 + i32( fog_volume_bbox_projected.x.max ) / i32( c_block_size ) ) );
+	var i32 start_block_y( ust::max( 0, i32( fog_volume_bbox_projected.y.min ) / i32( c_block_size ) ) );
+	var i32 end_block_y(
+		ust::min( i32( num_blocks_y - 1u ), i32( fog_volume_bbox_projected.y.max ) / i32( c_block_size ) ) );
 
-	var i32 block_begin_y( ust::max( 0, i32( fog_volume_bbox_projected.y.min ) / i32( c_block_size ) ) );
-	var i32 block_end_y(
-		ust::min( i32( num_blocks_y ), 1 + i32( fog_volume_bbox_projected.y.max ) / i32( c_block_size ) ) );
-
-	if( block_begin_x >= block_end_x | block_begin_y >= block_end_y )
+	if( start_block_y > end_block_y )
 	{
 		return;
 	}
@@ -102,8 +97,31 @@ fn DrawLocalFogVolumeImpl(
 	scoped_array FogBlock mut blocks[ size_type( num_blocks_x ) ]( ust::make_zeroed</FogBlock/>() );
 
 	// Iterate over lines of blocks.
-	for( auto mut block_y= u32( block_begin_y ); block_y < u32( block_end_y ); ++block_y )
+	for( auto mut block_y= u32( start_block_y ); block_y <= u32( end_block_y ); ++block_y )
 	{
+		var f32 start_x=
+			ust::max(
+				fog_volume_bbox_projected.x.min,
+				ust::max(
+					fog_volume_bbox_projected.x_plus_y .min - f32( block_y * c_block_size + c_block_size ),
+					fog_volume_bbox_projected.x_minus_y.min + f32( block_y * c_block_size ) ) );
+
+		var f32 end_x=
+			ust::min(
+				fog_volume_bbox_projected.x.max,
+				ust::min(
+					fog_volume_bbox_projected.x_plus_y .max - f32( block_y * c_block_size ),
+					fog_volume_bbox_projected.x_minus_y.max + f32( block_y * c_block_size + c_block_size ) ) );
+
+		var i32 start_block_x( ust::max( 0, i32( start_x ) / i32( c_block_size ) ) );
+		var i32 end_block_x(
+			ust::min( i32( num_blocks_x - 1u ), i32( end_x ) / i32( c_block_size ) ) );
+
+		if( start_block_x > end_block_x )
+		{
+			continue;
+		}
+
 		// Reset min/max inv_z for each block.
 		foreach( &mut block : blocks )
 		{
@@ -120,7 +138,7 @@ fn DrawLocalFogVolumeImpl(
 				depth_buffer_local.subrange(
 					size_type( y * surface_local.stride ), size_type( ( y + 1u ) * surface_local.stride ) );
 
-			for( auto mut block_x= u32( block_begin_x ); block_x < ust::min( surface.size[0] / c_block_size, u32( block_end_x ) ); ++block_x )
+			for( auto mut block_x= u32( start_block_x ); block_x <= ust::min( surface.size[0] / c_block_size - 1u, u32( end_block_x ) ); ++block_x )
 			{
 				var FogBlock &mut block= blocks[ size_type( block_x ) ];
 				for( auto mut dx= 0u; dx < c_block_size; ++dx )
@@ -148,7 +166,7 @@ fn DrawLocalFogVolumeImpl(
 		var Vec3f block_vec_yz= block_center_offset_vec + f32( block_y ) * block_vec_y;
 
 		// Iterate over all blocks in line and calculate fog params for them.
-		for( auto mut block_x= u32( block_begin_x ); block_x < u32( block_end_x ); ++block_x )
+		for( auto mut block_x= u32( start_block_x ); block_x <= u32( end_block_x ); ++block_x )
 		{
 			var FogBlock &mut block= blocks[ size_type( block_x ) ];
 
@@ -211,9 +229,9 @@ fn DrawLocalFogVolumeImpl(
 			auto color_line= surface_local.pixels.subrange( offset_start, offset_end );
 			auto depth_buffer_line= depth_buffer_local.subrange( offset_start, offset_end );
 
-			//  TODO - handle case when "block_end_x" is less than num blocks.
+			//  TODO - handle case when "end_block_x" is less than num blocks.
 
-			for( auto mut block_x= u32( block_begin_x ); block_x < ust::min( surface.size[0] / c_block_size, u32( block_end_x ) ); ++block_x )
+			for( auto mut block_x= u32( start_block_x ); block_x <= ust::min( surface.size[0] / c_block_size - 1u, u32( end_block_x ) ); ++block_x )
 			{
 				var FogBlock& block= blocks[ size_type( block_x ) ];
 				for( auto mut dx= 0u; dx < c_block_size; ++dx )
