@@ -569,8 +569,10 @@ fn WorldDrawerSoft::DrawPartial(
 	var u32 valve_special_material_frame= CalculateValveSpecialMaterialFrame( drawing_info.game_time_s );
 	var u32 film_special_material_frame= CalculateFilmSpecialMaterialFrame( drawing_info.game_time_s );
 
+	var bool fog_enabled= settings_.lock_imut().deref().r_fog_enabled;
 	var bool dynamic_lights_enabled= settings_.lock_imut().deref().r_dynamic_lights_enabled;
-	var bool global_fog_enabled= map_data.global_fog_enabled && settings_.lock_imut().deref().r_fog_enabled;
+
+	var bool global_fog_enabled= fog_enabled && settings_.lock_imut().deref().r_fog_enabled;
 
 	var ust::optional</Vec3f/> camera_position_for_fog=
 		( global_fog_enabled ? ust::optional</Vec3f/>( camera_position ) : ust::optional</Vec3f/>() );
@@ -1625,6 +1627,70 @@ fn WorldDrawerSoft::DrawPartial(
 				cast_imut(test_line.vertices)[1],
 				Color32FromComponents(
 					ust::make_array( test_line.color[0], test_line.color[1], test_line.color[2], 0u8 ) ) );
+		}
+	}
+
+	// Draw local fog volumes prior to drawing semitrensparent geometry.
+	if( fog_enabled )
+	{
+		local_fog_volumes_.clear();
+
+		foreach( &fog_volume : zvox_data.fog_volumes ) label for_fog_volumes
+		{
+			var Vec3f center( f32( fog_volume.center[0] ), f32( fog_volume.center[1] ), f32( fog_volume.center[2] ) );
+
+			var Vec3f half_size(
+				f32( fog_volume.bounding_box_half_size[0] ),
+				f32( fog_volume.bounding_box_half_size[1] ),
+				f32( fog_volume.bounding_box_half_size[2] ) );
+
+			var BBox3f bbox{ .min= center - half_size, .max= center + half_size };
+
+			if( !AreBoxVerticesClippedByAtLeastOneCameraClipPlane( camera_clip_planes, bbox.CreateCornerVertices() ) &&
+				visibility_calculator.IsBoxVisible( bbox.CreateCornerVertices() ) )
+			{
+				// HACK!
+				// There are a couple of places (like on map 34) where fog volumes are placed with intersection.
+				// Drawing such volumes may be pretty costly.
+				// So, combine them into single volume to gain some performance.
+				foreach( &mut prev_bbox : local_fog_volumes_ )
+				{
+					if( bbox.Instersects( prev_bbox ) )
+					{
+						prev_bbox.ExtendWithOther( bbox );
+						continue label for_fog_volumes;
+					}
+				}
+
+				local_fog_volumes_.push_back( bbox );
+			}
+		}
+
+		if( !local_fog_volumes_.empty() )
+		{
+			var [ f32, 4 ] fog_color_additive
+			[
+				map_data.fog_color[0] * lighting_modifiers.map.scale[0],
+				map_data.fog_color[1] * lighting_modifiers.map.scale[1],
+				map_data.fog_color[2] * lighting_modifiers.map.scale[2],
+				map_data.fog_color[3],
+			];
+
+			foreach( &local_fog_volume : local_fog_volumes_ )
+			{
+				auto [ surface, depth_buffer ]= rasterizer.GetSurfaceAndDepthBuffer();
+
+					local_fog_rasterizer_.DrawLocalFogVolume(
+						surface,
+						depth_buffer,
+						fog_color_additive,
+						local_fog_volume,
+						camera_matrices.view_matrix,
+						camera_matrices.sky_inverse_transformation_matrix,
+						camera_position );
+
+					++stats.num_visible_local_fog_volumes;
+			}
 		}
 	}
 

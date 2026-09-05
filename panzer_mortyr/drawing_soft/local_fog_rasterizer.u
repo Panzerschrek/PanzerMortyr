@@ -1,0 +1,369 @@
+import "../bbox_projection.iu"
+import "../fog.iu"
+import "local_fog_rasterizer.iu"
+
+namespace PM
+{
+
+fn LocalFogRasterizer::DrawLocalFogVolume(
+	mut this,
+	Color32ImageView surface,
+	ust::array_view_imut</f32/> depth_buffer,
+	[ f32, 4 ]& fog_color,
+	BBox3f& fog_volume_bbox,
+	Mat4f& view_matrix,
+	Mat3f& inverse_perspective_and_rotation_matrix,
+	Vec3f& camera_position )
+{
+	var ust::optional</ClippingPolygon/> fog_volume_bbox_projected_opt=
+		ProjectBBox( fog_volume_bbox, camera_position, view_matrix );
+
+	if( fog_volume_bbox_projected_opt.empty() )
+	{
+		return;
+	}
+
+	var ClippingPolygon& fog_volume_bbox_projected= fog_volume_bbox_projected_opt.try_deref();
+
+	var Vec3f fog_volume_scale= 0.5f * fog_volume_bbox.GetDimensions();
+	var Vec3f fog_volume_center= fog_volume_bbox.GetCenter();
+
+	var Vec3f inv_fog_volume_scale(
+		1.0f / fog_volume_scale.x, 1.0f / fog_volume_scale.y, 1.0f / fog_volume_scale.z );
+
+	var Vec3f box_space_camera_position= ( camera_position - fog_volume_center ) * inv_fog_volume_scale;
+
+	var Mat3f transform_matrix= inverse_perspective_and_rotation_matrix * Mat3f::MakeScale( inv_fog_volume_scale );
+
+	var bool use_box_shaped_fog= BoxShapeShouldBeUsedForLocalFogVolume( fog_volume_bbox );
+
+	var [ u32, 2 ] covered_size
+	[
+		( ust::max(
+			0.0f,
+			ust::min( f32( surface.size[0] ), fog_volume_bbox_projected.x.max ) -
+				ust::max( 0.0f, fog_volume_bbox_projected.x.min ) ) ),
+		( ust::max(
+			0.0f,
+			ust::min( f32( surface.size[1] ), fog_volume_bbox_projected.y.max ) -
+				ust::max( 0.0f, fog_volume_bbox_projected.y.min ) ) ),
+	];
+
+	if( covered_size[0] <= surface.size[0] / 4u && covered_size[1] <= surface.size[1] / 4u )
+	{
+		// The fog volume covers only a small fraction of the screen.
+		// Can use better quality without much performance impact.
+		( use_box_shaped_fog
+			? DrawLocalFogVolumeImpl</ 2u, true />(
+				fog_blocks_storage_,
+				surface,
+				depth_buffer,
+				fog_color,
+				fog_volume_bbox_projected,
+				transform_matrix,
+				box_space_camera_position )
+			: DrawLocalFogVolumeImpl</ 2u, false />(
+				fog_blocks_storage_,
+				surface,
+				depth_buffer,
+				fog_color,
+				fog_volume_bbox_projected,
+				transform_matrix,
+				box_space_camera_position ) );
+	}
+	else if( covered_size[0] >= surface.size[0] * 3u / 4u && covered_size[1] >= surface.size[1] * 3u / 4u )
+	{
+		// The fog volume covers almost the whole screen.
+		// Reduce quality to gain more performance, but only for sphere-shaped volumes.
+		// For box-shaped volumes still use medium quality, since low quality looks too ugly.
+		( use_box_shaped_fog
+			? DrawLocalFogVolumeImpl</ 4u, true />(
+				fog_blocks_storage_,
+				surface,
+				depth_buffer,
+				fog_color,
+				fog_volume_bbox_projected,
+				transform_matrix,
+				box_space_camera_position )
+			: DrawLocalFogVolumeImpl</ 8u, false />(
+				fog_blocks_storage_,
+				surface,
+				depth_buffer,
+				fog_color,
+				fog_volume_bbox_projected,
+				transform_matrix,
+				box_space_camera_position ) );
+	}
+	else
+	{
+		// The fog volume isn't too small or too big. Use medium quality.
+		( use_box_shaped_fog
+			? DrawLocalFogVolumeImpl</ 4u, true />(
+				fog_blocks_storage_,
+				surface,
+				depth_buffer,
+				fog_color,
+				fog_volume_bbox_projected,
+				transform_matrix,
+				box_space_camera_position )
+			: DrawLocalFogVolumeImpl</ 4u, false />(
+				fog_blocks_storage_,
+				surface,
+				depth_buffer,
+				fog_color,
+				fog_volume_bbox_projected,
+				transform_matrix,
+				box_space_camera_position ) );
+	}
+}
+
+template</ u32 block_size, bool use_box_shaped_fog />
+fn DrawLocalFogVolumeImpl(
+	ust::vector</LocalFogRasterizer::FogBlock/> &mut blocks_vec,
+	Color32ImageView surface,
+	ust::array_view_imut</f32/> depth_buffer,
+	[ f32, 4 ]& fog_color,
+	ClippingPolygon& fog_volume_bbox_projected,
+	Mat3f& transform_matrix,
+	Vec3f& box_space_camera_position )
+{
+	// Read some params into local variables to ensure they are not re-read on each loop iteration.
+	var Color32ImageView surface_local= surface;
+	var ust::array_view_imut</f32/> depth_buffer_local= depth_buffer;
+	var [ f32, 4 ] fog_color_local= fog_color;
+	var ClippingPolygon fog_volume_bbox_projected_local= fog_volume_bbox_projected;
+
+	// Round the number of blocks down.
+	// Don't care if there are a couple of pixels left on a border.
+	// In the majority of cases it shouldn't be the case, since screen resolutions are typically divisible by 8 or even 16.
+	var u32 num_blocks_x= surface_local.size[0] / block_size;
+	var u32 num_blocks_y= surface_local.size[1] / block_size;
+
+	if( blocks_vec.size() < size_type( num_blocks_x ) )
+	{
+		blocks_vec.resize( size_type( num_blocks_x ), ust::make_zeroed</LocalFogRasterizer::FogBlock/>() );
+	}
+	auto blocks= blocks_vec.range().subrange_end( size_type( num_blocks_x ) );
+
+	var i32 start_block_y( ust::max( 0, i32( fog_volume_bbox_projected_local.y.min ) / i32( block_size ) ) );
+	var i32 end_block_y(
+		ust::min( i32( num_blocks_y - 1u ), i32( fog_volume_bbox_projected_local.y.max ) / i32( block_size ) ) );
+
+	if( start_block_y > end_block_y )
+	{
+		return;
+	}
+
+	var Vec3f block_center_offset_vec=
+		Vec3f( f32( block_size ) * 0.5f, f32( block_size ) * 0.5f, 1.0f ) * transform_matrix;
+
+	var Vec3f block_vec_x= f32( block_size ) * Vec3f( transform_matrix.values[0] );
+	var Vec3f block_vec_y= f32( block_size ) * Vec3f( transform_matrix.values[1] );
+
+	// Iterate over lines of blocks.
+	for( auto mut block_y= u32( start_block_y ); block_y <= u32( end_block_y ); ++block_y )
+	{
+		var f32 start_x=
+			ust::max(
+				fog_volume_bbox_projected_local.x.min,
+				ust::max(
+					fog_volume_bbox_projected_local.x_plus_y .min - f32( block_y * block_size + block_size ),
+					fog_volume_bbox_projected_local.x_minus_y.min + f32( block_y * block_size ) ) );
+
+		var f32 end_x=
+			ust::min(
+				fog_volume_bbox_projected_local.x.max,
+				ust::min(
+					fog_volume_bbox_projected_local.x_plus_y .max - f32( block_y * block_size ),
+					fog_volume_bbox_projected_local.x_minus_y.max + f32( block_y * block_size + block_size ) ) );
+
+		var i32 start_block_x= ust::max( 0, i32( start_x ) / i32( block_size ) );
+		var i32 end_block_x= ust::min( i32( num_blocks_x - 1u ), i32( end_x ) / i32( block_size ) );
+
+		if( start_block_x > end_block_x )
+		{
+			continue;
+		}
+
+		// Reset min/max inv_z for each block.
+		foreach( &mut block : blocks.subrange( size_type( start_block_x ), size_type( end_block_x + 1 ) ) )
+		{
+			block.min_inv_z= ust::plus_inf </f32/>();
+			block.max_inv_z= ust::minus_inf</f32/>();
+		}
+
+		// Iterate over all pixel lines within this line of blocks and set min/max inv_z.
+		for( var u32 mut y= block_y * block_size, y_end= block_y * block_size + block_size; y < y_end; ++y )
+		{
+			auto depth_buffer_line=
+				depth_buffer_local.subrange(
+					size_type( y * surface_local.stride ), size_type( ( y + 1u ) * surface_local.stride ) );
+
+			for( auto mut block_x= u32( start_block_x ); block_x <= u32( end_block_x ); ++block_x )
+			{
+				var LocalFogRasterizer::FogBlock &mut block= blocks[ size_type( block_x ) ];
+				for( auto mut dx= 0u; dx < block_size; ++dx )
+				{
+					var f32 inv_z= depth_buffer_line[ size_type( block_x * block_size + dx ) ];
+					ust::min_assign( block.min_inv_z, inv_z );
+					ust::max_assign( block.max_inv_z, inv_z );
+				}
+			}
+		}
+
+		var Vec3f block_vec_yz= block_center_offset_vec + f32( block_y ) * block_vec_y;
+
+		// Iterate over all blocks in line and calculate fog params for them.
+		for( auto mut block_x= u32( start_block_x ); block_x <= u32( end_block_x ); ++block_x )
+		{
+			var LocalFogRasterizer::FogBlock &mut block= blocks[ size_type( block_x ) ];
+
+			var Vec3f box_space_ray= block_vec_yz + f32( block_x ) * block_vec_x;
+
+			var f32 box_space_ray_length= box_space_ray.Length();
+
+			var Vec3f box_space_ray_normalized= box_space_ray / box_space_ray_length;
+
+			var f32 box_space_min_distance= box_space_ray_length / ust::max( block.max_inv_z, 1.0f / 65536.0f );
+			var f32 box_space_max_distance= box_space_ray_length / ust::max( block.min_inv_z, 1.0f / 65536.0f );
+
+			var [ f32, 2 ] mut intersection_near_far_distances[ c_almost_inf, c_almost_inf ];
+			var f32 mut fog_density_scale= 0.0f;
+
+			static_if( use_box_shaped_fog )
+			{
+				// Find near/far distance of ray with box intersection.
+				// The difference between these two values is distance travelled within this fog volume.
+				intersection_near_far_distances=
+					CalculateRayIntersectionWithUnitBBox( box_space_camera_position, box_space_ray_normalized );
+
+				// For box-shaped fog use constant density scale.
+				fog_density_scale= 0.5f;
+			}
+			else
+			{
+				intersection_near_far_distances=
+					CalculateRayUnitSphereIntersection( box_space_camera_position, box_space_ray_normalized );
+
+				// For elliptical fog make density depending on distance travelled within fog boundaries.
+				// Otherwise fog edges look too sharp.
+				fog_density_scale= 0.3f * ( intersection_near_far_distances[1] - intersection_near_far_distances[0] );
+			}
+
+			var f32 near_distance= ust::max( intersection_near_far_distances[0], 0.0f );
+
+			var f32 far_distance_min=
+				ust::max( ust::min( intersection_near_far_distances[1], box_space_min_distance ), near_distance );
+
+			var f32 far_distance_max=
+				ust::max( ust::min( intersection_near_far_distances[1], box_space_max_distance ), near_distance );
+
+			var f32 fog_density_min= ( far_distance_min - near_distance ) * fog_density_scale;
+			var f32 fog_density_max= ( far_distance_max - near_distance ) * fog_density_scale;
+
+			block.fog_density_inv_z_scale=
+				( fog_density_min - fog_density_max ) /
+				ust::max( block.max_inv_z - block.min_inv_z, 1.0f / c_almost_inf );
+			block.fog_density_bias= fog_density_max - block.min_inv_z * block.fog_density_inv_z_scale;
+		}
+
+		// Iterate over all pixels within this block line and apply fog.
+		for( var u32 mut y= block_y * block_size, y_end= block_y * block_size + block_size; y < y_end; ++y )
+		{
+			var size_type offset_start( y * surface_local.stride ), offset_end( ( y + 1u ) * surface_local.stride );
+
+			auto color_line= surface_local.pixels.subrange( offset_start, offset_end );
+			auto depth_buffer_line= depth_buffer_local.subrange( offset_start, offset_end );
+
+			for( auto mut block_x= u32( start_block_x ); block_x <= u32( end_block_x ); ++block_x )
+			{
+				var LocalFogRasterizer::FogBlock& block= blocks[ size_type( block_x ) ];
+				for( auto mut dx= 0u; dx < block_size; ++dx )
+				{
+					var size_type pixel_address( block_x * block_size + dx );
+					var f32 depth_value= depth_buffer_line[ pixel_address ];
+					var Color32 &mut pixel= color_line[ pixel_address ];
+
+					var f32 fog_density= depth_value * block.fog_density_inv_z_scale + block.fog_density_bias;
+
+					var BRGAColor color_components= Color32ReadRawComponents( pixel );
+
+					var BRGAColor color_mixed
+					[
+						( ust::min( f32( color_components[0] ) + fog_density * fog_color_local[0], 255.0f ) ),
+						( ust::min( f32( color_components[1] ) + fog_density * fog_color_local[1], 255.0f ) ),
+						( ust::min( f32( color_components[2] ) + fog_density * fog_color_local[2], 255.0f ) ),
+						( ust::min( f32( color_components[3] ) + fog_density * fog_color_local[3], 255.0f ) ),
+					];
+
+					Color32WriteRawComponents( pixel, color_mixed );
+				}
+			}
+		}
+	}
+}
+
+// Returns near/far distance.
+fn CalculateRayIntersectionWithUnitBBox( Vec3f& ray_start, Vec3f& ray_direction ) : [ f32, 2 ]
+{
+	var f32 mut near_distance= -c_almost_inf, mut far_distance= c_almost_inf;
+
+	if( ray_direction.x > 0.0f )
+	{
+		ust::max_assign( near_distance, ( -1.0f - ray_start.x ) / ray_direction.x );
+		ust::min_assign( far_distance , (  1.0f - ray_start.x ) / ray_direction.x );
+	}
+	else if( ray_direction.x < 0.0f )
+	{
+		ust::max_assign( near_distance, (  1.0f - ray_start.x ) / ray_direction.x );
+		ust::min_assign( far_distance , ( -1.0f - ray_start.x ) / ray_direction.x );
+	}
+	else if( ray_start.x <= -1.0f | ray_start.x >= 1.0f )
+	{
+		return ust::make_array( c_almost_inf, -c_almost_inf );
+	}
+
+	if( ray_direction.y > 0.0f )
+	{
+		ust::max_assign( near_distance, ( -1.0f - ray_start.y ) / ray_direction.y );
+		ust::min_assign( far_distance , (  1.0f - ray_start.y ) / ray_direction.y );
+	}
+	else if( ray_direction.y < 0.0f )
+	{
+		ust::max_assign( near_distance, (  1.0f - ray_start.y ) / ray_direction.y );
+		ust::min_assign( far_distance , ( -1.0f - ray_start.y ) / ray_direction.y );
+	}
+	else if( ray_start.y <= -1.0f | ray_start.y >= 1.0f )
+	{
+		return ust::make_array( c_almost_inf, -c_almost_inf );
+	}
+
+	if( ray_direction.z > 0.0f )
+	{
+		ust::max_assign( near_distance, ( -1.0f - ray_start.z ) / ray_direction.z );
+		ust::min_assign( far_distance , (  1.0f - ray_start.z ) / ray_direction.z );
+	}
+	else if( ray_direction.z < 0.0f )
+	{
+		ust::max_assign( near_distance, (  1.0f - ray_start.z ) / ray_direction.z );
+		ust::min_assign( far_distance , ( -1.0f - ray_start.z ) / ray_direction.z );
+	}
+	else if( ray_start.z <= -1.0f | ray_start.z >= 1.0f )
+	{
+		return ust::make_array( c_almost_inf, -c_almost_inf );
+	}
+
+	return ust::make_array( near_distance, far_distance );
+}
+
+var f32 c_almost_inf= 99999999.0f;
+
+// Returns near/far distance.
+fn CalculateRayUnitSphereIntersection( Vec3f& ray_start, Vec3f& ray_normalized_direction ) : [ f32, 2 ]
+{
+	var f32 side_step= ust::sqrt( ust::max( 0.0f, 1.0f - ray_normalized_direction.Cross( ray_start ).SquareLength() ) );
+	var f32 dinstance_to_closest_point= -ray_start.Dot( ray_normalized_direction );
+	return ust::make_array( dinstance_to_closest_point - side_step, dinstance_to_closest_point + side_step );
+}
+
+} // namespace PM
