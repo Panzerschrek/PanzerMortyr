@@ -30,13 +30,17 @@ fn CreateDrawersGLAndSoft(
 		mut video_player_soft :video_player
 	} = CreateDrawersSoft( settings, caching_game_resources_loader, console_out );
 
+	auto viewport_size= window_gl.lock_imut().deref().GetViewportSize();
+
 	return AbstractDrawers
 	{
 		.window= ust::make_shared_ptr( WindowMultiplexed( ust::make_array( move( window_gl ), move( window_soft ) ) ) ),
 		.image_drawer=
 			ust::make_box(
 				ImageDrawerMultiplexed( ust::make_array( move(image_drawer_gl), move( image_drawer_soft ) ) ) ),
-		.hud_drawer= move(hud_drawer_gl),
+		.hud_drawer=
+			ust::make_box(
+				HudDrawerMultiplexed( viewport_size, ust::make_array( move(hud_drawer_gl), move(hud_drawer_soft) ) ) ),
 		.text_drawer=
 			ust::make_box( TextDrawerMultiplexed( ust::make_array( move(text_drawer_gl), move(text_drawer_soft) ) ) ),
 		.world_drawer=
@@ -205,6 +209,42 @@ public:
 
 private:
 	[ ust::box</AbstractTextDrawer/>, 2 ] text_drawers_;
+}
+
+class HudDrawerMultiplexed final : AbstractHudDrawer
+{
+public:
+	fn constructor( [ u32, 2 ] viewport_size, [ ust::box</AbstractHudDrawer/>, 2 ] mut hud_drawers )
+		( base( viewport_size ), hud_drawers_= move(hud_drawers) )
+	{}
+
+protected: // AbstractHudDrawer
+	fn virtual override AddTileQuad( mut this, i32 x, i32 y, HudDrawingInfo::IconIndex tile_index )
+	{
+		foreach( &mut hud_drawer_ptr : hud_drawers_ )
+		{
+			hud_drawer_ptr.deref().AddTileQuad( x, y, tile_index );
+		}
+	}
+
+	fn virtual override AddDigitQuad( mut this, i32 x, i32 y, u32 digit_index, bool alternative_color )
+	{
+		foreach( &mut hud_drawer_ptr : hud_drawers_ )
+		{
+			hud_drawer_ptr.deref().AddDigitQuad( x, y, digit_index, alternative_color );
+		}
+	}
+
+	fn virtual override FlushDrawQuads( mut this )
+	{
+		foreach( &mut hud_drawer_ptr : hud_drawers_ )
+		{
+			hud_drawer_ptr.deref().FlushDrawQuads();
+		}
+	}
+
+protected:
+	[ ust::box</AbstractHudDrawer/>, 2 ] hud_drawers_;
 }
 
 class WorldDrawerMultiplexed final : AbstractWorldDrawer
