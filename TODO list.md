@@ -111,9 +111,6 @@ PanzerMortyr OpenGL rendering:
 
 PanzerMortyr software rendering:
 
-* Try speeding-up rasterization code by using fixed-point arithmetic for edges calculation.
-* Try seeeding-up rasterization code by using depth buffer in u32 or even u16 format.
-* Try speeding-up rasterization by correcting color and depth equations, so that it's not need to clamp interpolated color and depth values.
 * Draw test primitives.
 * Draw burning models.
 * Consider applying local fog to semitransparent geometry.

@@ -120,19 +120,62 @@ public:
 		debug_assert( v1.position.z > 0.0f );
 		debug_assert( v2.position.z > 0.0f );
 
+		// Convert vertices to fixed point.
+		// We need it for edges calculation.
+		// Also some quantization helps preventing division by very small floating-point values.
+		var [ [ i32, 2 ], 3 ] vertices_projected_fixed
+		[
+			[
+				( ( v0.position.x / v0.position.z ) * c_quantization_scale ),
+				( ( v0.position.y / v0.position.z ) * c_quantization_scale ),
+			],
+			[
+				( ( v1.position.x / v1.position.z ) * c_quantization_scale ),
+				( ( v1.position.y / v1.position.z ) * c_quantization_scale ),
+			],
+			[
+				( ( v2.position.x / v2.position.z ) * c_quantization_scale ),
+				( ( v2.position.y / v2.position.z ) * c_quantization_scale ),
+			],
+		];
+
+		var i32 min_y_fixed=
+			ust::min(
+				ust::min( vertices_projected_fixed[0][1], vertices_projected_fixed[1][1] ),
+				vertices_projected_fixed[2][1] );
+		var i32 max_y_fixed=
+			ust::max(
+				ust::max( vertices_projected_fixed[0][1], vertices_projected_fixed[1][1] ),
+				vertices_projected_fixed[2][1] );
+
+		// Convert min/max y into integers with rounding.
+		var i32 min_y_i=
+			ust::max(
+				0,
+				( min_y_fixed + ( 1 << ( c_quantization_scale_log2 - 1 ) ) ) >> c_quantization_scale_log2 );
+		var i32 max_y_i=
+			ust::min(
+				( max_y_fixed + ( 1 << ( c_quantization_scale_log2 - 1 ) ) ) >> c_quantization_scale_log2,
+				i32( surface_.size[1] ) );
+
+		if( min_y_i >= max_y_i )
+		{
+			return; // This triangle is too thin - it doesn't fill even a single line.
+		}
+
 		var [ [ f32, 2 ], 3 ] vertices_projected
 		[
 			[
-				QuantizeProjectedVertexCoordinate( v0.position.x / v0.position.z ),
-				QuantizeProjectedVertexCoordinate( v0.position.y / v0.position.z )
+				f32( vertices_projected_fixed[0][0] ) * c_quantization_inv_scale,
+				f32( vertices_projected_fixed[0][1] ) * c_quantization_inv_scale,
 			],
 			[
-				QuantizeProjectedVertexCoordinate( v1.position.x / v1.position.z ),
-				QuantizeProjectedVertexCoordinate( v1.position.y / v1.position.z )
+				f32( vertices_projected_fixed[1][0] ) * c_quantization_inv_scale,
+				f32( vertices_projected_fixed[1][1] ) * c_quantization_inv_scale,
 			],
 			[
-				QuantizeProjectedVertexCoordinate( v2.position.x / v2.position.z ),
-				QuantizeProjectedVertexCoordinate( v2.position.y / v2.position.z )
+				f32( vertices_projected_fixed[2][0] ) * c_quantization_inv_scale,
+				f32( vertices_projected_fixed[2][1] ) * c_quantization_inv_scale,
 			],
 		];
 
@@ -141,10 +184,8 @@ public:
 		// This is needed in order to avoid precision issues at large screen coordinates, causing artifacts like Z-fighting.
 		var [ f32, 2 ] triangle_center
 		[
-			ust::floor(
-				( vertices_projected[0][0] + vertices_projected[1][0] + vertices_projected[2][0] ) * ( 1.0f / 3.0f ) ),
-			ust::floor(
-				( vertices_projected[0][1] + vertices_projected[1][1] + vertices_projected[2][1] ) * ( 1.0f / 3.0f ) ),
+			( ( vertices_projected[0][0] + vertices_projected[1][0] + vertices_projected[2][0] ) * ( 1.0f / 3.0f ) ),
+			( ( vertices_projected[0][1] + vertices_projected[1][1] + vertices_projected[2][1] ) * ( 1.0f / 3.0f ) ),
 		];
 
 		var [ [ f32, 2 ], 3 ] vertices_projected_shifted
@@ -208,71 +249,77 @@ public:
 		var ust::array_view_mut</f32/> depth_buffer= depth_buffer_;
 		var [ f32, 4 ] fog_color= fog_color_;
 
-		var f32 min_y= ust::min( ust::min( vertices_projected[0][1], vertices_projected[1][1] ), vertices_projected[2][1] );
-		var f32 max_y= ust::max( ust::max( vertices_projected[0][1], vertices_projected[1][1] ), vertices_projected[2][1] );
-
-		var i32 min_y_i= ust::max( 0, i32( ust::round( min_y ) ) );
-		var i32 max_y_i= ust::min( i32( ust::round( max_y ) ), i32( surface.size[1] ) );
-
-		if( min_y_i >= max_y_i )
-		{
-			return; // This triangle is too thin - it doesn't fill even a single line.
-		}
-
-		var f32 surface_size_x( surface.size[0] );
-
 		// A triangle has up to two edges on each side, but usually it's one and two.
 		// For simplicity assume that we always have two edges on both sides.
 		// This simplifies code a bit and allows avoiding extra branching.
-		var [ f32, 2 ] mut edges_min_x[ 0.0f ... ];
-		var [ f32, 2 ] mut edges_max_x[ surface_size_x ... ];
-		var [ f32, 2 ] mut edges_min_step_x[ 0.0f ... ];
-		var [ f32, 2 ] mut edges_max_step_x[ 0.0f ... ];
+		// Use 32.32 fixed point numbers, such precision is necessary for very inclined edges.
+		var [ i64, 2 ] mut edges_min_x_fixed32[ 0i64 ... ];
+		var [ i64, 2 ] mut edges_max_x_fixed32[ i64( surface.size[0] ) << 32 ... ];
+		var [ i64, 2 ] mut edges_min_step_x_fixed32[ 0i64 ... ];
+		var [ i64, 2 ] mut edges_max_step_x_fixed32[ 0i64 ... ];
 
 		{
-			var [ [ f32, 2 ], 3 ] edges
+			var [ [ i32, 2 ], 3 ] edges_fixed
 			[
 				[
-					vertices_projected[1][0] - vertices_projected[0][0],
-					vertices_projected[1][1] - vertices_projected[0][1],
+					vertices_projected_fixed[1][0] - vertices_projected_fixed[0][0],
+					vertices_projected_fixed[1][1] - vertices_projected_fixed[0][1],
 				],
 				[
-					vertices_projected[2][0] - vertices_projected[1][0],
-					vertices_projected[2][1] - vertices_projected[1][1],
+					vertices_projected_fixed[2][0] - vertices_projected_fixed[1][0],
+					vertices_projected_fixed[2][1] - vertices_projected_fixed[1][1],
 				],
 				[
-					vertices_projected[0][0] - vertices_projected[2][0],
-					vertices_projected[0][1] - vertices_projected[2][1],
+					vertices_projected_fixed[0][0] - vertices_projected_fixed[2][0],
+					vertices_projected_fixed[0][1] - vertices_projected_fixed[2][1],
 				],
 			];
 
-			var f32 min_y_center= f32( min_y_i ) + 0.5f; // We perform rasterization for centers of pixels.
+			 // We perform rasterization for centers of pixels.
+			var i32 min_y_center= ( min_y_i << c_quantization_scale_log2 ) + ( 1 << ( c_quantization_scale_log2 - 1 ) );
 
 			var size_type mut num_edges_min= 0s, mut nun_edges_max= 0s;
 
 			for( auto mut e= 0s; e < 3s; ++e )
 			{
-				var [ f32, 2 ]& edge= edges[e];
-				var [ f32, 2 ]& vertex_projected= vertices_projected[e];
+				var [ i32, 2 ]& edge_fixed= edges_fixed[e];
 
-				if( edge[1] == 0.0f )
+				if( edge_fixed[1] == 0 )
 				{
 					continue; // This edge is parallel to X axis and thus can be ignored.
 				}
 
-				var f32 edge_step= edge[0] / edge[1];
-				var f32 edge_x= vertex_projected[0] + ( min_y_center - vertex_projected[1] ) * edge_step;
+				var i32 constexpr c_shift_to_fixed32= 32 - c_quantization_scale_log2;
 
-				if( edge[1] > 0.0f )
+				var i64 edge_step= ( i64( edge_fixed[0] ) << c_shift_to_fixed32 ) / i64( edge_fixed[1] );
+
+				if( edge_fixed[1] > 0 )
 				{
-					edges_max_x[ nun_edges_max ]= edge_x;
-					edges_max_step_x[ nun_edges_max ]= edge_step;
+					var [ i32, 2 ]& vertex_projected= vertices_projected_fixed[e];
+
+					var i64 edge_x_fixed32=
+						( i64( vertex_projected[0] ) << c_shift_to_fixed32 ) +
+						i64( min_y_center - vertex_projected[1] ) * edge_step +
+						( 1i64 << 31 ) /* add 0.5 to allow rounding to nearest pixel */;
+
+					edges_max_x_fixed32[ nun_edges_max ]= edge_x_fixed32;
+					edges_max_step_x_fixed32[ nun_edges_max ]= edge_step << c_quantization_scale_log2;
 					nun_edges_max ^= 1s;
 				}
-				else // if( edge[1] < 0.0f )
+				else // if( edge_fixed[1] < 0 )
 				{
-					edges_min_x[ num_edges_min ]= edge_x;
-					edges_min_step_x[ num_edges_min ]= edge_step;
+					// For min border edge_x use the opposite edge vertex to calculate it.
+					// It's needed to use the same base vertex for two triangles lying on the same edge.
+					// This is necessary to avoid nasty artifacts with one-pixel gaps between triangles.
+					var [ i32, 2 ]& vertex_projected= vertices_projected_fixed[ ( e + 1s ) % 3s ];
+
+					var i64 edge_x_fixed32=
+						( i64( vertex_projected[0] ) << c_shift_to_fixed32 ) +
+						i64( min_y_center - vertex_projected[1] ) * edge_step +
+						( 1i64 << 31 ) /* add 0.5 to allow rounding to nearest pixel */;
+
+					edges_min_x_fixed32[ num_edges_min ]= edge_x_fixed32;
+					edges_min_step_x_fixed32[ num_edges_min ]= edge_step << c_quantization_scale_log2;
 					num_edges_min ^= 1s;
 				}
 			}
@@ -384,13 +431,20 @@ public:
 
 					for( auto mut y= min_y_i; y < max_y_i; ++y )
 					{
-						var f32 min_x=
-							ust::max( ust::max( cast_imut(edges_min_x)[0], cast_imut(edges_min_x)[1] ), 0.0f );
-						var f32 max_x=
-							ust::min( ust::min( cast_imut(edges_max_x)[0], cast_imut(edges_max_x)[1] ), surface_size_x );
+						// Truncate to integer, not round, since 0.5 needed for rounding should be added earlier.
+						var i32 min_x_i=
+							ust::max(
+								ust::max(
+									i32( cast_imut(edges_min_x_fixed32)[0] >> 32 ),
+									i32( cast_imut(edges_min_x_fixed32)[1] >> 32 ) ),
+								0 );
 
-						var i32 min_x_i= i32( ust::round( min_x ) );
-						var i32 max_x_i= i32( ust::round( max_x ) );
+						var i32 max_x_i=
+							ust::min(
+								ust::min(
+									i32( cast_imut(edges_max_x_fixed32)[0] >> 32 ),
+									i32( cast_imut(edges_max_x_fixed32)[1] >> 32 ) ),
+								i32( surface.size[0] ) );
 
 						if( min_x_i < max_x_i )
 						{
@@ -520,10 +574,10 @@ public:
 							}
 						}
 
-						edges_min_x[0]+= edges_min_step_x[0];
-						edges_min_x[1]+= edges_min_step_x[1];
-						edges_max_x[0]+= edges_max_step_x[0];
-						edges_max_x[1]+= edges_max_step_x[1];
+						edges_min_x_fixed32[0]+= edges_min_step_x_fixed32[0];
+						edges_min_x_fixed32[1]+= edges_min_step_x_fixed32[1];
+						edges_max_x_fixed32[0]+= edges_max_step_x_fixed32[0];
+						edges_max_x_fixed32[1]+= edges_max_step_x_fixed32[1];
 					}
 				}
 
@@ -624,13 +678,20 @@ public:
 
 					for( auto mut y= min_y_i; y < max_y_i; ++y )
 					{
-						var f32 min_x=
-							ust::max( ust::max( cast_imut(edges_min_x)[0], cast_imut(edges_min_x)[1] ), 0.0f );
-						var f32 max_x=
-							ust::min( ust::min( cast_imut(edges_max_x)[0], cast_imut(edges_max_x)[1] ), surface_size_x );
+						// Truncate to integer, not round, since 0.5 needed for rounding should be added earlier.
+						var i32 min_x_i=
+							ust::max(
+								ust::max(
+									i32( cast_imut(edges_min_x_fixed32)[0] >> 32 ),
+									i32( cast_imut(edges_min_x_fixed32)[1] >> 32 ) ),
+								0 );
 
-						var i32 min_x_i= i32( ust::round( min_x ) );
-						var i32 max_x_i= i32( ust::round( max_x ) );
+						var i32 max_x_i=
+							ust::min(
+								ust::min(
+									i32( cast_imut(edges_max_x_fixed32)[0] >> 32 ),
+									i32( cast_imut(edges_max_x_fixed32)[1] >> 32 ) ),
+								i32( surface.size[0] ) );
 
 						if( min_x_i < max_x_i )
 						{
@@ -763,10 +824,10 @@ public:
 							}
 						}
 
-						edges_min_x[0]+= edges_min_step_x[0];
-						edges_min_x[1]+= edges_min_step_x[1];
-						edges_max_x[0]+= edges_max_step_x[0];
-						edges_max_x[1]+= edges_max_step_x[1];
+						edges_min_x_fixed32[0]+= edges_min_step_x_fixed32[0];
+						edges_min_x_fixed32[1]+= edges_min_step_x_fixed32[1];
+						edges_max_x_fixed32[0]+= edges_max_step_x_fixed32[0];
+						edges_max_x_fixed32[1]+= edges_max_step_x_fixed32[1];
 					}
 				}
 
@@ -784,13 +845,13 @@ public:
 		var [ [ f32, 3 ], 2 ] mut vertices_projected
 		[
 			[
-				QuantizeProjectedVertexCoordinate( v0.x / v0.z ),
-				QuantizeProjectedVertexCoordinate( v0.y / v0.z ),
+				ust::floor( ( v0.x / v0.z ) * c_quantization_scale ) * c_quantization_inv_scale,
+				ust::floor( ( v0.y / v0.z ) * c_quantization_scale ) * c_quantization_inv_scale,
 				1.0f / v0.z
 			],
 			[
-				QuantizeProjectedVertexCoordinate( v1.x / v1.z ),
-				QuantizeProjectedVertexCoordinate( v1.y / v1.z ),
+				ust::floor( ( v1.x / v1.z ) * c_quantization_scale ) * c_quantization_inv_scale,
+				ust::floor( ( v1.y / v1.z ) * c_quantization_scale ) * c_quantization_inv_scale,
 				1.0f / v1.z
 			],
 		];
@@ -885,18 +946,10 @@ public:
 	}
 
 private:
-	// Work with floating-point coordinates, but quantize them,
-	// so that we don't work with infinite small delta values.
-	fn QuantizeProjectedVertexCoordinate( f32 x ) : f32
-	{
-		// TODO - tune this constant.
-		// Smaller values are generally better, but too small values can lead to artifacts with T-junctions.
-		var f32 constexpr c_quantization_scale= 64.0f;
-		// TODO - try avoiding using "floor", since it may be a little bit slow.
-		return ust::floor( x * c_quantization_scale ) * ( 1.0f / c_quantization_scale );
-	}
+	var i32 constexpr c_quantization_scale_log2= 10; // fixed10 format gives good precision and still has huge range.
+	var f32 constexpr c_quantization_scale( 1 << c_quantization_scale_log2 );
+	var f32 constexpr c_quantization_inv_scale= 1.0f / c_quantization_scale;
 
-private:
 	var [ ust::reference_notation::pollution_element, 2 ] c_constructor_pollution[ [ "0a", "1a" ], [ "0b", "2a" ] ];
 
 private:
