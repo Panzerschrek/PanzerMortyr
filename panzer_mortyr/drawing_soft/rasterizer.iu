@@ -243,13 +243,14 @@ public:
 		// A triangle has up to two edges on each side, but usually it's one and two.
 		// For simplicity assume that we always have two edges on both sides.
 		// This simplifies code a bit and allows avoiding extra branching.
-		var [ i64, 2 ] mut edges_min_x[ 0i64 ... ];
-		var [ i64, 2 ] mut edges_max_x[ i64( surface.size[0] ) << 32 ... ];
-		var [ i64, 2 ] mut edges_min_step_x[ 0i64 ... ];
-		var [ i64, 2 ] mut edges_max_step_x[ 0i64 ... ];
+		// Use 32.32 fixed point numbers, such precision is necessary for very inclined edges.
+		var [ i64, 2 ] mut edges_min_x_fixed32[ 0i64 ... ];
+		var [ i64, 2 ] mut edges_max_x_fixed32[ i64( surface.size[0] ) << 32 ... ];
+		var [ i64, 2 ] mut edges_min_step_x_fixed32[ 0i64 ... ];
+		var [ i64, 2 ] mut edges_max_step_x_fixed32[ 0i64 ... ];
 
 		{
-			var [ [ i32, 2 ], 3 ] edges
+			var [ [ i32, 2 ], 3 ] edges_fixed
 			[
 				[
 					vertices_projected_fixed[1][0] - vertices_projected_fixed[0][0],
@@ -272,31 +273,30 @@ public:
 
 			for( auto mut e= 0s; e < 3s; ++e )
 			{
-				var [ i32, 2 ]& edge= edges[e];
+				var [ i32, 2 ]& edge_fixed= edges_fixed[e];
 
-
-				if( edge[1] == 0 )
+				if( edge_fixed[1] == 0 )
 				{
 					continue; // This edge is parallel to X axis and thus can be ignored.
 				}
 
 				var i32 constexpr c_shift_to_fixed32= 32 - c_quantization_scale_log2;
 
-				var i64 edge_step= ( i64( edge[0] ) << c_shift_to_fixed32 ) / i64( edge[1] );
+				var i64 edge_step= ( i64( edge_fixed[0] ) << c_shift_to_fixed32 ) / i64( edge_fixed[1] );
 
-				if( edge[1] > 0 )
+				if( edge_fixed[1] > 0 )
 				{
 					var [ i32, 2 ]& vertex_projected= vertices_projected_fixed[e];
 
-					var i64 edge_x=
+					var i64 edge_x_fixed32=
 						( i64( vertex_projected[0] ) << c_shift_to_fixed32 ) +
 						i64( min_y_center - vertex_projected[1] ) * edge_step;
 
-					edges_max_x[ nun_edges_max ]= edge_x;
-					edges_max_step_x[ nun_edges_max ]= edge_step << c_quantization_scale_log2;
+					edges_max_x_fixed32[ nun_edges_max ]= edge_x_fixed32;
+					edges_max_step_x_fixed32[ nun_edges_max ]= edge_step << c_quantization_scale_log2;
 					nun_edges_max ^= 1s;
 				}
-				else // if( edge[1] < 0 )
+				else // if( edge_fixed[1] < 0 )
 				{
 					// For min border edge_x use the opposite edge vertex to calculate it.
 					// It's needed to use the same base vertex for two triangles lying on the same edge.
@@ -304,12 +304,12 @@ public:
 
 					var [ i32, 2 ]& vertex_projected= vertices_projected_fixed[ ( e + 1s ) % 3s ];
 
-					var i64 edge_x=
+					var i64 edge_x_fixed32=
 						( i64( vertex_projected[0] ) << c_shift_to_fixed32 ) +
 						i64( min_y_center - vertex_projected[1] ) * edge_step;
 
-					edges_min_x[ num_edges_min ]= edge_x;
-					edges_min_step_x[ num_edges_min ]= edge_step << c_quantization_scale_log2;
+					edges_min_x_fixed32[ num_edges_min ]= edge_x_fixed32;
+					edges_min_step_x_fixed32[ num_edges_min ]= edge_step << c_quantization_scale_log2;
 					num_edges_min ^= 1s;
 				}
 			}
@@ -426,15 +426,15 @@ public:
 						var i32 min_x_i=
 							ust::max(
 								ust::max(
-									i32( ( cast_imut(edges_min_x)[0] + fixed32_half ) >> 32 ),
-									i32( ( cast_imut(edges_min_x)[1] + fixed32_half ) >> 32 ) ),
+									i32( ( cast_imut(edges_min_x_fixed32)[0] + fixed32_half ) >> 32 ),
+									i32( ( cast_imut(edges_min_x_fixed32)[1] + fixed32_half ) >> 32 ) ),
 								0 );
 
 						var i32 max_x_i=
 							ust::min(
 								ust::min(
-									i32( ( cast_imut(edges_max_x)[0] + fixed32_half ) >> 32 ),
-									i32( ( cast_imut(edges_max_x)[1] + fixed32_half ) >> 32 ) ),
+									i32( ( cast_imut(edges_max_x_fixed32)[0] + fixed32_half ) >> 32 ),
+									i32( ( cast_imut(edges_max_x_fixed32)[1] + fixed32_half ) >> 32 ) ),
 								i32( surface.size[0] ) );
 
 						if( min_x_i < max_x_i )
@@ -565,10 +565,10 @@ public:
 							}
 						}
 
-						edges_min_x[0]+= edges_min_step_x[0];
-						edges_min_x[1]+= edges_min_step_x[1];
-						edges_max_x[0]+= edges_max_step_x[0];
-						edges_max_x[1]+= edges_max_step_x[1];
+						edges_min_x_fixed32[0]+= edges_min_step_x_fixed32[0];
+						edges_min_x_fixed32[1]+= edges_min_step_x_fixed32[1];
+						edges_max_x_fixed32[0]+= edges_max_step_x_fixed32[0];
+						edges_max_x_fixed32[1]+= edges_max_step_x_fixed32[1];
 					}
 				}
 
@@ -674,15 +674,15 @@ public:
 						var i32 min_x_i=
 							ust::max(
 								ust::max(
-									i32( ( cast_imut(edges_min_x)[0] + fixed32_half ) >> 32 ),
-									i32( ( cast_imut(edges_min_x)[1] + fixed32_half ) >> 32 ) ),
+									i32( ( cast_imut(edges_min_x_fixed32)[0] + fixed32_half ) >> 32 ),
+									i32( ( cast_imut(edges_min_x_fixed32)[1] + fixed32_half ) >> 32 ) ),
 								0 );
 
 						var i32 max_x_i=
 							ust::min(
 								ust::min(
-									i32( ( cast_imut(edges_max_x)[0] + fixed32_half ) >> 32 ),
-									i32( ( cast_imut(edges_max_x)[1] + fixed32_half ) >> 32 ) ),
+									i32( ( cast_imut(edges_max_x_fixed32)[0] + fixed32_half ) >> 32 ),
+									i32( ( cast_imut(edges_max_x_fixed32)[1] + fixed32_half ) >> 32 ) ),
 								i32( surface.size[0] ) );
 
 						if( min_x_i < max_x_i )
@@ -816,10 +816,10 @@ public:
 							}
 						}
 
-						edges_min_x[0]+= edges_min_step_x[0];
-						edges_min_x[1]+= edges_min_step_x[1];
-						edges_max_x[0]+= edges_max_step_x[0];
-						edges_max_x[1]+= edges_max_step_x[1];
+						edges_min_x_fixed32[0]+= edges_min_step_x_fixed32[0];
+						edges_min_x_fixed32[1]+= edges_min_step_x_fixed32[1];
+						edges_max_x_fixed32[0]+= edges_max_step_x_fixed32[0];
+						edges_max_x_fixed32[1]+= edges_max_step_x_fixed32[1];
 					}
 				}
 
