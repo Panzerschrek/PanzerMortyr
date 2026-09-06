@@ -120,13 +120,14 @@ public:
 		debug_assert( v1.position.z > 0.0f );
 		debug_assert( v2.position.z > 0.0f );
 
-		var f32 c_quantization_scale( 1 << 6 );
-		var f32 c_quantization_inv_scale= 1.0f / c_quantization_scale;
+		var i32 constexpr c_quantization_scale_log2= 6;
+		var f32 constexpr c_quantization_scale( 1 << c_quantization_scale_log2 );
+		var f32 constexpr c_quantization_inv_scale= 1.0f / c_quantization_scale;
 
 		// Convert vertices to fixed point.
 		// We need it for edges calculation.
 		// Also some quantization helps preventing division by very small floating-point values.
-		var [ [ i32, 2 ], 3 ] vertices_projected_fixed6
+		var [ [ i32, 2 ], 3 ] vertices_projected_fixed
 		[
 			[
 				( ( v0.position.x / v0.position.z ) * c_quantization_scale ),
@@ -145,16 +146,16 @@ public:
 		var [ [ f32, 2 ], 3 ] vertices_projected
 		[
 			[
-				f32( vertices_projected_fixed6[0][0] ) * c_quantization_inv_scale,
-				f32( vertices_projected_fixed6[0][1] ) * c_quantization_inv_scale,
+				f32( vertices_projected_fixed[0][0] ) * c_quantization_inv_scale,
+				f32( vertices_projected_fixed[0][1] ) * c_quantization_inv_scale,
 			],
 			[
-				f32( vertices_projected_fixed6[1][0] ) * c_quantization_inv_scale,
-				f32( vertices_projected_fixed6[1][1] ) * c_quantization_inv_scale,
+				f32( vertices_projected_fixed[1][0] ) * c_quantization_inv_scale,
+				f32( vertices_projected_fixed[1][1] ) * c_quantization_inv_scale,
 			],
 			[
-				f32( vertices_projected_fixed6[2][0] ) * c_quantization_inv_scale,
-				f32( vertices_projected_fixed6[2][1] ) * c_quantization_inv_scale,
+				f32( vertices_projected_fixed[2][0] ) * c_quantization_inv_scale,
+				f32( vertices_projected_fixed[2][1] ) * c_quantization_inv_scale,
 			],
 		];
 
@@ -251,20 +252,21 @@ public:
 			var [ [ i32, 2 ], 3 ] edges
 			[
 				[
-					vertices_projected_fixed6[1][0] - vertices_projected_fixed6[0][0],
-					vertices_projected_fixed6[1][1] - vertices_projected_fixed6[0][1],
+					vertices_projected_fixed[1][0] - vertices_projected_fixed[0][0],
+					vertices_projected_fixed[1][1] - vertices_projected_fixed[0][1],
 				],
 				[
-					vertices_projected_fixed6[2][0] - vertices_projected_fixed6[1][0],
-					vertices_projected_fixed6[2][1] - vertices_projected_fixed6[1][1],
+					vertices_projected_fixed[2][0] - vertices_projected_fixed[1][0],
+					vertices_projected_fixed[2][1] - vertices_projected_fixed[1][1],
 				],
 				[
-					vertices_projected_fixed6[0][0] - vertices_projected_fixed6[2][0],
-					vertices_projected_fixed6[0][1] - vertices_projected_fixed6[2][1],
+					vertices_projected_fixed[0][0] - vertices_projected_fixed[2][0],
+					vertices_projected_fixed[0][1] - vertices_projected_fixed[2][1],
 				],
 			];
 
-			var i32 min_y_center= ( min_y_i << 6 ) + ( 1 << 5 ); // We perform rasterization for centers of pixels.
+			 // We perform rasterization for centers of pixels.
+			var i32 min_y_center= ( min_y_i << c_quantization_scale_log2 ) + ( 1 << ( c_quantization_scale_log2 - 1 ) );
 
 			var size_type mut num_edges_min= 0s, mut nun_edges_max= 0s;
 
@@ -278,17 +280,20 @@ public:
 					continue; // This edge is parallel to X axis and thus can be ignored.
 				}
 
-				var i64 edge_step= ( i64( edge[0] ) << 26 ) / i64( edge[1] );
+				var i32 constexpr c_shift_to_fixed32= 32 - c_quantization_scale_log2;
+
+				var i64 edge_step= ( i64( edge[0] ) << c_shift_to_fixed32 ) / i64( edge[1] );
 
 				if( edge[1] > 0 )
 				{
-					var [ i32, 2 ]& vertex_projected= vertices_projected_fixed6[e];
+					var [ i32, 2 ]& vertex_projected= vertices_projected_fixed[e];
 
 					var i64 edge_x=
-						( i64( vertex_projected[0] ) << 26 ) + i64( min_y_center - vertex_projected[1] ) * edge_step;
+						( i64( vertex_projected[0] ) << c_shift_to_fixed32 ) +
+						i64( min_y_center - vertex_projected[1] ) * edge_step;
 
 					edges_max_x[ nun_edges_max ]= edge_x;
-					edges_max_step_x[ nun_edges_max ]= edge_step << 6;
+					edges_max_step_x[ nun_edges_max ]= edge_step << c_quantization_scale_log2;
 					nun_edges_max ^= 1s;
 				}
 				else // if( edge[1] < 0 )
@@ -297,13 +302,14 @@ public:
 					// It's needed to use the same base vertex for two triangles lying on the same edge.
 					// This is necessary to avoid nasty artifacts with one-pixel gaps between triangles.
 
-					var [ i32, 2 ]& vertex_projected= vertices_projected_fixed6[ ( e + 1s ) % 3s ];
+					var [ i32, 2 ]& vertex_projected= vertices_projected_fixed[ ( e + 1s ) % 3s ];
 
 					var i64 edge_x=
-						( i64( vertex_projected[0] ) << 26 ) + i64( min_y_center - vertex_projected[1] ) * edge_step;
+						( i64( vertex_projected[0] ) << c_shift_to_fixed32 ) +
+						i64( min_y_center - vertex_projected[1] ) * edge_step;
 
 					edges_min_x[ num_edges_min ]= edge_x;
-					edges_min_step_x[ num_edges_min ]= edge_step << 6;
+					edges_min_step_x[ num_edges_min ]= edge_step << c_quantization_scale_log2;
 					num_edges_min ^= 1s;
 				}
 			}
