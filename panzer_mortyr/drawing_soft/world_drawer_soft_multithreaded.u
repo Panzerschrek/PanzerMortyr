@@ -38,14 +38,29 @@ fn WorldDrawerSoftMultithreaded::constructor(
 						WorldDrawerSoftInternal::LoadBillboardsDescription(
 							caching_game_resources_loader.lock_imut().deref().GetGameFilesystem(), console_out ),
 					.map_index= 0u,
+					.shutdown_requested= false,
 					.caustics_texture= CreateCausticsTexture(),
 					.interpolated_caustics_layer= zero_init,
 				} ),
 		caching_game_resources_loader_ptr_= move(caching_game_resources_loader),
 		console_out_= move(console_out),
+		barrier_( 2u + 1u /* Worker threads and host thread. */ ),
 	)
 {
-	threads_= CreateThreads( settings, drawer_shared_data_, window_.lock_imut().deref().GetViewportSize() );
+	threads_=
+		CreateThreads( 2u, settings, barrier_, drawer_shared_data_, window_.lock_imut().deref().GetViewportSize() );
+}
+
+fn WorldDrawerSoftMultithreaded::destructor()
+{
+	with( mut lock : drawer_shared_data_.lock_mut() )
+	{
+		lock.deref().shutdown_requested= true;
+	}
+
+	barrier_.wait();
+
+	threads_.clear(); // This causes joining.
 }
 
 fn WorldDrawerSoftMultithreaded::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDrawingStats
@@ -124,48 +139,20 @@ fn WorldDrawerSoftMultithreaded::Draw( mut this, WorldDrawingInfo& drawing_info 
 		}
 	}
 
-	// TODO - execute this code on other threads.
-	foreach( &mut thread_data : threads_ )
+	with( mut drawer_shared_data_lock : drawer_shared_data_.lock_mut() )
 	{
-		auto mut thread_individual_shared_data_lock= thread_data.individual_shared_data.lock_mut();
-		var ThreadIndividualSharedData &mut thread_individual_shared_data= thread_individual_shared_data_lock.deref();
+		var DrawerSharedData &mut drawer_shared_data= drawer_shared_data_lock.deref();
 
-		if( thread_individual_shared_data.map_visibility_calculators.empty() )
-		{
-			continue;
-		}
-
-		auto drawer_shared_data_lock= thread_data.drawer_shared_data.lock_imut();
-		var DrawerSharedData& drawer_shared_data= drawer_shared_data_lock.deref();
-
-		if( drawer_shared_data.map_data.empty() )
-		{
-			continue;
-		}
-
-		var MapsDescription::MapDescription& map_description=
-			drawer_shared_data.maps_description.deref().maps[ size_type( drawer_shared_data.map_index ) ];
-
-		var MaterialsDescription::Block& materials_block=
-			drawer_shared_data.materials_description.deref().blocks[ map_description.materials_block ]; // Halts if not found.
-
-		// TODO - provide here destination region.
-		thread_data.drawer.Draw(
-			Color32ImageView
-			{
-				.pixels= thread_individual_shared_data.color_buffer,
-				.size= thread_individual_shared_data.color_buffer_size,
-				.stride= thread_individual_shared_data.color_buffer_size[0],
-			},
-			drawer_shared_data.game_params.deref(),
-			drawer_shared_data.billboards_description,
-			map_description,
-			materials_block,
-			drawer_shared_data.map_data.try_deref(),
-			thread_individual_shared_data.map_visibility_calculators.try_deref(),
-			drawer_shared_data.models,
-			drawing_info );
+		// Provide drawing info for worker threads.
+		// TODO - move it, not copy.
+		drawer_shared_data.drawing_info= drawing_info;
 	}
+
+	// Tell other threads that they should start drawing.
+	barrier_.wait();
+
+	// Wait until the work is finished.
+	barrier_.wait();
 
 	// Copy individual framebuffers of each thread into the result surface.
 
@@ -200,8 +187,65 @@ fn WorldDrawerSoftMultithreaded::Draw( mut this, WorldDrawingInfo& drawing_info 
 	return ust::make_zeroed</ WorldDrawingStats />(); // TODO - return proper stats.
 }
 
+op WorldDrawerSoftMultithreaded::ThreadFunction::()( this )
+{
+	var WorldDrawerSoftInternal mut drawer( settings );
+
+	loop
+	{
+		// Wait for others and host before performing drawing.
+		barrier.wait();
+
+		with( mut drawer_shared_data_lock : drawer_shared_data.lock_imut() )
+		{
+			var DrawerSharedData& drawer_shared_data= drawer_shared_data_lock.deref();
+
+			if( drawer_shared_data.shutdown_requested )
+			{
+				return;
+			}
+
+			auto mut thread_individual_shared_data_lock= individual_shared_data.lock_mut();
+			var ThreadIndividualSharedData &mut thread_individual_shared_data= thread_individual_shared_data_lock.deref();
+
+			if( !drawer_shared_data.map_data.empty() &&
+				!drawer_shared_data.drawing_info.empty() &&
+				!thread_individual_shared_data.map_visibility_calculators.empty() )
+			{
+				var MapsDescription::MapDescription& map_description=
+					drawer_shared_data.maps_description.deref().maps[ size_type( drawer_shared_data.map_index ) ];
+
+				var MaterialsDescription::Block& materials_block=
+					drawer_shared_data.materials_description.deref().blocks[ map_description.materials_block ]; // Halts if not found.
+
+				// TODO - provide here destination region.
+				drawer.Draw(
+					Color32ImageView
+					{
+						.pixels= thread_individual_shared_data.color_buffer,
+						.size= thread_individual_shared_data.color_buffer_size,
+						.stride= thread_individual_shared_data.color_buffer_size[0],
+					},
+					drawer_shared_data.game_params.deref(),
+					drawer_shared_data.billboards_description,
+					map_description,
+					materials_block,
+					drawer_shared_data.map_data.try_deref(),
+					thread_individual_shared_data.map_visibility_calculators.try_deref(),
+					drawer_shared_data.models,
+					drawer_shared_data.drawing_info.try_deref() );
+			}
+		}
+
+		// Synchronize with others and host after performing drawing.
+		barrier.wait();
+	}
+}
+
 fn WorldDrawerSoftMultithreaded::CreateThreads(
+	u32 num_threads,
 	SettingsImutPtr& settings,
+	ust::shared_barrier& barrier,
 	ust::shared_ptr_mt_imut</DrawerSharedData/>& drawer_shared_data_ptr,
 	[ u32, 2 ] out_surface_size ) : ust::vector</ThreadData/>
 {
@@ -209,27 +253,36 @@ fn WorldDrawerSoftMultithreaded::CreateThreads(
 
 	// TODO - perform here proper subdivision into regions.
 
-	for( auto mut i= 0u; i < 2u; ++i )
+	for( auto mut i= 0u; i < num_threads; ++i )
 	{
-		var u32 x= i * out_surface_size[0] / 2u;
-		var u32 next_x= ( i + 1u ) * out_surface_size[0] / 2u;
+		var u32 x= i * out_surface_size[0] / num_threads;
+		var u32 next_x= ( i + 1u ) * out_surface_size[0] / num_threads;
 
 		var [ u32, 2 ] color_buffer_size[ next_x - x, out_surface_size[1] ];
 		var [ u32, 2 ] dst_offset[ x, 0u ];
 
+		auto individual_shared_data=
+			ust::make_shared_ptr_mt(
+				ThreadIndividualSharedData
+				{
+					.color_buffer( size_type( color_buffer_size[0] * color_buffer_size[1] ), Color32(0) ),
+					.color_buffer_size= color_buffer_size,
+					.dst_offset= dst_offset,
+				} );
+
 		result_threads.push_back(
 			ThreadData
 			{
-				.drawer_shared_data= drawer_shared_data_ptr,
-				.drawer( settings ),
-				.individual_shared_data=
-					ust::make_shared_ptr_mt(
-						ThreadIndividualSharedData
+				.individual_shared_data= individual_shared_data,
+				.thread=
+					ust::make_thread(
+						ThreadFunction
 						{
-							.color_buffer( size_type( color_buffer_size[0] * color_buffer_size[1] ), Color32(0) ),
-							.color_buffer_size= color_buffer_size,
-							.dst_offset= dst_offset,
-						} )
+							.barrier= barrier,
+							.settings= settings,
+							.drawer_shared_data= drawer_shared_data_ptr,
+							.individual_shared_data= individual_shared_data,
+						} ),
 			} );
 	}
 

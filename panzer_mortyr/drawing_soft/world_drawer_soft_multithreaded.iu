@@ -1,4 +1,6 @@
+import "/shared_barrier.iu"
 import "/shared_ptr_mt.iu"
+import "/thread.iu"
 import "../caching_game_resources_loader.iu"
 import "../settings.iu"
 import "window_soft.iu"
@@ -15,6 +17,8 @@ public:
 		SettingsImutPtr& settings,
 		CachingGameResourcesLoaderPtr caching_game_resources_loader,
 		ConsoleOutPtr console_out );
+
+	fn destructor();
 
 public: // AbstractWorldDrawer
 	fn virtual final Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDrawingStats;
@@ -33,6 +37,10 @@ private:
 		// Load models on demand and store them in this container.
 		// Store empty optional if failed to load (in order to avoid loading again).
 		ModelsMapSoft models;
+
+		ust::optional</WorldDrawingInfo/> drawing_info;
+
+		bool shutdown_requested;
 
 		// Put all heavyweight fields at the end.
 
@@ -56,17 +64,25 @@ private:
 
 	struct ThreadData
 	{
-		// Store immutable shared pointer, so that it can be locked simultaneously by more than one thread.
-		ust::shared_ptr_mt_imut</DrawerSharedData/> imut drawer_shared_data;
-
 		ust::shared_ptr_mt_mut</ ThreadIndividualSharedData /> imut individual_shared_data;
+		ust::thread</ ThreadFunction, void /> thread;
+	}
 
-		WorldDrawerSoftInternal drawer;
+	struct ThreadFunction
+	{
+		SettingsImutPtr imut settings;
+		ust::shared_ptr_mt_imut</DrawerSharedData/> imut drawer_shared_data;
+		ust::shared_ptr_mt_mut</ ThreadIndividualSharedData /> imut individual_shared_data;
+		ust::shared_barrier imut barrier;
+
+		op()( this );
 	}
 
 private:
 	fn CreateThreads(
+		u32 num_threads,
 		SettingsImutPtr& settings,
+		ust::shared_barrier& barrier,
 		ust::shared_ptr_mt_imut</DrawerSharedData/>& drawer_shared_data_ptr,
 		[ u32, 2 ] out_surface_size ) : ust::vector</ThreadData/>;
 
@@ -77,6 +93,8 @@ private:
 	ust::shared_ptr_mut</WindowSoft/> imut window_;
 	CachingGameResourcesLoaderPtr imut caching_game_resources_loader_ptr_;
 	ConsoleOutPtr imut console_out_;
+
+	ust::shared_barrier mut barrier_;
 
 	ust::vector</ThreadData/> threads_;
 
