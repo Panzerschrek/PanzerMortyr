@@ -1,3 +1,4 @@
+import "/shared_ptr_mt.iu"
 import "../caching_game_resources_loader.iu"
 import "../settings.iu"
 import "window_soft.iu"
@@ -19,8 +20,28 @@ public: // AbstractWorldDrawer
 	fn virtual final Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDrawingStats;
 
 private:
+	struct DrawerSharedData
+	{
+		u32 map_index;
+		ust::optional</ MapFullDrawDataSoft /> map_data;
+
+		// Load models on demand and store them in this container.
+		// Store empty optional if failed to load (in order to avoid loading again).
+		ModelsMapSoft models;
+
+		// Put all heavyweight fields at the end.
+
+		CausticsTextureData imut caustics_texture;
+
+		// Temporary storage, where interpolated caustics layer for each frame is calculated and stored.
+		CausticsTextureLayer interpolated_caustics_layer;
+	}
+
 	struct ThreadData
 	{
+		// Store immutable shared pointer, so that it can be locked simultaneously by more than one thread.
+		ust::shared_ptr_mt_imut</DrawerSharedData/> imut drawer_shared_data;
+
 		WorldDrawerSoftInternal drawer;
 
 		// Each thread has its own visibility calculator - in order to draw only things visible within its screen region.
@@ -33,7 +54,10 @@ private:
 	}
 
 private:
-	fn CreateThreads( SettingsImutPtr& settings, [ u32, 2 ] out_surface_size ) : ust::vector</ThreadData/>;
+	fn CreateThreads(
+		SettingsImutPtr& settings,
+		ust::shared_ptr_mt_imut</DrawerSharedData/>& drawer_shared_data_ptr,
+		[ u32, 2 ] out_surface_size ) : ust::vector</ThreadData/>;
 
 	fn SetMap( mut this, u32 map_index );
 
@@ -49,20 +73,7 @@ private:
 
 	ust::vector</ThreadData/> threads_;
 
-	// Map index may be up-to-date, but map data may be empty - if failed to load map files.
-	u32 map_index_;
-	ust::optional</ MapFullDrawDataSoft /> map_data_;
-
-	// Load models on demand and store them in this container.
-	// Store empty optional if failed to load (in order to avoid loading again).
-	ModelsMapSoft models_;
-
-	// Put all heavyweight fields at the end.
-
-	CausticsTextureData imut caustics_texture_;
-
-	// Temporary storage, where interpolated caustics layer for each frame is calculated and stored.
-	CausticsTextureLayer interpolated_caustics_layer_;
+	ust::shared_ptr_mt_mut</DrawerSharedData/> imut drawer_shared_data_;
 }
 
 } // namespace PM

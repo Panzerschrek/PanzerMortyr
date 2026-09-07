@@ -34,85 +34,92 @@ fn WorldDrawerSoftMultithreaded::constructor(
 			WorldDrawerSoftInternal::LoadBillboardsDescription(
 				caching_game_resources_loader.lock_imut().deref().GetGameFilesystem(), console_out ),
 		caching_game_resources_loader_ptr_= move(caching_game_resources_loader),
+		drawer_shared_data_=
+			ust::make_shared_ptr_mt(
+				DrawerSharedData
+				{
+					.map_index= 0u,
+					.caustics_texture= CreateCausticsTexture(),
+					.interpolated_caustics_layer= zero_init,
+				} ),
 		console_out_= move(console_out),
-		map_index_= 0u,
-		caustics_texture_= CreateCausticsTexture(),
-		interpolated_caustics_layer_= zero_init,
 	)
 {
-	threads_= CreateThreads( settings, window_.lock_imut().deref().GetViewportSize() );
+	threads_= CreateThreads( settings, drawer_shared_data_, window_.lock_imut().deref().GetViewportSize() );
 }
 
 fn WorldDrawerSoftMultithreaded::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDrawingStats
 {
 	// Load models in use if switching to a new map.
-	var bool need_loading_models= map_index_ != drawing_info.map_index;
+	var bool need_loading_models= drawer_shared_data_.lock_imut().deref().map_index != drawing_info.map_index;
 
 	// Ensure we have actual map data.
 	SetMap( drawing_info.map_index );
 
-	if( need_loading_models && !map_data_.empty() )
+	with( mut drawer_shared_data_lock : drawer_shared_data_.lock_mut() )
 	{
-		// Load models in use if switching to a new map.
-		WorldDrawerSoftInternal::LoadModels(
-			drawing_info.used_models,
-			caching_game_resources_loader_ptr_.lock_imut().deref().GetGameFilesystem(),
-			console_out_,
-			map_data_.try_deref().map_draw_data.deref().textures,
-			models_ );
-	}
+		var DrawerSharedData &mut drawer_shared_data= drawer_shared_data_lock.deref();
 
-	if( map_data_.empty() )
-	{
-		return ust::make_zeroed</WorldDrawingStats/>();
-	}
-
-	var MapsDescription::MapDescription& map_description= maps_description_.deref().maps[ size_type( map_index_ ) ];
-
-	var MaterialsDescription::Block& materials_block=
-		materials_description_.deref().blocks[ map_description.materials_block ]; // Halts if not found.
-
-	var MapFullDrawDataSoft &mut map_data_full= map_data_.try_deref();
-
-	// Perform per-frame calculations independent on view point.
-	// TODO - move this code into a common place.
-	{
-		var MapDrawDataSoft& map_data= map_data_full.map_draw_data.deref();
-
-		var ust::array_view_mut</bool/> highlighted_cluster_flags= map_data_full.highlighted_cluster_flags;
-
-		foreach( &mut flag : highlighted_cluster_flags )
+		if( need_loading_models && !drawer_shared_data.map_data.empty() )
 		{
-			flag= false;
+			// Load models in use if switching to a new map.
+			WorldDrawerSoftInternal::LoadModels(
+				drawing_info.used_models,
+				caching_game_resources_loader_ptr_.lock_imut().deref().GetGameFilesystem(),
+				console_out_,
+				drawer_shared_data.map_data.try_deref().map_draw_data.deref().textures,
+				drawer_shared_data.models );
 		}
 
-		foreach( cluster_index : drawing_info.highlighted_cluster_indices )
+		if( drawer_shared_data.map_data.empty() )
 		{
-			if( size_type( cluster_index ) < highlighted_cluster_flags.size() )
+			return ust::make_zeroed</WorldDrawingStats/>();
+		}
+
+		var MapFullDrawDataSoft &mut map_data_full= drawer_shared_data.map_data.try_deref();
+
+		// Perform per-frame calculations independent on view point.
+		// TODO - move this code into a common place.
+		{
+			var MapDrawDataSoft& map_data= map_data_full.map_draw_data.deref();
+
+			var ust::array_view_mut</bool/> highlighted_cluster_flags= map_data_full.highlighted_cluster_flags;
+
+			foreach( &mut flag : highlighted_cluster_flags )
 			{
-				highlighted_cluster_flags[ size_type( cluster_index ) ]= true;
+				flag= false;
 			}
-		}
 
-		var TexturesWithAppliedCaustics &mut textures_with_applied_caustics=
-				map_data_full.textures_with_applied_caustics;
-
-		if( settings_.lock_imut().deref().r_caustics_enabled && !textures_with_applied_caustics.empty() )
-		{
-			// Just update all textures affected by caustics each frame.
-			// We have not so many of such textures (no more than 10) and code doing so is pretty-fast.
-
-			FetchInterpolatedCausticsTextureLayer(
-				caustics_texture_, drawing_info.game_time_s, interpolated_caustics_layer_ );
-
-			// Just update all textures affected by caustics each frame.
-			// We have not so many of such textures (no more than 10) and code doing so is pretty-fast.
-
-			foreach( pair : textures_with_applied_caustics )
+			foreach( cluster_index : drawing_info.highlighted_cluster_indices )
 			{
-				var Color32WorldTextureWithMips& src_texture= map_data.textures[ size_type( pair.key() ) ];
-				var Color32WorldTextureWithMips &mut dst_texture= pair.value().deref();
-				ApplyCausticsTexture( interpolated_caustics_layer_, src_texture[0], dst_texture );
+				if( size_type( cluster_index ) < highlighted_cluster_flags.size() )
+				{
+					highlighted_cluster_flags[ size_type( cluster_index ) ]= true;
+				}
+			}
+
+			var TexturesWithAppliedCaustics &mut textures_with_applied_caustics=
+					map_data_full.textures_with_applied_caustics;
+
+			if( settings_.lock_imut().deref().r_caustics_enabled && !textures_with_applied_caustics.empty() )
+			{
+				// Just update all textures affected by caustics each frame.
+				// We have not so many of such textures (no more than 10) and code doing so is pretty-fast.
+
+				FetchInterpolatedCausticsTextureLayer(
+					drawer_shared_data.caustics_texture,
+					drawing_info.game_time_s,
+					drawer_shared_data.interpolated_caustics_layer );
+
+				// Just update all textures affected by caustics each frame.
+				// We have not so many of such textures (no more than 10) and code doing so is pretty-fast.
+
+				foreach( pair : textures_with_applied_caustics )
+				{
+					var Color32WorldTextureWithMips& src_texture= map_data.textures[ size_type( pair.key() ) ];
+					var Color32WorldTextureWithMips &mut dst_texture= pair.value().deref();
+					ApplyCausticsTexture( drawer_shared_data.interpolated_caustics_layer, src_texture[0], dst_texture );
+				}
 			}
 		}
 	}
@@ -124,6 +131,20 @@ fn WorldDrawerSoftMultithreaded::Draw( mut this, WorldDrawingInfo& drawing_info 
 		{
 			continue;
 		}
+
+		auto drawer_shared_data_lock= thread_data.drawer_shared_data.lock_imut();
+		var DrawerSharedData& drawer_shared_data= drawer_shared_data_lock.deref();
+
+		if( drawer_shared_data.map_data.empty() )
+		{
+			continue;
+		}
+
+		var MapsDescription::MapDescription& map_description=
+			maps_description_.deref().maps[ size_type( drawer_shared_data.map_index ) ];
+
+		var MaterialsDescription::Block& materials_block=
+			materials_description_.deref().blocks[ map_description.materials_block ]; // Halts if not found.
 
 		// TODO - provide here destination region.
 		thread_data.drawer.Draw(
@@ -137,9 +158,9 @@ fn WorldDrawerSoftMultithreaded::Draw( mut this, WorldDrawingInfo& drawing_info 
 			billboards_description_,
 			map_description,
 			materials_block,
-			map_data_full,
+			drawer_shared_data.map_data.try_deref(),
 			thread_data.map_visibility_calculators.try_deref(),
-			models_,
+			drawer_shared_data.models,
 			drawing_info );
 	}
 
@@ -174,7 +195,9 @@ fn WorldDrawerSoftMultithreaded::Draw( mut this, WorldDrawingInfo& drawing_info 
 }
 
 fn WorldDrawerSoftMultithreaded::CreateThreads(
-	SettingsImutPtr& settings, [ u32, 2 ] out_surface_size ) : ust::vector</ThreadData/>
+	SettingsImutPtr& settings,
+	ust::shared_ptr_mt_imut</DrawerSharedData/>& drawer_shared_data_ptr,
+	[ u32, 2 ] out_surface_size ) : ust::vector</ThreadData/>
 {
 	var ust::vector</ThreadData/> mut result_threads;
 
@@ -191,6 +214,7 @@ fn WorldDrawerSoftMultithreaded::CreateThreads(
 		result_threads.push_back(
 			ThreadData
 			{
+				.drawer_shared_data= drawer_shared_data_ptr,
 				.drawer( settings ),
 				.color_buffer( size_type( color_buffer_size[0] * color_buffer_size[1] ), Color32(0) ),
 				.color_buffer_size= color_buffer_size,
@@ -203,59 +227,64 @@ fn WorldDrawerSoftMultithreaded::CreateThreads(
 
 fn WorldDrawerSoftMultithreaded::SetMap( mut this, u32 map_index )
 {
-	// Check if we need to reload map first.
-	if( map_index == map_index_ )
+	with( mut drawer_shared_data_lock : drawer_shared_data_.lock_mut() )
 	{
-		return;
-	}
-	// Need to load map data.
+		var DrawerSharedData &mut drawer_shared_data= drawer_shared_data_lock.deref();
 
-	// Set map index in any case - it may be necessary in order to avoid reloading map data constantly if failed to load it once.
-	map_index_= map_index;
+		// Check if we need to reload map first.
+		if( map_index == drawer_shared_data.map_index )
+		{
+			return;
+		}
+		// Need to load map data.
 
-	// Reset previous map data first - to free used memory before allocating new memory for new map.
-	map_data_.reset();
+		// Set map index in any case - it may be necessary in order to avoid reloading map data constantly if failed to load it once.
+		drawer_shared_data.map_index= map_index;
 
-	foreach( &mut thread_data : threads_ )
-	{
-		thread_data.map_visibility_calculators.reset();
-	}
-
-	if( map_index == 0u )
-	{
-		ConsoleOutAddTextLine( console_out_, "Can't load map 0!" );
-		return;
-	}
-
-	auto mut lock= caching_game_resources_loader_ptr_.lock_mut();
-	var CachingGameResourcesLoader &mut caching_game_resources_loader= lock.deref();
-
-	var ust::shared_ptr_mt_final_nullable</ MapDrawDataSoft /> map_draw_data_nullable_ptr=
-		WorldDrawerSoftInternal::LoadMap(
-			caching_game_resources_loader,
-			console_out_,
-			game_params_.deref(),
-			maps_description_.deref(),
-			materials_description_.deref(),
-			billboards_description_,
-			map_index );
-
-	if( !map_draw_data_nullable_ptr.empty() )
-	{
-		var ust::shared_ptr_mt_final</ MapDrawDataSoft /> map_draw_data_ptr=
-			map_draw_data_nullable_ptr.try_to_non_nullable();
-
-		map_data_= WorldDrawerSoftInternal::CreateMapFullData( map_draw_data_ptr );
-
-		var ust::shared_ptr_mt_final</RoomClustersBSPTree/>& room_clusters_bsp_tree=
-			map_draw_data_ptr.deref().room_clusters_bsp_tree;
+		// Reset previous map data first - to free used memory before allocating new memory for new map.
+		drawer_shared_data.map_data.reset();
 
 		foreach( &mut thread_data : threads_ )
 		{
-			thread_data.map_visibility_calculators=
-				ust::make_array(
-					MapVisibilityCalculator( room_clusters_bsp_tree ),
-					MapVisibilityCalculator( room_clusters_bsp_tree ) );
+			thread_data.map_visibility_calculators.reset();
+		}
+
+		if( map_index == 0u )
+		{
+			ConsoleOutAddTextLine( console_out_, "Can't load map 0!" );
+			return;
+		}
+
+		auto mut lock= caching_game_resources_loader_ptr_.lock_mut();
+		var CachingGameResourcesLoader &mut caching_game_resources_loader= lock.deref();
+
+		var ust::shared_ptr_mt_final_nullable</ MapDrawDataSoft /> map_draw_data_nullable_ptr=
+			WorldDrawerSoftInternal::LoadMap(
+				caching_game_resources_loader,
+				console_out_,
+				game_params_.deref(),
+				maps_description_.deref(),
+				materials_description_.deref(),
+				billboards_description_,
+				map_index );
+
+		if( !map_draw_data_nullable_ptr.empty() )
+		{
+			var ust::shared_ptr_mt_final</ MapDrawDataSoft /> map_draw_data_ptr=
+				map_draw_data_nullable_ptr.try_to_non_nullable();
+
+			drawer_shared_data.map_data= WorldDrawerSoftInternal::CreateMapFullData( map_draw_data_ptr );
+
+			var ust::shared_ptr_mt_final</RoomClustersBSPTree/>& room_clusters_bsp_tree=
+				map_draw_data_ptr.deref().room_clusters_bsp_tree;
+
+			foreach( &mut thread_data : threads_ )
+			{
+				thread_data.map_visibility_calculators=
+					ust::make_array(
+						MapVisibilityCalculator( room_clusters_bsp_tree ),
+						MapVisibilityCalculator( room_clusters_bsp_tree ) );
+			}
 		}
 	}
 }
