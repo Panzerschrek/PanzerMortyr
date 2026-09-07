@@ -2301,6 +2301,82 @@ fn WorldDrawerSoftInternal::LoadMap(
 			} );
 }
 
+fn WorldDrawerSoftInternal::LoadModels(
+	ust::array_view_imut</UsedModel/> model_list,
+	GameFilesystemPtr& game_filesystem_ptr,
+	ConsoleOutPtr& console_out_ptr,
+	ust::array_view_imut</Color32WorldTextureWithMips/> map_textures,
+	ModelsMapSoft &mut models )
+{
+	// Populate new models table and take existing models from the old one (if can).
+	// Doing so we avoid loading models which are already loaded and also unload no longer used models.
+	var ModelsMapSoft mut new_models;
+
+	auto mut fs_lock= game_filesystem_ptr.lock_mut();
+	var ( fn( ust::file_readable &mut f ) : ust::io_result</ModelData/> ) constexpr load_model_fn( LoadModel );
+
+	foreach( &used_model : model_list )
+	{
+		auto mut prev_model= models.remove_if_exists( used_model.file_name );
+		if( !prev_model.empty() )
+		{
+			new_models.insert_new( used_model.file_name, prev_model.try_take() );
+			continue;
+		}
+
+		result_match( fs_lock.deref().LoadFile( used_model.file_name, load_model_fn ) )
+		{
+			Ok(m) ->
+			{
+				new_models.insert_new( used_model.file_name, ModelSoftExt{ .model= CreateModelSoft( m ) } );
+			},
+			Err(e) ->
+			{
+				ConsoleOutAddTextLine(
+					console_out_ptr,
+					ust::concat(
+						"Failed to load model file \"",
+						ConvertResourceStringToStringView( used_model.file_name ),
+						"\"! Error: ",
+						ust::enum_to_string( e ) ) );
+			},
+		}
+	}
+
+	models= move( new_models );
+
+	// Prepare blood-covered textures.
+	// Do this each time models are loaded, even for models which are already present in memory.
+	// This is needed since blood textures are defined on per-map basis and thus it may be needed to re-apply them.
+
+	if( size_type( c_blood_texture_layer_medium ) < map_textures.size() &&
+		size_type( c_blood_texture_layer_large ) < map_textures.size() )
+	{
+		var Color32WorldTextureMip0& blood_texture_medium=
+			map_textures[ size_type( c_blood_texture_layer_medium ) ][0];
+
+		var Color32WorldTextureMip0& blood_texture_large=
+			map_textures[ size_type( c_blood_texture_layer_large ) ][0];
+
+		foreach( &used_model : model_list )
+		{
+			if_var( &mut model_ext : models.find( used_model.file_name ) )
+			{
+				// Reset old textures before creating new ones.
+				model_ext.blood_covered_textures.reset();
+
+				if( used_model.blood_coverage_needed )
+				{
+					model_ext.blood_covered_textures.reset(
+						ust::make_array(
+							CreateBloodCoveredModelTexture( model_ext.model.texture, blood_texture_medium ),
+							CreateBloodCoveredModelTexture( model_ext.model.texture, blood_texture_large ) ) );
+				}
+			}
+		}
+	}
+}
+
 // Transform texture coordinates from 0 to 1 range into 0 to size range.
 // Also add a bias, so that coordinates are always non-negative and near zero
 // and thus f32 to i32 conversion performs proper truncation
@@ -3809,82 +3885,6 @@ fn LoadBillboardsDescription(
 				ust::concat( "Failed to read billboards description file! Error: ", ust::enum_to_string(e), "!" ) );
 			return BillboardsDescription();
 		},
-	}
-}
-
-fn LoadModels(
-	ust::array_view_imut</UsedModel/> model_list,
-	GameFilesystemPtr& game_filesystem_ptr,
-	ConsoleOutPtr& console_out_ptr,
-	ust::array_view_imut</Color32WorldTextureWithMips/> map_textures,
-	ModelsMapSoft &mut models )
-{
-	// Populate new models table and take existing models from the old one (if can).
-	// Doing so we avoid loading models which are already loaded and also unload no longer used models.
-	var ModelsMapSoft mut new_models;
-
-	auto mut fs_lock= game_filesystem_ptr.lock_mut();
-	var ( fn( ust::file_readable &mut f ) : ust::io_result</ModelData/> ) constexpr load_model_fn( LoadModel );
-
-	foreach( &used_model : model_list )
-	{
-		auto mut prev_model= models.remove_if_exists( used_model.file_name );
-		if( !prev_model.empty() )
-		{
-			new_models.insert_new( used_model.file_name, prev_model.try_take() );
-			continue;
-		}
-
-		result_match( fs_lock.deref().LoadFile( used_model.file_name, load_model_fn ) )
-		{
-			Ok(m) ->
-			{
-				new_models.insert_new( used_model.file_name, ModelSoftExt{ .model= CreateModelSoft( m ) } );
-			},
-			Err(e) ->
-			{
-				ConsoleOutAddTextLine(
-					console_out_ptr,
-					ust::concat(
-						"Failed to load model file \"",
-						ConvertResourceStringToStringView( used_model.file_name ),
-						"\"! Error: ",
-						ust::enum_to_string( e ) ) );
-			},
-		}
-	}
-
-	models= move( new_models );
-
-	// Prepare blood-covered textures.
-	// Do this each time models are loaded, even for models which are already present in memory.
-	// This is needed since blood textures are defined on per-map basis and thus it may be needed to re-apply them.
-
-	if( size_type( c_blood_texture_layer_medium ) < map_textures.size() &&
-		size_type( c_blood_texture_layer_large ) < map_textures.size() )
-	{
-		var Color32WorldTextureMip0& blood_texture_medium=
-			map_textures[ size_type( c_blood_texture_layer_medium ) ][0];
-
-		var Color32WorldTextureMip0& blood_texture_large=
-			map_textures[ size_type( c_blood_texture_layer_large ) ][0];
-
-		foreach( &used_model : model_list )
-		{
-			if_var( &mut model_ext : models.find( used_model.file_name ) )
-			{
-				// Reset old textures before creating new ones.
-				model_ext.blood_covered_textures.reset();
-
-				if( used_model.blood_coverage_needed )
-				{
-					model_ext.blood_covered_textures.reset(
-						ust::make_array(
-							CreateBloodCoveredModelTexture( model_ext.model.texture, blood_texture_medium ),
-							CreateBloodCoveredModelTexture( model_ext.model.texture, blood_texture_large ) ) );
-				}
-			}
-		}
 	}
 }
 
