@@ -58,7 +58,7 @@ fn WorldDrawerSoftMultithreaded::Draw( mut this, WorldDrawingInfo& drawing_info 
 			drawing_info.used_models,
 			caching_game_resources_loader_ptr_.lock_imut().deref().GetGameFilesystem(),
 			console_out_,
-			map_data_.try_deref()[0].map_draw_data.deref().textures,
+			map_data_.try_deref().map_draw_data.deref().textures,
 			models_ );
 	}
 
@@ -72,9 +72,7 @@ fn WorldDrawerSoftMultithreaded::Draw( mut this, WorldDrawingInfo& drawing_info 
 	var MaterialsDescription::Block& materials_block=
 		materials_description_.deref().blocks[ map_description.materials_block ]; // Halts if not found.
 
-	auto &mut map_data_tuple= map_data_.try_deref();
-
-	var MapFullDrawDataSoft &mut map_data_full= map_data_tuple[0];
+	var MapFullDrawDataSoft &mut map_data_full= map_data_.try_deref();
 
 	// Perform per-frame calculations independent on view point.
 	// TODO - move this code into a common place.
@@ -122,6 +120,11 @@ fn WorldDrawerSoftMultithreaded::Draw( mut this, WorldDrawingInfo& drawing_info 
 	// TODO - execute this code on other threads.
 	foreach( &mut thread_data : threads_ )
 	{
+		if( thread_data.map_visibility_calculators.empty() )
+		{
+			continue;
+		}
+
 		// TODO - provide here destination region.
 		thread_data.drawer.Draw(
 			Color32ImageView
@@ -135,7 +138,7 @@ fn WorldDrawerSoftMultithreaded::Draw( mut this, WorldDrawingInfo& drawing_info 
 			map_description,
 			materials_block,
 			map_data_full,
-			map_data_tuple[1],
+			thread_data.map_visibility_calculators.try_deref(),
 			models_,
 			drawing_info );
 	}
@@ -213,6 +216,11 @@ fn WorldDrawerSoftMultithreaded::SetMap( mut this, u32 map_index )
 	// Reset previous map data first - to free used memory before allocating new memory for new map.
 	map_data_.reset();
 
+	foreach( &mut thread_data : threads_ )
+	{
+		thread_data.map_visibility_calculators.reset();
+	}
+
 	if( map_index == 0u )
 	{
 		ConsoleOutAddTextLine( console_out_, "Can't load map 0!" );
@@ -237,15 +245,18 @@ fn WorldDrawerSoftMultithreaded::SetMap( mut this, u32 map_index )
 		var ust::shared_ptr_mt_final</ MapDrawDataSoft /> map_draw_data_ptr=
 			map_draw_data_nullable_ptr.try_to_non_nullable();
 
+		map_data_= WorldDrawerSoftInternal::CreateMapFullData( map_draw_data_ptr );
+
 		var ust::shared_ptr_mt_final</RoomClustersBSPTree/>& room_clusters_bsp_tree=
 			map_draw_data_ptr.deref().room_clusters_bsp_tree;
 
-		map_data_=
-			ust::make_tuple(
-				WorldDrawerSoftInternal::CreateMapFullData( map_draw_data_ptr ),
+		foreach( &mut thread_data : threads_ )
+		{
+			thread_data.map_visibility_calculators=
 				ust::make_array(
 					MapVisibilityCalculator( room_clusters_bsp_tree ),
-					MapVisibilityCalculator( room_clusters_bsp_tree ) ) );
+					MapVisibilityCalculator( room_clusters_bsp_tree ) );
+		}
 	}
 }
 
