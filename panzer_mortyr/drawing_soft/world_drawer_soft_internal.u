@@ -57,7 +57,6 @@ fn WorldDrawerSoftInternal::constructor(
 				caching_game_resources_loader.lock_imut().deref().GetGameFilesystem(), console_out ),
 		caching_game_resources_loader_ptr_= move(caching_game_resources_loader),
 		console_out_= move(console_out),
-		map_index_= 0u,
 		caustics_texture_= CreateCausticsTexture(),
 		interpolated_caustics_layer_= zero_init,
 	)
@@ -65,37 +64,19 @@ fn WorldDrawerSoftInternal::constructor(
 }
 
 fn WorldDrawerSoftInternal::Draw(
-	mut this, Color32ImageView surface, WorldDrawingInfo& drawing_info ) : WorldDrawingStats
+	mut this,
+	Color32ImageView surface,
+	u32 map_index,
+	MapFullDrawDataSoft &mut map_data_full,
+	ModelsMapSoft& models,
+	WorldDrawingInfo& drawing_info ) : WorldDrawingStats
 {
-	// Load models in use if switching to a new map.
-	var bool need_loading_models= map_index_ != drawing_info.map_index;
-
-	// Ensure we have actual map data.
-	SetMap( drawing_info.map_index );
-
-	if( need_loading_models && !map_data_.empty() )
-	{
-		// Load models in use if switching to a new map.
-		LoadModels(
-			drawing_info.used_models,
-			caching_game_resources_loader_ptr_.lock_imut().deref().GetGameFilesystem(),
-			console_out_,
-			map_data_.try_deref().map_draw_data.deref().textures,
-			models_ );
-	}
-
 	var WorldDrawingStats mut stats= zero_init;
 
-	if( map_data_.empty() )
-	{
-		return stats;
-	}
+	var MapDrawDataSoft& map_data= map_data_full.map_draw_data.deref();
 
 	// Perform per-frame calculations independent on view point.
 	{
-		var MapFullDrawDataSoft &mut map_data_full= map_data_.try_deref();
-		var MapDrawDataSoft& map_data= map_data_full.map_draw_data.deref();
-
 		var ust::array_view_mut</bool/> highlighted_cluster_flags= map_data_full.highlighted_cluster_flags;
 
 		var TexturesWithAppliedCaustics &mut textures_with_applied_caustics=
@@ -261,7 +242,7 @@ fn WorldDrawerSoftInternal::Draw(
 	auto whole_screen_bounds=
 		ClippingPolygon::CreateFromBox( Vec2f( 0.0f, 0.0f ), Vec2f( f32( surface.size[0] ), f32( surface.size[1] ) ) );
 
-	map_data_.try_deref().map_visibility_calculators[0].CalculateVisibility(
+	map_data_full.map_visibility_calculators[0].CalculateVisibility(
 		drawing_info.camera_params.position, view_matrix, whole_screen_bounds );
 
 	// Extract mirror geometry.
@@ -269,15 +250,13 @@ fn WorldDrawerSoftInternal::Draw(
 		mirror_vertices_.clear();
 		mirror_indices_.clear();
 
-		var MapsDescription::MapDescription& map_description= maps_description_.deref().maps[ size_type( map_index_ ) ];
+		var MapsDescription::MapDescription& map_description= maps_description_.deref().maps[ size_type( map_index ) ];
 		var MaterialsDescription::Block& materials_block=
 			materials_description_.deref().blocks[ map_description.materials_block ]; // Halts if not found.
 
-		var MapFullDrawDataSoft &mut map_full_draw_data= map_data_.try_deref();
-
 		CreateMirrorMapPolygons(
-			map_full_draw_data.map_draw_data.deref(),
-			map_full_draw_data.map_visibility_calculators[0],
+			map_data,
+			map_data_full.map_visibility_calculators[0],
 			materials_block,
 			mirror_vertices_,
 			mirror_indices_ );
@@ -328,7 +307,7 @@ fn WorldDrawerSoftInternal::Draw(
 
 			// Calculate visibility from mirror point.
 			var size_type visibility_calculator_index= 1s;
-			map_data_.try_deref().map_visibility_calculators[ visibility_calculator_index ].CalculateVisibilityForMirror(
+			map_data_full.map_visibility_calculators[ visibility_calculator_index ].CalculateVisibilityForMirror(
 				mirror_bounds,
 				camera_position_mirrored,
 				view_matrix_for_mirrored_geometry,
@@ -338,6 +317,9 @@ fn WorldDrawerSoftInternal::Draw(
 
 			DrawPartial(
 				surface,
+				map_index,
+				map_data_full,
+				models,
 				visibility_calculator_index,
 				drawing_info,
 				dynamic_light_sources,
@@ -369,9 +351,6 @@ fn WorldDrawerSoftInternal::Draw(
 	if( !mirror_indices_.empty() )
 	{
 		// Draw mirror geometry itself.
-
-		var MapFullDrawDataSoft &mut map_data_full= map_data_.try_deref();
-		var MapDrawDataSoft& map_data= map_data_full.map_draw_data.deref();
 
 		// Collect dynamic light sources affecting mirror geometry.
 		cluster_dynamic_light_sources_.clear();
@@ -479,6 +458,9 @@ fn WorldDrawerSoftInternal::Draw(
 
 	DrawPartial(
 		surface,
+		map_index,
+		map_data_full,
+		models,
 		0s,
 		drawing_info,
 		dynamic_light_sources,
@@ -505,6 +487,9 @@ fn WorldDrawerSoftInternal::Draw(
 fn WorldDrawerSoftInternal::DrawPartial(
 	mut this,
 	Color32ImageView surface,
+	u32 map_index,
+	MapFullDrawDataSoft& map_data_full,
+	ModelsMapSoft& models,
 	size_type visibility_calculator_index,
 	WorldDrawingInfo& drawing_info,
 	ust::array_view_imut</DynamicLightSourceSoft/> dynamic_light_sources,
@@ -517,13 +502,6 @@ fn WorldDrawerSoftInternal::DrawPartial(
 	TriangleVerticesOrder vertices_order,
 	WorldDrawingStats &mut stats )
 {
-	if( map_data_.empty() )
-	{
-		return;
-	}
-
-	var MapFullDrawDataSoft &mut map_data_full= map_data_.try_deref();
-
 	var MapDrawDataSoft& map_data= map_data_full.map_draw_data.deref();
 	var ZmapData& zmap_data= map_data.zmap_data.deref();
 	var ZvoxData& zvox_data= map_data.zvox_data.deref();
@@ -532,7 +510,7 @@ fn WorldDrawerSoftInternal::DrawPartial(
 	auto clusters= zvox_data.clusters.range();
 	auto quads= zmap_data.quads.range();
 
-	var MapsDescription::MapDescription& map_description= maps_description_.deref().maps[ size_type( map_index_ ) ];
+	var MapsDescription::MapDescription& map_description= maps_description_.deref().maps[ size_type( map_index ) ];
 
 	var MaterialsDescription::Block& materials_block=
 		materials_description_.deref().blocks[ map_description.materials_block ];
@@ -542,7 +520,7 @@ fn WorldDrawerSoftInternal::DrawPartial(
 
 	var RoomClustersHierarchy& room_clusters_hierarchy= map_data.room_clusters_hierarchy.deref();
 
-	var MapVisibilityCalculator &mut visibility_calculator=
+	var MapVisibilityCalculator& visibility_calculator=
 		map_data_full.map_visibility_calculators[ visibility_calculator_index ];
 
 	var ust::array_view_imut</bool/> highlighted_cluster_flags= map_data_full.highlighted_cluster_flags;
@@ -1074,7 +1052,7 @@ fn WorldDrawerSoftInternal::DrawPartial(
 			continue;
 		}
 
-		var ust::optional_ref_imut</ ModelSoftExt /> model_ext_opt= models_.find( model_object.model_file_name );
+		var ust::optional_ref_imut</ ModelSoftExt /> model_ext_opt= models.find( model_object.model_file_name );
 
 		if( model_ext_opt.empty() )
 		{
@@ -1721,111 +1699,6 @@ fn WorldDrawerSoftInternal::DrawPartial(
 		vertices_clipped );
 
 	stats.num_visible_semitransparent_triangles+= u32( semitransparent_geometry_indices_.size() ) / 3u;
-}
-
-fn WorldDrawerSoftInternal::SetMap( mut this, u32 map_index )
-{
-	// Check if we need to reload map first.
-	if( map_index == map_index_ )
-	{
-		return;
-	}
-	// Need to load map data.
-
-	// Set map index in any case - it may be necessary in order to avoid reloading map data constantly if failed to load it once.
-	map_index_= map_index;
-
-	// Reset previous map data first - to free used memory before allocating new memory for new map.
-	map_data_.reset();
-
-	if( map_index == 0u )
-	{
-		ConsoleOutAddTextLine( console_out_, "Can't load map 0!" );
-		return;
-	}
-
-	auto mut lock= caching_game_resources_loader_ptr_.lock_mut();
-	var CachingGameResourcesLoader &mut caching_game_resources_loader= lock.deref();
-
-	var ust::shared_ptr_mt_final_nullable</ MapDrawDataSoft /> map_draw_data_nullable_ptr=
-		LoadMap(
-			caching_game_resources_loader,
-			console_out_,
-			game_params_.deref(),
-			maps_description_.deref(),
-			materials_description_.deref(),
-			billboards_description_,
-			map_index );
-
-	if( !map_draw_data_nullable_ptr.empty() )
-	{
-		var ust::shared_ptr_mt_final</ MapDrawDataSoft /> map_draw_data_ptr=
-			map_draw_data_nullable_ptr.try_to_non_nullable();
-
-		var MapDrawDataSoft& map_draw_data= map_draw_data_ptr.deref();
-
-		var ZmapData& zmap_data= map_draw_data.zmap_data.deref();
-		var ZvoxData& zvox_data= map_draw_data.zvox_data.deref();
-
-		// Create table of textures with applied caustics.
-		var TexturesWithAppliedCaustics mut textures_with_applied_caustics;
-
-		for( auto mut i= 0s; i < zvox_data.clusters.size(); )
-		{
-			var ZvoxCluster& room_cluster= zvox_data.clusters[i];
-			if( room_cluster.c.num_children_clusters < 0 )
-			{
-				++i;
-				continue;
-			}
-
-			// This room cluster and all his children.
-			var size_type num_clusters_in_group= size_type( room_cluster.c.num_children_clusters ) + 1s;
-
-			if( room_cluster.contents == ZvoxCluster::c_contents_water )
-			{
-				for( auto mut j= 0s; j < num_clusters_in_group; ++j )
-				{
-					var ZvoxCluster& cluster= zvox_data.clusters[ i + j ];
-
-					if( cluster.cluster_type != ZvoxCluster::c_cluster_type_regular )
-					{
-						continue;
-					}
-
-					for( var size_type mut q( cluster.c.first_quad_index );
-						q < size_type( cluster.c.first_quad_index ) + size_type( cluster.num_quads );
-						++q )
-					{
-						var u32 texture_id( zmap_data.quads[ q ].texture_id );
-						if( texture_id < 1000u )
-						{
-							textures_with_applied_caustics.find_or_construct_new(
-								texture_id,
-								lambda() : ust::box</ Color32WorldTextureWithMips />
-								{
-									return ust::make_box( ust::make_zeroed</ Color32WorldTextureWithMips />() );
-								} );
-						}
-					}
-				}
-			}
-
-			i+= num_clusters_in_group;
-		}
-
-		auto& room_clusters_bsp_tree= map_draw_data.room_clusters_bsp_tree;
-
-		map_data_.reset(
-			MapFullDrawDataSoft
-			{
-				.map_draw_data= map_draw_data_ptr,
-				.map_visibility_calculators[ ( room_clusters_bsp_tree ), ( room_clusters_bsp_tree ) ],
-				.highlighted_cluster_flags( map_draw_data.zvox_data.deref().clusters.size(), false ),
-				.textures_with_applied_caustics= move( textures_with_applied_caustics ),
-				.mirror_texture= zero_init, // Set later if needed.
-			} );
-	}
 }
 
 fn WorldDrawerSoftInternal::LoadMap(
