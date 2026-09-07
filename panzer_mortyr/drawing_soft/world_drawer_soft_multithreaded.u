@@ -127,7 +127,10 @@ fn WorldDrawerSoftMultithreaded::Draw( mut this, WorldDrawingInfo& drawing_info 
 	// TODO - execute this code on other threads.
 	foreach( &mut thread_data : threads_ )
 	{
-		if( thread_data.map_visibility_calculators.empty() )
+		auto mut thread_individual_shared_data_lock= thread_data.individual_shared_data.lock_mut();
+		var ThreadIndividualSharedData &mut thread_individual_shared_data= thread_individual_shared_data_lock.deref();
+
+		if( thread_individual_shared_data.map_visibility_calculators.empty() )
 		{
 			continue;
 		}
@@ -150,16 +153,16 @@ fn WorldDrawerSoftMultithreaded::Draw( mut this, WorldDrawingInfo& drawing_info 
 		thread_data.drawer.Draw(
 			Color32ImageView
 			{
-				.pixels= thread_data.color_buffer,
-				.size= thread_data.color_buffer_size,
-				.stride= thread_data.color_buffer_size[0],
+				.pixels= thread_individual_shared_data.color_buffer,
+				.size= thread_individual_shared_data.color_buffer_size,
+				.stride= thread_individual_shared_data.color_buffer_size[0],
 			},
 			drawer_shared_data.game_params.deref(),
 			drawer_shared_data.billboards_description,
 			map_description,
 			materials_block,
 			drawer_shared_data.map_data.try_deref(),
-			thread_data.map_visibility_calculators.try_deref(),
+			thread_individual_shared_data.map_visibility_calculators.try_deref(),
 			drawer_shared_data.models,
 			drawing_info );
 	}
@@ -172,20 +175,23 @@ fn WorldDrawerSoftMultithreaded::Draw( mut this, WorldDrawingInfo& drawing_info 
 
 	foreach( &mut thread_data : threads_ )
 	{
-		for( auto mut src_y= 0u; src_y < thread_data.color_buffer_size[1]; ++src_y )
+		auto mut thread_individual_shared_data_lock= thread_data.individual_shared_data.lock_imut();
+		var ThreadIndividualSharedData& thread_individual_shared_data= thread_individual_shared_data_lock.deref();
+
+		for( auto mut src_y= 0u; src_y < thread_individual_shared_data.color_buffer_size[1]; ++src_y )
 		{
-			auto dst_x= thread_data.dst_offset[0];
-			auto dst_y= src_y + thread_data.dst_offset[1];
+			auto dst_x= thread_individual_shared_data.dst_offset[0];
+			auto dst_y= src_y + thread_individual_shared_data.dst_offset[1];
 
 			auto src_line=
-				thread_data.color_buffer.range().subrange(
-					size_type( thread_data.color_buffer_size[0] * src_y ),
-					size_type( thread_data.color_buffer_size[0] * ( src_y + 1u ) ) );
+				thread_individual_shared_data.color_buffer.range().subrange(
+					size_type( thread_individual_shared_data.color_buffer_size[0] * src_y ),
+					size_type( thread_individual_shared_data.color_buffer_size[0] * ( src_y + 1u ) ) );
 
 			auto dst_line=
 				surface.pixels.subrange(
 					size_type( dst_x + dst_y * surface.stride ),
-					size_type( dst_x + dst_y * surface.stride + thread_data.color_buffer_size[0] ) );
+					size_type( dst_x + dst_y * surface.stride + thread_individual_shared_data.color_buffer_size[0] ) );
 
 			dst_line.copy_from( src_line );
 		}
@@ -216,9 +222,14 @@ fn WorldDrawerSoftMultithreaded::CreateThreads(
 			{
 				.drawer_shared_data= drawer_shared_data_ptr,
 				.drawer( settings ),
-				.color_buffer( size_type( color_buffer_size[0] * color_buffer_size[1] ), Color32(0) ),
-				.color_buffer_size= color_buffer_size,
-				.dst_offset= dst_offset,
+				.individual_shared_data=
+					ust::make_shared_ptr_mt(
+						ThreadIndividualSharedData
+						{
+							.color_buffer( size_type( color_buffer_size[0] * color_buffer_size[1] ), Color32(0) ),
+							.color_buffer_size= color_buffer_size,
+							.dst_offset= dst_offset,
+						} )
 			} );
 	}
 
@@ -246,7 +257,10 @@ fn WorldDrawerSoftMultithreaded::SetMap( mut this, u32 map_index )
 
 		foreach( &mut thread_data : threads_ )
 		{
-			thread_data.map_visibility_calculators.reset();
+			with( &mut lock : thread_data.individual_shared_data.lock_mut() )
+			{
+				lock.deref().map_visibility_calculators.reset();
+			}
 		}
 
 		if( map_index == 0u )
@@ -280,10 +294,13 @@ fn WorldDrawerSoftMultithreaded::SetMap( mut this, u32 map_index )
 
 			foreach( &mut thread_data : threads_ )
 			{
-				thread_data.map_visibility_calculators=
-					ust::make_array(
-						MapVisibilityCalculator( room_clusters_bsp_tree ),
-						MapVisibilityCalculator( room_clusters_bsp_tree ) );
+				with( &mut lock : thread_data.individual_shared_data.lock_mut() )
+				{
+					lock.deref().map_visibility_calculators=
+						ust::make_array(
+							MapVisibilityCalculator( room_clusters_bsp_tree ),
+							MapVisibilityCalculator( room_clusters_bsp_tree ) );
+				}
 			}
 		}
 	}
