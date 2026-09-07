@@ -6,11 +6,11 @@ namespace PM
 
 fn WorldDrawerSoftMultithreaded::constructor(
 	ust::shared_ptr_mut</WindowSoft/> mut window,
-	SettingsImutPtr& settings,
+	SettingsImutPtr mut settings,
 	CachingGameResourcesLoaderPtr mut caching_game_resources_loader,
 	ConsoleOutPtr mut console_out )
 	(
-		settings_= settings,
+		settings_= move(settings),
 		window_= move(window),
 		drawer_shared_data_=
 			ust::make_shared_ptr_mt(
@@ -47,8 +47,7 @@ fn WorldDrawerSoftMultithreaded::constructor(
 		barrier_( 2u + 1u /* Worker threads and host thread. */ ),
 	)
 {
-	threads_=
-		CreateThreads( 2u, settings, barrier_, drawer_shared_data_, window_.lock_imut().deref().GetViewportSize() );
+	threads_= CreateThreads( 2u, barrier_, drawer_shared_data_, window_.lock_imut().deref().GetViewportSize() );
 }
 
 fn WorldDrawerSoftMultithreaded::destructor()
@@ -143,6 +142,10 @@ fn WorldDrawerSoftMultithreaded::Draw( mut this, WorldDrawingInfo& drawing_info 
 	{
 		var DrawerSharedData &mut drawer_shared_data= drawer_shared_data_lock.deref();
 
+		// Provide copy of settings.
+		// TODO - consider copying not the whole struct, but reading only needed fields.
+		drawer_shared_data.settings_copy= settings_.lock_imut().deref();
+
 		// Provide drawing info for worker threads.
 		// TODO - move it, not copy.
 		drawer_shared_data.drawing_info= drawing_info;
@@ -189,7 +192,7 @@ fn WorldDrawerSoftMultithreaded::Draw( mut this, WorldDrawingInfo& drawing_info 
 
 op WorldDrawerSoftMultithreaded::ThreadFunction::()( this )
 {
-	var WorldDrawerSoftInternal mut drawer( settings );
+	var WorldDrawerSoftInternal mut drawer;
 
 	loop
 	{
@@ -220,6 +223,7 @@ op WorldDrawerSoftMultithreaded::ThreadFunction::()( this )
 
 				// TODO - provide here destination region.
 				drawer.Draw(
+					drawer_shared_data.settings_copy,
 					Color32ImageView
 					{
 						.pixels= thread_individual_shared_data.color_buffer,
@@ -244,7 +248,6 @@ op WorldDrawerSoftMultithreaded::ThreadFunction::()( this )
 
 fn WorldDrawerSoftMultithreaded::CreateThreads(
 	u32 num_threads,
-	SettingsImutPtr& settings,
 	ust::shared_barrier& barrier,
 	ust::shared_ptr_mt_imut</DrawerSharedData/>& drawer_shared_data_ptr,
 	[ u32, 2 ] out_surface_size ) : ust::vector</ThreadData/>
@@ -279,7 +282,6 @@ fn WorldDrawerSoftMultithreaded::CreateThreads(
 						ThreadFunction
 						{
 							.barrier= barrier,
-							.settings= settings,
 							.drawer_shared_data= drawer_shared_data_ptr,
 							.individual_shared_data= individual_shared_data,
 						} ),
