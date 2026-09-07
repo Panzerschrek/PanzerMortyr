@@ -1,3 +1,4 @@
+import "caustics.iu"
 import "world_drawer_soft_singlethreaded.iu"
 
 namespace PM
@@ -9,6 +10,7 @@ fn WorldDrawerSoftSinglethreaded::constructor(
 	CachingGameResourcesLoaderPtr mut caching_game_resources_loader,
 	ConsoleOutPtr mut console_out )
 	(
+		settings_= settings,
 		window_= move(window),
 		game_params_=
 			lambda[&]() : GameResourcePtr</GameParams/>
@@ -35,6 +37,8 @@ fn WorldDrawerSoftSinglethreaded::constructor(
 		drawer_internal_( settings ),
 		console_out_= move(console_out),
 		map_index_= 0u,
+		caustics_texture_= CreateCausticsTexture(),
+		interpolated_caustics_layer_= zero_init,
 	)
 {}
 
@@ -69,6 +73,50 @@ fn WorldDrawerSoftSinglethreaded::Draw( mut this, WorldDrawingInfo& drawing_info
 	var MaterialsDescription::Block& materials_block=
 		materials_description_.deref().blocks[ map_description.materials_block ]; // Halts if not found.
 
+	var MapFullDrawDataSoft &mut map_data_full= map_data_.try_deref();
+
+	// Perform per-frame calculations independent on view point.
+	{
+		var MapDrawDataSoft& map_data= map_data_full.map_draw_data.deref();
+
+		var ust::array_view_mut</bool/> highlighted_cluster_flags= map_data_full.highlighted_cluster_flags;
+
+		foreach( &mut flag : highlighted_cluster_flags )
+		{
+			flag= false;
+		}
+
+		foreach( cluster_index : drawing_info.highlighted_cluster_indices )
+		{
+			if( size_type( cluster_index ) < highlighted_cluster_flags.size() )
+			{
+				highlighted_cluster_flags[ size_type( cluster_index ) ]= true;
+			}
+		}
+
+		var TexturesWithAppliedCaustics &mut textures_with_applied_caustics=
+				map_data_full.textures_with_applied_caustics;
+
+		if( settings_.lock_imut().deref().r_caustics_enabled && !textures_with_applied_caustics.empty() )
+		{
+			// Just update all textures affected by caustics each frame.
+			// We have not so many of such textures (no more than 10) and code doing so is pretty-fast.
+
+			FetchInterpolatedCausticsTextureLayer(
+				caustics_texture_, drawing_info.game_time_s, interpolated_caustics_layer_ );
+
+			// Just update all textures affected by caustics each frame.
+			// We have not so many of such textures (no more than 10) and code doing so is pretty-fast.
+
+			foreach( pair : textures_with_applied_caustics )
+			{
+				var Color32WorldTextureWithMips& src_texture= map_data.textures[ size_type( pair.key() ) ];
+				var Color32WorldTextureWithMips &mut dst_texture= pair.value().deref();
+				ApplyCausticsTexture( interpolated_caustics_layer_, src_texture[0], dst_texture );
+			}
+		}
+	}
+
 	return
 		drawer_internal_.Draw(
 		window_lock.deref().GetSurface(),
@@ -76,7 +124,7 @@ fn WorldDrawerSoftSinglethreaded::Draw( mut this, WorldDrawingInfo& drawing_info
 		billboards_description_,
 		map_description,
 		materials_block,
-		map_data_.try_deref(),
+		map_data_full,
 		models_,
 		drawing_info );
 }
