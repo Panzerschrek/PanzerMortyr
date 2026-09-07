@@ -6,7 +6,7 @@ namespace PM
 
 fn WorldDrawerSoftMultithreaded::constructor(
 	ust::shared_ptr_mut</WindowSoft/> mut window,
-	SettingsImutPtr mut settings,
+	SettingsImutPtr& settings,
 	CachingGameResourcesLoaderPtr mut caching_game_resources_loader,
 	ConsoleOutPtr mut console_out )
 	(
@@ -34,13 +34,14 @@ fn WorldDrawerSoftMultithreaded::constructor(
 			WorldDrawerSoftInternal::LoadBillboardsDescription(
 				caching_game_resources_loader.lock_imut().deref().GetGameFilesystem(), console_out ),
 		caching_game_resources_loader_ptr_= move(caching_game_resources_loader),
-		drawer_internal_( settings ),
 		console_out_= move(console_out),
 		map_index_= 0u,
 		caustics_texture_= CreateCausticsTexture(),
 		interpolated_caustics_layer_= zero_init,
 	)
-{}
+{
+	threads_= CreateThreads( settings, window_.lock_imut().deref().GetViewportSize() );
+}
 
 fn WorldDrawerSoftMultithreaded::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDrawingStats
 {
@@ -65,8 +66,6 @@ fn WorldDrawerSoftMultithreaded::Draw( mut this, WorldDrawingInfo& drawing_info 
 	{
 		return ust::make_zeroed</WorldDrawingStats/>();
 	}
-
-	auto mut window_lock= window_.lock_mut();
 
 	var MapsDescription::MapDescription& map_description= maps_description_.deref().maps[ size_type( map_index_ ) ];
 
@@ -120,17 +119,83 @@ fn WorldDrawerSoftMultithreaded::Draw( mut this, WorldDrawingInfo& drawing_info 
 		}
 	}
 
-	return
-		drawer_internal_.Draw(
-		window_lock.deref().GetSurface(),
-		game_params_.deref(),
-		billboards_description_,
-		map_description,
-		materials_block,
-		map_data_full,
-		map_data_tuple[1],
-		models_,
-		drawing_info );
+	// TODO - execute this code on other threads.
+	foreach( &mut thread_data : threads_ )
+	{
+		// TODO - provide here destination region.
+		thread_data.drawer.Draw(
+			Color32ImageView
+			{
+				.pixels= thread_data.color_buffer,
+				.size= thread_data.color_buffer_size,
+				.stride= thread_data.color_buffer_size[0],
+			},
+			game_params_.deref(),
+			billboards_description_,
+			map_description,
+			materials_block,
+			map_data_full,
+			map_data_tuple[1],
+			models_,
+			drawing_info );
+	}
+
+	// Copy individual framebuffers of each thread into the result surface.
+
+	auto mut window_lock= window_.lock_mut();
+
+	var Color32ImageView surface= window_lock.deref().GetSurface();
+
+	foreach( &mut thread_data : threads_ )
+	{
+		for( auto mut src_y= 0u; src_y < thread_data.color_buffer_size[1]; ++src_y )
+		{
+			auto dst_x= thread_data.dst_offset[0];
+			auto dst_y= src_y + thread_data.dst_offset[1];
+
+			auto src_line=
+				thread_data.color_buffer.range().subrange(
+					size_type( thread_data.color_buffer_size[0] * src_y ),
+					size_type( thread_data.color_buffer_size[0] * ( src_y + 1u ) ) );
+
+			auto dst_line=
+				surface.pixels.subrange(
+					size_type( dst_x + dst_y * surface.stride ),
+					size_type( dst_x + dst_y * surface.stride + thread_data.color_buffer_size[0] ) );
+
+			dst_line.copy_from( src_line );
+		}
+	}
+
+	return ust::make_zeroed</ WorldDrawingStats />(); // TODO - return proper stats.
+}
+
+fn WorldDrawerSoftMultithreaded::CreateThreads(
+	SettingsImutPtr& settings, [ u32, 2 ] out_surface_size ) : ust::vector</ThreadData/>
+{
+	var ust::vector</ThreadData/> mut result_threads;
+
+	// TODO - perform here proper subdivision into regions.
+
+	for( auto mut i= 0u; i < 2u; ++i )
+	{
+		var u32 x= i * out_surface_size[0] / 2u;
+		var u32 next_x= ( i + 1u ) * out_surface_size[0] / 2u;
+
+		var [ u32, 2 ] color_buffer_size[ next_x - x, out_surface_size[1] ];
+		var [ u32, 2 ] dst_offset[ x, 0u ];
+
+		result_threads.push_back(
+			ThreadData
+			{
+				.drawer( settings ),
+				.color_buffer( size_type( color_buffer_size[0] * color_buffer_size[1] ), Color32(0) ),
+				.color_buffer_size= color_buffer_size,
+				.dst_offset= dst_offset,
+			} );
+	}
+
+	return result_threads;
 }
 
 fn WorldDrawerSoftMultithreaded::SetMap( mut this, u32 map_index )
