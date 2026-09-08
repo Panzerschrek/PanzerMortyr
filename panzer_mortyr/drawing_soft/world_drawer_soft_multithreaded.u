@@ -73,6 +73,8 @@ fn WorldDrawerSoftMultithreaded::destructor()
 
 fn WorldDrawerSoftMultithreaded::Draw( mut this, WorldDrawingInfo mut drawing_info ) : WorldDrawingStats
 {
+	var WorldDrawingStats mut stats= zero_init;
+
 	// Load models in use if switching to a new map.
 	var bool need_loading_models= drawer_shared_data_.lock_imut().deref().map_index != drawing_info.map_index;
 
@@ -96,7 +98,7 @@ fn WorldDrawerSoftMultithreaded::Draw( mut this, WorldDrawingInfo mut drawing_in
 
 		if( drawer_shared_data.map_data.empty() )
 		{
-			return ust::make_zeroed</WorldDrawingStats/>();
+			return stats;
 		}
 
 		var MapFullDrawDataSoft &mut map_data_full= drawer_shared_data.map_data.try_deref();
@@ -193,9 +195,16 @@ fn WorldDrawerSoftMultithreaded::Draw( mut this, WorldDrawingInfo mut drawing_in
 
 			dst_line.copy_from( src_line );
 		}
+
+		// Accumulate stats.
+		// Some things may be counted more than once, but it's fine, since they may be processed more than once.
+		foreach( &field_info : typeinfo</WorldDrawingStats/>.fields_list )
+		{
+			mixin( "stats." + field_info.name + " += thread_individual_shared_data.stats." + field_info.name + ";" );
+		}
 	}
 
-	return ust::make_zeroed</ WorldDrawingStats />(); // TODO - return proper stats.
+	return stats;
 }
 
 op WorldDrawerSoftMultithreaded::ThreadFunction::()( this )
@@ -229,28 +238,28 @@ op WorldDrawerSoftMultithreaded::ThreadFunction::()( this )
 				var MaterialsDescription::Block& materials_block=
 					drawer_shared_data.materials_description.deref().blocks[ map_description.materials_block ]; // Halts if not found.
 
-				// TODO - provide here destination region.
-				drawer.Draw(
-					drawer_shared_data.settings_copy,
-					Color32ImageView
-					{
-						.pixels= thread_individual_shared_data.color_buffer,
-						.size= thread_individual_shared_data.color_buffer_size,
-						.stride= thread_individual_shared_data.color_buffer_size[0],
-					},
-					WorldDrawerSoftInternal::ViewportContext
-					{
-						.subrect_offset= thread_individual_shared_data.dst_offset,
-						.total_viewport_size= drawer_shared_data.viewport_size,
-					},
-					drawer_shared_data.game_params.deref(),
-					drawer_shared_data.billboards_description,
-					map_description,
-					materials_block,
-					drawer_shared_data.map_data.try_deref(),
-					thread_individual_shared_data.map_visibility_calculators.try_deref(),
-					drawer_shared_data.models,
-					drawer_shared_data.drawing_info.try_deref() );
+				thread_individual_shared_data.stats=
+					drawer.Draw(
+						drawer_shared_data.settings_copy,
+						Color32ImageView
+						{
+							.pixels= thread_individual_shared_data.color_buffer,
+							.size= thread_individual_shared_data.color_buffer_size,
+							.stride= thread_individual_shared_data.color_buffer_size[0],
+						},
+						WorldDrawerSoftInternal::ViewportContext
+						{
+							.subrect_offset= thread_individual_shared_data.dst_offset,
+							.total_viewport_size= drawer_shared_data.viewport_size,
+						},
+						drawer_shared_data.game_params.deref(),
+						drawer_shared_data.billboards_description,
+						map_description,
+						materials_block,
+						drawer_shared_data.map_data.try_deref(),
+						thread_individual_shared_data.map_visibility_calculators.try_deref(),
+						drawer_shared_data.models,
+						drawer_shared_data.drawing_info.try_deref() );
 			}
 		}
 
@@ -281,6 +290,7 @@ fn WorldDrawerSoftMultithreaded::CreateThreads(
 					.color_buffer( size_type( subrect.size[0] * subrect.size[1] ), Color32(0) ),
 					.color_buffer_size= subrect.size,
 					.dst_offset= subrect.offset,
+					.stats= zero_init, // Set later.
 				} );
 
 		result_threads.push_back(
