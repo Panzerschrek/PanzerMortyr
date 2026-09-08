@@ -1,3 +1,4 @@
+import "/thread.iu"
 import "../loading_screen.iu"
 import "drawers_factory_soft.iu"
 import "hud_drawer_soft.iu"
@@ -25,21 +26,39 @@ fn CreateDrawersSoft(
 	// Draw loading screen as soon as possible.
 	DrawLoadingScreen( window, image_drawer.deref() );
 
-	var u32 num_threads= 3u; // TODO - read settings/request the actual number of CPUs.
-
 	return AbstractDrawers
 	{
 		.image_drawer= move( image_drawer ),
 		.hud_drawer= ust::make_box( HudDrawerSoft( window, game_filesystem, console_out ) ),
 		.text_drawer= ust::make_box( TextDrawerSoft( window, game_filesystem, console_out ) ),
-		.world_drawer=
-			ust::make_box(
-				// TODO - use singlethreaded drawer if multithreading is disabled or unsupported.
-				WorldDrawerSoftMultithreaded(
-					window, settings, caching_game_resources_loader, console_out, num_threads ) ),
+		.world_drawer= CreateWorldDrawer( window, settings, caching_game_resources_loader, console_out ),
 		.video_player= ust::make_box( VideoPlayerSoft( window, console_out ) ),
 		.window= move(window),
 	};
+}
+
+fn CreateWorldDrawer(
+	ust::shared_ptr_mut</WindowSoft/> mut window,
+	SettingsPtr& settings,
+	CachingGameResourcesLoaderPtr& caching_game_resources_loader,
+	ConsoleOutPtr& console_out ) : ust::box</ AbstractWorldDrawer />
+{
+	// TODO - allow overriding number of threads using settings.
+
+	// Use a hard limit on number of threads.
+	// It seems that more than 32 threads aren't needed.
+	var u32 num_threads= ust::min( ust::get_number_of_available_cpus(), 32u );
+
+	if( num_threads <= 1u )
+	{
+		return ust::make_box(
+			WorldDrawerSoftSinglethreaded( move(window), settings, caching_game_resources_loader, console_out ) );
+	}
+
+	return
+		ust::make_box(
+			WorldDrawerSoftMultithreaded(
+				move(window), settings, caching_game_resources_loader, console_out, num_threads ) );
 }
 
 } // namespace PM
