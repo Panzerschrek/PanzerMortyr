@@ -1,3 +1,4 @@
+import "/assert.iu"
 import "caustics.iu"
 import "world_drawer_soft_multithreaded.iu"
 
@@ -258,25 +259,22 @@ fn WorldDrawerSoftMultithreaded::CreateThreads(
 	ust::shared_ptr_mt_imut</DrawerSharedData/>& drawer_shared_data_ptr,
 	[ u32, 2 ] out_surface_size ) : ust::vector</ThreadData/>
 {
-	var ust::vector</ThreadData/> mut result_threads;
+	var ust::vector</ViewportSubrect/> subrects= SplitViewportRect( out_surface_size, num_threads );
+	assert( subrects.size() == size_type( num_threads ) );
 
-	// TODO - perform here proper subdivision into regions.
+	var ust::vector</ThreadData/> mut result_threads;
 
 	for( auto mut i= 0u; i < num_threads; ++i )
 	{
-		var u32 x= i * out_surface_size[0] / num_threads;
-		var u32 next_x= ( i + 1u ) * out_surface_size[0] / num_threads;
-
-		var [ u32, 2 ] color_buffer_size[ next_x - x, out_surface_size[1] ];
-		var [ u32, 2 ] dst_offset[ x, 0u ];
+		var ViewportSubrect& subrect= subrects[ size_type(i) ];
 
 		auto individual_shared_data=
 			ust::make_shared_ptr_mt(
 				ThreadIndividualSharedData
 				{
-					.color_buffer( size_type( color_buffer_size[0] * color_buffer_size[1] ), Color32(0) ),
-					.color_buffer_size= color_buffer_size,
-					.dst_offset= dst_offset,
+					.color_buffer( size_type( subrect.size[0] * subrect.size[1] ), Color32(0) ),
+					.color_buffer_size= subrect.size,
+					.dst_offset= subrect.offset,
 				} );
 
 		result_threads.push_back(
@@ -361,6 +359,86 @@ fn WorldDrawerSoftMultithreaded::SetMap( mut this, u32 map_index )
 				}
 			}
 		}
+	}
+}
+
+struct ViewportSubrect
+{
+	[ u32, 2 ] offset;
+	[ u32, 2 ] size;
+}
+
+// Split given viewport rect into several subrects.
+// This function tries to preserve equal area and makes rects as square as possible.
+fn SplitViewportRect( [ u32, 2 ] size, u32 num_parts ) : ust::vector</ ViewportSubrect />
+{
+	var ust::vector</ ViewportSubrect /> mut subrects;
+	SplitViewportSubrect_r( ViewportSubrect{ .offset[ 0u, 0u ], .size= size }, num_parts, subrects );
+	return subrects;
+}
+
+fn SplitViewportSubrect_r( ViewportSubrect& subrect, u32 num_parts, ust::vector</ ViewportSubrect /> &mut out_subrects )
+{
+	debug_assert( num_parts > 0u );
+	debug_assert( subrect.size[0] > 0u );
+	debug_assert( subrect.size[1] > 0u );
+
+	if( num_parts == 1u )
+	{
+		out_subrects.push_back( subrect );
+		return;
+	}
+
+	var u32 num_parts0= num_parts / 2u;
+	var u32 num_parts1= num_parts - num_parts0;
+
+	if( subrect.size[0] > subrect.size[1] )
+	{
+		// TODO - consider rounding sizes so that they are divisible by 8.
+		var u32 size0= subrect.size[0] * num_parts0 / num_parts;
+		var u32 size1= subrect.size[0] - size0;
+
+		SplitViewportSubrect_r(
+			ViewportSubrect
+			{
+				.offset[ subrect.offset[0], subrect.offset[1] ],
+				.size[ size0, subrect.size[1] ],
+			},
+			num_parts0,
+			out_subrects );
+
+		SplitViewportSubrect_r(
+			ViewportSubrect
+			{
+				.offset[ subrect.offset[0] + size0, subrect.offset[1] ],
+				.size[ size1, subrect.size[1] ],
+			},
+			num_parts1,
+			out_subrects );
+	}
+	else
+	{
+		// TODO - consider rounding sizes so that they are divisible by 8.
+		var u32 size0= subrect.size[1] * num_parts0 / num_parts;
+		var u32 size1= subrect.size[1] - size0;
+
+		SplitViewportSubrect_r(
+			ViewportSubrect
+			{
+				.offset[ subrect.offset[0], subrect.offset[1] ],
+				.size[ subrect.size[0], size0 ],
+			},
+			num_parts0,
+			out_subrects );
+
+		SplitViewportSubrect_r(
+			ViewportSubrect
+			{
+				.offset[ subrect.offset[0], subrect.offset[1] + size0 ],
+				.size[ subrect.size[0], size1 ],
+			},
+			num_parts1,
+			out_subrects );
 	}
 }
 
