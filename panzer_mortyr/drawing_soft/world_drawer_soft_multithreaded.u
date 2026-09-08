@@ -45,11 +45,16 @@ fn WorldDrawerSoftMultithreaded::constructor(
 				} ),
 		caching_game_resources_loader_ptr_= move(caching_game_resources_loader),
 		console_out_= move(console_out),
-		barrier_( num_threads + 1u /* Worker threads and host thread. */ ),
+		barriers_
+		{
+			// We have worker threads and single host thread.
+			.drawing_start( num_threads + 1u ),
+			.drawing_end  ( num_threads + 1u ),
+		},
+		threads_=
+			CreateThreads( num_threads, barriers_, drawer_shared_data_, window_.lock_imut().deref().GetViewportSize() ),
 	)
 {
-	threads_=
-		CreateThreads( num_threads, barrier_, drawer_shared_data_, window_.lock_imut().deref().GetViewportSize() );
 }
 
 fn WorldDrawerSoftMultithreaded::destructor()
@@ -59,7 +64,7 @@ fn WorldDrawerSoftMultithreaded::destructor()
 		lock.deref().shutdown_requested= true;
 	}
 
-	barrier_.wait();
+	barriers_.drawing_start.wait();
 
 	threads_.clear(); // This causes joining.
 }
@@ -153,10 +158,10 @@ fn WorldDrawerSoftMultithreaded::Draw( mut this, WorldDrawingInfo mut drawing_in
 	}
 
 	// Tell other threads that they should start drawing.
-	barrier_.wait();
+	barriers_.drawing_start.wait();
 
 	// Wait until the work is finished.
-	barrier_.wait();
+	barriers_.drawing_end.wait();
 
 	// Copy individual framebuffers of each thread into the result surface.
 
@@ -198,7 +203,7 @@ op WorldDrawerSoftMultithreaded::ThreadFunction::()( this )
 	loop
 	{
 		// Wait for others and host before performing drawing.
-		barrier.wait();
+		barriers.drawing_start.wait();
 
 		with( mut drawer_shared_data_lock : drawer_shared_data.lock_imut() )
 		{
@@ -243,13 +248,13 @@ op WorldDrawerSoftMultithreaded::ThreadFunction::()( this )
 		}
 
 		// Synchronize with others and host after performing drawing.
-		barrier.wait();
+		barriers.drawing_end.wait();
 	}
 }
 
 fn WorldDrawerSoftMultithreaded::CreateThreads(
 	u32 num_threads,
-	ust::shared_barrier& barrier,
+	Barriers& barriers,
 	ust::shared_ptr_mt_imut</DrawerSharedData/>& drawer_shared_data_ptr,
 	[ u32, 2 ] out_surface_size ) : ust::vector</ThreadData/>
 {
@@ -282,7 +287,7 @@ fn WorldDrawerSoftMultithreaded::CreateThreads(
 					ust::make_thread(
 						ThreadFunction
 						{
-							.barrier= barrier,
+							.barriers= barriers,
 							.drawer_shared_data= drawer_shared_data_ptr,
 							.individual_shared_data= individual_shared_data,
 						} ),
