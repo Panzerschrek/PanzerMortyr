@@ -73,28 +73,14 @@ fn WorldDrawerSoftMultithreaded::destructor()
 
 fn WorldDrawerSoftMultithreaded::Draw( mut this, WorldDrawingInfo mut drawing_info ) : WorldDrawingStats
 {
-	var WorldDrawingStats mut stats= zero_init;
-
-	// Load models in use if switching to a new map.
-	var bool need_loading_models= drawer_shared_data_.lock_imut().deref().map_index != drawing_info.map_index;
-
 	// Ensure we have actual map data.
-	SetMap( drawing_info.map_index );
+	SetMap( drawing_info );
+
+	var WorldDrawingStats mut stats= zero_init;
 
 	with( mut drawer_shared_data_lock : drawer_shared_data_.lock_mut() )
 	{
 		var DrawerSharedData &mut drawer_shared_data= drawer_shared_data_lock.deref();
-
-		if( need_loading_models && !drawer_shared_data.map_data.empty() )
-		{
-			// Load models in use if switching to a new map.
-			WorldDrawerSoftInternal::LoadModels(
-				drawing_info.used_models,
-				caching_game_resources_loader_ptr_.lock_imut().deref().GetGameFilesystem(),
-				console_out_,
-				drawer_shared_data.map_data.try_deref().map_draw_data.textures,
-				drawer_shared_data.models );
-		}
 
 		if( drawer_shared_data.map_data.empty() )
 		{
@@ -311,21 +297,21 @@ fn WorldDrawerSoftMultithreaded::CreateThreads(
 	return result_threads;
 }
 
-fn WorldDrawerSoftMultithreaded::SetMap( mut this, u32 map_index )
+fn WorldDrawerSoftMultithreaded::SetMap( mut this, WorldDrawingInfo& drawing_info )
 {
 	with( mut drawer_shared_data_lock : drawer_shared_data_.lock_mut() )
 	{
 		var DrawerSharedData &mut drawer_shared_data= drawer_shared_data_lock.deref();
 
 		// Check if we need to reload map first.
-		if( map_index == drawer_shared_data.map_index )
+		if( drawing_info.map_index == drawer_shared_data.map_index )
 		{
 			return;
 		}
 		// Need to load map data.
 
 		// Set map index in any case - it may be necessary in order to avoid reloading map data constantly if failed to load it once.
-		drawer_shared_data.map_index= map_index;
+		drawer_shared_data.map_index= drawing_info.map_index;
 
 		// Reset previous map data first - to free used memory before allocating new memory for new map.
 		drawer_shared_data.map_data.reset();
@@ -338,7 +324,7 @@ fn WorldDrawerSoftMultithreaded::SetMap( mut this, u32 map_index )
 			}
 		}
 
-		if( map_index == 0u )
+		if( drawing_info.map_index == 0u )
 		{
 			ConsoleOutAddTextLine( console_out_, "Can't load map 0!" );
 			return;
@@ -355,7 +341,7 @@ fn WorldDrawerSoftMultithreaded::SetMap( mut this, u32 map_index )
 				drawer_shared_data.maps_description.deref(),
 				drawer_shared_data.materials_description.deref(),
 				drawer_shared_data.billboards_description,
-				map_index );
+				drawing_info.map_index );
 
 		if( !map_draw_data_opt.empty() )
 		{
@@ -374,6 +360,17 @@ fn WorldDrawerSoftMultithreaded::SetMap( mut this, u32 map_index )
 							MapVisibilityCalculator( room_clusters_bsp_tree ) );
 				}
 			}
+		}
+
+		// Load models in use if switching to a new map.
+		if( !drawer_shared_data.map_data.empty() )
+		{
+			WorldDrawerSoftInternal::LoadModels(
+				drawing_info.used_models,
+				caching_game_resources_loader.GetGameFilesystem(),
+				console_out_,
+				drawer_shared_data.map_data.try_deref().map_draw_data.textures,
+				drawer_shared_data.models );
 		}
 	}
 }
