@@ -159,20 +159,31 @@ fn WorldDrawerSoftMultithreaded::Draw( mut this, WorldDrawingInfo mut drawing_in
 		auto mut thread_individual_shared_data_lock= thread_data.individual_shared_data.lock_imut();
 		var ThreadIndividualSharedData& thread_individual_shared_data= thread_individual_shared_data_lock.deref();
 
-		for( auto mut src_y= 0u; src_y < thread_individual_shared_data.color_buffer_size[1]; ++src_y )
+		// Copy size may be less that thread collor buffer size, since this size may be rounded up.
+		var u32 copy_size_x=
+			ust::min(
+				thread_individual_shared_data.color_buffer_size[0],
+				surface.size[0] - thread_individual_shared_data.dst_offset[0] );
+		var u32 copy_size_y=
+			ust::min(
+				thread_individual_shared_data.color_buffer_size[1],
+				surface.size[1] - thread_individual_shared_data.dst_offset[1] );
+
+		for( auto mut src_y= 0u; src_y < copy_size_y; ++src_y )
 		{
 			auto dst_x= thread_individual_shared_data.dst_offset[0];
 			auto dst_y= src_y + thread_individual_shared_data.dst_offset[1];
 
+			var u32 src_start_offset= thread_individual_shared_data.color_buffer_size[0] * src_y;
+
 			auto src_line=
 				thread_individual_shared_data.color_buffer.range().subrange(
-					size_type( thread_individual_shared_data.color_buffer_size[0] * src_y ),
-					size_type( thread_individual_shared_data.color_buffer_size[0] * ( src_y + 1u ) ) );
+					size_type( src_start_offset ), size_type( src_start_offset + copy_size_x ) );
+
+			var u32 dst_start_offset= dst_x + dst_y * surface.stride;
 
 			auto dst_line=
-				surface.pixels.subrange(
-					size_type( dst_x + dst_y * surface.stride ),
-					size_type( dst_x + dst_y * surface.stride + thread_individual_shared_data.color_buffer_size[0] ) );
+				surface.pixels.subrange( size_type( dst_start_offset ), size_type( dst_start_offset + copy_size_x ) );
 
 			dst_line.copy_from( src_line );
 		}
@@ -255,7 +266,17 @@ fn WorldDrawerSoftMultithreaded::CreateThreads(
 	ust::shared_ptr_mt_imut</DrawerSharedData/>& drawer_shared_data_ptr,
 	[ u32, 2 ] out_surface_size ) : ust::vector</ThreadData/>
 {
-	var ust::vector</ViewportSubrect/> subrects= SplitViewportRect( out_surface_size, num_threads );
+	// Perform splitting of the viewport in 8-pixel units, so that result subregions have size divisible by 8.
+	// This is needed for some drawing code, like for local fog or sky.
+	var u32 c_split_unit_size= 8u;
+
+	var ust::vector</ViewportSubrect/> subrects=
+		SplitViewportRect(
+			ust::make_array(
+				( out_surface_size[0] + ( c_split_unit_size - 1u ) ) / c_split_unit_size,
+				( out_surface_size[1] + ( c_split_unit_size - 1u ) ) / c_split_unit_size ),
+			num_threads );
+
 	assert( subrects.size() == size_type( num_threads ) );
 
 	var ust::vector</ThreadData/> mut result_threads;
@@ -264,13 +285,25 @@ fn WorldDrawerSoftMultithreaded::CreateThreads(
 	{
 		var ViewportSubrect& subrect= subrects[ size_type(i) ];
 
+		var [ u32, 2 ] subrect_pixel_size
+		[
+			subrect.size[0] * c_split_unit_size,
+			subrect.size[1] * c_split_unit_size,
+		];
+
+		var [ u32, 2 ] subrect_pixel_offset
+		[
+			subrect.offset[0] * c_split_unit_size,
+			subrect.offset[1] * c_split_unit_size,
+		];
+
 		auto individual_shared_data=
 			ust::make_shared_ptr_mt(
 				ThreadIndividualSharedData
 				{
-					.color_buffer( size_type( subrect.size[0] * subrect.size[1] ), Color32(0) ),
-					.color_buffer_size= subrect.size,
-					.dst_offset= subrect.offset,
+					.color_buffer( size_type( subrect_pixel_size[0] * subrect_pixel_size[1] ), Color32(0) ),
+					.color_buffer_size= subrect_pixel_size,
+					.dst_offset= subrect_pixel_offset,
 					.stats= zero_init, // Set later.
 				} );
 
@@ -402,8 +435,7 @@ fn SplitViewportSubrect_r( ViewportSubrect& subrect, u32 num_parts, ust::vector<
 
 	if( subrect.size[0] > subrect.size[1] )
 	{
-		// Round size to 8 pixels. Some code works nicely with sizes divisible by 8.
-		var u32 size0= RoundSizeTo8PixelsIfCan( subrect.size[0] * num_parts0 / num_parts );
+		var u32 size0= subrect.size[0] * num_parts0 / num_parts ;
 		var u32 size1= subrect.size[0] - size0;
 
 		SplitViewportSubrect_r(
@@ -426,8 +458,7 @@ fn SplitViewportSubrect_r( ViewportSubrect& subrect, u32 num_parts, ust::vector<
 	}
 	else
 	{
-		// Round size to 8 pixels. Some code works nicely with sizes divisible by 8.
-		var u32 size0= RoundSizeTo8PixelsIfCan( subrect.size[1] * num_parts0 / num_parts );
+		var u32 size0= subrect.size[1] * num_parts0 / num_parts;
 		var u32 size1= subrect.size[1] - size0;
 
 		SplitViewportSubrect_r(
@@ -450,9 +481,5 @@ fn SplitViewportSubrect_r( ViewportSubrect& subrect, u32 num_parts, ust::vector<
 	}
 }
 
-fn RoundSizeTo8PixelsIfCan( u32 size ) : u32
-{
-	return ( size <= 8u ? size : ( size & ~7u ) );
-}
 
 } // namespace PM
