@@ -39,10 +39,9 @@ fn TransformMapVertices(
 	// By taking a subrange of the given ranges having common size we allow LLVM optimizing loop iteration slightly better.
 	var size_type num_vertices= ust::min( vertices.size(), vertices_transformed.size() );
 
-	foreach( pair :
-		vertices_transformed.subrange_end( num_vertices ).iter().zip( vertices.subrange_end( num_vertices ).iter() ) )
+	for( auto mut i= 0s; i < num_vertices; ++i )
 	{
-		pair.first= Vec3f( pair.second.position ) * m;
+		vertices_transformed[i]= Vec3f( vertices[i].position ) * m;
 	}
 }
 
@@ -54,6 +53,9 @@ fn CalculateLightForMapVertices(
 {
 	debug_assert( vertices.size() == vertex_lights.size() );
 
+	// By taking a subrange of the given ranges having common size we allow LLVM optimizing loop iteration slightly better.
+	var size_type num_vertices= ust::min( vertices.size(), vertex_lights.size() );
+
 	// Take static light (stored for each vertex).
 	{
 		var [ f32, 3 ] scale
@@ -63,18 +65,15 @@ fn CalculateLightForMapVertices(
 			static_lighting_modifier.scale[2] * ( 1.0f / 255.0f ),
 		];
 
-		// By taking a subrange of the given ranges having common size we allow LLVM optimizing loop iteration slightly better.
-		var size_type num_vertices= ust::min( vertices.size(), vertex_lights.size() );
-
-		foreach( pair :
-				vertex_lights.subrange_end( num_vertices ).iter().zip( vertices.subrange_end( num_vertices ).iter() ) )
+		for( auto mut i= 0s; i < num_vertices; ++i )
 		{
 			// TODO - use FMA here?
-			pair.first=
+			var MapVertex& v= vertices[i];
+			vertex_lights[i]=
 				ust::make_array(
-					f32( pair.second.light[0] ) * scale[0] + static_lighting_modifier.add[0],
-					f32( pair.second.light[1] ) * scale[1] + static_lighting_modifier.add[1],
-					f32( pair.second.light[2] ) * scale[2] + static_lighting_modifier.add[2],
+					f32( v.light[0] ) * scale[0] + static_lighting_modifier.add[0],
+					f32( v.light[1] ) * scale[1] + static_lighting_modifier.add[1],
+					f32( v.light[2] ) * scale[2] + static_lighting_modifier.add[2],
 					0.0f /* set fog density to zero */ );
 		}
 	}
@@ -85,12 +84,13 @@ fn CalculateLightForMapVertices(
 		// Read it into a local variable to ensure it's not re-read on each loop iteration.
 		var DynamicLightSourceSoft l= light_source;
 
-		foreach( pair : vertex_lights.iter().zip( vertices.iter() ) )
+		for( auto mut i= 0s; i < num_vertices; ++i )
 		{
-			var [ f32, 3 ] light= l.CalculateLightForPoint( Vec3f( pair.second.position ) );
-			pair.first[0]+= light[0];
-			pair.first[1]+= light[1];
-			pair.first[2]+= light[2];
+			var VertexLightWithFog &mut vl= vertex_lights[i];
+			var [ f32, 3 ] light= l.CalculateLightForPoint( Vec3f( vertices[i].position ) );
+			vl[0]+= light[0];
+			vl[1]+= light[1];
+			vl[2]+= light[2];
 		}
 	}
 }
@@ -107,14 +107,14 @@ fn CalculateFogDensityForMapVertices(
 	// By taking a subrange of the given ranges having common size we allow LLVM optimizing loop iteration slightly better.
 	var size_type num_vertices= ust::min( vertices.size(), vertex_lights.size() );
 
-	foreach( pair :
-			vertex_lights.subrange_end( num_vertices ).iter().zip( vertices.subrange_end( num_vertices ).iter() ) )
+	for( auto mut i= 0s; i < num_vertices; ++i )
 	{
-		var f32 one_minus_fog_density= CalculateOneMinusFogDensity( ( c - Vec3f( pair.second.position ) ).Length() );
-		pair.first[0]*= one_minus_fog_density;
-		pair.first[1]*= one_minus_fog_density;
-		pair.first[2]*= one_minus_fog_density;
-		pair.first[3]= 1.0f - one_minus_fog_density;
+		var f32 one_minus_fog_density= CalculateOneMinusFogDensity( ( c - Vec3f( vertices[i].position ) ).Length() );
+		var VertexLightWithFog &mut vl= vertex_lights[i];
+		vl[0]*= one_minus_fog_density;
+		vl[1]*= one_minus_fog_density;
+		vl[2]*= one_minus_fog_density;
+		vl[3]= 1.0f - one_minus_fog_density;
 	}
 }
 
