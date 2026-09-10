@@ -61,6 +61,7 @@ PanzerMortyr game logic:
 * Consider creating patches for ZINF-files for fixing some errors in them.
 * Implement misfire - sometimes enemies don't shoot, even if shooting animation is playing.
 * Adjust rotation angles for grenade projectiles, so that they look nicely.
+* Draw damaging flames for non-enemy objects using flame billboards instead of burning effect, since such burning for them looks unnatural and ugly.
 * Consider performing proper player to entity visibility check while doing entity state transition based on "w_zasiegu_widocznosci" property.
 * Consider disabling all or at least some weapons of the player if weapon shot start position is in water or other liquid. The original game allow shooting in water, but PanzerMortyr probably shouldn't allow this.
 * Consider disabling burning effect for non-enemy entities. It doesn't look well for things made of iron or other non-burnable materials.
@@ -98,6 +99,7 @@ PanzerMortyr rendering:
 * Allow switching to a fullscreen mode with refresh rate change.
 * Implement visual effect specific for omni protection item (multiplayer-only power-up).
 * Consider speeding-up rain and snow particles fetching by cutting the fetch bbox by the view frustum.
+* Consider speeding-up rain circles fetching by cutting the fetch bbox by the view frustum.
 * Consider reducing power of local fog volumes (additive) due to global fog.
 * Consider drawing mirror reflections in water surfaces.
 * Consider using the same code for local fog calculation for semitransparent geometry and for other geometry in software mode.
@@ -119,7 +121,6 @@ PanzerMortyr software rendering:
 * Consider optimizing vertices transformations and other heavy calculations by using "fma" instructions.
 * Consider optimizing code calculating per-vertex light for models using bit-hacky fast inverse square root.
 * Consider using textures dithering (as Unreal does).
-* Consider speeding-up software world drawing by performing drawing using multiple threads, when each thread writes into its own framebuffer and the master thread then combines these buffers together.
 
 PanzerMortyr menus and HUD:
 
