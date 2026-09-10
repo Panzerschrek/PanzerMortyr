@@ -49,7 +49,6 @@ PanzerMortyr general:
 
 PanzerMortyr game logic:
 
-* Don't create colliders for enemies and maybe other entities with zero energy. Investigations of the original game have shown, that player doesn't collide with dead enemies even if they have non-zero bounding box.
 * Drop items from entities at the center of their bounding box, not at entity position (located typically on ground).
 * Ensure all entity properties affecting state transitions are implemented.
 * Break glass quads and quads with breakable materials while applying spash damage. The original game doesn't do this and it doesn't look right.
@@ -91,6 +90,7 @@ PanzerMortyr rendering:
 * Apply additional tessellation for tessellated polygons in order to perform smoother light values interpolation (naively triangulating them doesn't produce good result always).
 * Somehow distort/colorize the whole image while swimming in water. Maybe even add or alter global fog if camera is in water volume.
 * Consider optimizing calculating light from point light sources for models - avoid enumerating all lights.
+* Perform some smoothing while applying ambient light (stored in 4x4x4 grid for each room cluster) to models.
 * Consider drawing blob shadows under models (as some sort of decal?).
 * Consider limiting the number of active dynamic light sources - to avoid huge performance drops.
 * Consider applying dynamic light to glass and water quads.
@@ -127,6 +127,7 @@ PanzerMortyr menus and HUD:
 * Allow changing HUD position via settings menu.
 * Implement some stub page for parental lock menu.
 * Consider allowing specifying custom window resolution for windowed mode on video settings page.
+* Allow changing rendering mode (OpenGL/software) via menu.
 * Consider displaying in HUD amounts of tools in inventory, at least important ones - health, ammo.
 * Consider drawing active tools at some edge (left or right) of the screen.
 * Allow configuring crosshair kind, investigate what kinds of crosshairs are available in the original game.
