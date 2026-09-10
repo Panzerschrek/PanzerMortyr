@@ -116,7 +116,6 @@ PanzerMortyr software rendering:
 * Draw burning models.
 * Consider applying local fog to semitransparent geometry.
 * Fix issues with hall-of-mirrors effect visible at some places on some maps where sky quads are missing or aren't large enough to cover the entire sky.
-* Consider optimizing vertices transformation code by producing 4-component position vectors and thus ensuring vector instructions are used.
 * Consider optimizing vertices transformations and other heavy calculations by using "fma" instructions.
 * Consider optimizing code calculating per-vertex light for models using bit-hacky fast inverse square root.
 * Consider using textures dithering (as Unreal does).
