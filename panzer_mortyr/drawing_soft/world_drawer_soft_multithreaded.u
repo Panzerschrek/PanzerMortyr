@@ -1,0 +1,502 @@
+import "/assert.iu"
+import "caustics.iu"
+import "world_drawer_soft_multithreaded.iu"
+
+namespace PM
+{
+
+fn WorldDrawerSoftMultithreaded::constructor(
+	ust::shared_ptr_mut</WindowSoft/> mut window,
+	SettingsImutPtr mut settings,
+	CachingGameResourcesLoaderPtr mut caching_game_resources_loader,
+	ConsoleOutPtr mut console_out,
+	u32 num_threads )
+	(
+		settings_= move(settings),
+		drawer_shared_data_=
+			ust::make_shared_ptr_mt(
+				DrawerSharedData
+				{
+					.game_params=
+						lambda[&]() : GameResourcePtr</GameParams/>
+						{
+							auto mut lock= caching_game_resources_loader.lock_mut();
+							return lock.deref().LoadGameParams();
+						}(),
+					.maps_description=
+						lambda[&]() : GameResourcePtr</MapsDescription/>
+						{
+							auto mut lock= caching_game_resources_loader.lock_mut();
+							return lock.deref().LoadMapsDescription();
+						}(),
+					.materials_description=
+						lambda[&]() : GameResourcePtr</MaterialsDescription/>
+						{
+							auto mut lock= caching_game_resources_loader.lock_mut();
+							return lock.deref().LoadMaterialsDescription();
+						}(),
+					.billboards_description=
+						WorldDrawerSoftInternal::LoadBillboardsDescription(
+							caching_game_resources_loader.lock_imut().deref().GetGameFilesystem(), console_out ),
+					.viewport_size= window.lock_imut().deref().GetViewportSize(),
+					.map_index= 0u,
+					.shutdown_requested= false,
+					.caustics_texture= CreateCausticsTexture(),
+					.interpolated_caustics_layer= zero_init,
+				} ),
+		window_= move(window),
+		caching_game_resources_loader_ptr_= move(caching_game_resources_loader),
+		console_out_= move(console_out),
+		barriers_
+		{
+			// We have worker threads and single host thread synchronized with these barriers.
+			.drawing_start( num_threads + 1u ),
+			.drawing_end  ( num_threads + 1u ),
+		},
+		threads_= CreateThreads( num_threads, barriers_, drawer_shared_data_ ),
+	)
+{}
+
+fn WorldDrawerSoftMultithreaded::destructor()
+{
+	// Tell the background threads that they should stop their work.
+	with( mut lock : drawer_shared_data_.lock_mut() )
+	{
+		lock.deref().shutdown_requested= true;
+	}
+
+	// Wake up background threads.
+	barriers_.drawing_start.wait();
+
+	// Join and destroy background threads.
+	threads_.clear();
+}
+
+fn WorldDrawerSoftMultithreaded::Draw( mut this, WorldDrawingInfo mut drawing_info ) : WorldDrawingStats
+{
+	// Ensure we have actual map data.
+	SetMap( drawing_info );
+
+	var WorldDrawingStats mut stats= zero_init;
+
+	with( mut drawer_shared_data_lock : drawer_shared_data_.lock_mut() )
+	{
+		var DrawerSharedData &mut drawer_shared_data= drawer_shared_data_lock.deref();
+
+		if( drawer_shared_data.map_data.empty() )
+		{
+			return stats;
+		}
+
+		var MapFullDrawDataSoft &mut map_data_full= drawer_shared_data.map_data.try_deref();
+
+		// Perform per-frame calculations independent on view point.
+
+		WorldDrawerSoftInternal::UpdateHighlightedClusterFlags( map_data_full, drawing_info );
+
+		if( settings_.lock_imut().deref().r_caustics_enabled )
+		{
+			var TexturesWithAppliedCaustics &mut textures_with_applied_caustics=
+					map_data_full.textures_with_applied_caustics;
+
+			if( !textures_with_applied_caustics.empty() )
+			{
+				// Just update all textures affected by caustics each frame.
+				// We have not so many of such textures (no more than 10) and code doing so is pretty-fast.
+
+				FetchInterpolatedCausticsTextureLayer(
+					drawer_shared_data.caustics_texture,
+					drawing_info.game_time_s,
+					drawer_shared_data.interpolated_caustics_layer );
+
+				auto src_textures= map_data_full.map_draw_data.textures.range();
+
+				foreach( pair : textures_with_applied_caustics )
+				{
+					var Color32WorldTextureWithMips& src_texture= src_textures[ size_type( pair.key() ) ];
+					var Color32WorldTextureWithMips &mut dst_texture= pair.value().deref();
+					ApplyCausticsTexture( drawer_shared_data.interpolated_caustics_layer, src_texture[0], dst_texture );
+				}
+			}
+		}
+
+		// Provide copy of settings.
+		// TODO - consider copying not the whole struct, but reading only needed fields.
+		drawer_shared_data.settings_copy= settings_.lock_imut().deref();
+
+		// Provide drawing info for worker threads.
+		drawer_shared_data.drawing_info= move( drawing_info );
+	}
+
+	// Tell other threads that they should start drawing.
+	barriers_.drawing_start.wait();
+
+	// Wait until the work is finished.
+	barriers_.drawing_end.wait();
+
+	// Copy individual framebuffers of each thread into the result surface.
+	// This is somewhat slow and creates a bottleneck, but there is no way to avoid it.
+	// It would be technically possible to share the window surface across threads,
+	// but it's unsafe to do so and we avoid unsafe code unless it's strickly necessary.
+
+	auto mut window_lock= window_.lock_mut();
+	var Color32ImageView surface= window_lock.deref().GetSurface();
+
+	var bool show_thread_subrect_borders=
+		settings_.lock_imut().deref().r_debug_software_mode_show_thread_subrect_borders;
+
+	foreach( &mut thread_data : threads_ )
+	{
+		auto thread_individual_data_lock= thread_data.individual_data.lock_imut();
+		var ThreadIndividualData& thread_individual_data= thread_individual_data_lock.deref();
+
+		// Copy size may be less that thread color buffer size, since this size may be rounded up.
+		var u32 copy_size_x=
+			ust::min(
+				thread_individual_data.color_buffer_size[0],
+				surface.size[0] - thread_individual_data.dst_offset[0] );
+		var u32 copy_size_y=
+			ust::min(
+				thread_individual_data.color_buffer_size[1],
+				surface.size[1] - thread_individual_data.dst_offset[1] );
+
+		for( auto mut src_y= 0u; src_y < copy_size_y; ++src_y )
+		{
+			auto dst_x= thread_individual_data.dst_offset[0];
+			auto dst_y= src_y + thread_individual_data.dst_offset[1];
+
+			var u32 src_start_offset= thread_individual_data.color_buffer_size[0] * src_y;
+
+			auto src_line=
+				thread_individual_data.color_buffer.range().subrange(
+					size_type( src_start_offset ), size_type( src_start_offset + copy_size_x ) );
+
+			var u32 dst_start_offset= dst_x + dst_y * surface.stride;
+
+			auto dst_line=
+				surface.pixels.subrange( size_type( dst_start_offset ), size_type( dst_start_offset + copy_size_x ) );
+
+			dst_line.copy_from( src_line );
+		}
+
+		if( show_thread_subrect_borders )
+		{
+			var Color32 color= Color32FromComponents( ust::make_array( 0u8, 255u8, 0u8, 128u8 ) );
+
+			for( auto mut dx= 0u; dx < copy_size_x; ++dx )
+			{
+				var u32 dst_x= thread_individual_data.dst_offset[0] + dx;
+
+				var u32 y_first= thread_individual_data.dst_offset[1];
+				var u32 y_last= y_first + copy_size_y - 1u;
+
+				surface.pixels[ size_type( dst_x + y_first * surface.stride ) ]= color;
+				surface.pixels[ size_type( dst_x + y_last  * surface.stride ) ]= color;
+			}
+
+			for( auto mut dy= 0u; dy < copy_size_y; ++dy )
+			{
+				var u32 dst_y= thread_individual_data.dst_offset[1] + dy;
+
+				var u32 x_first= thread_individual_data.dst_offset[0];
+				var u32 x_last= x_first + copy_size_x - 1u;
+
+				surface.pixels[ size_type( x_first + dst_y * surface.stride ) ]= color;
+				surface.pixels[ size_type( x_last  + dst_y * surface.stride ) ]= color;
+			}
+		}
+
+		// Accumulate stats.
+		// Some things may be counted more than once, but it's fine,
+		// since this reflects that some things are actually processed more than once (by each thread in the worst case).
+		foreach( &field_info : typeinfo</WorldDrawingStats/>.fields_list )
+		{
+			mixin( "stats." + field_info.name + " += thread_individual_data.stats." + field_info.name + ";" );
+		}
+	}
+
+	return stats;
+}
+
+op WorldDrawerSoftMultithreaded::ThreadFunction::()( this )
+{
+	var WorldDrawerSoftInternal mut drawer;
+
+	loop
+	{
+		// Wait for others and host before performing drawing.
+		barriers.drawing_start.wait();
+
+		// Use immutable lock, so that many background threads can lock it simultaneously.
+		with( mut drawer_shared_data_lock : drawer_shared_data.lock_imut() )
+		{
+			var DrawerSharedData& drawer_shared_data= drawer_shared_data_lock.deref();
+
+			if( drawer_shared_data.shutdown_requested )
+			{
+				return;
+			}
+
+			auto mut thread_individual_data_lock= individual_data.lock_mut();
+			var ThreadIndividualData &mut thread_individual_data= thread_individual_data_lock.deref();
+
+			if( !drawer_shared_data.map_data.empty() &&
+				!drawer_shared_data.drawing_info.empty() &&
+				!thread_individual_data.map_visibility_calculators.empty() )
+			{
+				var MapsDescription::MapDescription& map_description=
+					drawer_shared_data.maps_description.deref().maps[ size_type( drawer_shared_data.map_index ) ];
+
+				var MaterialsDescription::Block& materials_block=
+					drawer_shared_data.materials_description.deref().blocks[ map_description.materials_block ]; // Halts if not found.
+
+				thread_individual_data.stats=
+					drawer.Draw(
+						drawer_shared_data.settings_copy,
+						Color32ImageView
+						{
+							.pixels= thread_individual_data.color_buffer,
+							.size= thread_individual_data.color_buffer_size,
+							.stride= thread_individual_data.color_buffer_size[0],
+						},
+						WorldDrawerSoftInternal::ViewportContext
+						{
+							.subrect_offset= thread_individual_data.dst_offset,
+							.total_viewport_size= drawer_shared_data.viewport_size,
+						},
+						drawer_shared_data.game_params.deref(),
+						drawer_shared_data.billboards_description,
+						materials_block,
+						drawer_shared_data.map_data.try_deref(),
+						thread_individual_data.map_visibility_calculators.try_deref(),
+						drawer_shared_data.models,
+						drawer_shared_data.drawing_info.try_deref() );
+			}
+		}
+
+		// Synchronize with others and host after performing drawing.
+		barriers.drawing_end.wait();
+	}
+}
+
+fn WorldDrawerSoftMultithreaded::CreateThreads(
+	u32 num_threads,
+	Barriers& barriers,
+	ust::shared_ptr_mt_imut</DrawerSharedData/>& drawer_shared_data_ptr ) : ust::vector</ThreadData/>
+{
+	var [ u32, 2 ] viewport_size= drawer_shared_data_ptr.lock_imut().deref().viewport_size;
+
+	// Perform splitting of the viewport in 8-pixel units, so that result subregions have size divisible by 8.
+	// This is needed for some drawing code, like for local fog or sky.
+	var u32 c_split_unit_size= 8u;
+
+	var ust::vector</ViewportSubrect/> subrects=
+		SplitViewportRect(
+			ust::make_array(
+				( viewport_size[0] + ( c_split_unit_size - 1u ) ) / c_split_unit_size,
+				( viewport_size[1] + ( c_split_unit_size - 1u ) ) / c_split_unit_size ),
+			num_threads );
+
+	assert( subrects.size() == size_type( num_threads ) );
+
+	var ust::vector</ThreadData/> mut result_threads;
+
+	foreach( &subrect : subrects )
+	{
+		var [ u32, 2 ] subrect_pixel_size
+		[
+			subrect.size[0] * c_split_unit_size,
+			subrect.size[1] * c_split_unit_size,
+		];
+
+		var [ u32, 2 ] subrect_pixel_offset
+		[
+			subrect.offset[0] * c_split_unit_size,
+			subrect.offset[1] * c_split_unit_size,
+		];
+
+		auto individual_data=
+			ust::make_shared_ptr_mt(
+				ThreadIndividualData
+				{
+					.color_buffer( size_type( subrect_pixel_size[0] * subrect_pixel_size[1] ), Color32(0) ),
+					.color_buffer_size= subrect_pixel_size,
+					.dst_offset= subrect_pixel_offset,
+					.stats= zero_init, // Set later.
+				} );
+
+		result_threads.push_back(
+			ThreadData
+			{
+				.individual_data= individual_data,
+				.thread=
+					ust::make_thread(
+						ThreadFunction
+						{
+							.barriers= barriers,
+							.drawer_shared_data= drawer_shared_data_ptr,
+							.individual_data= individual_data,
+						} ),
+			} );
+	}
+
+	return result_threads;
+}
+
+fn WorldDrawerSoftMultithreaded::SetMap( mut this, WorldDrawingInfo& drawing_info )
+{
+	auto mut drawer_shared_data_lock= drawer_shared_data_.lock_mut();
+	var DrawerSharedData &mut drawer_shared_data= drawer_shared_data_lock.deref();
+
+	// Check if we need to reload map first.
+	if( drawing_info.map_index == drawer_shared_data.map_index )
+	{
+		return;
+	}
+	// Need to load map data.
+
+	// Set map index in any case - it may be necessary in order to avoid reloading map data constantly if failed to load it once.
+	drawer_shared_data.map_index= drawing_info.map_index;
+
+	// Reset previous map data first - to free used memory before allocating new memory for new map.
+	drawer_shared_data.map_data.reset();
+
+	foreach( &mut thread_data : threads_ )
+	{
+		with( &mut lock : thread_data.individual_data.lock_mut() )
+		{
+			lock.deref().map_visibility_calculators.reset();
+		}
+	}
+
+	if( drawing_info.map_index == 0u )
+	{
+		ConsoleOutAddTextLine( console_out_, "Can't load map 0!" );
+		return;
+	}
+
+	auto mut caching_game_resources_loader_lock= caching_game_resources_loader_ptr_.lock_mut();
+	var CachingGameResourcesLoader &mut caching_game_resources_loader= caching_game_resources_loader_lock.deref();
+
+	var ust::optional</ MapFullDrawDataSoft /> mut map_draw_data_opt=
+		WorldDrawerSoftInternal::LoadMap(
+			caching_game_resources_loader,
+			console_out_,
+			drawer_shared_data.game_params.deref(),
+			drawer_shared_data.maps_description.deref(),
+			drawer_shared_data.materials_description.deref(),
+			drawer_shared_data.billboards_description,
+			drawing_info.map_index );
+
+	if( !map_draw_data_opt.empty() )
+	{
+		var ust::shared_ptr_mt_final</RoomClustersBSPTree/> room_clusters_bsp_tree=
+			map_draw_data_opt.try_deref().map_draw_data.room_clusters_bsp_tree;
+
+		drawer_shared_data.map_data= map_draw_data_opt.try_take();
+
+		foreach( &mut thread_data : threads_ )
+		{
+			with( &mut lock : thread_data.individual_data.lock_mut() )
+			{
+				lock.deref().map_visibility_calculators=
+					ust::make_array(
+						MapVisibilityCalculator( room_clusters_bsp_tree ),
+						MapVisibilityCalculator( room_clusters_bsp_tree ) );
+			}
+		}
+	}
+
+	// Load models in use if switching to a new map.
+	if( !drawer_shared_data.map_data.empty() )
+	{
+		WorldDrawerSoftInternal::LoadModels(
+			drawing_info.used_models,
+			caching_game_resources_loader.GetGameFilesystem(),
+			console_out_,
+			drawer_shared_data.map_data.try_deref().map_draw_data.textures,
+			drawer_shared_data.models );
+	}
+}
+
+struct ViewportSubrect
+{
+	[ u32, 2 ] offset;
+	[ u32, 2 ] size;
+}
+
+// Split given viewport rect into several subrects.
+// This function tries to preserve equal area and makes rects as square as possible.
+fn SplitViewportRect( [ u32, 2 ] size, u32 num_parts ) : ust::vector</ ViewportSubrect />
+{
+	assert( size[0] * size[1] >= num_parts ); // Should have enough area for the given number of parts.
+
+	var ust::vector</ ViewportSubrect /> mut subrects;
+	SplitViewportSubrect_r( ViewportSubrect{ .offset[ 0u, 0u ], .size= size }, num_parts, subrects );
+	return subrects;
+}
+
+fn SplitViewportSubrect_r( ViewportSubrect& subrect, u32 num_parts, ust::vector</ ViewportSubrect /> &mut out_subrects )
+{
+	debug_assert( num_parts > 0u );
+	debug_assert( subrect.size[0] > 0u );
+	debug_assert( subrect.size[1] > 0u );
+
+	if( num_parts == 1u )
+	{
+		out_subrects.push_back( subrect );
+		return;
+	}
+
+	var u32 num_parts0= num_parts / 2u;
+	var u32 num_parts1= num_parts - num_parts0;
+
+	if( subrect.size[0] > subrect.size[1] )
+	{
+		var u32 size0= subrect.size[0] * num_parts0 / num_parts;
+		var u32 size1= subrect.size[0] - size0;
+
+		SplitViewportSubrect_r(
+			ViewportSubrect
+			{
+				.offset[ subrect.offset[0], subrect.offset[1] ],
+				.size[ size0, subrect.size[1] ],
+			},
+			num_parts0,
+			out_subrects );
+
+		SplitViewportSubrect_r(
+			ViewportSubrect
+			{
+				.offset[ subrect.offset[0] + size0, subrect.offset[1] ],
+				.size[ size1, subrect.size[1] ],
+			},
+			num_parts1,
+			out_subrects );
+	}
+	else
+	{
+		var u32 size0= subrect.size[1] * num_parts0 / num_parts;
+		var u32 size1= subrect.size[1] - size0;
+
+		SplitViewportSubrect_r(
+			ViewportSubrect
+			{
+				.offset[ subrect.offset[0], subrect.offset[1] ],
+				.size[ subrect.size[0], size0 ],
+			},
+			num_parts0,
+			out_subrects );
+
+		SplitViewportSubrect_r(
+			ViewportSubrect
+			{
+				.offset[ subrect.offset[0], subrect.offset[1] + size0 ],
+				.size[ subrect.size[0], size1 ],
+			},
+			num_parts1,
+			out_subrects );
+	}
+}
+
+} // namespace PM

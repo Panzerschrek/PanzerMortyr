@@ -23,119 +23,38 @@ import "model_blood_coverage.iu"
 import "rasterizer.iu"
 import "sky_rasterizer.iu"
 import "vertex_transformations.iu"
-import "world_drawer_soft.iu"
+import "world_drawer_soft_internal.iu"
 
 namespace PM
 {
 
-fn WorldDrawerSoft::constructor(
-	ust::shared_ptr_mut</WindowSoft/> mut window,
-	SettingsImutPtr mut settings,
-	CachingGameResourcesLoaderPtr mut caching_game_resources_loader,
-	ConsoleOutPtr mut console_out )
+fn WorldDrawerSoftInternal::constructor()
 	(
-		window_= move(window),
-		settings_= move(settings),
-		game_params_=
-			lambda[&]() : GameResourcePtr</GameParams/>
-			{
-				auto mut lock= caching_game_resources_loader.lock_mut();
-				return lock.deref().LoadGameParams();
-			}(),
-		maps_description_=
-			lambda[&]() : GameResourcePtr</MapsDescription/>
-			{
-				auto mut lock= caching_game_resources_loader.lock_mut();
-				return lock.deref().LoadMapsDescription();
-			}(),
-		materials_description_=
-			lambda[&]() : GameResourcePtr</MaterialsDescription/>
-			{
-				auto mut lock= caching_game_resources_loader.lock_mut();
-				return lock.deref().LoadMaterialsDescription();
-			}(),
-		billboards_description_=
-			LoadBillboardsDescription(
-				caching_game_resources_loader.lock_imut().deref().GetGameFilesystem(), console_out ),
-		caching_game_resources_loader_ptr_= move(caching_game_resources_loader),
-		console_out_= move(console_out),
-		map_index_= 0u,
-		caustics_texture_= CreateCausticsTexture(),
-		interpolated_caustics_layer_= zero_init,
+		mirror_texture_= zero_init, // Set later if needed.
 	)
+{}
+
+fn WorldDrawerSoftInternal::Draw(
+	mut this,
+	Settings& settings,
+	Color32ImageView surface,
+	ViewportContext& viewport_context,
+	GameParams& game_params,
+	BillboardsDescription& billboards_description,
+	MaterialsDescription::Block& materials_block,
+	MapFullDrawDataSoft& map_data_full,
+	MapVisibilityCalculatorsPair &mut map_visibility_calculators,
+	ModelsMapSoft& models,
+	WorldDrawingInfo& drawing_info ) : WorldDrawingStats
 {
-}
-
-fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDrawingStats
-{
-	// Load models in use if switching to a new map.
-	var bool need_loading_models= map_index_ != drawing_info.map_index;
-
-	// Ensure we have actual map data.
-	SetMap( drawing_info.map_index );
-
-	if( need_loading_models && !map_data_.empty() )
-	{
-		// Load models in use if switching to a new map.
-		LoadModels(
-			drawing_info.used_models,
-			caching_game_resources_loader_ptr_.lock_imut().deref().GetGameFilesystem(),
-			console_out_,
-			map_data_.try_deref().map_draw_data.textures,
-			models_ );
-	}
-
 	var WorldDrawingStats mut stats= zero_init;
 
-	if( map_data_.empty() )
-	{
-		return stats;
-	}
-
-	// Perform per-frame calculations independent on view point.
-	{
-		var MapFullDrawDataSoft &mut map_data_full= map_data_.try_deref();
-		var MapDrawDataSoft& map_data= map_data_full.map_draw_data;
-
-		var ust::array_view_mut</bool/> highlighted_cluster_flags= map_data_full.highlighted_cluster_flags;
-
-		var TexturesWithAppliedCaustics &mut textures_with_applied_caustics=
-			map_data_full.textures_with_applied_caustics;
-
-		foreach( &mut flag : highlighted_cluster_flags )
-		{
-			flag= false;
-		}
-
-		foreach( cluster_index : drawing_info.highlighted_cluster_indices )
-		{
-			if( size_type( cluster_index ) < highlighted_cluster_flags.size() )
-			{
-				highlighted_cluster_flags[ size_type( cluster_index ) ]= true;
-			}
-		}
-
-		if( settings_.lock_imut().deref().r_caustics_enabled && !textures_with_applied_caustics.empty() )
-		{
-			// Just update all textures affected by caustics each frame.
-			// We have not so many of such textures (no more than 10) and code doing so is pretty-fast.
-
-			FetchInterpolatedCausticsTextureLayer(
-				caustics_texture_, drawing_info.game_time_s, interpolated_caustics_layer_ );
-
-			foreach( pair : textures_with_applied_caustics )
-			{
-				var Color32WorldTextureWithMips& src_texture= map_data.textures[ size_type( pair.key() ) ];
-				var Color32WorldTextureWithMips &mut dst_texture= pair.value().deref();
-				ApplyCausticsTexture( interpolated_caustics_layer_, src_texture[0], dst_texture );
-			}
-		}
-	}
+	var MapDrawDataSoft& map_data= map_data_full.map_draw_data;
 
 	// Convert dynamic light sources into our own format.
 	scoped_array DynamicLightSourceSoft dynamic_light_sources[ drawing_info.dynamic_light_sources.size() ](
 		drawing_info.dynamic_light_sources.iter().map(
-			lambda[ &game_params= game_params_.deref() ]( WorldDrawingInfo::DynamicLightSource& s ) : DynamicLightSourceSoft
+			lambda[&]( WorldDrawingInfo::DynamicLightSource& s ) : DynamicLightSourceSoft
 			{
 				return DynamicLightSourceSoft( s, game_params );
 			} ) );
@@ -143,22 +62,22 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 	// Count all light sources as visible.
 	stats.num_visible_dynamic_lights= u32( dynamic_light_sources.size() );
 
-	auto window= window_; // Copy shared pointer here, so that the lock object isn't linked to "this".
-	auto mut window_lock= window.lock_mut();
-	var Color32ImageView surface= window_lock.deref().GetSurface();
-
 	// Prepare and clear depth buffer.
 	depth_buffer_.clear();
 	depth_buffer_.resize( size_type( surface.size[1] * surface.stride ), 0.0f );
 
 	var LightingModifiers lighting_modifiers=
 		MakeLightingModifiersComponentOrderBGR(
-			CalculateLightingModifiers( settings_.lock_imut().deref(), drawing_info.fullscreen_effect ) );
+			CalculateLightingModifiers( settings, drawing_info.fullscreen_effect ) );
 
 	var Mat4f rotation_matrix=
 		CalculateCameraRotationMatrix( drawing_info.camera_params.azimuth, drawing_info.camera_params.elevation );
 
-	var f32 view_aspect= f32( surface.size[0] ) / f32( surface.size[1] );
+	// For rotation transpose matrix is inverse matrix.
+	var Mat4f rotation_inverse_matrix= rotation_matrix.Transpose();
+
+	var f32 view_aspect=
+		f32( viewport_context.total_viewport_size[0] ) / f32( viewport_context.total_viewport_size[1] );
 
 	var f32 half_fov_tan= ust::tan( drawing_info.camera_params.fov_x * 0.5f );
 	var f32 half_fov_inv_tan= 1.0f / half_fov_tan;
@@ -175,34 +94,7 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 		]
 	};
 
-	var Mat4f rotation_and_projection_matrix= rotation_matrix * camera_projection_matrix;
-
-	var Mat4f translation_matrix= Mat4f::MakeTranslation( -drawing_info.camera_params.position );
-
-	// Maps normalized -1 to 1 coordinates to 0 to size coordinates and flips vertically.
-	var Mat4f viewport_transformation_matrix
-	{
-		.values
-		[
-			[ 0.5f * f32( surface.size[0] ),                           0.0f, 0.0f, 0.0f ],
-			[                          0.0f, -0.5f * f32( surface.size[1] ), 0.0f, 0.0f ],
-			[ 0.5f * f32( surface.size[0] ),  0.5f * f32( surface.size[1] ), 1.0f, 0.0f ],
-			[                          0.0f,                           0.0f, 0.0f, 1.0f ],
-		],
-	};
-
-	var Mat4f viewport_transformation_planes_matrix
-	{
-		.values
-		[
-			[ 2.0f / f32( surface.size[0] ),                           0.0f, -1.0f, 0.0f ],
-			[                          0.0f, -2.0f / f32( surface.size[1] ),  1.0f, 0.0f ],
-			[                          0.0f,                           0.0f,  1.0f, 0.0f ],
-			[                          0.0f,                           0.0f,  0.0f, 1.0f ],
-		],
-	};
-
-	var Mat4f camera_projection_planes_matrix
+	var Mat4f camera_projection_inverse_matrix
 	{
 		.values
 		[
@@ -213,60 +105,92 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 		]
 	};
 
+	// Planes matrix is inverse and transposed matrix.
+	var Mat4f camera_projection_planes_matrix= camera_projection_inverse_matrix.Transpose();
+
+	var Mat4f rotation_and_projection_matrix= rotation_matrix * camera_projection_matrix;
+
+	var Mat4f translation_matrix= Mat4f::MakeTranslation( -drawing_info.camera_params.position );
+	var Mat4f translation_inverse_matrix= Mat4f::MakeTranslation( drawing_info.camera_params.position );
+
+	var Mat4f viewport_transformation_matrix=
+		// Map -1 to 1 range to 0 to 1 and flip vertically.
+		Mat4f::MakeScale( Vec3f( 0.5f, -0.5f, 1.0f ) ) *
+		Mat4f::MakeZShear( Vec2f( 0.5f, 0.5f ) ) *
+		// Scale to viewport size.
+		Mat4f::MakeScale(
+			Vec3f(
+				f32( viewport_context.total_viewport_size[0] ),
+				f32( viewport_context.total_viewport_size[1] ),
+				1.0f ) ) *
+		// Take subrect offset into account.
+		Mat4f::MakeZShear(
+			-Vec2f( f32( viewport_context.subrect_offset[0] ), f32( viewport_context.subrect_offset[1] ) ) );
+
+	var Mat4f viewport_transformation_inverse_matrix=
+		Mat4f::MakeZShear(
+				Vec2f( f32( viewport_context.subrect_offset[0] ), f32( viewport_context.subrect_offset[1] ) ) ) *
+			Mat4f::MakeScale(
+				Vec3f(
+					1.0f / f32( viewport_context.total_viewport_size[0] ),
+					1.0f / f32( viewport_context.total_viewport_size[1] ),
+					1.0f ) ) *
+			Mat4f::MakeZShear( -Vec2f( 0.5f, 0.5f ) ) *
+			Mat4f::MakeScale( Vec3f( 2.0f, -2.0f, 1.0f ) );
+
+	// Planes matrix is inverse and transposed matrix.
+	var Mat4f viewport_transformation_planes_matrix= viewport_transformation_inverse_matrix.Transpose();
+
 	var Mat4f view_matrix= translation_matrix * rotation_and_projection_matrix * viewport_transformation_matrix;
 
 	var Mat4f camera_space_planes_matrix=
-		( rotation_matrix.Transpose() * Mat4f::MakeTranslation( drawing_info.camera_params.position ) ).Transpose();
-
-	var Mat3f perspective_inverse_matrix
-	{
-		.values
-		[
-			[ half_fov_tan,                       0.0f, 0.0f ],
-			[         0.0f, half_fov_tan / view_aspect, 0.0f ],
-			[         0.0f,                       0.0f, 1.0f ],
-		]
-	};
-
-	var Mat3f viewport_inverse_transformation_matrix
-	{
-		.values
-		[
-			[ 2.0f / f32( surface.size[0] ),                           0.0f, 0.0f ],
-			[                          0.0f, -2.0f / f32( surface.size[1] ), 0.0f ],
-			[                         -1.0f,                           1.0f, 1.0f ],
-		],
-	};
-
-	// For rotation transpose matrix is inverse matrix.
-	var Mat3f rotation_inverse_matrix
-	{
-		.values
-		[
-			[ rotation_matrix.values[0][0], rotation_matrix.values[1][0], rotation_matrix.values[2][0] ],
-			[ rotation_matrix.values[0][1], rotation_matrix.values[1][1], rotation_matrix.values[2][1] ],
-			[ rotation_matrix.values[0][2], rotation_matrix.values[1][2], rotation_matrix.values[2][2] ],
-		]
-	};
+		( rotation_inverse_matrix * translation_inverse_matrix ).Transpose();
 
 	var Mat3f sky_inverse_transformation_matrix=
-		viewport_inverse_transformation_matrix * perspective_inverse_matrix * rotation_inverse_matrix;
+		viewport_transformation_inverse_matrix.TruncateToMat3() *
+		camera_projection_inverse_matrix.TruncateToMat3() *
+		rotation_inverse_matrix.TruncateToMat3();
 
-	// World-space clip planes.
-	var CameraClipPlanes camera_clip_planes= CreateCameraClipPlanes( drawing_info.camera_params, view_aspect );
-
-	// View-space clip planes.
+	// View-space clip planes (for the current vieport region).
 	var FrustumClipPlanes frustum_clip_planes
 	[
 		{ .normal( 0.0f, 0.0f, 1.0f ), .distance= -c_z_near_for_clipping },
-		CalculateViewSpaceFrustumSideClipPlanes( surface.size ),
+		[
+			// Add extra half pixel to avoid some precision errors.
+			{ .normal(  1.0f,  0.0f,                        0.5f ), .distance= 0.0f },
+			{ .normal( -1.0f,  0.0f, f32(surface.size[0]) + 0.5f ), .distance= 0.0f },
+			{ .normal(  0.0f, -1.0f, f32(surface.size[1]) + 0.5f ), .distance= 0.0f },
+			{ .normal(  0.0f,  1.0f,                        0.5f ), .distance= 0.0f },
+		]
+	];
+
+	var Mat3f camera_clip_planes_matrix=
+		viewport_transformation_matrix.TruncateToMat3().Transpose() *
+		camera_projection_matrix.TruncateToMat3().Transpose() *
+		rotation_inverse_matrix.TruncateToMat3();
+
+	var Vec3f near_z_plane_normal= ( -frustum_clip_planes[0].normal ) * camera_clip_planes_matrix;
+
+	// World-space clip planes.
+	var CameraClipPlanes camera_clip_planes
+	[
+		Planef::CreateFromNormalAndPoint(
+			near_z_plane_normal, drawing_info.camera_params.position + near_z_plane_normal * -c_z_near ),
+		Planef::CreateFromNormalAndPoint(
+			( -frustum_clip_planes[1][0].normal ) * camera_clip_planes_matrix, drawing_info.camera_params.position ),
+		Planef::CreateFromNormalAndPoint(
+			( -frustum_clip_planes[1][1].normal ) * camera_clip_planes_matrix, drawing_info.camera_params.position ),
+		Planef::CreateFromNormalAndPoint(
+			( -frustum_clip_planes[1][2].normal ) * camera_clip_planes_matrix, drawing_info.camera_params.position ),
+		Planef::CreateFromNormalAndPoint(
+			( -frustum_clip_planes[1][3].normal ) * camera_clip_planes_matrix, drawing_info.camera_params.position ),
 	];
 
 	// Use bounds for screen pixels.
 	auto whole_screen_bounds=
 		ClippingPolygon::CreateFromBox( Vec2f( 0.0f, 0.0f ), Vec2f( f32( surface.size[0] ), f32( surface.size[1] ) ) );
 
-	map_data_.try_deref().map_visibility_calculators[0].CalculateVisibility(
+	map_visibility_calculators[0].CalculateVisibility(
 		drawing_info.camera_params.position, view_matrix, whole_screen_bounds );
 
 	// Extract mirror geometry.
@@ -274,15 +198,9 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 		mirror_vertices_.clear();
 		mirror_indices_.clear();
 
-		var MapsDescription::MapDescription& map_description= maps_description_.deref().maps[ size_type( map_index_ ) ];
-		var MaterialsDescription::Block& materials_block=
-			materials_description_.deref().blocks[ map_description.materials_block ]; // Halts if not found.
-
-		var MapFullDrawDataSoft &mut map_full_draw_data= map_data_.try_deref();
-
 		CreateMirrorMapPolygons(
-			map_full_draw_data.map_draw_data,
-			map_full_draw_data.map_visibility_calculators[0],
+			map_data,
+			map_visibility_calculators[0],
 			materials_block,
 			mirror_vertices_,
 			mirror_indices_ );
@@ -295,7 +213,7 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 
 	var BBox3f mirror_bounds= CalculateMirrorBounds( mirror_vertices_ );
 
-	var bool mirrors_enabled= settings_.lock_imut().deref().r_mirrors_enabled;
+	var bool mirrors_enabled= settings.r_mirrors_enabled;
 
 	if_var( &mirror_plane : CalculateMirrorPlane( mirror_vertices_, mirror_indices_ ) )
 	{
@@ -333,7 +251,7 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 
 			// Calculate visibility from mirror point.
 			var size_type visibility_calculator_index= 1s;
-			map_data_.try_deref().map_visibility_calculators[ visibility_calculator_index ].CalculateVisibilityForMirror(
+			map_visibility_calculators[ visibility_calculator_index ].CalculateVisibilityForMirror(
 				mirror_bounds,
 				camera_position_mirrored,
 				view_matrix_for_mirrored_geometry,
@@ -342,8 +260,14 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 			// Draw image in mirror.
 
 			DrawPartial(
+				settings,
 				surface,
-				visibility_calculator_index,
+				game_params,
+				billboards_description,
+				materials_block,
+				map_data_full,
+				map_visibility_calculators[ visibility_calculator_index ],
+				models,
 				drawing_info,
 				dynamic_light_sources,
 				camera_position_mirrored,
@@ -375,12 +299,9 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 	{
 		// Draw mirror geometry itself.
 
-		var MapFullDrawDataSoft &mut map_data_full= map_data_.try_deref();
-		var MapDrawDataSoft& map_data= map_data_full.map_draw_data;
-
 		// Collect dynamic light sources affecting mirror geometry.
 		cluster_dynamic_light_sources_.clear();
-		if( settings_.lock_imut().deref().r_dynamic_lights_enabled )
+		if( settings.r_dynamic_lights_enabled )
 		{
 			foreach( &dynamic_light_source : dynamic_light_sources )
 			{
@@ -412,7 +333,7 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 			lighting_modifiers.map,
 			cluster_dynamic_light_sources_ );
 
-		if( settings_.lock_imut().deref().r_fog_enabled && map_data.global_fog_enabled )
+		if( settings.r_fog_enabled && map_data.global_fog_enabled )
 		{
 			CalculateFogDensityForMapVertices(
 				mirror_vertices_, vertex_lights_range, drawing_info.camera_params.position );
@@ -443,12 +364,11 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 			// Mirrors are enabled - draw mirrors with blending.
 
 			// Prepare mirror texture containing premultiplied alpha.
-			var f32 mirror_alpha=
-				ust::max( 0.05f, ust::min( settings_.lock_imut().deref().r_mirror_alpha, 0.95f ) );
+			var f32 mirror_alpha= ust::max( 0.05f, ust::min( settings.r_mirror_alpha, 0.95f ) );
 
 			var u8 mirror_alpha_u8( mirror_alpha * 255.0f );
 
-			var Color32WorldTextureWithMips &mut mirror_texture_dst= map_data_full.mirror_texture;
+			var Color32WorldTextureWithMips &mut mirror_texture_dst= mirror_texture_;
 
 			UpdateMirrorTexture( mirror_texture_src[0], mirror_texture_dst, mirror_alpha_u8 );
 
@@ -483,8 +403,14 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 	// Draw main image.
 
 	DrawPartial(
+		settings,
 		surface,
-		0s,
+		game_params,
+		billboards_description,
+		materials_block,
+		map_data_full,
+		map_visibility_calculators[0],
+		models,
 		drawing_info,
 		dynamic_light_sources,
 		drawing_info.camera_params.position,
@@ -502,15 +428,25 @@ fn WorldDrawerSoft::Draw( mut this, WorldDrawingInfo& drawing_info ) : WorldDraw
 		stats );
 
 	// Draw fullscreen blending as the last step.
-	ApplyFullscreenBlending( surface, drawing_info.fullscreen_blend_color );
+	ApplyFullscreenBlending(
+		surface,
+		viewport_context.subrect_offset,
+		viewport_context.total_viewport_size,
+		drawing_info.fullscreen_blend_color );
 
 	return stats;
 }
 
-fn WorldDrawerSoft::DrawPartial(
+fn WorldDrawerSoftInternal::DrawPartial(
 	mut this,
+	Settings& settings,
 	Color32ImageView surface,
-	size_type visibility_calculator_index,
+	GameParams& game_params,
+	BillboardsDescription& billboards_description,
+	MaterialsDescription::Block& materials_block,
+	MapFullDrawDataSoft& map_data_full,
+	MapVisibilityCalculator& visibility_calculator,
+	ModelsMapSoft& models,
 	WorldDrawingInfo& drawing_info,
 	ust::array_view_imut</DynamicLightSourceSoft/> dynamic_light_sources,
 	Vec3f& camera_position,
@@ -522,13 +458,6 @@ fn WorldDrawerSoft::DrawPartial(
 	TriangleVerticesOrder vertices_order,
 	WorldDrawingStats &mut stats )
 {
-	if( map_data_.empty() )
-	{
-		return;
-	}
-
-	var MapFullDrawDataSoft &mut map_data_full= map_data_.try_deref();
-
 	var MapDrawDataSoft& map_data= map_data_full.map_draw_data;
 	var ZmapData& zmap_data= map_data.zmap_data.deref();
 	var ZvoxData& zvox_data= map_data.zvox_data.deref();
@@ -537,18 +466,10 @@ fn WorldDrawerSoft::DrawPartial(
 	auto clusters= zvox_data.clusters.range();
 	auto quads= zmap_data.quads.range();
 
-	var MapsDescription::MapDescription& map_description= maps_description_.deref().maps[ size_type( map_index_ ) ];
-
-	var MaterialsDescription::Block& materials_block=
-		materials_description_.deref().blocks[ map_description.materials_block ];
-
 	var ust::array_view_imut</ZmapLemClusterSkyLightData/> clusters_sky_light_data=
 		map_data.zmap_lem_data.deref().clusters_sky_light_data;
 
 	var RoomClustersHierarchy& room_clusters_hierarchy= map_data.room_clusters_hierarchy.deref();
-
-	var MapVisibilityCalculator &mut visibility_calculator=
-		map_data_full.map_visibility_calculators[ visibility_calculator_index ];
 
 	var ust::array_view_imut</bool/> highlighted_cluster_flags= map_data_full.highlighted_cluster_flags;
 
@@ -569,8 +490,8 @@ fn WorldDrawerSoft::DrawPartial(
 	var u32 valve_special_material_frame= CalculateValveSpecialMaterialFrame( drawing_info.game_time_s );
 	var u32 film_special_material_frame= CalculateFilmSpecialMaterialFrame( drawing_info.game_time_s );
 
-	var bool fog_enabled= settings_.lock_imut().deref().r_fog_enabled;
-	var bool dynamic_lights_enabled= settings_.lock_imut().deref().r_dynamic_lights_enabled;
+	var bool fog_enabled= settings.r_fog_enabled;
+	var bool dynamic_lights_enabled= settings.r_dynamic_lights_enabled;
 
 	var bool global_fog_enabled= fog_enabled && map_data.global_fog_enabled;
 
@@ -621,7 +542,7 @@ fn WorldDrawerSoft::DrawPartial(
 		}
 	}
 
-	var bool caustics_enabled= settings_.lock_imut().deref().r_caustics_enabled;
+	var bool caustics_enabled= settings.r_caustics_enabled;
 
 	var f32 highlighted_clusters_light_scale= 2.0f + ust::sin( drawing_info.game_time_s * 6.0f );
 
@@ -1079,7 +1000,7 @@ fn WorldDrawerSoft::DrawPartial(
 			continue;
 		}
 
-		var ust::optional_ref_imut</ ModelSoftExt /> model_ext_opt= models_.find( model_object.model_file_name );
+		var ust::optional_ref_imut</ ModelSoftExt /> model_ext_opt= models.find( model_object.model_file_name );
 
 		if( model_ext_opt.empty() )
 		{
@@ -1232,7 +1153,7 @@ fn WorldDrawerSoft::DrawPartial(
 			{
 				var SphericalHarmonics3 dynamic_light=
 					GetLightForPointFromDynamicLightSources(
-						game_params_.deref(),
+						game_params,
 						drawing_info.dynamic_light_sources,
 						bbox_center,
 						radius,
@@ -1403,7 +1324,7 @@ fn WorldDrawerSoft::DrawPartial(
 		stats.num_visible_model_triangles+= u32( model.triangles.size() );
 	}
 
-	if( settings_.lock_imut().deref().r_decals_enabled )
+	if( settings.r_decals_enabled )
 	{
 		temp_vertices_.clear();
 		temp_indices_.clear();
@@ -1479,7 +1400,7 @@ fn WorldDrawerSoft::DrawPartial(
 		stats.num_visible_billboards+=
 			BuildBillboardPolygons(
 				drawing_info.billboards,
-				billboards_description_,
+				billboards_description,
 				camera_position,
 				drawing_info.camera_params.fov_x,
 				camera_clip_planes,
@@ -1522,11 +1443,11 @@ fn WorldDrawerSoft::DrawPartial(
 			camera_position );
 	}
 
-	if( settings_.lock_imut().deref().r_rain_snow_enabled && !map_data.rain_snow_hierarchy.nodes.empty() )
+	if( settings.r_rain_snow_enabled && !map_data.rain_snow_hierarchy.nodes.empty() )
 	{
 		var size_type first_vertex= semitransparent_geometry_vertices_.size();
 
-		switch( map_description.precipitation_kind )
+		switch( map_data.precipitation_kind )
 		{
 			MapsDescription::MapDescription::c_precipitation_kind_none -> {},
 			MapsDescription::MapDescription::c_precipitation_kind_snow ->
@@ -1542,7 +1463,7 @@ fn WorldDrawerSoft::DrawPartial(
 			{
 				CreateRainTriangles(
 					map_data.rain_snow_hierarchy,
-					billboards_description_,
+					billboards_description,
 					drawing_info.game_time_s,
 					camera_position,
 					semitransparent_geometry_vertices_,
@@ -1557,7 +1478,7 @@ fn WorldDrawerSoft::DrawPartial(
 			semitransparent_geometry_vertices_.range().subrange_start( first_vertex ) );
 	}
 
-	if( settings_.lock_imut().deref().r_water_circle_decals_enabled )
+	if( settings.r_water_circle_decals_enabled )
 	{
 		var size_type first_vertex= semitransparent_geometry_vertices_.size();
 
@@ -1585,7 +1506,7 @@ fn WorldDrawerSoft::DrawPartial(
 		DrawTestLines( rasterizer, drawing_info.test_lines, camera_matrices.view_matrix, frustum_clip_planes );
 	}
 
-	if( settings_.lock_imut().deref().r_debug_show_room_clusters_bsp_tree )
+	if( settings.r_debug_show_room_clusters_bsp_tree )
 	{
 		var ust::vector</WorldDrawingInfo::TestLine/> mut lines;
 
@@ -1593,7 +1514,7 @@ fn WorldDrawerSoft::DrawPartial(
 
 		DrawTestLines( rasterizer, lines, camera_matrices.view_matrix, frustum_clip_planes );
 	}
-	if( settings_.lock_imut().deref().r_debug_show_room_clusters_bsp_tree_projected_portals )
+	if( settings.r_debug_show_room_clusters_bsp_tree_projected_portals )
 	{
 		var ust::vector</WorldDrawingInfo::TestLine/> mut lines;
 
@@ -1611,7 +1532,7 @@ fn WorldDrawerSoft::DrawPartial(
 					ust::make_array( test_line.color[0], test_line.color[1], test_line.color[2], 0u8 ) ) );
 		}
 	}
-	if( settings_.lock_imut().deref().r_debug_show_room_clusters_bsp_tree_projected_leaf_bounds )
+	if( settings.r_debug_show_room_clusters_bsp_tree_projected_leaf_bounds )
 	{
 		var ust::vector</WorldDrawingInfo::TestLine/> mut lines;
 
@@ -1728,41 +1649,43 @@ fn WorldDrawerSoft::DrawPartial(
 	stats.num_visible_semitransparent_triangles+= u32( semitransparent_geometry_indices_.size() ) / 3u;
 }
 
-fn WorldDrawerSoft::SetMap( mut this, u32 map_index )
+fn WorldDrawerSoftInternal::UpdateHighlightedClusterFlags(
+	MapFullDrawDataSoft &mut map_data_full, WorldDrawingInfo& drawing_info )
 {
-	// Check if we need to reload map first.
-	if( map_index == map_index_ )
+	var ust::array_view_mut</bool/> highlighted_cluster_flags= map_data_full.highlighted_cluster_flags;
+
+	foreach( &mut flag : highlighted_cluster_flags )
 	{
-		return;
-	}
-	// Need to load map data.
-
-	// Set map index in any case - it may be necessary in order to avoid reloading map data constantly if failed to load it once.
-	map_index_= map_index;
-
-	// Reset previous map data first - to free used memory before allocating new memory for new map.
-	map_data_.reset();
-
-	if( map_index == 0u )
-	{
-		ConsoleOutAddTextLine( console_out_, "Can't load map 0!" );
-		return;
+		flag= false;
 	}
 
-	auto mut lock= caching_game_resources_loader_ptr_.lock_mut();
-	var CachingGameResourcesLoader &mut caching_game_resources_loader= lock.deref();
+	foreach( cluster_index : drawing_info.highlighted_cluster_indices )
+	{
+		if( size_type( cluster_index ) < highlighted_cluster_flags.size() )
+		{
+			highlighted_cluster_flags[ size_type( cluster_index ) ]= true;
+		}
+	}
+}
 
-	var MapsDescription& maps_description= maps_description_.deref();
-
+fn WorldDrawerSoftInternal::LoadMap(
+	CachingGameResourcesLoader &mut caching_game_resources_loader,
+	ConsoleOutPtr& console_out,
+	GameParams& game_params,
+	MapsDescription& maps_description,
+	MaterialsDescription& materials_description,
+	BillboardsDescription& billboards_description,
+	u32 map_index ) : ust::optional</ MapFullDrawDataSoft />
+{
 	if( size_type( map_index ) >= maps_description.maps.size() )
 	{
-		ConsoleOutAddTextLine( console_out_, ust::concat( "Map with index ", ust::to_string8( map_index ), " not found!" ) );
-		return;
+		ConsoleOutAddTextLine( console_out, ust::concat( "Map with index ", ust::to_string8( map_index ), " not found!" ) );
+		return ust::null_optional;
 	}
 
 	var MapsDescription::MapDescription& map_description= maps_description.maps[ size_type( map_index ) ];
 
-	var MaterialsDescription::Block& materials_block= materials_description_.deref().blocks[ map_description.materials_block ]; // Halts if not found.
+	var MaterialsDescription::Block& materials_block= materials_description.blocks[ map_description.materials_block ]; // Halts if not found.
 
 	var GameResourcePtr</MaterialsProperties/> materials_properties_ptr= caching_game_resources_loader.LoadMaterialsProperties();
 
@@ -1792,7 +1715,7 @@ fn WorldDrawerSoft::SetMap( mut this, u32 map_index )
 		room_clusters_hierarchy_nullable_ptr.empty() ||
 		quads_hierarchy_nullable_ptr.empty() )
 	{
-		return;
+		return ust::null_optional;
 	}
 
 	var GameResourcePtr</ZmapData/> zmap_data_ptr= zmap_data_nullable_ptr.try_to_non_nullable();
@@ -1812,7 +1735,7 @@ fn WorldDrawerSoft::SetMap( mut this, u32 map_index )
 		CreateBreakableMaterialsBitArray( materials_properties_ptr.deref(), materials_block );
 
 	var ust::vector</PointLightSource/> mut light_sources=
-		CreatePointLightSourcesForMapLightSources( zvox_data, game_params_.deref() );
+		CreatePointLightSourcesForMapLightSources( zvox_data, game_params );
 
 	var ust::vector</ MapVertex /> mut vertices;
 	var ust::vector</u16/> mut indices;
@@ -2134,6 +2057,39 @@ fn WorldDrawerSoft::SetMap( mut this, u32 map_index )
 	// Ensure light components order is correct.
 	ConvertMapVertexLightComponentsOrder( vertices );
 
+	var ust::shared_ptr_mt_final</RoomClustersBSPTree/> room_clusters_bsp_tree(
+		BuildRoomClustersBSPTree( zvox_data.clusters ) );
+
+	auto mut moon_and_stars_buffer= CreateMoonAndStarsBuffer( map_description, billboards_description );
+	// We have more than one quad, but it's irrelevant for moon and star billboards.
+	PrepareQuadVertexTextureCoordinates( moon_and_stars_buffer[0] );
+
+	var RainSnowHierarchy mut rain_snow_hierarchy;
+	if( map_description.precipitation_kind == MapsDescription::MapDescription::c_precipitation_kind_rain ||
+		map_description.precipitation_kind == MapsDescription::MapDescription::c_precipitation_kind_snow )
+	{
+		rain_snow_hierarchy= BuildRainSnowHierarchy( zmap_lam_data.rain_droplets);
+	}
+
+	var BitArray mut wet_material_bits= CreateWetMaterialsBitArray( materials_properties_ptr.deref(), materials_block );
+
+	var WaterCirclesHierarchy mut water_circles_heirarchy;
+	if( map_description.precipitation_kind == MapsDescription::MapDescription::c_precipitation_kind_rain )
+	{
+		water_circles_heirarchy=
+			BuildWaterCirclesHierarchy( zmap_lam_data.rain_droplets, zmap_data.quads, wet_material_bits );
+	}
+
+	auto mut textures=
+		LoadMapTextures( materials_block, caching_game_resources_loader.GetGameFilesystem(), console_out );
+
+	var size_type mut mirror_texture_index(
+		materials_block.special_material_indices[ size_type( MaterialsDescription::SpecialMaterial::Mirror ) ] );
+	if( mirror_texture_index >= textures.size() )
+	{
+		mirror_texture_index= 0s;
+	}
+
 	// Create table of textures with applied caustics.
 	var TexturesWithAppliedCaustics mut textures_with_applied_caustics;
 
@@ -2181,40 +2137,7 @@ fn WorldDrawerSoft::SetMap( mut this, u32 map_index )
 		i+= num_clusters_in_group;
 	}
 
-	var ust::shared_ptr_final</RoomClustersBSPTree/> room_clusters_bsp_tree(
-		BuildRoomClustersBSPTree( zvox_data.clusters ) );
-
-	auto mut moon_and_stars_buffer= CreateMoonAndStarsBuffer( map_description, billboards_description_ );
-	// We have more than one quad, but it's irrelevant for moon and star billboards.
-	PrepareQuadVertexTextureCoordinates( moon_and_stars_buffer[0] );
-
-	var RainSnowHierarchy mut rain_snow_hierarchy;
-	if( map_description.precipitation_kind == MapsDescription::MapDescription::c_precipitation_kind_rain ||
-		map_description.precipitation_kind == MapsDescription::MapDescription::c_precipitation_kind_snow )
-	{
-		rain_snow_hierarchy= BuildRainSnowHierarchy( zmap_lam_data.rain_droplets);
-	}
-
-	var BitArray mut wet_material_bits= CreateWetMaterialsBitArray( materials_properties_ptr.deref(), materials_block );
-
-	var WaterCirclesHierarchy mut water_circles_heirarchy;
-	if( map_description.precipitation_kind == MapsDescription::MapDescription::c_precipitation_kind_rain )
-	{
-		water_circles_heirarchy=
-			BuildWaterCirclesHierarchy( zmap_lam_data.rain_droplets, zmap_data.quads, wet_material_bits );
-	}
-
-	auto mut textures=
-		LoadMapTextures( materials_block, caching_game_resources_loader.GetGameFilesystem(), console_out_ );
-
-	var size_type mut mirror_texture_index(
-		materials_block.special_material_indices[ size_type( MaterialsDescription::SpecialMaterial::Mirror ) ] );
-	if( mirror_texture_index >= textures.size() )
-	{
-		mirror_texture_index= 0s;
-	}
-
-	map_data_.reset(
+	return
 		MapFullDrawDataSoft
 		{
 			.map_draw_data
@@ -2259,16 +2182,111 @@ fn WorldDrawerSoft::SetMap( mut this, u32 map_index )
 				],
 				.global_fog_enabled= map_description.linear_fog_enabled,
 				.rain_snow_hierarchy= move(rain_snow_hierarchy),
+				.precipitation_kind= map_description.precipitation_kind,
 				.breakable_material_bits= move(breakable_material_bits),
 				.wet_material_bits= move(wet_material_bits),
 				.mirror_texture_index= mirror_texture_index,
 				.water_circles_heirarchy= move(water_circles_heirarchy),
 			},
-			.map_visibility_calculators[ ( room_clusters_bsp_tree ), ( room_clusters_bsp_tree ) ],
 			.highlighted_cluster_flags( zvox_data.clusters.size(), false ),
 			.textures_with_applied_caustics= move( textures_with_applied_caustics ),
-			.mirror_texture= zero_init, // Set later if needed.
-		} );
+		};
+}
+
+fn WorldDrawerSoftInternal::LoadModels(
+	ust::array_view_imut</UsedModel/> model_list,
+	GameFilesystemPtr& game_filesystem_ptr,
+	ConsoleOutPtr& console_out_ptr,
+	ust::array_view_imut</Color32WorldTextureWithMips/> map_textures,
+	ModelsMapSoft &mut models )
+{
+	// Populate new models table and take existing models from the old one (if can).
+	// Doing so we avoid loading models which are already loaded and also unload no longer used models.
+	var ModelsMapSoft mut new_models;
+
+	auto mut fs_lock= game_filesystem_ptr.lock_mut();
+	var ( fn( ust::file_readable &mut f ) : ust::io_result</ModelData/> ) constexpr load_model_fn( LoadModel );
+
+	foreach( &used_model : model_list )
+	{
+		auto mut prev_model= models.remove_if_exists( used_model.file_name );
+		if( !prev_model.empty() )
+		{
+			new_models.insert_new( used_model.file_name, prev_model.try_take() );
+			continue;
+		}
+
+		result_match( fs_lock.deref().LoadFile( used_model.file_name, load_model_fn ) )
+		{
+			Ok(m) ->
+			{
+				new_models.insert_new( used_model.file_name, ModelSoftExt{ .model= CreateModelSoft( m ) } );
+			},
+			Err(e) ->
+			{
+				ConsoleOutAddTextLine(
+					console_out_ptr,
+					ust::concat(
+						"Failed to load model file \"",
+						ConvertResourceStringToStringView( used_model.file_name ),
+						"\"! Error: ",
+						ust::enum_to_string( e ) ) );
+			},
+		}
+	}
+
+	models= move( new_models );
+
+	// Prepare blood-covered textures.
+	// Do this each time models are loaded, even for models which are already present in memory.
+	// This is needed since blood textures are defined on per-map basis and thus it may be needed to re-apply them.
+
+	if( size_type( c_blood_texture_layer_medium ) < map_textures.size() &&
+		size_type( c_blood_texture_layer_large ) < map_textures.size() )
+	{
+		var Color32WorldTextureMip0& blood_texture_medium=
+			map_textures[ size_type( c_blood_texture_layer_medium ) ][0];
+
+		var Color32WorldTextureMip0& blood_texture_large=
+			map_textures[ size_type( c_blood_texture_layer_large ) ][0];
+
+		foreach( &used_model : model_list )
+		{
+			if_var( &mut model_ext : models.find( used_model.file_name ) )
+			{
+				// Reset old textures before creating new ones.
+				model_ext.blood_covered_textures.reset();
+
+				if( used_model.blood_coverage_needed )
+				{
+					model_ext.blood_covered_textures.reset(
+						ust::make_array(
+							CreateBloodCoveredModelTexture( model_ext.model.texture, blood_texture_medium ),
+							CreateBloodCoveredModelTexture( model_ext.model.texture, blood_texture_large ) ) );
+				}
+			}
+		}
+	}
+}
+
+fn WorldDrawerSoftInternal::LoadBillboardsDescription(
+	GameFilesystemPtr& game_filesystem_ptr, ConsoleOutPtr& console_out_ptr ) : BillboardsDescription
+{
+	auto mut lock= game_filesystem_ptr.lock_mut();
+	result_match( lock.deref().LoadFileToString( c_billboards_description_file_name ) )
+	{
+		Ok( file_contents ) ->
+		{
+			return ParseBillboardsDescriptionFile( file_contents );
+		},
+		Err( e ) ->
+		{
+			ConsoleOutAddTextLine(
+				console_out_ptr,
+				ust::concat( "Failed to read billboards description file! Error: ", ust::enum_to_string(e), "!" ) );
+			return BillboardsDescription();
+		},
+	}
 }
 
 // Transform texture coordinates from 0 to 1 range into 0 to size range.
@@ -3762,102 +3780,6 @@ fn DrawTestLines(
 	}
 }
 
-fn LoadBillboardsDescription(
-	GameFilesystemPtr& game_filesystem_ptr, ConsoleOutPtr& console_out_ptr ) : BillboardsDescription
-{
-	auto mut lock= game_filesystem_ptr.lock_mut();
-	result_match( lock.deref().LoadFileToString( c_billboards_description_file_name ) )
-	{
-		Ok( file_contents ) ->
-		{
-			return ParseBillboardsDescriptionFile( file_contents );
-		},
-		Err( e ) ->
-		{
-			ConsoleOutAddTextLine(
-				console_out_ptr,
-				ust::concat( "Failed to read billboards description file! Error: ", ust::enum_to_string(e), "!" ) );
-			return BillboardsDescription();
-		},
-	}
-}
-
-fn LoadModels(
-	ust::array_view_imut</UsedModel/> model_list,
-	GameFilesystemPtr& game_filesystem_ptr,
-	ConsoleOutPtr& console_out_ptr,
-	ust::array_view_imut</Color32WorldTextureWithMips/> map_textures,
-	ModelsMapSoft &mut models )
-{
-	// Populate new models table and take existing models from the old one (if can).
-	// Doing so we avoid loading models which are already loaded and also unload no longer used models.
-	var ModelsMapSoft mut new_models;
-
-	auto mut fs_lock= game_filesystem_ptr.lock_mut();
-	var ( fn( ust::file_readable &mut f ) : ust::io_result</ModelData/> ) constexpr load_model_fn( LoadModel );
-
-	foreach( &used_model : model_list )
-	{
-		auto mut prev_model= models.remove_if_exists( used_model.file_name );
-		if( !prev_model.empty() )
-		{
-			new_models.insert_new( used_model.file_name, prev_model.try_take() );
-			continue;
-		}
-
-		result_match( fs_lock.deref().LoadFile( used_model.file_name, load_model_fn ) )
-		{
-			Ok(m) ->
-			{
-				new_models.insert_new( used_model.file_name, ModelSoftExt{ .model= CreateModelSoft( m ) } );
-			},
-			Err(e) ->
-			{
-				ConsoleOutAddTextLine(
-					console_out_ptr,
-					ust::concat(
-						"Failed to load model file \"",
-						ConvertResourceStringToStringView( used_model.file_name ),
-						"\"! Error: ",
-						ust::enum_to_string( e ) ) );
-			},
-		}
-	}
-
-	models= move( new_models );
-
-	// Prepare blood-covered textures.
-	// Do this each time models are loaded, even for models which are already present in memory.
-	// This is needed since blood textures are defined on per-map basis and thus it may be needed to re-apply them.
-
-	if( size_type( c_blood_texture_layer_medium ) < map_textures.size() &&
-		size_type( c_blood_texture_layer_large ) < map_textures.size() )
-	{
-		var Color32WorldTextureMip0& blood_texture_medium=
-			map_textures[ size_type( c_blood_texture_layer_medium ) ][0];
-
-		var Color32WorldTextureMip0& blood_texture_large=
-			map_textures[ size_type( c_blood_texture_layer_large ) ][0];
-
-		foreach( &used_model : model_list )
-		{
-			if_var( &mut model_ext : models.find( used_model.file_name ) )
-			{
-				// Reset old textures before creating new ones.
-				model_ext.blood_covered_textures.reset();
-
-				if( used_model.blood_coverage_needed )
-				{
-					model_ext.blood_covered_textures.reset(
-						ust::make_array(
-							CreateBloodCoveredModelTexture( model_ext.model.texture, blood_texture_medium ),
-							CreateBloodCoveredModelTexture( model_ext.model.texture, blood_texture_large ) ) );
-				}
-			}
-		}
-	}
-}
-
 fn LoadMapTextures(
 	MaterialsDescription::Block& materials_block,
 	GameFilesystemPtr& game_filesystem_ptr,
@@ -4136,40 +4058,8 @@ fn UpdateMirrorTexture( Color32WorldTextureMip0& src, Color32WorldTextureWithMip
 	BuildWorldTextureMips( dst );
 }
 
-fn CalculateViewSpaceFrustumSideClipPlanes( [ u32, 2 ]& viewport_size ) : FrustumSideClipPlanes
-{
-	var Mat3f plane_normals_matrix
-	{
-		.values
-		[
-			[ 2.0f / f32( viewport_size[0] ),                            0.0f, -1.0f ],
-			[                           0.0f, -2.0f / f32( viewport_size[1] ),  1.0f ],
-			[                           0.0f,                            0.0f,  1.0f ],
-		],
-	};
-
-	 // Use slightly more than 90 degree to compensate for possible precision issues.
-	var f32 constexpr half_fov_x= c_tau / 8.0f * 1.02f;
-
-	var f32 half_fov_x_cos= ust::cos( half_fov_x );
-	var f32 half_fov_x_sin= ust::sin( half_fov_x );
-
-	var f32 half_fov_y= half_fov_x;
-	var f32 half_fov_y_cos= ust::cos( half_fov_y );
-	var f32 half_fov_y_sin= ust::sin( half_fov_y );
-
-	var [ Planef, 4 ] result_planes
-	[
-		{ .normal= Vec3f(  half_fov_x_cos, 0.0f,  half_fov_x_sin ) * plane_normals_matrix, .distance= 0.0f },
-		{ .normal= Vec3f( -half_fov_x_cos, 0.0f,  half_fov_x_sin ) * plane_normals_matrix, .distance= 0.0f },
-		{ .normal= Vec3f( 0.0f,  half_fov_y_cos,  half_fov_y_sin ) * plane_normals_matrix, .distance= 0.0f },
-		{ .normal= Vec3f( 0.0f, -half_fov_y_cos,  half_fov_y_sin ) * plane_normals_matrix, .distance= 0.0f },
-	];
-	return result_planes;
-}
-
 // Move Z near plane a little bit forward so that no actual geometry can lay on it.
-var f32 constexpr c_z_near_for_clipping= 1.25f;
+var f32 constexpr c_z_near_for_clipping= 1.125f * c_z_near;
 
 var tup[ Color32SquareTexture</ 0s /> ] c_white_texture_1x1[ [ [ c_white_color ] ] ] ;
 
