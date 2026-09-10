@@ -49,7 +49,6 @@ PanzerMortyr general:
 
 PanzerMortyr game logic:
 
-* Drop items from entities at the center of their bounding box, not at entity position (located typically on ground).
 * Ensure all entity properties affecting state transitions are implemented.
 * Break glass quads and quads with breakable materials while applying spash damage. The original game doesn't do this and it doesn't look right.
 * Implement flame particles emitted by explosive decorations ("wybuch_benzyny"/"plomienie").
