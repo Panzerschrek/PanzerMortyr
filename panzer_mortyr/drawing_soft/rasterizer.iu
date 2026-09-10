@@ -658,6 +658,18 @@ public:
 						f32( 1 << 16 ) * f32( mip_size[1] ) / f32( mip0_size[1] ),
 					];
 
+					var [ [ i32, 2 ], 2 ] tex_coord_equation_deltas_fixed16
+					[
+						[
+							( tex_coord_equations[0].x * mip_tc_scale[0] ),
+							( tex_coord_equations[0].y * mip_tc_scale[0] ),
+						],
+						[
+							( tex_coord_equations[1].x * mip_tc_scale[1] ),
+							( tex_coord_equations[1].y * mip_tc_scale[1] ),
+						]
+					];
+
 					// Perform texture coordinates interpolation using fixed16 format.
 					// It gives good precision with minimum overflow/underflow chance.
 					// For offset component perform f32 -> i64 -> i32 cast to wrap-around instead of producing garbage for large f32 values.
@@ -665,14 +677,36 @@ public:
 					var [ [ i32, 3 ], 2 ] tex_coord_equations_fixed16
 					[
 						[
-							     ( tex_coord_equations[0].x * mip_tc_scale[0] ),
-							     ( tex_coord_equations[0].y * mip_tc_scale[0] ),
-							( i64( tex_coord_equations[0].z * mip_tc_scale[0] ) )
+							tex_coord_equation_deltas_fixed16[0][0],
+							tex_coord_equation_deltas_fixed16[0][1],
+							(
+								i64( tex_coord_equations[0].z * mip_tc_scale[0] ) -
+								// Take triangle center into account.
+								( (
+									i64( triangle_center[0] * c_quantization_scale ) *
+										i64( tex_coord_equation_deltas_fixed16[0][0] ) +
+									i64( triangle_center[1] * c_quantization_scale ) *
+										i64( tex_coord_equation_deltas_fixed16[0][1] )
+								  ) >> c_quantization_scale_log2 ) +
+								// Shift to pixel center.
+								( i64( tex_coord_equation_deltas_fixed16[0][0] + tex_coord_equation_deltas_fixed16[0][1] ) >> 1 )
+							)
 						],
 						[
-							     ( tex_coord_equations[1].x * mip_tc_scale[1] ),
-							     ( tex_coord_equations[1].y * mip_tc_scale[1] ),
-							( i64( tex_coord_equations[1].z * mip_tc_scale[1] ) )
+							tex_coord_equation_deltas_fixed16[1][0],
+							tex_coord_equation_deltas_fixed16[1][1],
+							(
+								i64( tex_coord_equations[1].z * mip_tc_scale[0] ) -
+								// Take triangle center into account.
+								( (
+									i64( triangle_center[0] * c_quantization_scale ) *
+										i64( tex_coord_equation_deltas_fixed16[1][0] ) +
+									i64( triangle_center[1] * c_quantization_scale ) *
+										i64( tex_coord_equation_deltas_fixed16[1][1] )
+								  ) >> c_quantization_scale_log2 ) +
+								// Shift to pixel center.
+								( i64( tex_coord_equation_deltas_fixed16[1][0] + tex_coord_equation_deltas_fixed16[1][1] ) >> 1 )
+							)
 						]
 					];
 
@@ -701,11 +735,6 @@ public:
 								f32( min_x_i ) + ( 0.5f - triangle_center[0] ),
 								f32( y ) + ( 0.5f - triangle_center[1] ),
 							];
-							var [ i32, 2 ] first_pixel_center_fixed1
-							[
-								min_x_i * 2 + 1 - i32( triangle_center[0] ) * 2,
-								y * 2 + 1 - i32( triangle_center[1] ) * 2,
-							];
 
 							var [ f32, 4 ] mut pixel_color= zero_init;
 
@@ -721,11 +750,11 @@ public:
 							var [ i32, 2 ] mut pixel_tex_coord_fixed16
 							[
 								tex_coord_equations_fixed16[0][2] +
-								( ( tex_coord_equations_fixed16[0][0] * first_pixel_center_fixed1[0] +
-									tex_coord_equations_fixed16[0][1] * first_pixel_center_fixed1[1] ) >> 1 ),
+									tex_coord_equations_fixed16[0][0] * min_x_i +
+									tex_coord_equations_fixed16[0][1] * y,
 								tex_coord_equations_fixed16[1][2] +
-								( ( tex_coord_equations_fixed16[1][0] * first_pixel_center_fixed1[0] +
-									tex_coord_equations_fixed16[1][1] * first_pixel_center_fixed1[1] ) >> 1 ),
+									tex_coord_equations_fixed16[1][0] * min_x_i +
+									tex_coord_equations_fixed16[1][1] * y,
 							];
 
 							var f32 mut pixel_depth=
