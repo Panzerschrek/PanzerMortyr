@@ -13,6 +13,8 @@ out vec4 color;
 
 void main()
 {
+	// Keep this shader synchronized with Ü code applying burning effect in software mode!
+
 	// Calculate fire power scale depending on Z coordinate of the fragment's normal.
 	// Surfaces which are facing down shouldn't burn.
 

@@ -1,0 +1,141 @@
+import "/assert.iu"
+import "burning_effect.iu"
+
+namespace PM
+{
+
+// This function calculates burning effect exactly how this effect is calculated in OpenGL mode via a shader.
+// The only difference is that it does this for each vertex and not for each pixel.
+// Keep this code synchronized with the corresponding shader!
+fn CalculateVertexLightsForBurningEffect(
+	CausticsTextureData& texture,
+	f32 time_s,
+	ust::array_view_imut</ ModelFrameVertex /> frame0_vertices,
+	ust::array_view_imut</ ModelFrameVertex /> frame1_vertices,
+	f32 frame_mix,
+	f32 burning_strength,
+	[ f32, 3 ]& light_scale,
+	ust::array_view_mut</ VertexLightWithFog /> vertex_lights )
+{
+	debug_assert( frame0_vertices.size() == frame1_vertices.size() );
+	debug_assert( vertex_lights.size() == frame0_vertices.size() );
+
+	var u32 texture_layer_index=
+		u32( time_s * ( 3.0f / 4.0f * f32( c_caustics_texture_num_layers ) ) ) % c_caustics_texture_num_layers;
+
+	var CausticsTextureLayer& texture_layer= texture[ texture_layer_index ];
+
+	var f32 texture_scroll= time_s * ( 2.0f / 3.0f * f32( c_caustics_texture_size ) );
+
+	var f32 frame_scale0= 1.0f - frame_mix;
+	var f32 frame_scale1= frame_mix;
+
+	// By taking a subrange of the given ranges having common size we allow LLVM optimizing loop iteration slightly better.
+	var size_type num_vertices=
+		ust::min( ust::min( frame0_vertices.size(), frame1_vertices.size() ), vertex_lights.size() );
+
+	for( auto mut i= 0s; i < num_vertices; ++i )
+	{
+		// Calculate position and normal mixed between two frames.
+		// Don't care optimizing it for the case where both frames are identical,
+		// since the most models to which burning effect is applied are animated and thus require proper mixing.
+
+		var ModelFrameVertex& v0= frame0_vertices[i];
+		var ModelFrameVertex& v1= frame1_vertices[i];
+
+		var Vec3f position= Vec3f( v0.position ) * frame_scale0 + Vec3f( v1.position ) * frame_scale1;
+
+		var Vec3f normal=
+			Vec3f( f32( v0.normal[0] ), f32( v0.normal[1] ), f32( v0.normal[2] ) ) * frame_scale0 +
+			Vec3f( f32( v1.normal[0] ), f32( v1.normal[1] ), f32( v1.normal[2] ) ) * frame_scale1;
+
+		// Perform normalization, since mixing may produce non-normalized normals.
+		var Vec3f normal_normalized= normal / ust::max( 1.0f / 1024.0f, normal.Length() );
+
+		// Calculate fire power scale depending on Z coordinate of the vertex normal.
+		// Surfaces which are facing down shouldn't burn.
+
+		var f32 normal_based_fire_power_scale= ust::max( 0.0f, normal_normalized.z * -0.6f + 0.4f );
+
+		var Vec3f tc_scale(
+			f32( c_caustics_texture_size ) / 32.0f,
+			f32( c_caustics_texture_size ) / 32.0f,
+			f32( c_caustics_texture_size ) / 64.0f );
+		var Vec3f mut tc= position * tc_scale;
+		tc.z+= texture_scroll;
+
+		var [ i32, 3 ] tc_i
+		[
+			i32(tc.x) & ( i32( c_caustics_texture_size ) - 1 ),
+			i32(tc.y) & ( i32( c_caustics_texture_size ) - 1 ),
+			i32(tc.z) & ( i32( c_caustics_texture_size ) - 1 ),
+		];
+
+		// Perform here biplanar texture mapping.
+
+		var f32 normal_xy_square_length= ust::max( 0.00001f, normal.xy().SquareLength() );
+		var f32 weight0= normal.y * normal.y / ( 255.0f * normal_xy_square_length );
+		var f32 weight1= normal.x * normal.x / ( 255.0f * normal_xy_square_length );
+
+		var u8 texture_value0= texture_layer[ u32( tc_i[0] ) ][ u32( tc_i[2] ) ];
+		var u8 texture_value1= texture_layer[ u32( tc_i[1] ) ][ u32( tc_i[2] ) ];
+
+		var f32 texture_value= f32( texture_value0 ) * weight0 + f32( texture_value1 ) * weight1;
+
+		// Modulate normal-based power with texture.
+		var f32 fire_power= texture_value * normal_based_fire_power_scale * ( 2.0f * burning_strength );
+
+		// A tricky code doing gradient with 4 different colors.
+		var [ f32, 3 ] mut l[ 0.0f ... ];
+		if( fire_power < c_edge0 )
+		{
+			l= ColorMix( c_color_dark, c_color_blue, ( fire_power - 0.0f ) * ( 1.0f / ( c_edge0 - 0.0f ) ) );
+		}
+		else if( fire_power < c_edge1 )
+		{
+			l= ColorMix( c_color_blue, c_color_orange, ( fire_power - c_edge0 ) * ( 1.0f / ( c_edge1 - c_edge0 ) ) );
+		}
+		else if( fire_power < c_edge2 )
+		{
+			l= ColorMix( c_color_orange, c_color_yellow, ( fire_power - c_edge1 ) * ( 1.0f / ( c_edge2 - c_edge1 ) ) );
+		}
+		else if( fire_power < c_edge3 )
+		{
+			l= ColorMix( c_color_yellow, c_color_dark, ( fire_power - c_edge2 ) * ( 1.0f / ( c_edge3 - c_edge2 ) ) );
+		}
+		else
+		{
+			l= c_color_dark;
+		}
+
+		var VertexLightWithFog &mut vl= vertex_lights[i];
+		var f32 one_minus_fog_density= 1.0f - vl[3];
+		vl[0]= ust::max( 0.0f, l[0] ) * light_scale[0] * one_minus_fog_density;
+		vl[1]= ust::max( 0.0f, l[1] ) * light_scale[1] * one_minus_fog_density;
+		vl[2]= ust::max( 0.0f, l[2] ) * light_scale[2] * one_minus_fog_density;
+	}
+}
+
+fn ColorMix( [ f32, 3 ]& a, [ f32, 3 ]& b, f32 mix ) : [ f32, 3 ]
+{
+	var f32 one_minus_mix= 1.0f - mix;
+	var [ f32, 3 ] res
+	[
+		a[0] * one_minus_mix + b[0] * mix,
+		a[1] * one_minus_mix + b[1] * mix,
+		a[2] * one_minus_mix + b[2] * mix,
+	];
+	return res;
+}
+
+var [ f32, 3 ] constexpr c_color_dark  [ 0.0f, 0.0f, 0.0f ];
+var [ f32, 3 ] constexpr c_color_blue  [ 0.4f, 0.0f, 0.0f ];
+var [ f32, 3 ] constexpr c_color_orange[ 0.1f, 0.3f, 0.5f ];
+var [ f32, 3 ] constexpr c_color_yellow[ 0.2f, 0.8f, 0.8f ];
+
+var f32 constexpr c_edge0= 0.1f;
+var f32 constexpr c_edge1= 0.6f;
+var f32 constexpr c_edge2= 1.1f;
+var f32 constexpr c_edge3= 2.0f;
+
+} // namespace PM

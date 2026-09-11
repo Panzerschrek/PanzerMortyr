@@ -62,7 +62,6 @@ PanzerMortyr game logic:
 * Draw damaging flames for non-enemy objects using flame billboards instead of burning effect, since such burning for them looks unnatural and ugly.
 * Consider performing proper player to entity visibility check while doing entity state transition based on "w_zasiegu_widocznosci" property.
 * Consider disabling all or at least some weapons of the player if weapon shot start position is in water or other liquid. The original game allow shooting in water, but PanzerMortyr probably shouldn't allow this.
-* Consider disabling burning effect for non-enemy entities. It doesn't look well for things made of iron or other non-burnable materials.
 * Consider optimizing global navigation graph calculation even more - to reduce map loading time.
 * Consider not creating edges in global navigation graph requiring jumping down too deep (to avoid fall damage).
 * Avoid creating global navigation graph nodes located in liquids, but allow them in shallow water (but not acid or lava).
@@ -113,7 +112,6 @@ PanzerMortyr OpenGL rendering:
 PanzerMortyr software rendering:
 
 * Draw test primitives.
-* Draw burning models.
 * Consider applying local fog to semitransparent geometry.
 * Fix issues with hall-of-mirrors effect visible at some places on some maps where sky quads are missing or aren't large enough to cover the entire sky.
 * Consider optimizing vertices transformations and other heavy calculations by using "fma" instructions.
