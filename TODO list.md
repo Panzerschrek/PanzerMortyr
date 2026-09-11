@@ -117,7 +117,6 @@ PanzerMortyr software rendering:
 * Consider applying local fog to semitransparent geometry.
 * Fix issues with hall-of-mirrors effect visible at some places on some maps where sky quads are missing or aren't large enough to cover the entire sky.
 * Consider optimizing vertices transformations and other heavy calculations by using "fma" instructions.
-* Consider optimizing code calculating per-vertex light for models using bit-hacky fast inverse square root.
 * Consider using textures dithering (as Unreal does).
 
 PanzerMortyr menus and HUD:
