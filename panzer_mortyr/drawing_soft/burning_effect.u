@@ -8,6 +8,7 @@ fn CalculateVertexLightsForBurningEffect(
 	ust::array_view_imut</ ModelFrameVertex /> frame0_vertices,
 	ust::array_view_imut</ ModelFrameVertex /> frame1_vertices,
 	f32 frame_mix,
+	CausticsTextureLayer& texture_layer,
 	f32 burning_strength,
 	[ f32, 3 ]& light_scale,
 	ust::array_view_mut</ VertexLightWithFog /> vertex_lights )
@@ -24,8 +25,6 @@ fn CalculateVertexLightsForBurningEffect(
 
 	for( auto mut i= 0s; i < num_vertices; ++i )
 	{
-		// TODO - perform proper light calculation.
-
 		var ModelFrameVertex& v0= frame0_vertices[i];
 		var ModelFrameVertex& v1= frame1_vertices[i];
 
@@ -41,11 +40,32 @@ fn CalculateVertexLightsForBurningEffect(
 
 		var f32 normal_based_fire_power_scale= ust::max( 0.0f, normal_normalized.z * -0.6f + 0.4f );
 
-		var f32 texture_value= 1.0f; // TODO - read from a texture.
-		ust::ignore_unused( position );
+		var Vec3f tc_scale(
+			f32( c_caustics_texture_size ) / 32.0f,
+			f32( c_caustics_texture_size ) / 32.0f,
+			f32( c_caustics_texture_size ) / 64.0f );
+		var Vec3f tc= position * tc_scale;
+		// tc.z+= texture_offset_y; // TODO - perform scrolling.
+
+		var [ i32, 3 ] tc_i
+		[
+			i32(tc.x) & ( i32( c_caustics_texture_size ) - 1 ),
+			i32(tc.y) & ( i32( c_caustics_texture_size ) - 1 ),
+			i32(tc.z) & ( i32( c_caustics_texture_size ) - 1 ),
+		];
+
+		// Perform here biplanar texture mapping.
+
+		var f32 normal_xy_square_length= ust::max( 0.00001f, normal.xy().SquareLength() );
+		var f32 weight0= normal.y * normal.y / ( 255.0f * normal_xy_square_length );
+		var f32 weight1= normal.x * normal.x / ( 255.0f * normal_xy_square_length );
+
+		var u8 texture_value0= texture_layer[ u32( tc_i[0] ) ][ u32( tc_i[2] ) ];
+		var u8 texture_value1= texture_layer[ u32( tc_i[1] ) ][ u32( tc_i[2] ) ];
+
+		var f32 texture_value= f32( texture_value0 ) * weight0 + f32( texture_value1 ) * weight1;
 
 		// Modulate normal-based power with texture.
-
 		var f32 fire_power= texture_value * normal_based_fire_power_scale * ( 2.0f * burning_strength );
 
 		// A tricky code doing gradient with 4 different colors.
