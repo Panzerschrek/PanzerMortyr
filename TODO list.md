@@ -116,13 +116,13 @@ PanzerMortyr software rendering:
 * Fix issues with hall-of-mirrors effect visible at some places on some maps where sky quads are missing or aren't large enough to cover the entire sky.
 * Consider optimizing vertices transformations and other heavy calculations by using "fma" instructions.
 * Consider using textures dithering (as Unreal does).
+* Consider implementing some sort of vertical synchronization - to avoid tearing.
 
 PanzerMortyr menus and HUD:
 
 * Allow changing HUD position via settings menu.
 * Implement some stub page for parental lock menu.
 * Consider allowing specifying custom window resolution for windowed mode on video settings page.
-* Allow changing rendering mode (OpenGL/software) via menu.
 * Consider displaying in HUD amounts of tools in inventory, at least important ones - health, ammo.
 * Consider drawing active tools at some edge (left or right) of the screen.
 * Allow configuring crosshair kind, investigate what kinds of crosshairs are available in the original game.
