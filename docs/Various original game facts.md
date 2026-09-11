@@ -103,3 +103,4 @@ This documents describes various interesting facts about the original game.
 * The original game has some hard limit for the number of sounds playing simultaneously. This limit is reached on some future maps due to Robo Ed enemies emitting idle sounds, so that some other sounds disappear.
 * Projectiles have very limited lifetime (2 seconds or so), so that panzerfaust shots may disappear before hitting something.
 * Robo Ed. enemies can't sometimes navigate in tight corridors (like on map 19), because their bounding boxes are way too large.
+* Lamp decorations (on map 2 and 3) are specified to be enemies. They emit a default enemy death sound after being shot.
