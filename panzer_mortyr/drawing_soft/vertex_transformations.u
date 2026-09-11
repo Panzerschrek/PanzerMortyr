@@ -130,10 +130,9 @@ fn TransformModelVerticesSingleFrame(
 	// By taking a subrange of the given ranges having common size we allow LLVM optimizing loop iteration slightly better.
 	var size_type num_vertices= ust::min( frame_vertices.size(), vertices_transformed.size() );
 
-	foreach( pair :
-			vertices_transformed.subrange_end( num_vertices ).iter().zip( frame_vertices.subrange_end( num_vertices ).iter() ) )
+	for( auto mut i= 0s; i < num_vertices; ++i )
 	{
-		pair.first= Vec3f( pair.second.position ) * m;
+		vertices_transformed[i]= Vec3f( frame_vertices[i].position ) * m;
 	}
 }
 
@@ -163,17 +162,13 @@ fn TransformModelVerticesTwoFrames(
 	var size_type num_vertices=
 		ust::min( ust::min( frame0_vertices.size(), frame1_vertices.size() ), vertices_transformed.size() );
 
-	foreach( pair :
-			vertices_transformed.subrange_end( num_vertices ).iter().zip(
-				frame0_vertices.subrange_end( num_vertices ).iter().zip(
-					frame1_vertices.subrange_end( num_vertices ).iter() ) ) )
+	for( auto mut i= 0s; i < num_vertices; ++i )
 	{
 		var Vec3f position=
-			Vec3f( pair.second.first .position ) * ( 1.0f - frame_mix ) +
-			Vec3f( pair.second.second.position ) * frame_mix;
+			Vec3f( frame0_vertices[i].position ) * ( 1.0f - frame_mix ) +
+			Vec3f( frame1_vertices[i].position ) * frame_mix;
 
-
-		pair.first= position * m;
+		vertices_transformed[i]= position * m;
 	}
 }
 
@@ -192,16 +187,15 @@ fn ApplyLightToModelVerticesSingleFrame(
 	// By taking a subrange of the given ranges having common size we allow LLVM optimizing loop iteration slightly better.
 	var size_type num_vertices= ust::min( frame_vertices.size(), vertex_lights.size() );
 
-	foreach( pair :
-		vertex_lights.subrange_end( num_vertices ).iter().zip( frame_vertices.subrange_end( num_vertices ).iter() ) )
+	for( auto mut i= 0s; i < num_vertices; ++i )
 	{
 		// TODO - optimize this code, make sure vector instructions are used.
 
 		// Since input normals are already normalized and no mixing is performed, renormalization isn't necessary.
-		var [ i8, 3 ]& n= pair.second.normal;
+		var [ i8, 3 ]& n= frame_vertices[i].normal;
 		var Vec3f normal_normalized( f32(n[0]) * normal_scale, f32(n[1]) * normal_scale, f32(n[2]) * normal_scale );
 
-		pair.first=
+		vertex_lights[i]=
 			ust::make_array(
 				l[0].directional_components.Dot( normal_normalized ) + l[0].constant_component,
 				l[1].directional_components.Dot( normal_normalized ) + l[1].constant_component,
@@ -240,14 +234,11 @@ fn ApplyLightToModelVerticesTwoFrames(
 	var size_type num_vertices=
 		ust::min( ust::min( frame0_vertices.size(), frame1_vertices.size() ), vertex_lights.size() );
 
-	foreach( pair :
-			vertex_lights.subrange_end( num_vertices ).iter().zip(
-				frame0_vertices.subrange_end( num_vertices ).iter().zip(
-					frame1_vertices.subrange_end( num_vertices ).iter() ) ) )
+	for( auto mut i= 0s; i < num_vertices; ++i )
 	{
 		// TODO - optimize this code, make sure vector instructions are used.
-		var [ i8, 3 ]& n0= pair.second.first .normal;
-		var [ i8, 3 ]& n1= pair.second.second.normal;
+		var [ i8, 3 ]& n0= frame0_vertices[i].normal;
+		var [ i8, 3 ]& n1= frame1_vertices[i].normal;
 
 		var Vec3f normal=
 			Vec3f( f32( n0[0] ), f32( n0[1] ), f32( n0[2] ) ) * scale0 +
@@ -257,7 +248,7 @@ fn ApplyLightToModelVerticesTwoFrames(
 		// TODO - try speed-up normalization, like by using fast inverse square root.
 		var Vec3f normal_normalized= normal / ust::max( 1.0f / 1024.0f, normal.Length() );
 
-		pair.first=
+		vertex_lights[i]=
 			ust::make_array(
 				l[0].directional_components.Dot( normal_normalized ) + l[0].constant_component,
 				l[1].directional_components.Dot( normal_normalized ) + l[1].constant_component,
@@ -279,17 +270,17 @@ fn CalculateFogDensityForModelVerticesSingleFrame(
 	// By taking a subrange of the given ranges having common size we allow LLVM optimizing loop iteration slightly better.
 	var size_type num_vertices= ust::min( frame_vertices.size(), vertex_lights.size() );
 
-	foreach( pair :
-			vertex_lights.subrange_end( num_vertices ).iter().zip( frame_vertices.subrange_end( num_vertices ).iter() ) )
+	for( auto mut i= 0s; i < num_vertices; ++i )
 	{
 		// TODO - optimize this code, make sure vector instructions are used.
-		var Vec3f position_transformed= Vec3f( pair.second.position ) * m;
+		var Vec3f position_transformed= Vec3f( frame_vertices[i].position ) * m;
 
 		var f32 one_minus_fog_density= CalculateOneMinusFogDensity( position_transformed.Length() );
-		pair.first[0]*= one_minus_fog_density;
-		pair.first[1]*= one_minus_fog_density;
-		pair.first[2]*= one_minus_fog_density;
-		pair.first[3]= 1.0f - one_minus_fog_density;
+		var VertexLightWithFog &mut vl= vertex_lights[i];
+		vl[0]*= one_minus_fog_density;
+		vl[1]*= one_minus_fog_density;
+		vl[2]*= one_minus_fog_density;
+		vl[3]= 1.0f - one_minus_fog_density;
 	}
 }
 
@@ -323,25 +314,23 @@ fn CalculateFogDensityForModelVerticesTwoFrames(
 	var size_type num_vertices=
 		ust::min( ust::min( frame0_vertices.size(), frame1_vertices.size() ), vertex_lights.size() );
 
-	foreach( pair :
-			vertex_lights.subrange_end( num_vertices ).iter().zip(
-				frame0_vertices.subrange_end( num_vertices ).iter().zip(
-					frame1_vertices.subrange_end( num_vertices ).iter() ) ) )
+	for( auto mut i= 0s; i < num_vertices; ++i )
 	{
 		// TODO - optimize this code, make sure vector instructions are used.
 
-		var [ f32, 3 ]& p0= pair.second.first .position;
-		var [ f32, 3 ]& p1= pair.second.second.position;
+		var [ f32, 3 ]& p0= frame0_vertices[i].position;
+		var [ f32, 3 ]& p1= frame1_vertices[i].position;
 
 		var Vec3f position= Vec3f( p0 ) * scale0 + Vec3f( p1 ) * scale1;
 
 		var Vec3f position_transformed= position * m;
 
 		var f32 one_minus_fog_density= CalculateOneMinusFogDensity( position_transformed.Length() );
-		pair.first[0]*= one_minus_fog_density;
-		pair.first[1]*= one_minus_fog_density;
-		pair.first[2]*= one_minus_fog_density;
-		pair.first[3]= 1.0f - one_minus_fog_density;
+		var VertexLightWithFog &mut vl= vertex_lights[i];
+		vl[0]*= one_minus_fog_density;
+		vl[1]*= one_minus_fog_density;
+		vl[2]*= one_minus_fog_density;
+		vl[3]= 1.0f - one_minus_fog_density;
 	}
 }
 
