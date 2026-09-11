@@ -4,6 +4,9 @@ import "burning_effect.iu"
 namespace PM
 {
 
+// This function calculates burning effect exactly how this effect is calculated in OpenGL mode via a shader.
+// The only difference is that it does this for each vertex and not for each pixel.
+// Keep this code synchronized with the corresponding shader!
 fn CalculateVertexLightsForBurningEffect(
 	CausticsTextureData& texture,
 	f32 time_s,
@@ -24,8 +27,8 @@ fn CalculateVertexLightsForBurningEffect(
 
 	var f32 texture_scroll= time_s * ( 2.0f / 3.0f * f32( c_caustics_texture_size ) );
 
-	var f32 scale0= 1.0f - frame_mix;
-	var f32 scale1= frame_mix;
+	var f32 frame_scale0= 1.0f - frame_mix;
+	var f32 frame_scale1= frame_mix;
 
 	// By taking a subrange of the given ranges having common size we allow LLVM optimizing loop iteration slightly better.
 	var size_type num_vertices=
@@ -33,18 +36,24 @@ fn CalculateVertexLightsForBurningEffect(
 
 	for( auto mut i= 0s; i < num_vertices; ++i )
 	{
+		// Calculate position and normal mixed between two frames.
+		// Don't care optimizing it for the case where both frames are identical,
+		// since the most models to which burning effect is applied are animated and thus require proper mixing.
+
 		var ModelFrameVertex& v0= frame0_vertices[i];
 		var ModelFrameVertex& v1= frame1_vertices[i];
 
-		var Vec3f position= Vec3f( v0.position ) * scale0 + Vec3f( v1.position ) * scale1;
+		var Vec3f position= Vec3f( v0.position ) * frame_scale0 + Vec3f( v1.position ) * frame_scale1;
 
 		var Vec3f normal=
-			Vec3f( f32( v0.normal[0] ), f32( v0.normal[1] ), f32( v0.normal[2] ) ) * scale0 +
-			Vec3f( f32( v1.normal[0] ), f32( v1.normal[1] ), f32( v1.normal[2] ) ) * scale1;
+			Vec3f( f32( v0.normal[0] ), f32( v0.normal[1] ), f32( v0.normal[2] ) ) * frame_scale0 +
+			Vec3f( f32( v1.normal[0] ), f32( v1.normal[1] ), f32( v1.normal[2] ) ) * frame_scale1;
 
 		// Perform normalization, since mixing may produce non-normalized normals.
-		// TODO - try speed-up normalization, like by using fast inverse square root.
 		var Vec3f normal_normalized= normal / ust::max( 1.0f / 1024.0f, normal.Length() );
+
+		// Calculate fire power scale depending on Z coordinate of the vertex normal.
+		// Surfaces which are facing down shouldn't burn.
 
 		var f32 normal_based_fire_power_scale= ust::max( 0.0f, normal_normalized.z * -0.6f + 0.4f );
 
@@ -80,19 +89,19 @@ fn CalculateVertexLightsForBurningEffect(
 		var [ f32, 3 ] mut l[ 0.0f ... ];
 		if( fire_power < c_edge0 )
 		{
-			l= ColorMix( c_color_dark, c_color_blue, ( fire_power - 0.0f ) / ( c_edge0 - 0.0f ) );
+			l= ColorMix( c_color_dark, c_color_blue, ( fire_power - 0.0f ) * ( 1.0f / ( c_edge0 - 0.0f ) ) );
 		}
 		else if( fire_power < c_edge1 )
 		{
-			l= ColorMix( c_color_blue, c_color_orange, ( fire_power - c_edge0 ) / ( c_edge1 - c_edge0 ) );
+			l= ColorMix( c_color_blue, c_color_orange, ( fire_power - c_edge0 ) * ( 1.0f / ( c_edge1 - c_edge0 ) ) );
 		}
 		else if( fire_power < c_edge2 )
 		{
-			l= ColorMix( c_color_orange, c_color_yellow, ( fire_power - c_edge1 ) / ( c_edge2 - c_edge1 ) );
+			l= ColorMix( c_color_orange, c_color_yellow, ( fire_power - c_edge1 ) * ( 1.0f / ( c_edge2 - c_edge1 ) ) );
 		}
 		else if( fire_power < c_edge3 )
 		{
-			l= ColorMix( c_color_yellow, c_color_dark, ( fire_power - c_edge2 ) / ( c_edge3 - c_edge2 ) );
+			l= ColorMix( c_color_yellow, c_color_dark, ( fire_power - c_edge2 ) * ( 1.0f / ( c_edge3 - c_edge2 ) ) );
 		}
 		else
 		{
