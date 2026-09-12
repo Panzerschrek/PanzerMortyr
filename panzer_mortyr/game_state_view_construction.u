@@ -54,8 +54,11 @@ fn ConstructWorldDrawingInfo(
 		.camera_params
 		{
 			.position= Vec3f::MakeZero(),
-			.azimuth= camera_controller.GetAzimuth(),
-			.elevation= camera_controller.GetElevation(),
+			.angles
+			{
+				.azimuth= camera_controller.GetAzimuth(),
+				.elevation= camera_controller.GetElevation(),
+			},
 			.fov_x= camera_controller.GetFOV(),
 		},
 		.fullscreen_effect= WorldDrawingInfo::FullscreenEffect::None,
@@ -92,9 +95,8 @@ fn ConstructWorldDrawingInfo(
 		drawing_info.broken_quad_bits= game_state.broken_quad_bits;
 
 		{
-			auto [ azimuth, elevation ]= GetCameraAngles( game_state_extended, time_steps_fraction, camera_controller );
-			drawing_info.camera_params.azimuth= azimuth;
-			drawing_info.camera_params.elevation= elevation;
+			drawing_info.camera_params.angles=
+				GetCameraAngles( game_state_extended, time_steps_fraction, camera_controller );
 			// TODO - set also roll if necessary.
 		}
 
@@ -115,8 +117,7 @@ fn ConstructWorldDrawingInfo(
 		}
 
 		drawing_info.camera_params.position=
-			camera_position_without_depth_shift +
-			GetCameraDepthShift( drawing_info.camera_params.azimuth, drawing_info.camera_params.elevation );
+			camera_position_without_depth_shift + GetCameraDepthShift( drawing_info.camera_params.angles );
 
 		auto get_entity_position_and_azimuth=
 			lambda[&]( size_type i ) : ust::optional</ tup[ Vec3f, f32 ] />
@@ -661,8 +662,8 @@ fn ConstructWorldDrawingInfo(
 				if( muzzle_flash.owner_entity_index == c_player_entity_index )
 				{
 					var Mat4f rotation_matrix=
-						Mat4f::MakeRotationX( drawing_info.camera_params.elevation ) *
-						Mat4f::MakeRotationZ( drawing_info.camera_params.azimuth );
+						Mat4f::MakeRotationX( drawing_info.camera_params.angles.elevation ) *
+						Mat4f::MakeRotationZ( drawing_info.camera_params.angles.azimuth );
 
 					absolute_position=
 						camera_position_without_depth_shift + muzzle_flash.relative_position * rotation_matrix;
@@ -1109,8 +1110,8 @@ fn ConstructWorldDrawingInfo(
 				if( muzzle_light.owner_entity_index == c_player_entity_index )
 				{
 					var Mat4f rotation_matrix=
-						Mat4f::MakeRotationX( drawing_info.camera_params.elevation ) *
-						Mat4f::MakeRotationZ( drawing_info.camera_params.azimuth );
+						Mat4f::MakeRotationX( drawing_info.camera_params.angles.elevation ) *
+						Mat4f::MakeRotationZ( drawing_info.camera_params.angles.azimuth );
 
 					absolute_position=
 						camera_position_without_depth_shift +
@@ -1426,8 +1427,8 @@ fn ConstructWorldDrawingInfo(
 							{
 								.model_file_name= animation.model_file_name,
 								.position= camera_position_without_depth_shift + position_variation,
-								.azimuth= drawing_info.camera_params.azimuth,
-								.elevation= drawing_info.camera_params.elevation + elevation_add,
+								.azimuth= drawing_info.camera_params.angles.azimuth,
+								.elevation= drawing_info.camera_params.angles.elevation + elevation_add,
 								.frames= model_frames,
 								.disable_culling= true,
 								.first_person_weapon= true,
@@ -1518,13 +1519,11 @@ fn ConstructWorldDrawingInfo(
 
 			var Vec3f flashlight_ray_start=
 				drawing_info.camera_params.position +
-				Vec3f( -5.0f, 10.0f, -8.0f ) * Mat4f::MakeRotationZ( drawing_info.camera_params.azimuth );
+				Vec3f( -5.0f, 10.0f, -8.0f ) * Mat4f::MakeRotationZ( drawing_info.camera_params.angles.azimuth );
 
 			var f32 c_flashlight_trace_max_distance= 1024.0f;
 			var Vec3f trace_vec=
-				CalculateCameraDirectionVector(
-					drawing_info.camera_params.azimuth, drawing_info.camera_params.elevation ) *
-				c_flashlight_trace_max_distance;
+				CalculateCameraDirectionVector( drawing_info.camera_params.angles ) * c_flashlight_trace_max_distance;
 
 			var f32 mut min_trace_distance= 1.0f;
 
@@ -2235,22 +2234,22 @@ fn ConstructGameEventNotificationsDrawingInfo(
 		var f32 c_note_full_alpha_distance= 32.0f;
 		var f32 c_note_base_scale= 20.0f;
 
-		auto [ camera_azimuth, camera_elevation ] =
+		var CameraAngles angles =
 			GetCameraAngles( game_state_extended, time_steps_fraction, camera_controller );
 
 		var Vec3f direction_vector=
-			CalculateCameraDirectionVector( camera_azimuth, camera_elevation ) * c_note_visible_max_distance;
+			CalculateCameraDirectionVector( angles ) * c_note_visible_max_distance;
 
 		// Extrapolate/mix camera position used for note volume intersection search.
 
 		var Vec3f mut camera_position=
-			GetCameraPositionForPlayerWithExtraDepthShift( game_state.player, camera_azimuth, camera_elevation );
+			GetCameraPositionForPlayerWithExtraDepthShift( game_state.player, angles );
 
 		if_var( &current_predicted_game_state : game_state_extended.current_predicted )
 		{
 			camera_position=
 				GetCameraPositionForPlayerWithExtraDepthShift(
-					current_predicted_game_state.player, camera_azimuth, camera_elevation );
+					current_predicted_game_state.player, angles );
 		}
 
 		if_var( &next_predicted_game_state : game_state_extended.next_predicted )
@@ -2259,7 +2258,7 @@ fn ConstructGameEventNotificationsDrawingInfo(
 				MixPosition(
 					camera_position,
 					GetCameraPositionForPlayerWithExtraDepthShift(
-						next_predicted_game_state.player, camera_azimuth, camera_elevation ),
+						next_predicted_game_state.player, angles ),
 					time_steps_fraction );
 		}
 
@@ -2306,8 +2305,11 @@ fn ConstructCrosshairDrawingInfo(
 	{
 		.camera_position= Vec3f::MakeZero(),
 		// Don't care taking death camera angles, since we don't draw crosshair if player is dead anyway.
-		.camera_azimuth= camera_controller.GetAzimuth(),
-		.camera_elevation= camera_controller.GetElevation(),
+		.camera_angles
+		{
+			.azimuth= camera_controller.GetAzimuth(),
+			.elevation= camera_controller.GetElevation(),
+		},
 		.camera_fov= camera_controller.GetFOV(),
 		.hit_point= Vec3f::MakeZero(),
 		.hit_point_kind= CrosshairDrawingInfo::HitPointKind::None,
@@ -2329,12 +2331,10 @@ fn ConstructCrosshairDrawingInfo(
 					: game_state_extended.current_predicted.try_deref() );
 
 			drawing_info.camera_position=
-				GetCameraPositionForPlayerWithExtraDepthShift(
-					start_state.player, drawing_info.camera_azimuth, drawing_info.camera_elevation );
+				GetCameraPositionForPlayerWithExtraDepthShift( start_state.player, drawing_info.camera_angles );
 
 			auto [ position, kind ]=
-				GetCrosshairPositionAndKind(
-					map_data, start_state, drawing_info.camera_azimuth, drawing_info.camera_elevation );
+				GetCrosshairPositionAndKind( map_data, start_state, drawing_info.camera_angles );
 
 			drawing_info.hit_point= position;
 			drawing_info.hit_point_kind= kind;
@@ -2348,8 +2348,7 @@ fn ConstructCrosshairDrawingInfo(
 						drawing_info.camera_position,
 						GetCameraPositionForPlayerWithExtraDepthShift(
 							next_predicted_game_state.player,
-							drawing_info.camera_azimuth,
-							drawing_info.camera_elevation ),
+							drawing_info.camera_angles ),
 						time_steps_fraction );
 
 				drawing_info.hit_point=
@@ -2358,8 +2357,7 @@ fn ConstructCrosshairDrawingInfo(
 						GetCrosshairPositionAndKind(
 							map_data,
 							next_predicted_game_state,
-							drawing_info.camera_azimuth,
-							drawing_info.camera_elevation )[0],
+							drawing_info.camera_angles )[0],
 						time_steps_fraction );
 			}
 		}
@@ -2374,9 +2372,9 @@ fn GetCameraPositionForPlayer( PlayerState& player_state ) : Vec3f
 	return Vec3f( player_state.position.xy(), player_state.position.z + c_camera_z_offset + crouching_z_offset );
 }
 
-fn GetCameraDepthShift( f32 azimuth, f32 elevation ) : Vec3f
+fn GetCameraDepthShift( CameraAngles& angles ) : Vec3f
 {
-	var Mat4f camera_rotation_matrix= Mat4f::MakeRotationX( elevation ) * Mat4f::MakeRotationZ( azimuth );
+	var Mat4f camera_rotation_matrix= Mat4f::MakeRotationX( angles.elevation ) * Mat4f::MakeRotationZ( angles.azimuth );
 
 	// The original game moves camera slightly backwards. Do exactly this.
 	// This constant was fine-tuned to match position of the first-person weapon almost pixel to pixel compared to the original game.
@@ -2388,15 +2386,18 @@ fn GetCameraDepthShift( f32 azimuth, f32 elevation ) : Vec3f
 fn GetCameraAngles(
 	GameStateExtended& game_state_extended,
 	f32 time_steps_fraction,
-	CameraController& camera_controller ) : [ f32, 2 ]
+	CameraController& camera_controller ) : CameraAngles
 {
-	var f32 mut azimuth= camera_controller.GetAzimuth();
-	var f32 mut elevation= camera_controller.GetElevation();
+	var CameraAngles mut angles
+	{
+		.azimuth= camera_controller.GetAzimuth(),
+		.elevation= camera_controller.GetElevation(),
+	};
 
 	if_var( &death_camera_state : game_state_extended.current.player.death_camera_state )
 	{
-		azimuth= death_camera_state.azimuth;
-		elevation= death_camera_state.elevation;
+		angles.azimuth= death_camera_state.azimuth;
+		angles.elevation= death_camera_state.elevation;
 
 		// For death camera angles perform mixing between angles of previous and current game state.
 		// Miss-predicting them isn't allowed, so, don't use predicted state,
@@ -2406,18 +2407,18 @@ fn GetCameraAngles(
 		{
 			if_var( &previous_death_camera_state : previous_game_state.player.death_camera_state )
 			{
-				azimuth= MixAngle( previous_death_camera_state.azimuth, azimuth, time_steps_fraction );
-				elevation= MixAngle( previous_death_camera_state.elevation, elevation, time_steps_fraction );
+				angles.azimuth= MixAngle( previous_death_camera_state.azimuth, angles.azimuth, time_steps_fraction );
+				angles.elevation= MixAngle( previous_death_camera_state.elevation, angles.elevation, time_steps_fraction );
 			}
 		}
 	}
 
-	return ust::make_array( azimuth, elevation );
+	return angles;
 }
 
-fn GetCameraPositionForPlayerWithExtraDepthShift( PlayerState& player_state, f32 azimuth, f32 elevation ) : Vec3f
+fn GetCameraPositionForPlayerWithExtraDepthShift( PlayerState& player_state, CameraAngles& angles ) : Vec3f
 {
-	return GetCameraPositionForPlayer( player_state ) + GetCameraDepthShift( azimuth, elevation );
+	return GetCameraPositionForPlayer( player_state ) + GetCameraDepthShift( angles );
 }
 
 fn CreateModelFrames( ModelAnimationFrames& in_frames ) : WorldDrawingInfo::ModelFrames
@@ -2532,15 +2533,15 @@ fn MixAngle( f32 a, f32 b, f32 mix_factor ) : f32
 	return a + angle_delta * mix_factor;
 }
 
-fn CalculateCameraDirectionVector( f32 azimuth, f32 elevation ) : Vec3f
+fn CalculateCameraDirectionVector( CameraAngles& angles ) : Vec3f
 {
-	var f32 elevation_cos= ust::cos(elevation);
-	var f32 elevation_sin= ust::sin(elevation);
+	var f32 elevation_cos= ust::cos(angles.elevation);
+	var f32 elevation_sin= ust::sin(angles.elevation);
 
 	return
 		Vec3f(
-			-ust::sin(azimuth) * elevation_cos,
-			 ust::cos(azimuth) * elevation_cos,
+			-ust::sin(angles.azimuth) * elevation_cos,
+			 ust::cos(angles.azimuth) * elevation_cos,
 			elevation_sin ) ;
 }
 
