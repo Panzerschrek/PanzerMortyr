@@ -1,6 +1,5 @@
 import "/stdout.iu"
 import "/string_conversions.iu"
-import "../message_box.iu"
 import "../window_common.iu"
 import "gl_functions.iu"
 import "window_gl.iu"
@@ -8,29 +7,12 @@ import "window_gl.iu"
 namespace PM
 {
 
-fn WindowGL::constructor( SettingsPtr mut settings, ConsoleOutPtr& console_out )
-	(
-		viewport_size_=
-			lambda[&]() : [ u32, 2 ]
-			{
-				auto lock= settings.lock_imut();
-				var Settings& s= lock.deref();
-
-				// If these values aren't correct, they will be fixed later anyway.
-				return ust::make_array( s.r_screen_width, s.r_screen_height );
-			} (),
-		prev_gamma_= ReadGamma( settings ),
-		prev_vsync_= settings.lock_imut().deref().r_vsync,
-		settings_= move(settings),
-		window_= zero_init /* set later */,
-		gl_context_= zero_init /* set later */
-	)
+fn WindowGL::Create( SettingsPtr mut settings, ConsoleOutPtr& console_out ) : ust::optional</WindowGL/>
 {
 	if( unsafe( SDL_Init( SDL_INIT_VIDEO ) ) != 0 )
 	{
 		ConsoleOutAddTextLine( console_out, "SDL video init failed!" );
-		ShowFatalErrorMessageBox( "SDL video init failed!" );
-		halt;
+		return ust::null_optional;
 	}
 
 	var bool use_gl_debugging= compiler::options::generate_debug_info || compiler::options::optimization_level == '0';
@@ -50,52 +32,59 @@ fn WindowGL::constructor( SettingsPtr mut settings, ConsoleOutPtr& console_out )
 		SDL_GL_SetAttribute( SDL_GL_CONTEXT_PROFILE_MASK, i32( SDL_GL_CONTEXT_PROFILE_CORE ) );
 	}
 
+	var [ u32, 2 ] mut viewport_size=
+		lambda[&]() : [ u32, 2 ]
+		{
+			auto lock= settings.lock_imut();
+			var Settings& s= lock.deref();
+			return ust::make_array( s.r_screen_width, s.r_screen_height );
+		} ();
+
 	var Uint32 mut window_flags( SDL_WINDOW_OPENGL );
 
-	var u32 display_index= GetAndActualizeDisplayIndex( settings_, console_out );
+	var u32 display_index= GetAndActualizeDisplayIndex( settings, console_out );
 
-	if( settings_.lock_imut().deref().r_fullscreen )
+	if( settings.lock_imut().deref().r_fullscreen )
 	{
-		SelectFullscreenMode( viewport_size_, display_index, console_out );
+		SelectFullscreenMode( viewport_size, display_index, console_out );
 		window_flags|= Uint32( SDL_WINDOW_FULLSCREEN );
 	}
 	else
 	{
-		SelectWindowedMode( viewport_size_, display_index, console_out );
+		SelectWindowedMode( viewport_size, display_index, console_out );
 	}
 
 	ConsoleOutAddTextLine(
 		console_out,
 		ust::concat(
 			"Creating a window with size ",
-			ust::to_string8( viewport_size_[0] ),
+			ust::to_string8( viewport_size[0] ),
 			"x",
-			ust::to_string8( viewport_size_[1] ),
+			ust::to_string8( viewport_size[1] ),
 			"." ) );
 
-	window_=
+	var $(SDL_Window) window=
 		unsafe( SDL_CreateWindow(
 			$<( cast_mut( c_window_caption_nt[0] ) ),
 			SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
-			i32(viewport_size_[0]), i32(viewport_size_[1]),
+			i32(viewport_size[0]), i32(viewport_size[1]),
 			window_flags ) );
 
-	if( ust::is_nullptr( window_ ) )
+	if( ust::is_nullptr( window ) )
 	{
 		ConsoleOutAddTextLine( console_out, "Failed to create window!" );
-		halt;
+		return ust::null_optional;
 	}
 
-	// TODO - set window icon.
+	// TODO - set window icon?
 
-	gl_context_= unsafe( SDL_GL_CreateContext( window_ ) );
-	if( ust::is_nullptr( gl_context_ ) )
+	var SDL_GLContext gl_context= unsafe( SDL_GL_CreateContext( window ) );
+	if( ust::is_nullptr( gl_context ) )
 	{
 		ConsoleOutAddTextLine( console_out, "Failed to create OpenGL context!" );
-		halt;
+		unsafe( SDL_DestroyWindow( window ) );
+		return ust::null_optional;
 	}
-
-	unsafe( SDL_GL_SetSwapInterval( ( settings_.lock_imut().deref().r_vsync ? 1 : 0 ) ) );
 
 	InitializeGLFunctionPointers();
 
@@ -119,7 +108,22 @@ fn WindowGL::constructor( SettingsPtr mut settings, ConsoleOutPtr& console_out )
 	ConsoleOutAddTextLine(
 		console_out, ust::concat( " version: ", unsafe( GetGLStringPretty( GLenum( GL_VERSION ) ) ) ) );
 
+	return unsafe( WindowGL( move(settings), viewport_size, window, gl_context ) );
+}
+
+fn WindowGL::constructor(
+	SettingsPtr mut settings, [ u32, 2 ] viwport_size, $(SDL_Window) window, SDL_GLContext gl_context ) unsafe
+	(
+		viewport_size_= viwport_size,
+		window_= window,
+		gl_context_= gl_context,
+		prev_gamma_= ReadGamma( settings ),
+		prev_vsync_= settings.lock_imut().deref().r_vsync,
+		settings_= move(settings),
+	)
+{
 	unsafe( SetWindowGamma( window_, prev_gamma_ ) );
+	unsafe( SDL_GL_SetSwapInterval( ( prev_vsync_ ? 1 : 0 ) ) );
 }
 
 fn WindowGL::destructor()
