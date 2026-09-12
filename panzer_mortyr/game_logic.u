@@ -688,12 +688,12 @@ fn UpdatePlayerDeathCamera( GameState &mut game_state, PlayerInput& player_input
 	// The death camera in the original game works in the following way:
 	// Camera perfoms azimuth, elevation and (sometimes) roll rotation roughly one second after death.
 	//
-	// Camera performs slightly less than full circle of rotation around Z axis (azimuth) to the left.
-	//
 	// If camera is pointed down (below horizont), it's rotated slightly upwards (elevation) to a fixed angle of 30 degree or so.
+	// It also performs slightly less than full circle of rotation around Z axis (azimuth) to the left.
 	//
 	// If camera points up (above horizont), it's rotated down (elevation),
 	// so that the target elevation is negative of original elevation.
+	// It also performs half circle of rotation around Z axis (azimuth).
 	// In this case 180 degree roll rotation (around view axis) is also performed.
 	//
 
@@ -717,9 +717,6 @@ fn UpdatePlayerDeathCamera( GameState &mut game_state, PlayerInput& player_input
 
 		if( death_camera_state.start_step + c_num_rotation_steps >= game_state.step_index )
 		{
-			var f32 constexpr c_max_azimuthal_rotation= c_tau * 15.0f / 16.0f;
-			death_camera_state.azimuth+= c_max_azimuthal_rotation / f32( c_num_rotation_steps );
-
 			var f32 rotation_fraction=
 				f32( game_state.step_index - death_camera_state.start_step ) / f32( c_num_rotation_steps );
 
@@ -733,6 +730,9 @@ fn UpdatePlayerDeathCamera( GameState &mut game_state, PlayerInput& player_input
 					( c_target_elevation - death_camera_state.start_elevation ) * rotation_fraction;
 
 				death_camera_state.roll= 0.0f; // No roll is applied in this case.
+
+				// Perform less that 360 degree azimuthal rotation.
+				death_camera_state.azimuth+= ( c_tau * 15.0f / 16.0f ) / f32( c_num_rotation_steps );
 			}
 			else
 			{
@@ -743,7 +743,10 @@ fn UpdatePlayerDeathCamera( GameState &mut game_state, PlayerInput& player_input
 					death_camera_state.start_elevation +
 					( target_elevation - death_camera_state.start_elevation ) * rotation_fraction;
 
-				death_camera_state.roll= ( c_tau * 0.5f ) * rotation_fraction; // Do 180 degree roll.
+				death_camera_state.roll= ( -c_tau * 0.5f ) * rotation_fraction; // Do 180 degree roll.
+
+				// Perform 180 degree azimuthal rotation.
+				death_camera_state.azimuth+= ( c_tau * 0.5f ) / f32( c_num_rotation_steps );
 			}
 		}
 	}
@@ -860,8 +863,12 @@ fn PerformPlayerWeaponLogic(
 							shot,
 							player_state.position,
 							player_state.crouching_phase,
-							player_input.azimuth,
-							player_input.elevation );
+							CameraAngles
+							{
+								.azimuth= player_input.azimuth,
+								.elevation= player_input.elevation,
+								.roll= 0.0f
+							} );
 
 					{
 						// HACK!
@@ -953,11 +960,15 @@ fn PerformPlayerWeaponLogic(
 
 					if( tool.recoil > 0u )
 					{
-						player_state.velocity+=
-							f32( tool.recoil ) *
-							( Vec3f( 0.0f, -1.0f, 0.0f ) *
-								Mat4f::MakeRotationX( player_input.elevation ) *
-								Mat4f::MakeRotationZ( player_input.azimuth ) );
+						var Mat3f rotation_matrix=
+							CameraAngles
+							{
+								.azimuth= player_input.azimuth,
+								.elevation= player_input.elevation,
+								.roll= 0.0f,
+							}.CalculateRotationMatrix().TruncateToMat3();
+
+						player_state.velocity+= Vec3f( 0.0f, -f32( tool.recoil ), 0.0f ) * rotation_matrix;
 					}
 
 					// Alarm nearby enemies assuming shooting produces a loud sound which can be heard by them.
@@ -9312,8 +9323,7 @@ fn CreateDynamicClusterBBox( ZvoxCluster& cluster, Vec3f& translation ) : BBox3f
 fn GetCrosshairPositionAndKind(
 	GameMapData& map_data,
 	GameState& game_state,
-	f32 camera_azimuth,
-	f32 camera_elevation ) : tup[ Vec3f, CrosshairDrawingInfo::HitPointKind ]
+	CameraAngles& camera_angles ) : tup[ Vec3f, CrosshairDrawingInfo::HitPointKind ]
 {
 	var Vec3f mut position_sum= Vec3f::MakeZero(), mut direction_sum= Vec3f::MakeZero();
 	var size_type mut num_positions= 0s;
@@ -9335,8 +9345,7 @@ fn GetCrosshairPositionAndKind(
 					shot,
 					game_state.player.position,
 					game_state.player.crouching_phase,
-					camera_azimuth,
-					camera_elevation );
+					camera_angles );
 
 			position_sum+= position;
 			direction_sum+= direction;
@@ -9402,12 +9411,9 @@ fn GetPlayerShotStartAndDirection(
 	[ i32, 7 ]& shot,
 	Vec3f& player_position,
 	f32 crouching_phase,
-	f32 camera_azimuth,
-	f32 camera_elevation ) : [ Vec3f, 2 ]
+	CameraAngles& camera_angles ) : [ Vec3f, 2 ]
 {
-	var Mat4f camera_rotation_matrix=
-		Mat4f::MakeRotationX( camera_elevation ) *
-		Mat4f::MakeRotationZ( camera_azimuth );
+	var Mat3f camera_rotation_matrix= camera_angles.CalculateRotationMatrix().TruncateToMat3();
 
 	var f32 shot_elevation= ( c_weapon_angles_scale * c_tau ) * f32( shot[5] );
 
@@ -9415,7 +9421,7 @@ fn GetPlayerShotStartAndDirection(
 	// This behavior is observable in the original game.
 	var f32 extra_elevation= f32( shot[0] & 1 ) * ( -0.75f / 360.0f * c_tau );
 
-	var Mat4f shot_rotation_matrix= Mat4f::MakeRotationX( shot_elevation + extra_elevation );
+	var Mat3f shot_rotation_matrix= Mat4f::MakeRotationX( shot_elevation + extra_elevation ).TruncateToMat3();
 
 	var Vec3f shot_relative_position( f32( shot[2] ), f32( shot[3] ), f32( shot[4] ) - c_camera_z_offset );
 
