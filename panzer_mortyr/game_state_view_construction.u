@@ -1095,6 +1095,71 @@ fn ConstructWorldDrawingInfo(
 				} );
 		}
 
+		// Draw damaging flames as flame billboards for non-enemy entities.
+		game_state.damaging_flames.Iterate(
+			lambda[&]( DamagingFlame& damaging_flame )
+			{
+				if( size_type( damaging_flame.entity_index ) >= game_state.entities.size() )
+				{
+					return;
+				}
+
+				var ust::optional</EntityState/>& entity_opt=
+					game_state.entities[ size_type( damaging_flame.entity_index ) ];
+
+				if( entity_opt.empty() )
+				{
+					return;
+				}
+
+				var size_type entity_kind( entity_opt.try_deref().kind );
+
+				if( entity_kind >= entities_description.entities.size() ||
+					// Don't draw damaging flames as billboards for enemy entities.
+					entities_description.entities[ entity_kind ].mode == EntitiesDescription::EntityDescription::c_mode_enemy )
+				{
+					return;
+				}
+
+				var Vec3f& damaging_flame_position= damaging_flame.position;
+
+				var u32 phase=
+					damaging_flame.age_steps / c_animated_billboards_frequency_divisor % BillboardConstants::c_num_flames;
+
+				// At the end of their lifetime make flames darker and smaller.
+				var f32 relative_age=
+					( f32( damaging_flame.age_steps ) + time_steps_fraction ) / f32( c_damaging_flame_max_age );
+				var f32 fade_phase= ust::min( ( 1.0f - relative_age ) * 5.0f, 1.0f );
+
+				drawing_info.billboards.push_back(
+					WorldDrawingInfo::Billboard
+					{
+						.alignment= WorldDrawingInfo::Billboard::Alignment::ZAxis,
+						.billboard_index( BillboardConstants::c_id_first_flame + phase ),
+						// Slighly move flame billboards up, so that flame center is at billboard bottom.
+						.position( damaging_flame_position.xy(), damaging_flame_position.z - 24.0f * fade_phase ),
+						.brightness= fade_phase,
+						.scale= fade_phase,
+					} );
+
+				// PanzerMortyr addition - add dynamic lights for flames.
+				// TODO - maybe limit their count? There can be a lot of flames.
+				var f32 constexpr flame_light_power= 1.5f;
+
+				// Calculate phase based on position, so that different flames have different phase.
+				var f32 modulation_phase= total_game_time_steps + damaging_flame_position.Dot( Vec3f( 1.0f, 1.3f, 0.87f ) );
+
+				var f32 light_modulation= CalculatePsedudoRandomFireLightSourceModulation( modulation_phase );
+
+				drawing_info.dynamic_light_sources.push_back(
+					WorldDrawingInfo::DynamicLightSource
+					{
+						.position= damaging_flame_position,
+						.power= flame_light_power * c_light_power_scale * fade_phase * light_modulation,
+						.color_index= c_flame_color_index,
+					} );
+			} );
+
 		game_state.muzzle_lights.Iterate(
 			lambda[
 				&game_state,
