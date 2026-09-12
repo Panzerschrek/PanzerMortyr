@@ -83,7 +83,6 @@ PanzerMortyr multiplayer game logic:
 PanzerMortyr rendering:
 
 * Support restarting video subsystem (in order to apply settings).
-* On first launch select one of two available rendering options (OpenGL or software) randomly and save it into settings. Use a chance around 25% or so for software rendering.
 * Apply additional tessellation for tessellated polygons in order to perform smoother light values interpolation (naively triangulating them doesn't produce good result always).
 * Somehow distort/colorize the whole image while swimming in water. Maybe even add or alter global fog if camera is in water volume.
 * Consider optimizing calculating light from point light sources for models - avoid enumerating all lights.
