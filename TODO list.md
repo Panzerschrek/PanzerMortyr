@@ -106,7 +106,6 @@ PanzerMortyr OpenGL rendering:
 * Add support for MSAA (with proper support of fullscreen effects like fog).
 * Consider drawing map polygons with detail textures (generate such textures somehow).
 * Consider optimizing dynamic lighting even more by using stencil test for them.
-* Fall-back to software rendering if failed to create OpenGL context.
 
 PanzerMortyr software rendering:
 
