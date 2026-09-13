@@ -641,7 +641,7 @@ fn ProcessGameLogicStep(
 
 	ProcessExplosionParticlesLogicStep( game_state.explosion_particles );
 
-	ProcessExplosionFlamesLogicStep( game_state );
+	ProcessExplosionFlamesLogicStep( map_data, game_state );
 
 	ProcessFlameParticlesLogicStep( game_state );
 
@@ -3100,6 +3100,7 @@ fn ProcessEntityLogicStep(
 							.position( entity.position.xy(), entity.position.z + f32( gasoline_explosion.plomienie[2] ) ),
 							.velocity= random_vector * c_explosion_flame_initial_speed,
 							.age_steps= 0u,
+							.is_moving= true,
 						} );
 				}
 			}
@@ -5248,17 +5249,47 @@ fn ProcessExplosionParticlesLogicStep( ExplosionParticlesContainer &mut explosio
 		} );
 }
 
-fn ProcessExplosionFlamesLogicStep( GameState &mut game_state )
+fn ProcessExplosionFlamesLogicStep(  GameMapData& map_data, GameState &mut game_state )
 {
+	auto& broken_quad_bits= game_state.broken_quad_bits;
+	auto& dynamic_cluster_colliders= game_state.dynamic_cluster_colliders;
+
 	game_state.explosion_flames.Retain(
-		lambda( ExplosionFlame &mut explosion_flame ) : bool
+		lambda[&]( ExplosionFlame &mut explosion_flame ) : bool
 		{
-			explosion_flame.position+= explosion_flame.velocity;
+			if( explosion_flame.is_moving )
+			{
+				// Find itersections using movement slightly longer than necessary.
+				// It's needed in order to fix possible numerical imprecisions.
 
-			explosion_flame.velocity.z+= c_explosion_flame_gravity;
-			explosion_flame.velocity*= c_explosion_flame_drag_scale;
+				var f32 c_elongation_eps= 1.0f;
+				var f32 velocity_length= ust::max( 0.01f, explosion_flame.velocity.Length() );
+				var Vec3f velocity_slightly_elongated=
+					explosion_flame.velocity * ( ( velocity_length + c_elongation_eps ) / velocity_length );
 
-			// TODO - calculate collisions with the world.
+				if_var( &line_trace_result :
+						LineTrace(
+							map_data,
+							broken_quad_bits,
+							dynamic_cluster_colliders,
+							explosion_flame.position,
+							velocity_slightly_elongated ) )
+				{
+					if( line_trace_result.distance < 1.0f )
+					{
+						explosion_flame.position+= line_trace_result.distance * velocity_slightly_elongated;
+						explosion_flame.is_moving= false;
+					}
+				}
+			}
+
+			if( explosion_flame.is_moving )
+			{
+				explosion_flame.position+= explosion_flame.velocity;
+
+				explosion_flame.velocity.z+= c_explosion_flame_gravity;
+				explosion_flame.velocity*= c_explosion_flame_drag_scale;
+			}
 
 			++explosion_flame.age_steps;
 			return explosion_flame.age_steps < 120u; // TODO - tune max edge.
