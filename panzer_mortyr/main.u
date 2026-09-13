@@ -16,40 +16,50 @@ import "message_box.iu"
 import "performance_counter.iu"
 import "savegame_screenshot.iu"
 
-fn nomangle getrlimit64( i32 resource, $(rlimit64) limit ) unsafe call_conv( "C" ) : i32;
-fn nomangle setrlimit64( i32 resource, $(rlimit64) limit ) unsafe call_conv( "C" ) : i32;
-
-struct rlimit64 ordered
+pretty_main
 {
-	i64 rlim_cur;
-	i64 rlim_max;
+	if( compiler::options::optimization_level == '0' )
+	{
+		// HACK!
+		// In debug builds we consume too much stack and hit 8MB limit on Linux.
+		// So, create a separate thread for the main function. We can specify increased stack size in such case.
+		unsafe
+		{
+			var $(::SDL_Thread) t=
+				SDL_CreateThreadWithStackSize(
+					MainForDebugBuilds,
+					$<( cast_mut( "debug_main\0"[0] ) ),
+					size_t(20) << 20, // 20MB stack.
+					ust::ptr_cast_to_byte8( $<( cast_mut( args ) ) ) );
+
+			var i32 mut res= -1;
+
+			SDL_WaitThread( t, $<( res ) );
+
+			// Call SDL_Quit after destroying all objects within "Main" function.
+			SDL_Quit();
+
+			return res;
+		}
+	}
+	else
+	{
+		var i32 res= PM::Main( args );
+
+		// Call SDL_Quit after destroying all objects within "Main" function.
+		unsafe( SDL_Quit() );
+
+		return res;
+	}
 }
 
-var i32 constexpr RLIMIT_STACK = 3;
-
-pretty_main
+fn MainForDebugBuilds( $(byte8) args_view_ptr ) unsafe call_conv( "C" ) : i32
 {
 	unsafe
 	{
-		var rlimit64 mut limit
-		{
-			.rlim_cur(0),
-			.rlim_max(0),
-		};
-		ust::ignore_unused( limit.rlim_cur );
-		ust::ignore_unused( limit.rlim_max );
-
-		getrlimit64( RLIMIT_STACK, $<(limit) );
-		limit.rlim_cur= 16i64 << 20;
-		setrlimit64( RLIMIT_STACK, $<(limit) );
+		auto args_ptr= ust::byte_ptr_cast</ ust::array_view_imut</ust::string_view8/> />( args_view_ptr );
+		return PM::Main( $>( args_ptr ) );
 	}
-
-	var i32 res= PM::Main( args );
-
-	// Call SDL_Quit after destroying all objects within "Main" function.
-	unsafe( SDL_Quit() );
-
-	return res;
 }
 
 namespace PM
