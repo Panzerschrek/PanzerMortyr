@@ -787,6 +787,56 @@ fn ConstructWorldDrawingInfo(
 				}
 			} );
 
+		game_state.explosion_flames.IterateWithIndexAndGenerationIndex(
+			lambda[&]( ExplosionFlame& explosion_flames, u32 index, u32 generation_index )
+			{
+				var Vec3f mut flame_particle_position= explosion_flames.position;
+
+				if_var( &previous_game_state : previous_game_state_opt )
+				{
+					if( !previous_game_state.explosion_flames.GetByIndex( index, generation_index ).empty() )
+					{
+						if_var( &current_predicted_game_state : current_predicted_game_state_opt )
+						{
+							if_var( &current_predicted_explosion_flame :
+									current_predicted_game_state.explosion_flames.GetByIndex( index, generation_index ) )
+							{
+								flame_particle_position= current_predicted_explosion_flame.position;
+							}
+						}
+					}
+				}
+
+				if_var( &next_predicted_game_state : next_predicted_game_state_opt )
+				{
+					if_var( &predicted_explosion_flame :
+							next_predicted_game_state.explosion_flames.GetByIndex( index, generation_index ) )
+					{
+						flame_particle_position=
+							MixPosition( flame_particle_position, predicted_explosion_flame.position, time_steps_fraction );
+					}
+				}
+
+				var u32 phase=
+					explosion_flames.age_steps / c_animated_billboards_frequency_divisor % BillboardConstants::c_num_flames;
+
+				// At the end of their lifetime make flames darker and smaller.
+				var f32 relative_age=
+					( f32( explosion_flames.age_steps ) + time_steps_fraction ) / f32( 120u );
+				var f32 fade_phase= ust::min( ( 1.0f - relative_age ) * 5.0f, 1.0f );
+
+				drawing_info.billboards.push_back(
+					WorldDrawingInfo::Billboard
+					{
+						.alignment= WorldDrawingInfo::Billboard::Alignment::ZAxis,
+						.billboard_index( BillboardConstants::c_id_first_flame + phase ),
+						// Slighly move flame billboards up, so that flame center is at billboard bottom.
+						.position( flame_particle_position.xy(), flame_particle_position.z - 24.0f * fade_phase ),
+						.brightness= fade_phase,
+						.scale= fade_phase,
+					} );
+			} );
+
 		game_state.flame_particles.IterateWithIndexAndGenerationIndex(
 			lambda[&]( FlameParticle& flame_particle, u32 index, u32 generation_index )
 			{
