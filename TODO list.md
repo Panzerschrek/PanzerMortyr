@@ -59,7 +59,6 @@ PanzerMortyr game logic:
 * Consider creating patches for ZINF-files for fixing some errors in them.
 * Implement misfire - sometimes enemies don't shoot, even if shooting animation is playing.
 * Adjust rotation angles for grenade projectiles, so that they look nicely.
-* Draw damaging flames for non-enemy objects using flame billboards instead of burning effect, since such burning for them looks unnatural and ugly.
 * Consider performing proper player to entity visibility check while doing entity state transition based on "w_zasiegu_widocznosci" property.
 * Consider disabling all or at least some weapons of the player if weapon shot start position is in water or other liquid. The original game allow shooting in water, but PanzerMortyr probably shouldn't allow this.
 * Consider optimizing global navigation graph calculation even more - to reduce map loading time.
