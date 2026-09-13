@@ -48,9 +48,9 @@ PanzerMortyr general:
 
 PanzerMortyr game logic:
 
+* Fix entity effects emmited at zero operation step. For some reason the number of steps from operation start is almost never zero.
 * Ensure all entity properties affecting state transitions are implemented.
 * Break glass quads and quads with breakable materials while applying spash damage. The original game doesn't do this and it doesn't look right.
-* Implement flame particles emitted by explosive decorations ("wybuch_benzyny"/"plomienie").
 * Spawn water splash particles if a projectile hits water surface.
 * Spawn water circles if a projectile hits water surface.
 * Do something with unconditional entity state transition "w_zasiegu_strzalu_b" - try making it somewhat random.
