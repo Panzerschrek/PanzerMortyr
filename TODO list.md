@@ -122,7 +122,6 @@ PanzerMortyr menus and HUD:
 * Allow configuring crosshair kind, investigate what kinds of crosshairs are available in the original game.
 * Consider displaying some sort of a progress bar while going close to the map exit trigger - as RtCW does.
 * Consider displaying some screen with map stats (completion time, killed enemies) at the end of a map - as Quake does.
-* Consider allowing navigating menu using mouse left/right button clicks and mouse wheel.
 
 PanzerMortyr sound:
 
