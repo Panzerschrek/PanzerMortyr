@@ -62,6 +62,7 @@ Changes:
 Improvements:
 
 * Enemies navigation is slightly better - they are able to go in places impossible for enemies in the original game, they can follow the player far away from their start positions, their movement is generally smoother.
+* There are separate controls for selecting next/previous weapon (by-default mouse wheel is used for this).
 
 Fixed bugs:
 

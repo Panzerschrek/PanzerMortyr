@@ -34,7 +34,6 @@ Gameplay investigation:
 
 PanzerMortyr general:
 
-* Add controls for selecting next and previous weapon (from available weapons).
 * Consider embedding git revision into the game executable and showing it somewhere in the game.
 * Consider performing even more advanced game data search - with more hardcoded paths, Windows registry fetches, etc.
 * Ensure PanzerMortyr works properly on Wayland-based systems.
