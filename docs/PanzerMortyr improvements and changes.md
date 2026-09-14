@@ -20,6 +20,8 @@ Improvements:
 * Camera position and positions and angles of game objects are calculated with sub-step precision and thus movements and rotations are smooth on high framerates (above 30fps).
 * Model frames are interpolated using sub-step precision and look smooth on high framerates (above 30fps).
 * Decals (including water circles) aren't clipped by map quad borders where such clipping isn't necessary. They can be applied to multiple adjacent map quads.
+* There is a mode with software rendering, which allows running on systems with lacking/outdated graphics drivers. It works fine, but has slightly lower quality compared to OpenGL mode - there is no linear textures filtration, fog and dynamic lighting is calculated per-vertex. The original game has only DirectX-based GPU-accelerated rendering and thus installing graphics drivers is necessary.
+
 
 Fixed bugs:
 
@@ -50,7 +52,7 @@ Changes:
 * Caustics look different. Different caustics texture is used, which is procedurally-generated, not the original one stored in a texture file. Caustics modulate underlying geometry light instead of adding it as the original game does.
 * Bullet hit spark effects (MG-42, laser pistol) look a little bit different and use different from the original billboard.
 * Clusters with notes are highlighted (their lighting is blinking), so that it's harder to miss a note.
-* Entities with damaging flames attached are drawn with burning effect covering the entire body. In the original game this effect is different - it just uses flame billboards attached to a model.
+* Enemy entities with damaging flames attached are drawn with burning effect covering the entire body. In the original game this effect is different - it just uses flame billboards attached to a model.
 * Blood covering entities are slightly darker compared to the original game.
 * Upon damage the screen is tinted red, but with less alpha towards the screen's center (with gradient). The original game uses uniform tinting in such case.
 * If the player is burning the screen is tinted yellow instead of drawing flame sprites covering the major part of the screen.
@@ -113,7 +115,6 @@ Changes:
 * Console looks differently.
 * PanzerMortyr has some menu pages implemented in different way from the original game, mainly to allow setting more options and key bindings.
 * Menu cursor position may be different - it's mostly just guessed.
-* A background texture pattern is displayed behind the main menu after launching the game instead of playing a prerecorded demo.
 * Note images are shown at screen's center with scale and alpha depending on distance from the player's camera to the note cluster volume, not with fixed scale as the original game does.
 
 
