@@ -5,7 +5,7 @@ System support:
 * The game should start and work properly on Windows 10 and 11 with x86_64 architecture, assuming hardware requirements are satisfied and OpenGL 3.3 (or later) drivers are present.
 * The game should start and work properly on x86_64 GNU/Linux systems with X Window system or Wayland, assuming hardware requirements are satisfied and OpenGL 3.3 (or later) drivers are present.
 * No administrator/root privileges should be necessary.
-* No extra library dependencies should be present except system libraries (like kernel32.dll, libc), libraries shipped together with *panzer_mortyr* (like *FFmpeg*) or C++ runtime libraries.
+* No extra library dependencies should be present except system libraries (like kernel32.dll, libc), libraries shipped together with *panzer_mortyr* (like *FFmpeg*) or *glibc* (on GNU/Linux).
 * On Windows the *panzer_mortyr* executable should have non-empty icon.
 
 Command line:
@@ -41,20 +41,22 @@ Cinematics:
 Menu:
 
 * Menu should be somewhat scaled for large resolutions.
-* Menu cursor should be properly shown on all pages.
-* Navigation should be possible by using up and down keys.
-* Selecting a menu item should work by using enter key.
-* Going back should be possible by using escape key.
-* Closing menu should be possible by using escape key on the main page.
+* Menu cursor should be properly shown on all pages. On pages with small text it should be small, on pages with large text it should be large.
+* Navigation should be possible by using up and down keys or mouse wheel.
+* Selecting a menu item should work by using enter key or left mouse button.
+* Going back should be possible by using escape key or right mouse button.
+* Closing menu should be possible by using escape key on the main page or right mouse button.
 * The menu sound should be emitted while navigating and selecting menu items (unless sound is disabled).
+* The menu sound should be emitted while changing settings in menu (boolean values, variants, sliders).
 * Skill selected in the new game menu should be applied properly.
 * Load/Save menu pages should contain several slots with user-defined slot names. Empty slots should be marked properly.
 * Load/Save menu pages should contain a small screenshot for the corresponding saved game.
 * Some stats for the selected save slot should be shown on load/save menu pages, including level name, skill, number of kills and the total number of enemies.
 * Saving the game via save page should work properly. Loading it via load page should work too.
 * Multiplayer page should be a stub.
-* It should be possible to change boolean settings on the options pages by pressing enter, left key and right key.
-* It should be possible to change numeric and slider values on the options pages using left and right keys. There should be limits for sliders and numeric values.
+* Parental lock/adult mode page should be a stub.
+* It should be possible to change boolean settings on the options pages by pressing enter, left key and right arrow keys, left mouse button.
+* It should be possible to change numeric and slider values on the options pages using left and right arrow keys. There should be limits for sliders and numeric values.
 * Setting key bindings should work for keyboard keys, mouse buttons and mouse wheel.
 * Pressing escape key when editing of a key binding is active should cancel editing.
 * It shouldn't be possible to use escape key and ~ as key binding.
@@ -73,7 +75,7 @@ Console:
 * The game should be paused when console is opened.
 * Keyboard input should be redirected to console if it's active.
 * It should be possible to enter a command.
-* It should be possible to repeat the last entered command by pressing up key.
+* It should be possible to repeat the last entered command by pressing up arrow key.
 * It should be possible to call console commands, including ones having arguments.
 * By typing a name of a setting with no arguments its value should be displayed.
 * By typing a name of a setting with single argument this setting should be set to the value of this argument.
@@ -81,6 +83,7 @@ Console:
 * If a given string isn't a command or setting name, a message indicating this should be shown.
 * At least some logging messages should be shown in console.
 * Entered commands should be added into the console log.
+* Both for commands and settings - and _ symbols should be interchangeable.
 
 Spectator mode:
 
@@ -153,6 +156,15 @@ Tool controls:
 * Some tools should have dedicated keys activating them - environment suit, flashlight, night vision, infrared vision, jetpack.
 * Weapons should be among tools. Selecting a weapon like a tool should be possible.
 
+Weapon selection:
+
+* It should be possible to select a weapon using dedicated weapon keys (numeric keys by-default).
+* A weapon which the player doesn't have or to which it has no ammo should not be selected and a corresponding notification message should be show.
+* It should be possible to select next or previous weapon using dedicated keys (mouse wheel by default).
+* Weapons which the player doesn't have or to which it has no ammo should be skipped in next/previous weapon selection.
+* Next/previous weapon selection should be done in a loop.
+* It should be possible to rapidly jump over several weapons in next/previous weapon selection. Like if weapon 3 is selected, pressing next weapon key 4 times should select weapon 7.
+
 HUD:
 
 * HUD should be somewhat scaled for large resolutions.
@@ -175,7 +187,7 @@ HUD:
 World rendering:
 
 * Map geometry should be shown properly with textures and static lighting.
-* Animated textures (like traffic lights on map 4) should work properly.
+* Animated textures (like traffic lights on map 4 or CSS logos) should work properly.
 * Underwater map geometry should have animated caustics texture applied to it.
 * Liquid surfaces should be semitransparent.
 * Textures on liquid surfaces should be seamless.
@@ -184,7 +196,7 @@ World rendering:
 * Broken glass/stained glass quads shouldn't be displayed.
 * Dynamic clusters (doors, elevators, buttons) should be displayed properly where they are.
 * Decals should be displayed properly - clipped when needed and with alpha-test.
-* Decals shouldn't be applied to breakable geometry.
+* Decals shouldn't be applied to breakable geometry or glass quads (both breakable and non-breakable).
 * Decals should be applied to geometry of dynamic clusters.
 * Water circles should be displayed on surfaces with wet materials where it's raining.
 * Snow and rain should work properly. There should be no snow/rain inside buildings, only outside.
@@ -194,7 +206,7 @@ World rendering:
 * Burning effect for models should work - with animated flames covering the entire model.
 * Light shafts should be displayed where needed.
 * Torch billboards and light coronas should be present.
-* Various billboards for explosions, flames, smoke trails and other game effects should be displayed properly.
+* Various billboards for explosions, flames, smoke trails, projectiles and other game effects should be displayed properly.
 * Semitransparent geometry should be sorted from back to front (their blending order should be correct).
 * Dynamic lights should be applied to the world (except liquids and glass), dynamic clusters, models, decals, but not to billboards, rain/snow, water circles.
 * Mirror floors should work properly - reflect all the world and blend this reflection with their own texture.
@@ -208,3 +220,35 @@ World rendering:
 * Rejection of invisible map geometry and dynamic objects (models, billboards) located within them should work properly. See *r_show_stats* setting, when such stats are enabled, only a fraction of total map clusters should be drawn in any given moment. Only models located in visible map parts should be drawn.
 * Frustum culling for models should work properly - models displayed behind the back shouldn't be draw at all.
 * World brightness setting should be applied properly and affect equally brightness of all kinds of geometry.
+
+Graphical settings:
+
+* It should be possible to turn fog on/off.
+* It should be possible to turn mirrors on/off.
+* It should be possible to change mirror alpha.
+* It should be possible to turn rain/snow on/off.
+* It should be possible to turn caustics on/off.
+* It should be possible to turn decals on/off.
+* It should be possible to turn water circles on/off.
+* It should be possible to turn dynamic lights on/off.
+* It should be possible to turn all blood effects on/off.
+* It should be possible to turn textures trilinear filtration on/off (in OpenGL mode only).
+* It should be possible to change textures anisotropy (in OpenGL mode only).
+* It should be possible to turn textures nearest filtration on/off separately for world, menu, HUD (in OpenGL mode only, in software mode it should be always nearest).
+
+Rendering mode setting:
+
+* OpenGL mode should work properly.
+* Software mode should work properly and be pretty performant.
+* If initialization of OpenGL mode fails, software mode should be used.
+* Upon first launch one of two rendering modes should be selected randomly with software mode having 25% chance and OpenGL mode having 75% chance.
+* Rendering mode setting should work properly (but require game restart).
+
+Music:
+
+* For singleplayer maps single music track should be played in a loop (track number is specified per-map in *ICE.STD* file).
+* For multiplayer maps all specified tracks should be played in a loop with random tracks order.
+* It should be possible to change music volume, even set it to zero. Music volume setting should be separate from game sounds and ambient sounds.
+* Starting new game, loading a game or starting a new map via console should reset currently-playing music.
+* If a cinematic is playing, music should be stopped.
+* Pausing the game should NOT pause music.
