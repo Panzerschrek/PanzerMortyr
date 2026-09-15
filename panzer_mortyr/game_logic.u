@@ -651,6 +651,8 @@ fn ProcessGameLogicStep(
 
 	ProcessBubblesLogicStep( map_data, game_state.bubbles );
 
+	ProcessWaterSplashesLogicStep( game_state.water_splashes );
+
 	ProcessBloodParticlesLogicStep( map_data, game_state );
 
 	ProcessMuzzleLightsLogicStep( game_state.muzzle_lights );
@@ -4206,6 +4208,7 @@ fn ProcessProjectilesLogicStep( GameGlobalData& global_data, GameMapData& map_da
 	auto& colliders= game_state.colliders;
 	auto &mut bubbles= game_state.bubbles;
 	auto &mut water_splashes= game_state.water_splashes;
+	auto &mut random= game_state.random;
 	auto &mut static_sound_sources= game_state.static_sound_sources;
 
 	game_state.projectiles.Retain(
@@ -4314,17 +4317,36 @@ fn ProcessProjectilesLogicStep( GameGlobalData& global_data, GameMapData& map_da
 					if_var( &line_trace_result :
 							LineTraceWaterQuads( map_data, projectile.position, water_collision_check_vec ) )
 					{
+
+
 						if( line_trace_result.distance < 1.0f )
 						{
-							// TODO - spawn many water splash particles.
-							water_splashes.Insert(
-								WaterSplash
+							var Vec3f water_splash_position=
+								projectile.position + water_collision_check_vec * line_trace_result.distance;
+
+							for( auto mut i= 0u; i < 32u; ++i )
+							{
+								var Vec3f random_vector(
+									f32( random.Next() ) * (  2.0f / f32( PseudoRandomGenerator::c_max ) ) - 1.0f,
+									f32( random.Next() ) * (  2.0f / f32( PseudoRandomGenerator::c_max ) ) - 1.0f,
+									f32( random.Next() ) * ( -1.0f / f32( PseudoRandomGenerator::c_max ) ) );
+
+								var f32 random_vector_square_length= random_vector.SquareLength();
+								if( random_vector_square_length > 1.0f | random_vector_square_length < 0.25f )
 								{
-									.position=
-										projectile.position + water_collision_check_vec * line_trace_result.distance,
-									.velocity= Vec3f::MakeZero(),
-									.age_steps= 0u
-								} );
+									continue;
+								}
+
+								water_splashes.Insert(
+									WaterSplash
+									{
+										.position= water_splash_position,
+										.velocity=
+											Vec3f( random_vector.xy(), random_vector.z * 2.0f ) *
+												c_water_splash_initial_speed,
+										.age_steps= 0u
+									} );
+							}
 						}
 					}
 				}
@@ -5500,6 +5522,20 @@ fn ProcessBubblesLogicStep( GameMapData& map_data, BubblesContainer &mut bubbles
 			++bubble.age_steps;
 
 			return bubble.age_steps < c_bubble_max_age;
+		} );
+}
+
+fn ProcessWaterSplashesLogicStep( WaterSplashesContainer &mut water_splashes )
+{
+	water_splashes.Retain(
+		lambda[&]( WaterSplash &mut water_splash ) : bool
+		{
+			water_splash.velocity.z+= c_water_splash_gravity;
+
+			water_splash.position+= water_splash.velocity;
+
+			++water_splash.age_steps;
+			return water_splash.age_steps < c_water_splash_max_age;
 		} );
 }
 
