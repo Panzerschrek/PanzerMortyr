@@ -651,6 +651,8 @@ fn ProcessGameLogicStep(
 
 	ProcessBubblesLogicStep( map_data, game_state.bubbles );
 
+	ProcessWaterSplashesLogicStep( map_data, game_state.water_splashes );
+
 	ProcessBloodParticlesLogicStep( map_data, game_state );
 
 	ProcessMuzzleLightsLogicStep( game_state.muzzle_lights );
@@ -4205,6 +4207,8 @@ fn ProcessProjectilesLogicStep( GameGlobalData& global_data, GameMapData& map_da
 	auto& dynamic_cluster_colliders= game_state.dynamic_cluster_colliders;
 	auto& colliders= game_state.colliders;
 	auto &mut bubbles= game_state.bubbles;
+	auto &mut water_splashes= game_state.water_splashes;
+	auto &mut random= game_state.random;
 	auto &mut static_sound_sources= game_state.static_sound_sources;
 
 	game_state.projectiles.Retain(
@@ -4301,6 +4305,54 @@ fn ProcessProjectilesLogicStep( GameGlobalData& global_data, GameMapData& map_da
 								hit_entity_index= collider.entity_index;
 								hit_cluster_index= ~0u;
 								hit_quad_index= ~0u;
+							}
+						}
+					}
+				}
+
+				{ // Detect collisions with water surface to spawn splash effects.
+
+					var Vec3f water_collision_check_vec= velocity_slightly_elongated * smallest_travelled_distance;
+
+					if_var( &line_trace_result :
+							LineTraceWaterQuads( map_data, projectile.position, water_collision_check_vec ) )
+					{
+						if( line_trace_result.distance < 1.0f )
+						{
+							var Vec3f water_splash_position=
+								projectile.position + water_collision_check_vec * line_trace_result.distance;
+
+							// Spawn several splashes.
+							// Give them random direction (mostly up) and some random speed.
+
+							for( auto mut i= 0u; i < 16u; ++i )
+							{
+								var f32 random_azimuth=
+									f32( random.Next() ) * ( c_tau / f32( PseudoRandomGenerator::c_max_plus_one ) );
+
+								var f32 random_elevation=
+									f32( random.Next() ) * ( c_tau / 24.0f / f32( PseudoRandomGenerator::c_max_plus_one ) ) -
+									c_tau / 4.0f;
+
+								var f32 random_elevation_cos= ust::cos( random_elevation );
+
+								var Vec3f random_vector(
+									ust::cos( random_azimuth ) * random_elevation_cos,
+									ust::sin( random_azimuth ) * random_elevation_cos,
+									ust::sin( random_elevation ) );
+
+								var f32 random_speed=
+									c_water_splash_initial_speed * 0.6f +
+									f32( random.Next() ) *
+										( c_water_splash_initial_speed * 0.4f / f32( PseudoRandomGenerator::c_max ) );
+
+								water_splashes.Insert(
+									WaterSplash
+									{
+										.position= water_splash_position,
+										.velocity= random_vector * random_speed,
+										.age_steps= 0u
+									} );
 							}
 						}
 					}
@@ -5477,6 +5529,28 @@ fn ProcessBubblesLogicStep( GameMapData& map_data, BubblesContainer &mut bubbles
 			++bubble.age_steps;
 
 			return bubble.age_steps < c_bubble_max_age;
+		} );
+}
+
+fn ProcessWaterSplashesLogicStep( GameMapData& map_data, WaterSplashesContainer &mut water_splashes )
+{
+	water_splashes.Retain(
+		lambda[&]( WaterSplash &mut water_splash ) : bool
+		{
+			// Apply gravity, but don't bother with air friction.
+			water_splash.velocity.z+= c_water_splash_gravity;
+
+			water_splash.position+= water_splash.velocity;
+
+			// Perform this check after updating position,
+			// so that water splashes spawned at water border and moving up are outside water on their first update.
+			if( IsPointInLiquid( map_data, water_splash.position ) )
+			{
+				return false; // Remove water splashes when they enter water again.
+			}
+
+			++water_splash.age_steps;
+			return water_splash.age_steps < c_water_splash_max_age;
 		} );
 }
 

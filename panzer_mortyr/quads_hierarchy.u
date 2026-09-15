@@ -49,40 +49,79 @@ fn BuildColliderQuadsHierarchy(
 		}
 	}
 
-	auto get_bbox_func=
-		lambda[&]( PackedQuadIndex& packed_quad_index ) : BBox3f
-		{
-			var BBox3f mut bbox
+	return
+		BuildBoundingBoxesHierarchy(
+			quad_indices.range(),
+			c_max_quads_in_node,
+			lambda[&]( PackedQuadIndex& packed_quad_index ) : BBox3f
 			{
-				.min( ust::plus_inf </f32/>(), ust::plus_inf </f32/>(), ust::plus_inf </f32/>() ),
-				.max( ust::minus_inf</f32/>(), ust::minus_inf</f32/>(), ust::minus_inf</f32/>() ),
-			};
-
-			var ZvoxCluster& cluster= clusters[ packed_quad_index.GetClusterIndex() ];
-			var ZmapQuad& quad= quads[ packed_quad_index.GetQuadIndex() ];
-
-			foreach( &v : quad.vertices )
-			{
-				var Vec3f pos(
-					f32( cluster.c.center[0] + i32( v[0] ) ),
-					f32( cluster.c.center[1] + i32( v[1] ) ),
-					f32( cluster.c.center[2] + i32( v[2] ) ) );
-				ust::min_assign( bbox.min.x, pos.x );
-				ust::max_assign( bbox.max.x, pos.x );
-				ust::min_assign( bbox.min.y, pos.y );
-				ust::max_assign( bbox.max.y, pos.y );
-				ust::min_assign( bbox.min.z, pos.z );
-				ust::max_assign( bbox.max.z, pos.z );
-			}
-
-			return bbox;
-		};
-
-	// This value was tuned to achieve maximum performance.
-	var size_type c_max_quads_in_node= 6s;
-
-	return BuildBoundingBoxesHierarchy( quad_indices.range(), c_max_quads_in_node, get_bbox_func );
+				var ZvoxCluster& cluster= clusters[ packed_quad_index.GetClusterIndex() ];
+				var ZmapQuad& quad= quads[ packed_quad_index.GetQuadIndex() ];
+				return CalculateQuadBBox( cluster, quad );
+			} );
 }
+
+fn BuildWaterQuadsHierarchy(
+	ust::array_view_imut</ZvoxCluster/> clusters,
+	ust::array_view_imut</ZmapQuad/> quads ) : QuadsHierarchy
+{
+	var ust::vector</PackedQuadIndex/> mut quad_indices;
+
+	for( auto mut c= 0s; c < clusters.size(); ++c )
+	{
+		var ZvoxCluster& cluster= clusters[c];
+
+		for( var size_type mut q( cluster.c.first_quad_index ), q_end= size_type( cluster.c.first_quad_index ) + size_type( cluster.num_quads );
+			q < q_end;
+			++q )
+		{
+			if( u32( quads[q].texture_id ) ==
+				MaterialsDescription::c_special_material_texture_indices[ size_type( MaterialsDescription::SpecialMaterial::Water ) ] )
+			{
+				quad_indices.push_back( PackedQuadIndex( c, q ) );
+			}
+		}
+	}
+
+	return
+		BuildBoundingBoxesHierarchy(
+			quad_indices.range(),
+			c_max_quads_in_node,
+			lambda[&]( PackedQuadIndex& packed_quad_index ) : BBox3f
+			{
+				var ZvoxCluster& cluster= clusters[ packed_quad_index.GetClusterIndex() ];
+				var ZmapQuad& quad= quads[ packed_quad_index.GetQuadIndex() ];
+				return CalculateQuadBBox( cluster, quad );
+			} );
+}
+
+fn CalculateQuadBBox( ZvoxCluster& cluster, ZmapQuad& quad ) : BBox3f
+{
+	var BBox3f mut bbox
+	{
+		.min( ust::plus_inf </f32/>(), ust::plus_inf </f32/>(), ust::plus_inf </f32/>() ),
+		.max( ust::minus_inf</f32/>(), ust::minus_inf</f32/>(), ust::minus_inf</f32/>() ),
+	};
+
+	foreach( &v : quad.vertices )
+	{
+		var Vec3f pos(
+			f32( cluster.c.center[0] + i32( v[0] ) ),
+			f32( cluster.c.center[1] + i32( v[1] ) ),
+			f32( cluster.c.center[2] + i32( v[2] ) ) );
+		ust::min_assign( bbox.min.x, pos.x );
+		ust::max_assign( bbox.max.x, pos.x );
+		ust::min_assign( bbox.min.y, pos.y );
+		ust::max_assign( bbox.max.y, pos.y );
+		ust::min_assign( bbox.min.z, pos.z );
+		ust::max_assign( bbox.max.z, pos.z );
+	}
+
+	return bbox;
+}
+
+// This value was tuned to achieve maximum performance.
+var size_type c_max_quads_in_node= 6s;
 
 } // namespace PM
 
