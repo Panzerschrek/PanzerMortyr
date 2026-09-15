@@ -258,6 +258,103 @@ fn LoadZvoxFile( ust::file_readable &mut f ) : ust::io_result</ZvoxData/>
 		}
 	}
 
+	// HACK!
+	// Try combining clusters of the map end elevator together.
+	// Otherwise it works poorly.
+	if( result.clusters.size() == 171s )
+	{
+		var size_type first_elevator_cluster_index= 4s;
+		var size_type last_elevator_cluster_index= 15s;
+
+		var bool mut has_consecutive_quads= true;
+		var bool mut has_equal_type= true;
+		var bool mut has_equal_move_distance= true;
+
+		{
+			var ZvoxCluster& first_elevator_cluster= result.clusters[ first_elevator_cluster_index ];
+
+			var u32 mut last_quad_index= first_elevator_cluster.c.first_quad_index;
+
+			for( auto mut i= first_elevator_cluster_index; i <= last_elevator_cluster_index; ++i )
+			{
+				var ZvoxCluster& cluster= cast_imut( result.clusters )[i];
+
+				has_consecutive_quads &= cluster.c.first_quad_index == last_quad_index;
+				last_quad_index= cluster.c.first_quad_index + u32( cluster.num_quads );
+
+				has_equal_type &= cluster.cluster_type == first_elevator_cluster.cluster_type;
+				has_equal_move_distance &= cluster.light_sources_begin == first_elevator_cluster.light_sources_begin;
+			}
+		}
+
+		if( has_consecutive_quads && has_equal_type && has_equal_move_distance )
+		{
+			var ZvoxCluster mut first_elevator_cluster= result.clusters[ first_elevator_cluster_index ];
+
+			// Calculate combined bbox.
+
+			var [ i32, 3 ]
+				mut bbox_min
+				[
+					first_elevator_cluster.c.center[0] - first_elevator_cluster.c.bounding_box_half_size[0],
+					first_elevator_cluster.c.center[1] - first_elevator_cluster.c.bounding_box_half_size[1],
+					first_elevator_cluster.c.center[2] - first_elevator_cluster.c.bounding_box_half_size[2],
+				],
+				mut bbox_max
+				[
+					first_elevator_cluster.c.center[0] + first_elevator_cluster.c.bounding_box_half_size[0],
+					first_elevator_cluster.c.center[1] + first_elevator_cluster.c.bounding_box_half_size[1],
+					first_elevator_cluster.c.center[2] + first_elevator_cluster.c.bounding_box_half_size[2],
+				];
+
+			for( auto mut i= first_elevator_cluster_index; i <= last_elevator_cluster_index; ++i )
+			{
+				var ZvoxCluster& cluster= result.clusters[i];
+				ust::min_assign( bbox_min[0], cluster.c.center[0] - cluster.c.bounding_box_half_size[0] );
+				ust::min_assign( bbox_min[1], cluster.c.center[1] - cluster.c.bounding_box_half_size[1] );
+				ust::min_assign( bbox_min[2], cluster.c.center[2] - cluster.c.bounding_box_half_size[2] );
+				ust::max_assign( bbox_max[0], cluster.c.center[0] + cluster.c.bounding_box_half_size[0] );
+				ust::max_assign( bbox_max[1], cluster.c.center[1] + cluster.c.bounding_box_half_size[1] );
+				ust::max_assign( bbox_max[2], cluster.c.center[2] + cluster.c.bounding_box_half_size[2] );
+			}
+
+			var [ i32, 3 ] bbox_center
+			[
+				( ( bbox_min[0] + bbox_max[0] ) >> 1 ),
+				( ( bbox_min[1] + bbox_max[1] ) >> 1 ),
+				( ( bbox_min[2] + bbox_max[2] ) >> 1 ),
+			];
+
+			var [ i32, 3 ] bbox_half_size
+			[
+				ust::max( bbox_center[0] - bbox_min[0], bbox_max[0] - bbox_center[0] ),
+				ust::max( bbox_center[1] - bbox_min[1], bbox_max[1] - bbox_center[1] ),
+				ust::max( bbox_center[2] - bbox_min[2], bbox_max[2] - bbox_center[2] ),
+			];
+
+			first_elevator_cluster.c.center= bbox_center;
+			first_elevator_cluster.c.bounding_box_half_size= bbox_half_size;
+
+			// Combine all quads of elevator clusters into quads of the first elevator cluster.
+
+			var ZvoxCluster last_elevator_cluster= result.clusters[ last_elevator_cluster_index ];
+
+			var u32 last_quad= last_elevator_cluster.c.first_quad_index + u32( last_elevator_cluster.num_quads );
+
+			first_elevator_cluster.num_quads= i32( last_quad - first_elevator_cluster.c.first_quad_index );
+
+			result.clusters[ first_elevator_cluster_index ]= move( first_elevator_cluster );
+
+			// Turn remaining elevator clusters into regular ones.
+			for( auto mut i= first_elevator_cluster_index + 1s; i <= last_elevator_cluster_index; ++i )
+			{
+				var ZvoxCluster &mut cluster= result.clusters[i];
+				cluster.num_quads= 0;
+				cluster.cluster_type= ZvoxCluster::c_cluster_type_regular;
+			}
+		}
+	}
+
 	return result;
 }
 
