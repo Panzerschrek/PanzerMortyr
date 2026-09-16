@@ -44,17 +44,19 @@ out vec4 color;
 
 void main()
 {
+	ivec2 tex_coord_i= ivec2( gl_FragCoord.xy );
+
 	vec2 texture_size= textureSize( fu_texture, 0 );
 
-	vec2 tex_coord= gl_FragCoord.xy / texture_size;
+	vec2 tex_coord= ( vec2( tex_coord_i ) + vec2( 0.5, 0.5 ) ) / texture_size;
 	vec2 texel_step= vec2( 1.0, 1.0 ) / texture_size;
 
 	vec4 c[5];
-	c[0]= texture( fu_texture, tex_coord );
-	c[1]= texture( fu_texture, tex_coord + vec2( -texel_step.x, +texel_step.y ) );
-	c[2]= texture( fu_texture, tex_coord + vec2( +texel_step.x, +texel_step.y ) );
-	c[3]= texture( fu_texture, tex_coord + vec2( -texel_step.x, -texel_step.y ) );
-	c[4]= texture( fu_texture, tex_coord + vec2( +texel_step.x, -texel_step.y ) );
+	c[0]= texelFetch( fu_texture, tex_coord_i, 0 );
+	c[1]= texelFetch( fu_texture, tex_coord_i + ivec2( -1, +1 ), 0 );
+	c[2]= texelFetch( fu_texture, tex_coord_i + ivec2( +1, +1 ), 0 );
+	c[3]= texelFetch( fu_texture, tex_coord_i + ivec2( -1, -1 ), 0 );
+	c[4]= texelFetch( fu_texture, tex_coord_i + ivec2( +1, -1 ), 0 );
 
 	const vec3 luma= vec3( 0.299, 0.587, 0.114 );
 	float l[5];
