@@ -258,6 +258,50 @@ Antialiasing (OpenGL only):
 * FXAA should be available and give medium quality - with contrast polygon edges smoothed, but with smoothing also within contrast polygons areas.
 * Using no antialiasing should be also possible.
 
+Static map light effects:
+
+* Animated fire billboards should be drawn where they should be. Each billboard should have its own animation phase. They should be aligned to Z axis.
+* Corona billboards should be drawn where they should be. They should have constant screen size and always oriented towards camera.
+* Blinking corona billboards should be drawn where they should be (like on map 4). Each billboard should have its own animation phase. They should be aligned to Z axis and have constant world size.
+
+Collision detection and character physics:
+
+* Player, enemies and other objects should be affected by gravity.
+* Player, enemies and other objects shouldn't be able to pass through walls, floors and ceilings and generally their movement should be blocked by map geometry.
+* Player and enemies should be able to climb stairs up to 16 units high without needing pressing jump button.
+* It shouldn't be possible to climb a step if there is no room above the head.
+* Player should be able to jump up to 64 units up.
+* It should be possible to slide along walls by moving mostly along, but slightly towards the wall. Such movement shouldn't create much friction.
+* It shouldn't be possible to stuck in map places with sharp corners.
+* It shouldn't be possible to get out of bounds, except there is a hole in map geometry allowing it.
+* Player movement should be accelerated. Acceleration (and deceleration) should depend on surface properties, like with snow surfaces having less acceleration/deceleration compared to stone surfaces.
+* It should be possible to climb ramps up to certain angle. But it should not be possible to climb almost vertical (but slightly inclined) surfaces.
+* Jumping should be available only if there is ground under the feet. It should instantly increase vertical speed (towards up direction).
+* If the player is in air (falling), there should be still a possibility to accelerate/decelerate, but with greatly reduced acceleration/deceleration compared to walking.
+* Camera Z position should be somewhat smoothed while climbing a staircase unless full crouching is active.
+* Crouching should work properly and effectively reduce height of the player's bbox and allow passing into tight shafts like on map 9 or into a hatch on map 29.
+* Crouching phase should be changed smoothly.
+* Crouching should remain active as long as crouching button is pressed.
+* Crouching should be preserved if there is no place above the head to stay.
+* Keeping run/walk button pressed should slow-down the player if "always run" option is enabled and speed-up him otherwise.
+* It should be possible to swim in water.
+* Gravity in water should be weaker compared to the normal value.
+* Swimming should use acceleration and deceleration.
+* Jumping while staying on the bottom of a pool should be possible.
+* It should be possible to leave a pool with difference between water level and floor level above less than 32 units.
+* Player and enemies shouldn'd be able to pass through each other.
+* Player and enemies shouldn't be able to push each other. If one of them is stationary, the other's movement should be blocked by this stationary enemy/player.
+* Enemies shouldn't be able to push decorations.
+* Player should be able to push some decorations (which should be pushable).
+* Pushing an pushable decoration should slow-down the player.
+* It shouldn't be possible to push a decoration out of bounds.
+* It shouldn't be possible to push one decoration by pushing another pushable decoration near to it.
+* If player falls down, he should get some damage upon collision with the floor if height difference is high enough. Increasing falling height should increase damage. It should be possible to deal 100 damage or more by falling from large enough height.
+* While jetpack is active, jumping should be disabled. Instead pressing jump key should accelerate the player up.
+* It should still be possible to get falling damage while jetpack is active.
+* Some forward/backward/side acceleration/deceleration should be available while jetpack is active.
+* "noclip" cheat should allow player moving through obstacles (map, objects), increase his speed significantly and disable gravity.
+
 Music:
 
 * For singleplayer maps single music track should be played in a loop (track number is specified per-map in *ICE.STD* file).
