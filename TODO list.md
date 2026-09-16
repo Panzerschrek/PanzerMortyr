@@ -97,7 +97,8 @@ PanzerMortyr rendering:
 
 PanzerMortyr OpenGL rendering:
 
-* Add support for MSAA (with proper support of fullscreen effects like fog).
+* Consider implementing fast approximate antialiasing.
+* Consider implementing multisample antialiasing (with proper support of fullscreen effects like fog).
 * Consider drawing map polygons with detail textures (generate such textures somehow).
 * Consider optimizing dynamic lighting even more by using stencil test for them.
 
@@ -112,6 +113,7 @@ PanzerMortyr software rendering:
 
 PanzerMortyr menus and HUD:
 
+* Allow changing antialiasing method via settings menu.
 * Allow changing HUD position via settings menu.
 * Consider allowing specifying custom window resolution for windowed mode on video settings page.
 * Consider displaying in HUD amounts of tools in inventory, at least important ones - health, ammo.
