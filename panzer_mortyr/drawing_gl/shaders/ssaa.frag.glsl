@@ -6,6 +6,8 @@ out vec4 color;
 
 void main()
 {
+	// Perform averaging of 2x2 block of pixels.
+
 	ivec2 coord= ivec2( gl_FragCoord.xy ) * 2;
 
 	vec4 color0= texelFetch( fu_texture, coord + ivec2( 0, 0 ), 0 );
