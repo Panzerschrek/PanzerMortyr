@@ -117,7 +117,6 @@ PanzerMortyr menus and HUD:
 * Consider allowing specifying custom window resolution for windowed mode on video settings page.
 * Consider displaying in HUD amounts of tools in inventory, at least important ones - health, ammo.
 * Consider drawing active tools at some edge (left or right) of the screen.
-* Allow configuring crosshair kind, investigate what kinds of crosshairs are available in the original game.
 * Consider displaying some sort of a progress bar while going close to the map exit trigger - as RtCW does.
 * Consider displaying some screen with map stats (completion time, killed enemies) at the end of a map - as Quake does.
 
