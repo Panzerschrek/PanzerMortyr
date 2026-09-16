@@ -64,9 +64,6 @@ fn WorldDrawerGL::constructor(
 		map_shader_(
 			embed</char8/>( "shaders/map.vert.glsl" ),
 			embed</char8/>( "shaders/map.frag.glsl" ) ),
-		mirror_depth_clear_shader_(
-			embed</char8/>( "shaders/mirror_depth_clear.vert.glsl" ),
-			embed</char8/>( "shaders/mirror_depth_clear.frag.glsl" ) ),
 		map_mirror_shader_(
 			embed</char8/>( "shaders/map.vert.glsl" ), // Use the same vertex shader as for map polygons.
 			embed</char8/>( "shaders/map_mirror.frag.glsl" ) ),
@@ -324,14 +321,9 @@ fn WorldDrawerGL::Draw( mut this, WorldDrawingInfo drawing_info ) : WorldDrawing
 
 		if( mirrors_enabled && camera_space_mirror_plane.distance > 0.0f )
 		{
-			// Clear depth to minimum value to avoid drawing anything outside mirror.
 			SetGLState( g_buffer_clear_gl_state );
-			unsafe( glClearDepth( 0.0 ) );
+			unsafe( glClearDepth( 1.0 ) );
 			unsafe( glClear( GLbitfield( GL_DEPTH_BUFFER_BIT ) ) );
-
-			// Clear mirror geometry with maximum depth value to allow drawing inside mirror.
-			ClearMirrorDepth(
-				camera_space_matrix, camera_projection_matrix, mirror_depth_clear_shader_, mirror_polygons_buffer_ );
 
 			var Mat4f mirror_matrix= Mat4f::MakeMirroring( mirror_plane );
 
@@ -2778,36 +2770,6 @@ fn DrawSemitransparentGeometry(
 		GLenum( GL_TRIANGLES ), GLsizei( num_indices ), GLenum( GL_UNSIGNED_SHORT ), ust::nullptr</byte8/>() ) );
 }
 
-fn ClearMirrorDepth(
-	Mat4f& camera_space_matrix,
-	Mat4f& camera_projection_matrix,
-	ShaderProgram &mut shader,
-	DynamicPolygonsBuffer& mirror_polygons )
-{
-	// Modify projection matrix to always produce constant depth.
-	var Mat4f mut mirror_depth_clear_projection_matrix= camera_projection_matrix;
-	mirror_depth_clear_projection_matrix.values[0][2]= 0.0f;
-	mirror_depth_clear_projection_matrix.values[1][2]= 0.0f;
-	mirror_depth_clear_projection_matrix.values[2][2]= 1.0f - 1.0f / 4096.0f; // Use almost 1, not strictly 1 to avoid clipping.
-	mirror_depth_clear_projection_matrix.values[3][2]= 0.0f;
-
-	var Mat4f mirror_depth_clear_view_matrix= camera_space_matrix * mirror_depth_clear_projection_matrix;
-
-	SetGLState( g_mirror_depth_clear_gl_state );
-
-	shader.Bind();
-	shader.SetUniform( "vu_matrix", mirror_depth_clear_view_matrix );
-
-	mirror_polygons.vertex_array_object.Bind();
-	mirror_polygons.index_buffer.Bind();
-
-	unsafe( glDrawElements(
-		GLenum( GL_TRIANGLES ),
-		GLsizei( ust::min( mirror_polygons.indices.size(), mirror_polygons.max_indices ) ),
-		GLenum( GL_UNSIGNED_SHORT ),
-		ust::nullptr</byte8/>() ) );
-}
-
 fn DrawMirrorPolygons(
 	Texture& map_textures_array,
 	ShaderProgram &mut shader,
@@ -3712,21 +3674,6 @@ var GLState g_map_dynamic_lights_drawing_gl_state
 	.blending_enabled= true,
 	.blend_source_factor( GL_ONE ),
 	.blend_destination_factor( GL_ONE ),
-};
-
-var GLState g_mirror_depth_clear_gl_state
-{
-	// Don't bother rewriting color.
-	.color_write_enabled= false,
-	// Alwasy rewrite depth.
-	.depth_test_enabled= true,
-	.depth_test_func( GL_ALWAYS ),
-	.depth_write_enabled= true,
-	.cull_face_enabled= true,
-	.cull_face( GL_FRONT ),
-	.blending_enabled= false,
-	.blend_source_factor( GL_INVALID_ENUM ),
-	.blend_destination_factor( GL_INVALID_ENUM ),
 };
 
 var GLState g_mirror_polygons_drawing_gl_state
