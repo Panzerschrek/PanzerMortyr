@@ -1,24 +1,23 @@
 import "gl_functions.iu"
 import "gl_state.iu"
-import "world_drawer_gl_supersampled.iu"
+import "world_drawer_gl_fxaa.iu"
 
 namespace PM
 {
 
-fn WorldDrawerGLSupersampled::constructor(
+fn WorldDrawerGLFXAA::constructor(
 	[ u32, 2 ] viewport_size,
 	SettingsImutPtr mut settings,
 	CachingGameResourcesLoaderPtr mut caching_game_resources_loader,
 	ConsoleOutPtr mut console_out,
 	GLCapabilities& gl_capabilities )
 	(
-		dst_viewport_size_= viewport_size,
-		supersampled_buffer_resolve_shader_(
-			embed</ char8 />( "shaders/ssaa.vert.glsl" ), embed</ char8 />( "shaders/ssaa.frag.glsl" ) ),
+		fxaa_buffer_resolve_shader_(
+			embed</ char8 />( "shaders/fxaa.vert.glsl" ), embed</ char8 />( "shaders/fxaa.frag.glsl" ) ),
 		color_texture_= Texture::Create( GLenum( GL_TEXTURE_2D ) ),
 		depth_texture_= Texture::Create( GLenum( GL_TEXTURE_2D ) ),
 		internal_drawer_(
-			ust::make_array( viewport_size[0] * c_ss_scale, viewport_size[1] * c_ss_scale ),
+			viewport_size,
 			move(settings),
 			move(caching_game_resources_loader),
 			move(console_out),
@@ -31,15 +30,16 @@ fn WorldDrawerGLSupersampled::constructor(
 		GLenum( GL_TEXTURE_2D ),
 		0,
 		GLint( GL_RGBA8 ),
-		GLsizei( viewport_size[0] * c_ss_scale ),
-		GLsizei( viewport_size[1] * c_ss_scale ),
+		GLsizei( viewport_size[0] ),
+		GLsizei( viewport_size[1] ),
 		0,
 		GLenum( GL_RGBA ),
 		GLenum( GL_UNSIGNED_BYTE ),
 		ust::nullptr</byte8/>() ) );
 
-	unsafe( glTexParameteri( GLenum( GL_TEXTURE_2D ), GLenum( GL_TEXTURE_MAG_FILTER ), GLint( GL_NEAREST ) ) );
-	unsafe( glTexParameteri( GLenum( GL_TEXTURE_2D ), GLenum( GL_TEXTURE_MIN_FILTER ), GLint( GL_NEAREST ) ) );
+	// Linear filtration is necessary for FXAA.
+	unsafe( glTexParameteri( GLenum( GL_TEXTURE_2D ), GLenum( GL_TEXTURE_MAG_FILTER ), GLint( GL_LINEAR ) ) );
+	unsafe( glTexParameteri( GLenum( GL_TEXTURE_2D ), GLenum( GL_TEXTURE_MIN_FILTER ), GLint( GL_LINEAR ) ) );
 
 	depth_texture_.Bind();
 
@@ -47,8 +47,8 @@ fn WorldDrawerGLSupersampled::constructor(
 		GLenum( GL_TEXTURE_2D ),
 		0,
 		GLint( GL_DEPTH24_STENCIL8 ),
-		GLsizei( viewport_size[0] * c_ss_scale ),
-		GLsizei( viewport_size[1] * c_ss_scale ),
+		GLsizei( viewport_size[0] ),
+		GLsizei( viewport_size[1] ),
 		0,
 		GLenum( GL_DEPTH_STENCIL ),
 		GLenum( GL_UNSIGNED_INT_24_8 ),
@@ -67,24 +67,22 @@ fn WorldDrawerGLSupersampled::constructor(
 	FramebufferObject::BindScreenFramebuffer();
 }
 
-fn WorldDrawerGLSupersampled::Draw( mut this, WorldDrawingInfo mut drawing_info ) : WorldDrawingStats
+fn WorldDrawerGLFXAA::Draw( mut this, WorldDrawingInfo mut drawing_info ) : WorldDrawingStats
 {
 	framebuffer_object_.Bind();
-	unsafe( glViewport( 0, 0, i32( dst_viewport_size_[0] * c_ss_scale ), i32( dst_viewport_size_[1] * c_ss_scale ) ) );
 
 	var WorldDrawingStats stats= internal_drawer_.Draw( move( drawing_info ) );
 
 	FramebufferObject::BindScreenFramebuffer();
-	unsafe( glViewport( 0, 0, i32( dst_viewport_size_[0] ), i32( dst_viewport_size_[1] ) ) );
 
-	SetGLState( g_global_fog_gl_state );
+	SetGLState( g_framebuffer_resolve_gl_state );
 
 	var u32 texture_slot= 0u;
 	unsafe( glActiveTexture( GLenum( GL_TEXTURE0 ) + GLenum(texture_slot) ) );
 	color_texture_.Bind();
 
-	supersampled_buffer_resolve_shader_.Bind();
-	supersampled_buffer_resolve_shader_.SetUniform( "fu_texture", texture_slot );
+	fxaa_buffer_resolve_shader_.Bind();
+	fxaa_buffer_resolve_shader_.SetUniform( "fu_texture", texture_slot );
 
 	// Draw single triangle covering the entire screen.
 	unsafe( glDrawArrays( GLenum( GL_TRIANGLES ), GLint(0), GLsizei(3) ) );
@@ -92,10 +90,7 @@ fn WorldDrawerGLSupersampled::Draw( mut this, WorldDrawingInfo mut drawing_info 
 	return stats;
 }
 
-// This should match the supersampling shader!
-var u32 c_ss_scale= 2u;
-
-var GLState g_global_fog_gl_state
+var GLState g_framebuffer_resolve_gl_state
 {
 	.color_write_enabled= true,
 	.depth_test_enabled= false,
