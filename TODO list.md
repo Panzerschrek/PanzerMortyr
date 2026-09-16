@@ -97,7 +97,6 @@ PanzerMortyr rendering:
 
 PanzerMortyr OpenGL rendering:
 
-* Consider implementing fast approximate antialiasing.
 * Consider implementing multisample antialiasing (with proper support of fullscreen effects like fog).
 * Consider drawing map polygons with detail textures (generate such textures somehow).
 * Consider optimizing dynamic lighting even more by using stencil test for them.
