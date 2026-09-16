@@ -80,7 +80,6 @@ PanzerMortyr rendering:
 
 * Support restarting video subsystem (in order to apply settings).
 * Apply additional tessellation for tessellated polygons in order to perform smoother light values interpolation (naively triangulating them doesn't produce good result always).
-* Somehow distort/colorize the whole image while swimming in water. Maybe even add or alter global fog if camera is in water volume.
 * Consider optimizing calculating light from point light sources for models - avoid enumerating all lights.
 * Perform some smoothing while applying ambient light (stored in 4x4x4 grid for each room cluster) to models.
 * Consider drawing blob shadows under models (as some sort of decal?).

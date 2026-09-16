@@ -1,6 +1,8 @@
 import "/scoped_array.iu"
 import "/common_lib/billboards_description_file.iu"
 import "bounding_boxes_hierarchy_debug_visualization.iu"
+import "bounding_boxes_hierarchy_visiting.iu"
+import "cluster_utils.iu"
 import "collisions.iu"
 import "game_constants.iu"
 import "game_logic.iu"
@@ -16,6 +18,7 @@ fn ConstructWorldDrawingInfo(
 	Settings& settings,
 	f32 time_steps_fraction,
 	CameraController& camera_controller,
+	GameGlobalData& global_data,
 	ust::optional_ref_imut</GameMapData/> map_data_opt,
 	ust::optional_ref_imut</GameStateExtended/> game_state_opt ) : WorldDrawingInfo
 {
@@ -64,6 +67,7 @@ fn ConstructWorldDrawingInfo(
 		},
 		.fullscreen_effect= WorldDrawingInfo::FullscreenEffect::None,
 		.broken_quad_bits( 0s ), // Set later.
+		.world_lighting_tint[ 1.0f ... ],
 		.fullscreen_blend_color= zero_init, // Set later if necessary.
 	};
 
@@ -1754,6 +1758,44 @@ fn ConstructWorldDrawingInfo(
 						.power= c_flashlight_base_power * c_light_power_scale * ( 1.0f - min_trace_distance ),
 					} );
 			}
+		}
+
+		// Apply tint if is in some liquid.
+		{
+			var bool mut in_water= false, mut in_acid= false, mut in_lava= false;
+
+			var Vec3f& point= drawing_info.camera_params.position;
+
+			auto clusters= map_data.zvox_data.deref().clusters.range();
+
+			VisitBoundingBoxesHierarchyForPoint(
+				map_data.room_clusters_hierarchy.deref(),
+				point,
+				lambda[&]( ClusterIndexInHierarchy c )
+				{
+					var ZvoxCluster& cluster= clusters[ size_type(c) ];
+					if( CreateClusterBBox( cluster ).PointIsInsideOrOnFace( point ) )
+					{
+						in_water |= cluster.contents == ZvoxCluster::c_contents_water;
+						in_acid  |= cluster.contents == ZvoxCluster::c_contents_acid ;
+						in_lava  |= cluster.contents == ZvoxCluster::c_contents_lava ;
+					}
+				} );
+
+			// The original game uses some sort of fog or lighting tinting if camera is located in some liquid.
+			// We use lighting tinting for that, but don't change fog.
+
+			var GameParams& game_params= global_data.game_params.deref();
+
+			var [ u8, 3 ] mut fog[ 0u8, 0u8, 0u8 ];
+			if( in_water ) { fog= game_params.fog_in_water; }
+			if( in_acid  ) { fog= game_params.fog_in_acid ; }
+			if( in_lava  ) { fog= game_params.fog_in_lava ; }
+
+			var f32 average_fog_component= ( f32( fog[0] ) + f32( fog[1] ) + f32( fog[2] ) ) / 3.0f;
+			drawing_info.world_lighting_tint[0]= 1.0f + ( f32( fog[2] ) - average_fog_component ) / 128.0f;
+			drawing_info.world_lighting_tint[1]= 1.0f + ( f32( fog[1] ) - average_fog_component ) / 128.0f;
+			drawing_info.world_lighting_tint[2]= 1.0f + ( f32( fog[0] ) - average_fog_component ) / 128.0f;
 		}
 
 		// Process fullscreen effects.
