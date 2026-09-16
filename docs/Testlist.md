@@ -302,6 +302,24 @@ Collision detection and character physics:
 * Some forward/backward/side acceleration/deceleration should be available while jetpack is active.
 * "noclip" cheat should allow player moving through obstacles (map, objects), increase his speed significantly and disable gravity.
 
+Dynamic clusters (buttons, doors, elevators):
+
+* Only the player (but not enemies) should be able to activate dynamic clusters.
+* Dynamic clusters should be activated by touching.
+* There should be some delay between touching and activation.
+* Activated dynamic cluster performs movement towards its destination.
+* After reaching the destination, a dynamic cluster should stay there or return back (depending on cluster type).
+* A dynamic cluster staying in its end position can be activated yet again to move it back.
+* Buttons should activate doors/elevators assigned to them (with some delay). If there is a button for a cluster, it shouldn't be activated by touching.
+* Chains of activation should be possible (like boss doors on map 23).
+* Dynamic clusters should be able to push the player, enemies and other objects.
+* If movement of a dynamic cluster is blocked (there is at least one object which can't be pushed further), it should reverse its movement.
+* Dynamic clusters should use proper per-quad collision detection, not bbox-based.
+* Buttons requiring some specific key shouldn't be activated if the player has no such key.
+* Collisions of enemies/objects/projectiles with dynamic clusters should work properly regardless of their position or movement phase.
+* Dynamic clusters should play a sound upon activation. The exact sound depends on cluster type.
+* Dynamic clusters should block visibility checks (an enemy staying behind a closed door shouldn't see the player staying at the other side).
+
 Music:
 
 * For singleplayer maps single music track should be played in a loop (track number is specified per-map in *ICE.STD* file).
