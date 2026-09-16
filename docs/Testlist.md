@@ -85,6 +85,14 @@ Console:
 * Entered commands should be added into the console log.
 * Both for commands and settings - and _ symbols should be interchangeable.
 
+Crosshair:
+
+* Crosshair should be drawn in the screen center (if *r_fixed_crosshair* is 1) or where the weapon points.
+* Crosshair should be yellow if the weapon points toward map geometry, green if it points towards sky or red if it points towards an object (enemy or decoration) having a collider.
+* It should be possible to configure crosshair shape.
+* Three shapes should be available - small cross, large cross, Г-shaped. Also it should be possible to select empty shape (no shape at all).
+* Crosshair shape selection in menu should work properly.
+
 Spectator mode:
 
 * After launching the game, some level should be loaded and shown in menu background.
@@ -243,6 +251,12 @@ Rendering mode setting:
 * If initialization of OpenGL mode fails, software mode should be used.
 * Upon first launch one of two rendering modes should be selected randomly with software mode having 25% chance and OpenGL mode having 75% chance.
 * Rendering mode setting should work properly (but require game restart).
+
+Antialiasing (OpenGL only):
+
+* SSAA should be available and give the best quality - polygon edges should be smooth.
+* FXAA should be available and give medium quality - with contrast polygon edges smoothed, but with smoothing also within contrast polygons areas.
+* Using no antialiasing should be also possible.
 
 Music:
 
