@@ -1,7 +1,7 @@
 ### Supported systems
 
 *PanzerMortyr* can be built for *Windows* and for *GNU/Linux*.
-For now only x86_64 architecture is supported, but adopting it for other systems and architectures shouldn't be that hard.
+For now only x86_64 and (with complications) x86 architectures are supported, but adopting it for other systems and architectures shouldn't be that hard.
 
 
 ### Submodules update
@@ -50,10 +50,15 @@ You need to call the *vcvarsall.bat* script provided with your *MSVC* installati
 Also make sure that *CMake* and *Ninja* are accessible via the `PATH` environment variable.
 Then you need to run the Ü build system in the same console window or build script, so that it sees the environment prepared on the steps described above.
 
-For x86_64 (or maybe even x86 builds) don't forget to use `--target-cpu skylake` option, so that the Ü compiler can better optimize result code by using newer CPU instructions.
+For x86_64 don't forget to use `--target-cpu skylake` option, so that the Ü compiler can better optimize result code by using newer CPU instructions.
+For x86 builds (32-bit) use `--target-cpu pentium4` option for the same purpose.
 
 
 ### Building the result package
 
 After a build is successfully finished, its results may be shipped.
-Just take the `panzer_mortyr` executable and the `panzer_mortyr_ffmpeg` shared library (`so` or `dll`) and put them into an archive (zip-file) for further redistribution.
+You should take the following build artifacts and put them into the result archive (zip-file) for further redistribution:
+
+* `panzer_mortyr` executable
+* `panzer_mortyr_ffmpeg` shared library
+* `cd_image_extractor` executable
