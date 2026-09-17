@@ -110,7 +110,6 @@ PanzerMortyr software rendering:
 
 PanzerMortyr menus and HUD:
 
-* Allow changing antialiasing method via settings menu.
 * Consider allowing specifying custom window resolution for windowed mode on video settings page.
 * Consider displaying in HUD amounts of tools in inventory, at least important ones - health, ammo.
 * Consider drawing active tools at some edge (left or right) of the screen.
