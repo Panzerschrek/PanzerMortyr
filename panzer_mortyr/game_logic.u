@@ -4939,6 +4939,77 @@ fn ProcessProjectileHitEvent(
 		}
 	}
 
+	if( weapon_tool.splash_damage_area_size > 0u )
+	{
+		// Apply splash damage to breakable quads.
+		// For simplicity use intersection test with a cube, not sphere.
+
+		var f32 fetch_cube_half_size= f32( weapon_tool.splash_damage_area_size ) / c_sqrt_3;
+
+		var BBox3f fetch_cube_bbox
+		{
+			.min( -fetch_cube_half_size, -fetch_cube_half_size, -fetch_cube_half_size ),
+			.max(  fetch_cube_half_size,  fetch_cube_half_size,  fetch_cube_half_size ),
+		};
+
+		var Vec3f& position= projectile_hit_event.position;
+
+		var BBox3f test_bbox
+		{
+			.min= fetch_cube_bbox.min + position,
+			.max= fetch_cube_bbox.max + position,
+		};
+
+		var CompactPolyhedron mut intersection_polyhedron
+		{
+			.num_planes= 0u,
+			.primary_planes_mask= 0u,
+			.planes[ { .normal= Vec3f::MakeZero(), .distance= 0.0f } ... ],
+		};
+
+		auto& clusters= map_data.zvox_data.deref().clusters;
+		auto& quads= map_data.zmap_data.deref().quads;
+
+		VisitBoundingBoxesHierarchyForBBox(
+			map_data.collider_quads_hierarchy.deref(),
+			test_bbox,
+			lambda[&]( PackedQuadIndex packed_quad_index )
+			{
+				var size_type cluster_index= packed_quad_index.GetClusterIndex();
+				var size_type quad_index= packed_quad_index.GetQuadIndex();
+
+				var ZmapQuad& quad= quads[ quad_index ];
+
+				if( !IsMapQuadBreakable( global_data, map_data, quad ) ||
+					game_state.broken_quad_bits.GetBit( quad_index ) )
+				{
+					return;
+				}
+
+				auto& c= clusters[ cluster_index ].c.center;
+				auto& v= quad.vertices;
+
+				var [ Vec3f, 4 ] vertices
+				[
+					( f32( c[0] + i32( v[0][0] ) ), f32( c[1] + i32( v[0][1] ) ), f32( c[2] + i32( v[0][2] ) ) ),
+					( f32( c[0] + i32( v[1][0] ) ), f32( c[1] + i32( v[1][1] ) ), f32( c[2] + i32( v[1][2] ) ) ),
+					( f32( c[0] + i32( v[2][0] ) ), f32( c[1] + i32( v[2][1] ) ), f32( c[2] + i32( v[2][2] ) ) ),
+					( f32( c[0] + i32( v[3][0] ) ), f32( c[1] + i32( v[3][1] ) ), f32( c[2] + i32( v[3][2] ) ) ),
+				];
+
+				CreateBBoxAndQuadMinkowskiSum( fetch_cube_bbox, vertices, intersection_polyhedron );
+
+				if( intersection_polyhedron.num_planes >= 4u &&
+					IsPointInsidePolyhedron(
+						position,
+						ust::array_view_imut</Planef/>( intersection_polyhedron.planes ).subrange_end(
+							size_type( intersection_polyhedron.num_planes ) ) ) )
+				{
+					game_state.broken_quad_bits.SetBitToOne( quad_index );
+				}
+		} );
+	}
+
 	if( weapon_tool.wall_mark >= 0 &&
 		size_type( projectile_hit_event.hit_quad_index ) < quads.size() )
 	{
