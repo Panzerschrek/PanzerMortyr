@@ -12,6 +12,7 @@ Improvements:
 * Vsync can be turned on and off.
 * Gamma and brightness can be tweaked.
 * 32-bit color.
+* Antialiasing.
 * Trilinear and anisotropic texture filtering.
 * Optional nearest texture filtering.
 * Models are always drawn in full quality.
@@ -65,6 +66,7 @@ Improvements:
 
 * Enemies navigation is slightly better - they are able to go in places impossible for enemies in the original game, they can follow the player far away from their start positions, their movement is generally smoother.
 * There are separate controls for selecting next/previous weapon (by-default mouse wheel is used for this).
+* Glass quads can be broken by splash damage.
 
 Fixed bugs:
 
@@ -124,7 +126,7 @@ Improvements:
 
 * PanzerMortyr outputs higher quality sound - with 44100Hz sample rate (by default) and 32-bit floating-point samples (where it's supported).
 * More active sounds are supported compared to the original game.
-* Music tracks can be played directly from WAV files stored in the game data directory, no CD or CD emulation is necessary.
+* Music tracks can be played directly from WAV files stored in the game data directory, no physical CD or CD emulation is necessary.
 
 Changes:
 
