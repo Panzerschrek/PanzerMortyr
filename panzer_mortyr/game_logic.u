@@ -4914,6 +4914,12 @@ fn ProcessProjectileHitEvent(
 		default -> {},
 	}
 
+	// We can break more than one breakable quad.
+	// In such case avoid emitting multiple breaking glass sounds.
+	// Instead average positions of quad breaking events and emit single sound.
+	var Vec3f mut breaking_glass_sound_positions_sum= Vec3f::MakeZero();
+	var u32 mut num_breaking_glass_positions= 0u;
+
 	if( size_type( projectile_hit_event.hit_cluster_index ) < clusters.size() &&
 		size_type( projectile_hit_event.hit_quad_index ) < quads.size() )
 	{
@@ -4931,12 +4937,95 @@ fn ProcessProjectileHitEvent(
 						.age_steps= 0u,
 					} );
 
-				EmitGlassBreakingSound(
-					game_state.static_sound_sources,
-					global_data.sounds_description.deref(),
-					projectile_hit_event.position );
+				breaking_glass_sound_positions_sum+= projectile_hit_event.position;
+				++num_breaking_glass_positions;
 			}
 		}
+	}
+
+	if( weapon_tool.splash_damage_area_size > 0u )
+	{
+		// PanzerMortyr addition - apply splash damage to breakable quads. The original game doesn't do this.
+
+		// Use size somewhat smaller than damage radius.
+		var f32 fetch_cube_half_size= f32( weapon_tool.splash_damage_area_size ) * 0.5f;
+
+		// For simplicity use intersection test with a cube, not sphere.
+		var BBox3f fetch_cube_bbox
+		{
+			.min( -fetch_cube_half_size, -fetch_cube_half_size, -fetch_cube_half_size ),
+			.max(  fetch_cube_half_size,  fetch_cube_half_size,  fetch_cube_half_size ),
+		};
+
+		var Vec3f& position= projectile_hit_event.position;
+
+		VisitBoundingBoxesHierarchyForBBox(
+			map_data.collider_quads_hierarchy.deref(),
+			BBox3f{ .min= fetch_cube_bbox.min + position, .max= fetch_cube_bbox.max + position },
+			lambda[&]( PackedQuadIndex packed_quad_index )
+			{
+				var size_type cluster_index= packed_quad_index.GetClusterIndex();
+				var size_type quad_index= packed_quad_index.GetQuadIndex();
+
+				var ZmapQuad& quad= quads[ quad_index ];
+
+				if( !IsMapQuadBreakable( global_data, map_data, quad ) ||
+					game_state.broken_quad_bits.GetBit( quad_index ) )
+				{
+					return;
+				}
+
+				auto& c= clusters[ cluster_index ].c.center;
+				auto& v= quad.vertices;
+
+				var [ Vec3f, 4 ] vertices
+				[
+					( f32( c[0] + i32( v[0][0] ) ), f32( c[1] + i32( v[0][1] ) ), f32( c[2] + i32( v[0][2] ) ) ),
+					( f32( c[0] + i32( v[1][0] ) ), f32( c[1] + i32( v[1][1] ) ), f32( c[2] + i32( v[1][2] ) ) ),
+					( f32( c[0] + i32( v[2][0] ) ), f32( c[1] + i32( v[2][1] ) ), f32( c[2] + i32( v[2][2] ) ) ),
+					( f32( c[0] + i32( v[3][0] ) ), f32( c[1] + i32( v[3][1] ) ), f32( c[2] + i32( v[3][2] ) ) ),
+				];
+
+				var CompactPolyhedron mut intersection_polyhedron
+				{
+					.num_planes= 0u,
+					.primary_planes_mask= 0u,
+					.planes[ { .normal= Vec3f::MakeZero(), .distance= 0.0f } ... ],
+				};
+
+				CreateBBoxAndQuadMinkowskiSum( fetch_cube_bbox, vertices, intersection_polyhedron );
+
+				if( intersection_polyhedron.num_planes >= 4u &&
+					IsPointInsidePolyhedron(
+						position,
+						ust::array_view_imut</Planef/>( intersection_polyhedron.planes ).subrange_end(
+							size_type( intersection_polyhedron.num_planes ) ) ) )
+				{
+					game_state.broken_quad_bits.SetBitToOne( quad_index );
+
+					var Vec3f quad_center= ( vertices[0] + vertices[1] + vertices[2] + vertices[3] ) * 0.25f;
+
+					game_state.breaking_glass_effects.Insert(
+						BreakingGlassEffect
+						{
+							.hit_position= quad_center,
+							.cluster_index( cluster_index ),
+							.quad_index( quad_index ),
+							.age_steps= 0u,
+						} );
+
+					breaking_glass_sound_positions_sum+= quad_center;
+					++num_breaking_glass_positions;
+				}
+		} );
+	}
+
+	if( num_breaking_glass_positions > 0u )
+	{
+		EmitGlassBreakingSound(
+			game_state.static_sound_sources,
+			global_data.sounds_description.deref(),
+			breaking_glass_sound_positions_sum / f32( num_breaking_glass_positions ) );
 	}
 
 	if( weapon_tool.wall_mark >= 0 &&
