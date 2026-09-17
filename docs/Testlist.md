@@ -328,3 +328,15 @@ Music:
 * Starting new game, loading a game or starting a new map via console should reset currently-playing music.
 * If a cinematic is playing, music should be stopped.
 * Pausing the game should NOT pause music.
+
+CD image extractor:
+
+* When launched with `-h` or `--help` command-line option, `cd_image_extractor` should show a help message.
+* If an ISO file containing an image of the original game CD is specified via command-line, its content should be extracted into `Data` subdirectory of the current directory. It should contain `main.hal` file and cinematic files.
+* If a CUE file containing an image of the original game CD is specified via command-line, the same data as for an ISO file should be extracted. Additionally music tracks (in WAV format) should be extracted into the `Data` subdrirectory.
+* If `cd_image_extractor` is launched with no command-line options and there is an ISO file in the current directory, it should be processed as described above.
+* If `cd_image_extractor` is launched with no command-line options and there is a CUE file in the current directory, it should be processed as described above.
+* If `cd_image_extractor` is launched with no command-line options and there is more than one ISO or CUE file in the current directory, nothing should be extracted.
+* If `Data` directory already exists, extracting should work too. Existing files in it should be overwritten, but other files (if there are some) should be preserved.
+* Original ISO/CUE/BIN files should not be affected in any case.
+* `cd_image_extractor.log` file should be written in any case
