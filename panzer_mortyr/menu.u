@@ -62,7 +62,11 @@ fn Menu::Deactivate( mut this )
 	key_bindings_page_state_.editing_active= false;
 }
 
-fn nodiscard Menu::ProcessKeyPress( mut this, SDL_Scancode scancode, AudioProcessor &mut audio_processor ) : Command
+fn nodiscard Menu::ProcessKeyPress(
+	mut this,
+	SDL_Scancode scancode,
+	GamePossibilities& game_possibilities,
+	AudioProcessor &mut audio_processor ) : Command
 {
 	auto play_menu_sound= lambda[&]() { audio_processor.PlayMenuSound(); };
 
@@ -109,6 +113,7 @@ fn nodiscard Menu::ProcessKeyPress( mut this, SDL_Scancode scancode, AudioProces
 				Page::SoundSettings -> { current_page_= Page::Options; },
 				Page::ExtraOptions -> { current_page_= Page::Options; },
 				Page::ParentalLock -> { current_page_= Page::Options; },
+				Page::AbortThisGame -> { current_page_= Page::MainMenu; },
 				Page::Quit -> { current_page_= Page::MainMenu; },
 			}
 		},
@@ -121,7 +126,20 @@ fn nodiscard Menu::ProcessKeyPress( mut this, SDL_Scancode scancode, AudioProces
 				{
 					switch( main_menu_current_row_ )
 					{
-						0u -> { current_page_= Page::NewGame; play_menu_sound(); },
+						0u ->
+						{
+							// If has active game ask the user first if he wants to abort the game.
+							// Otherwise just go straight to the new game page.
+							if( game_possibilities.has_active_game_with_valuable_progress )
+							{
+								current_page_= Page::AbortThisGame;
+							}
+							else
+							{
+								current_page_= Page::NewGame;
+							}
+							play_menu_sound();
+						},
 						1u ->
 						{
 							current_page_= Page::LoadGame;
@@ -132,11 +150,15 @@ fn nodiscard Menu::ProcessKeyPress( mut this, SDL_Scancode scancode, AudioProces
 						},
 						2u ->
 						{
-							current_page_= Page::SaveGame;
-							play_menu_sound();
+							// Allow entering "save" page only if saving is available (there is an active game and the player isn't dead).
+							if( game_possibilities.saving_available )
+							{
+								current_page_= Page::SaveGame;
+								play_menu_sound();
 
-							// Load save summaries upon entering the save page.
-							LoadSaveSummaries();
+								// Load save summaries upon entering the save page.
+								LoadSaveSummaries();
+							}
 						},
 						3u -> { current_page_= Page::Multiplayer; play_menu_sound(); },
 						4u -> { current_page_= Page::Options; play_menu_sound(); },
@@ -334,6 +356,7 @@ fn nodiscard Menu::ProcessKeyPress( mut this, SDL_Scancode scancode, AudioProces
 					}
 				},
 				Page::ParentalLock -> {},
+				Page::AbortThisGame -> { current_page_= Page::NewGame; play_menu_sound(); },
 				Page::Quit ->
 				{
 					return CommandQuit{};
@@ -405,6 +428,7 @@ fn nodiscard Menu::ProcessKeyPress( mut this, SDL_Scancode scancode, AudioProces
 					play_menu_sound();
 				},
 				Page::ParentalLock -> {},
+				Page::AbortThisGame -> {},
 				Page::Quit -> {},
 			}
 		},
@@ -473,6 +497,7 @@ fn nodiscard Menu::ProcessKeyPress( mut this, SDL_Scancode scancode, AudioProces
 					play_menu_sound();
 				},
 				Page::ParentalLock -> {},
+				Page::AbortThisGame -> {},
 				Page::Quit -> {},
 			}
 		},
@@ -671,6 +696,7 @@ fn nodiscard Menu::ProcessKeyPress( mut this, SDL_Scancode scancode, AudioProces
 					}
 				},
 				Page::ParentalLock -> {},
+				Page::AbortThisGame -> {},
 				Page::Quit -> {},
 			}
 		},
@@ -869,6 +895,7 @@ fn nodiscard Menu::ProcessKeyPress( mut this, SDL_Scancode scancode, AudioProces
 					}
 				},
 				Page::ParentalLock -> {},
+				Page::AbortThisGame -> {},
 				Page::Quit -> {},
 			}
 		},
@@ -901,6 +928,11 @@ fn nodiscard Menu::ProcessKeyPress( mut this, SDL_Scancode scancode, AudioProces
 				return CommandQuit{};
 				// Don't play menu sound if quitting.
 			}
+			else if( current_page_ == Page::AbortThisGame )
+			{
+				current_page_= Page::NewGame;
+				play_menu_sound();
+			}
 			else
 			{
 				ActualizeCurrentKeyBinding( KeyBinding::CreateFromKeyboardKeyScancode( scancode ) );
@@ -909,6 +941,11 @@ fn nodiscard Menu::ProcessKeyPress( mut this, SDL_Scancode scancode, AudioProces
 		SDL_SCANCODE_N ->
 		{
 			if( current_page_ == Page::Quit )
+			{
+				current_page_= Page::MainMenu;
+				play_menu_sound();
+			}
+			else if( current_page_ == Page::AbortThisGame )
 			{
 				current_page_= Page::MainMenu;
 				play_menu_sound();
@@ -927,7 +964,8 @@ fn nodiscard Menu::ProcessKeyPress( mut this, SDL_Scancode scancode, AudioProces
 	return CommandNone{};
 }
 
-fn nodiscard Menu::ProcessMouseButtonPress( mut this, u32 button_index, AudioProcessor &mut audio_processor ) : Command
+fn nodiscard Menu::ProcessMouseButtonPress(
+	mut this, u32 button_index, GamePossibilities& game_possibilities, AudioProcessor &mut audio_processor ) : Command
 {
 	if( key_bindings_page_state_.editing_active )
 	{
@@ -938,15 +976,16 @@ fn nodiscard Menu::ProcessMouseButtonPress( mut this, u32 button_index, AudioPro
 	// Allow navigating menu via mouse buttons.
 	if( button_index == 1u )
 	{
-		return ProcessKeyPress( SDL_SCANCODE_RETURN, audio_processor );
+		return ProcessKeyPress( SDL_SCANCODE_RETURN, game_possibilities, audio_processor );
 	}
 	else
 	{
-		return ProcessKeyPress( SDL_SCANCODE_ESCAPE, audio_processor );
+		return ProcessKeyPress( SDL_SCANCODE_ESCAPE, game_possibilities, audio_processor );
 	}
 }
 
-fn Menu::ProcessMouseWheel( mut this, i32 delta, AudioProcessor &mut audio_processor )
+fn Menu::ProcessMouseWheel(
+	mut this, i32 delta, GamePossibilities& game_possibilities, AudioProcessor &mut audio_processor )
 {
 	if( key_bindings_page_state_.editing_active )
 	{
@@ -964,12 +1003,12 @@ fn Menu::ProcessMouseWheel( mut this, i32 delta, AudioProcessor &mut audio_proce
 		// Allow navigating menu via mouse wheel.
 		if( delta > 0 )
 		{
-			var Command command= ProcessKeyPress( SDL_SCANCODE_UP, audio_processor );
+			var Command command= ProcessKeyPress( SDL_SCANCODE_UP, game_possibilities, audio_processor );
 			ust::ignore_unused(command); // No command can be actually generated by pressing UP.
 		}
 		else if( delta < 0 )
 		{
-			var Command command= ProcessKeyPress( SDL_SCANCODE_DOWN, audio_processor );
+			var Command command= ProcessKeyPress( SDL_SCANCODE_DOWN, game_possibilities, audio_processor );
 			ust::ignore_unused(command); // No command can be actually generated by pressing DOWN.
 		}
 	}
@@ -2079,6 +2118,18 @@ fn Menu::Draw( mut this, AbstractImageDrawer &mut image_drawer, AbstractTextDraw
 				"Parental lock/adult mode isn't implemented.",
 				text_settings );
 		},
+		Page::AbortThisGame ->
+		{
+			if_var( &image_size : image_drawer.GetImageSize( MenuImages::abort_game_text ) )
+			{
+				image_drawer.DrawImage(
+					MenuImages::abort_game_text,
+					i32( ( viewport_size_[0] - image_size[0] * scale ) / 2u ),
+					// Draw the message slightly above screen center.
+					i32( viewport_size_[1] * 5u / 8u ) - i32( image_size[1] * scale / 2u ),
+					f32( scale ) );
+			}
+		},
 		Page::Quit ->
 		{
 			if_var( &image_size : image_drawer.GetImageSize( MenuImages::quit_texts ) )
@@ -2260,6 +2311,7 @@ fn PreloadMenuImages( AbstractImageDrawer &mut image_drawer, RegionalVersion reg
 		( regional_version == RegionalVersion::Polish
 			? ust::make_array(   0u8, 255u8,  42u8 )
 			: ust::make_array( 255u8,   0u8,   0u8 ) ) );
+	image_drawer.PreloadImage( MenuImages::abort_game_text, ust::make_array( 0u8, 0u8, 0u8 ) );
 	image_drawer.PreloadImage( MenuImages::quit_texts, ust::make_array( 0u8, 0u8, 0u8 ) );
 }
 
@@ -2494,6 +2546,7 @@ var ResourceString
 	& cursor_frames= "MENU_Z.BMP\0\0",
 	& small_cursor_frames= "MENU_X.BMP\0\0",
 	& control_elements= "OPTION2.BMP\0",
+	& abort_game_text= "MENU_A.BMP\0\0",
 	& quit_texts= "QUIT.BMP\0\0\0\0";
 
 } // namespace MenuImages
