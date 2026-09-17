@@ -370,9 +370,38 @@ Melee weapons (kick, knife):
 
 Mind control weapon:
 
+* Non-alarmed enemies attacked with the mind control weapon should become alarmed.
+* Enemies attacked with the mind control weapon should not attack the player.
+* Enemies attacked with the mind control weapon should attack other enemies, except enemies which are also mind-controlled.
+* Non-mind-controlled enemies should respond to fire of mind-controlled enemies.
+* Mind-controll state should be limited in time (like 15 seconds or so).
+* As soon as an enemy is no longer mind-controlled, it should start attacking the player.
+* As soon as an enemy is no longer mind-controlled, other enemies targeting them should start attacking the player.
+
 Birds:
 
+* Burds should be placed in designated bird areas.
+* Birds should fill their bird area semirandomly - with regular density and random angles.
+* Birds should be alarmed by player walking into their placement area.
+* Birds should be alarmed by nearby shots.
+* Birds should be alarmed by nearby projectile hits.
+* Alarmed birds should start flying in random direction mostly up. The flight or each bird should be straight.
+* Flying birds should have pseudo-random animation phase (not synchronized with each other).
+* No collisions with map geometry and other objects should be performed for flying birds.
+* After some time flying birds should disappear.
+* Birds sound shoud be emitted once birds in a particular area are alarmed.
+
 Rats:
+
+* Rats should be placed in designated rat areas.
+* Non-alarmed rats should move randomly in their area.
+* Collision detection with map geometry should work for rats.
+* Rats should be alarmed by player walking into their placement area.
+* Rats should be alarmed by nearby shots.
+* Rats should be alarmed by nearby projectile hits.
+* Alarmed rats should move fast in random directions, possible leaving their designated area.
+* Alarmed rats should bounce from walls and other obstacles.
+* After some time alarmed rats should disappear.
 
 Music:
 
