@@ -17,6 +17,13 @@ Command line:
 * *--config* option should allow specifying custom config file. Values from it should be read and written.
 * *--game-directory* option should allow specifying game directory (where data is located) and should have priority over other directories in game data search.
 
+Logging:
+
+* `panzer_mortyr.log` file should we written on each launch.
+* If there is already such file, it should be overwritten.
+* The log file should contain the same log entries as shown in the terminal (if launched from one) and in the in-game console (with rare exceptions).
+* Fatal errors (causing termination) should be logged properly.
+
 Game data search:
 
 * If there is a file *main.hal* in the current directory, it should be found and used.
@@ -176,7 +183,7 @@ Weapon selection:
 HUD:
 
 * HUD should be somewhat scaled for large resolutions.
-* HUD icons should be displayed at the bottom of the screen.
+* HUD icons should be displayed at the bottom of the screen or at the top (depending on the setting for this, available for change in the menu).
 * A health icon should be displayed left from the screen center.
 * Current health value should be displayed next to the health icon.
 * Health value 20 or below should be displayed in red blinking digits.
@@ -243,6 +250,7 @@ Graphical settings:
 * It should be possible to turn textures trilinear filtration on/off (in OpenGL mode only).
 * It should be possible to change textures anisotropy (in OpenGL mode only).
 * It should be possible to turn textures nearest filtration on/off separately for world, menu, HUD (in OpenGL mode only, in software mode it should be always nearest).
+* It should be possible to change antialiasing properties.
 
 Rendering mode setting:
 
@@ -319,6 +327,52 @@ Dynamic clusters (buttons, doors, elevators):
 * Collisions of enemies/objects/projectiles with dynamic clusters should work properly regardless of their position or movement phase.
 * Dynamic clusters should play a sound upon activation. The exact sound depends on cluster type.
 * Dynamic clusters should block visibility checks (an enemy staying behind a closed door shouldn't see the player staying at the other side).
+
+Projectiles:
+
+* Projectiles (bullets, grenades, etc). should collide with map geometry, dynamic clusters, other objects and not pass through.
+* A projectile should not collide with the player/enemy who fired it. This can be tested easily with bouncing projectiles.
+* Projectiles should have finite velocity.
+* Bullet projectiles should fly in straight line.
+* Hand grenades, panzerfaust grenades, flamethrower projectiles should be affected by gravity.
+* Projectiles should die at first hit of something (produce hit effects, explode if needed) with exception of bouncing projectiles.
+* Bouncing projectiles (hand grenades, subatomic assault rifle projectiles, plasma launcher projectiles) should bounce from map geometry.
+* Bouncing projectiles should hit objects/enemies/player (explode if needed).
+* Bouncing projectiles should hit (explode if needed) breakable map quads.
+* With each bounce velocity of a bouncing projectile should be reduced.
+* Hand grenades should explode after some delay.
+* Projectile which doesn't hit something should die after some delay (like for projectiles fired into air).
+* At each bounce of a bouncing projectile a sound should be emitted.
+* At projectile hit a sound effect should be emitted, which depends on kind of thing which has been hit (map geometry, object, enemy) and material properties (for map geometry).
+* Smoke/fire trail effects should be emitted for some projectile kinds (depending on weapon properties).
+* For projectiles traveling in liquids bubbles should be emitted (but no smoke).
+* If projectile crosses a water-air boundary, splash effects should be emitted.
+* Projectiles should damage the player/enemies/objects.
+* Projectiles should break breakable quads (glass).
+* Splash damage should be applied for nearby player/enemies/objects for projectiles with splash damage (hand grenades, panzerfaust).
+* Breakable glass should be broken by nearby explosion of a projectile having splash damage.
+* Smoke effects should be emitted at projectile hit position (if necessary).
+* Explosion effects (like for panzerfaust or futuristic machinegun) should be emitted ad projectile hit position (if necessary).
+* For flamethrower flame effects should be spawned at projectile hit position for map geometry and objects.
+* If a flamethrower projectile hits an enemy, he should catch fire.
+* Flamethrower projectiles should disappear in liquids.
+* If a projectile hits an enemy having blood (1944 human/animal enemies, 2093 humanoids), blood particles should be emitted.
+* Nearby projectile hits should alarm enemies.
+* Nearby projectile hits should alarm birds and rats.
+* Both the player and enemies firing a weapon should emit a short flash of light with color/brightness specific for each weapon.
+* Projectiles should emit light while in flight (except rare projectile types with no light).
+* Short light flash should be emitted at projectile hit position with color/brightness specific for each weapon.
+* Projectiles itself should be drawn properly, using camera-aligned billboards, move axis-aligned billboards or models.
+* Bullet hole decals should be spawned at projectile hit position if map geometry has been hit and bullet holes are enabled for this weapon.
+* Spark particles should be spawned at projectile hit position if map geometry has been hit (machinegun, laser pistol).
+
+Melee weapons (kick, knife):
+
+Mind control weapon:
+
+Birds:
+
+Rats:
 
 Music:
 
