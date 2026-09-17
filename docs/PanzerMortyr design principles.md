@@ -39,13 +39,13 @@ Some investigation of original game files should be done in order to determine w
 ### User input isn't trusted
 
 It should be considered that users (players) can interact with *PanzerMortyr* in any practically-achievable way.
-This includes usual in-game input, changes done menu, commands typed into the console and changes in the config file.
+This includes usual in-game input, changes done via menu, commands typed into the console and changes in the config file.
 Thus such inputs should be sanitized to not cause a crash.
 
 
 ### Multiplayer architecture
 
-Since the original game has multiplayer support, *PanzerMortyr* should have multiplayer support too.
+Since the original game has multiplayer support, *PanzerMortyr* should probably have multiplayer support too.
 This may be achieved by using client-server architecture, where one game instance works like a server (performs all game logic calculations) and all clients connected to it display results of these calculations.
 Singleplayer code should be implemented in the client-sever way too, in order to simplify its code (avoid writing the same logic twice) and allow to play cooperative mode.
 
@@ -60,6 +60,14 @@ Writing unsafe code requires some attention, one should avoid exposing unsafe be
 *PanzerMortyr* should follow this rule.
 A safe interface should work as expected or it should trigger *halt*, no silent undefined behavior should be caused.
 The only exception are abstractions over graphical APIs - they should be written assuming no bad stuff happens like device context loss.
+
+
+### Unsafe code restrictions
+
+*unsafe* should be used only where it's really necessary.
+This includes calls to external C code, like *SDL2* or *OpenGL*.
+Also it's allowed to use *unsafe* to achieve realtime requirements for sound code.
+In other cases usage of *unsafe* is prohibited, even in cases where it can give some performance boost.
 
 
 ### Byte order should be expected
@@ -77,6 +85,8 @@ The same should be for non-map related resources, like GUI and HUD images - they
 The only exception are on-disk resources, which may be changed, like save file infos and images.
 
 This requirement is necessary to avoid possible lags and FPS drops.
+
+It's allowed to load some resources (like music data) outside loading phase, but only if a separate thread is used for such loading.
 
 
 ### Distributed files should be minimized
