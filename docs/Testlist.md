@@ -366,7 +366,39 @@ Projectiles:
 * Bullet hole decals should be spawned at projectile hit position if map geometry has been hit and bullet holes are enabled for this weapon.
 * Spark particles should be spawned at projectile hit position if map geometry has been hit (machinegun, laser pistol).
 
+Player weapons:
+
+* Shooting should work properly.
+* Ammo should be consumed (if a weapon requires ammo).
+* Firing sounds should be emitted.
+* Muzzle flashes should be emitted.
+* Muzzle lights should be emitted.
+* Projectiles should start traveling roughly from the position of the muzzle.
+* Projectiles should use some random spread (depending on weapon settings), like firing a rifle should be precise, but machinegun is way less precise.
+* Weapons firing more than one projectile at single trigger press should not fire more shots than there is ammo available.
+* Weapon-dependent delay between shots should work properly.
+* Recoil should work properly for panzerfaust (the player should be accelerated backwards).
+* It should not be possible to switch to another weapon if firing is active (firing sequence isn't finished yet).
+* Switching to another weapon should happen with current weapon lowered down and the new one lifted up.
+* Enemies should be alarmed by shots (except for melee weapons).
+* If the player stays close to a wall (so that the muzzle position is behind the wall) no projectiles should be fired.
+
+Player weapon animations:
+
+* Walking weapon animation should be player while walking, swimming or flying.
+* Idle animations should be played from time to time while walking.
+* Idle animations should be played from time to time while staying.
+* Shot animation should be played properly.
+* Weapon model should be moved slightly with some periodic pattern.
+
 Melee weapons (kick, knife):
+
+* Kick should be always available as an extra weapon.
+* It should be possible to fire a weapon and kick in the same time.
+* It should be possible to switch to the kick weapon explicitly. Firing it is the same as kicking.
+* Melee weapons should have limited range (their projectiles travel only single game step).
+* Using a melee weapon should not alarm enemies.
+* Hitting something with a melee weapon should alarm enemies.
 
 Mind control weapon:
 
@@ -402,6 +434,57 @@ Rats:
 * Alarmed rats should move fast in random directions, possible leaving their designated area.
 * Alarmed rats should bounce from walls and other obstacles.
 * After some time alarmed rats should disappear.
+
+Environmental damage:
+
+* The player should receive each second acid damage when swimming in acid, unless the acid protection suit item is active.
+* The player should receive each second acid damage when swimming in lava.
+* The player should start receiving suffocation damage after spending too much time in water without leaving it, unless the acid protection suit is active.
+* Leaving water should stop suffocation damage.
+* Armor should not absorb acid/suffocation damage.
+
+Acid protection suit:
+
+* It should be possible to activate and deactivate the acid protection suit item.
+* With each second when the acid protection suit is active, its remaining amount should decrease.
+* While the player is in acid and the acid protection suit is active, no acid damage should be delivered.
+* A visual effect with screen edges slightly painted blue should be applied when the acid protection suit is active.
+
+Flashlight:
+
+* It should be possible to activate and deactivate the flashlight item.
+* With each second when the flashlight is active, its remaining amount should decrease.
+* A dynamic light source should be spawned towards player's view direction when the flashlight is active.
+* The flashlight should use mostly white light.
+* Power of the flashlight should slightly decrease with distance.
+
+Night vision:
+
+* It should be possible to activate and deactivate the night vision item.
+* With each second when the night vision is active, its remaining amount should decrease.
+* When the night vision is active, the world should be painted green and be slightly brighter, so that its's possible to see dark corners.
+
+Infrared vision:
+
+* It should be possible to activate and deactivate the infrared vision item.
+* With each second when the infrared vision is active, its remaining amount should decrease.
+* When the infrared vision is active, the world should be painted red and models should be highlighted with constant orange color (lighting and own texture should be ignored).
+
+Jetpack:
+
+* It should be possible to activate and deactivate the jetpack item.
+* With each second when the jetpack is active, its remaining amount should decrease.
+* When the jetpack is active, jumping should not work and instead gradual acceleration upwards should work.
+* When the jetpack is active, it should be possible to accelerate/decelerate while in air.
+* When the jetpack is active, gravity should still work for the player.
+* When the jetpack is active, falling damage should still be applied in player collided with the ground too fast.
+
+False documents:
+
+* It should be possible to activate and deactivate the false documents item.
+* With each second when the false documents item is active, its remaining amount should decrease.
+* When the false documents item is active, enemies should not be able to see the player. But they still can be alarmed if hit by some projectile or splash damage or by nearby projectile hits.
+* An enemy having state property "alarmuj_okolice" entering such state should cancel player's invisibility - the false documents item should be deactivated and its remaining count should be set to zero. Only dogs and gestapo enemies are able to do that.
 
 Music:
 
