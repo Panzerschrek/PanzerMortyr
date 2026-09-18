@@ -40,7 +40,6 @@ PanzerMortyr general:
 * Write a readme file.
 * Write a license or borrow some existing one. Some restrictive license allowing only non-commercial usage is necessary.
 * Ship patched game logic files (like ZINF.STD) stored in the *MortyrGameLogicFixes* repository together with PanzerMortyr.
-* Ship licenses of thirdparty components (SDL2, FFmpeg) together with PanzerMortyr.
 * Consider embedding git revision into the game executable and showing it somewhere in the game.
 * Consider performing even more advanced game data search - with more hardcoded paths, Windows registry fetches, etc.
 * Ensure PanzerMortyr works properly on Wayland-based systems.

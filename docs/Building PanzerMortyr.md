@@ -57,8 +57,11 @@ For x86 builds (32-bit) use `--target-cpu pentium4` option for the same purpose.
 ### Building the result package
 
 After a build is successfully finished, its results may be shipped.
-You should take the following build artifacts and put them into the result archive (zip-file) for further redistribution:
+You should take the following files and put them into the result archive (zip-file) for further redistribution:
 
 * `panzer_mortyr` executable
 * `panzer_mortyr_ffmpeg` shared library
 * `cd_image_extractor` executable
+* SDL license file
+* FFmpeg license file
+* FXAA license file
