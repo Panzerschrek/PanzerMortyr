@@ -35,6 +35,15 @@ Game data search:
 * Case of the *Data* directory and the *main.hal* file should be irrelevant, *data*, *Data*, *DATA* directories should be accepted as valid data directories, *main.hal* and *MAIN.HAL* files should be handled equally.
 * If game data is detected in more than one places, game data directory specified via *--game-directory* option should have priority over other directories.
 
+Localization:
+
+* English and Polish versions of the original game should be supported.
+* All menu texts should use proper localization including texts added in PanzerMortyr and missing in the original game.
+* In-game text notifications (like about pick-ups, weapon switching) should use proper localization (with a couple of exceptions like unavailable weapons).
+* Notes should use proper localization.
+* In-game messages about key requirements and secret areas should use proper localization.
+* Console commands, internal setting names, console messages, fatal error message boxes should use English.
+
 Cinematics:
 
 * Game developer/publisher cinematics should be shown at game start, unless the game is started with *--new-game* and *--map* options.
@@ -72,6 +81,32 @@ Menu:
 * Non-key-binding controls menu should work properly.
 * Advanced options menu should work properly - all options should be editable and have effect.
 * Before quitting a quit message should be shown. The message text should be selected randomly. It should be possible to quit by pressing enter or Y, it should be possible to abort quitting by pressing escape or N.
+
+Loading screen:
+
+* The loading screen should look like red text "loading" (localization-dependent) on black background.
+* The loading screen should be shown upon game start (before showing startup cinematics).
+* The loading screen should be shown before loading the initial map for he spectator mode.
+* The loading screen should be shown before starting the new game.
+* The loading screen should be shown after intro cinematic and before loading the start level.
+* The loading screen should be shown before loading a game.
+* The loading screen should be shown before starting playing a map via "map" console command.
+* The loading screen should be shown upon transition to the next map.
+
+In-game notifications:
+
+* Text messages about selected weapons and pick-ups should be shown in the upper left corner of the screen.
+* Text messages about unavailability of a weapon and/or ammo for it should be shown while trying to switch to a weapon which player doesn't have or to which it has no ammo.
+* Text messages for map leave conditions should be shown when trying leaving a map having some leave condition (like killing a boss or collecting an item).
+* Messages about required keys (golden/silver/blue) should be shown while pressing a button requiring such key if the player has no such key.
+* Messages about opened secret areas should be shown.
+
+Notes:
+
+* Map objects where notes are placed (usually tables) should be highlighted - their geometry should change brightness periodically.
+* When pointing the crosshair towards such object and staying close enough, the corresponding note image should be shown.
+* Moving closer should make note image bigger and reduce its transparency.
+* The game process should not be paused while a note image is shown (unlike in the original game), all player controls should remain functional.
 
 Console:
 
