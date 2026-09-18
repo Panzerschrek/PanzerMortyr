@@ -103,7 +103,6 @@ PanzerMortyr OpenGL rendering:
 PanzerMortyr software rendering:
 
 * Consider drawing remaining test primitives - triangles and sprites.
-* Consider applying local fog to semitransparent geometry.
 * Fix issues with hall-of-mirrors effect visible at some places on some maps where sky quads are missing or aren't large enough to cover the entire sky.
 * Consider using textures dithering (as Unreal does).
 * Consider implementing some sort of vertical synchronization - to avoid tearing.
