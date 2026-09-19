@@ -54,7 +54,6 @@ PanzerMortyr game logic:
 
 * Fix entity effects emitted at zero operation step. For some reason the number of steps from operation start is almost never zero.
 * Ensure all entity properties affecting state transitions are implemented.
-* Spawn water circles if a projectile hits water surface.
 * Do something with unconditional entity state transition "w_zasiegu_strzalu_b" - try making it somewhat random.
 * Perform alarm-based enemy state transition with a delay, where it makes sense.
 * Consider implementing misfire - in the original game enemies sometimes don't shoot, even if shooting animation is playing.
