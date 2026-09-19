@@ -401,6 +401,77 @@ Projectiles:
 * Bullet hole decals should be spawned at projectile hit position if map geometry has been hit and bullet holes are enabled for this weapon.
 * Spark particles should be spawned at projectile hit position if map geometry has been hit (machinegun, laser pistol).
 
+Entities (general):
+
+* Entities (enemies, pick-ups, decorations) should function properly.
+* Entities should be affected by gravity (except for sky decorations).
+* Enemies and objects should have colliders (with some exceptions).
+* Animations should work properly (idle animations, destruction animations and others).
+* Pick-ups should not have colliders.
+* Some pick-ups shoould be rotated slowly. This is applicable for pick-ups floating in air and not lying on ground.
+* Enemies and objects should have limited health (energy) and die after receiving enough damage.
+* Light effects (sirens, lightnings) should work properly for entities.
+* Explosion effects (explosive barrels) should work properly, including explosion billboards, flame effects, light, splash damage, sound.
+* Sounds (sirens, destruction sounds for decorations) should work properly.
+* Smoke emitters should work properly and emit smoke particles periodically.
+
+Enemies:
+
+* While in calm mode, enemies should move in loops between their patrolling points (except ones who are stationary).
+* An enemy should be able to spot the player if he is located at front of him.
+* Enemies should be alarmed by nearby shots (except shots from melee weapons).
+* Enemies should be alarmed by nearby projectile hits.
+* An enemy transitioning into alarmed state should alarm other enemies nearby.
+* Enemies should move towards the player if he is far away.
+* If right now the player isn't visible from an enemie's point of view, this enemy should go to the position where he has seen the player last time.
+* If an enemy is close the the player, he should move randomly in his proximity, not going far away.
+* Injured enemies should be able to seek for health packs and armor items and be able to pick-up them.
+* Enemies with no ammo should be able to seek for ammo. They should use proper ammo for their weapon type. They should be able to pick-up weapons, including ones dropped by their dead allies.
+* An enemy having no ammo and no ammo nearby to pick-up should be in panic mode and try moving away from the player.
+* An enemy having low health and no health items nearby to pick-up should be in panic mode and try moving away from the player.
+* Enemies should attack the player when he is in sight and there is ammo left.
+* Enemies with mellee attacks (dogs) should attack the player properly.
+* Enemies should mostly not shot if there is some obstacle (map geometry, an object or another enemy) on the ray towards the player.
+* Enemies with directional moving mode (dogs, robo-spiders) should go straigt to the player, not navigating the navigation graph.
+* Enemies should be able to navigate the map (find their way) in most cases. They should not stuck or move in short circles.
+* If an enemy can't reach the player (no way is possible at all or it's too long to calculate), he should still move roughly towards the player and not stay stationary if movement animation is shown.
+* Enemies should be able to go around other enemies and objects if they are in the way.
+* Enemies should die if damaged enough.
+* Some enemy types may play injury animations. The chance of such animation is specified individually for each enemy.
+* Enemies should drop pick-ups properly (weapons, ammo, keys). What is dropped is specified for each enemy type individually.
+* Muzzle flashes should be shown for firing enemies.
+* Muzzle lights should be shown for firing enemies.
+* Shot sounds should be emitted for firing enemies. The weapon's sound should be emitted, except default sounds are disabled for this kind of enemy.
+* A random alarm sound (Halt oder ich schieße!) should be emitted by an enemy seeng the player first time, but not for enemies alarmed in other way.
+* Alarm sounds should not be emitted for enemies with default sounds disabled.
+* Injury sounds should be emitted for enemies upon taking damage unless default sounds are disabled.
+* Volkssturm enemies should be able to surrender if no ammo is left. They should start seeking for more ammo as soon as the player don't see them.
+* Random animations should be shown for some enemies (depending on enemy kind) in calm mode, like MP-40 guys playing with their weapons of Volkssturm guys smoking.
+* Custom sounds should be emitted for enemies requiring such sounds, like futuristic enemies with idle sounds, custom alarm sounds and shooting sounds.
+* Injured enemies should be covered with blood except enemies which are not alive or not humanoid.
+* Enemies should be flammable (burning effect should be applicable to them).
+* Accuracy of enemies should depend on their weapon (each weapon settings have a parameter for enemies accuracy) and current skill level.
+* Some enemy types (snipers, robo-spiders) have additional accuracy multiplier, so that they are accurate even on skill 0.
+* While shooting the player enemies should take his bounding box into account. If he is crouching, they should target the center of the bounding box in crouching state.
+* Each individual enemy type should be tested if it works as expected.
+
+The tank boss (on map 24):
+
+* The tank boss should start its movement after entering the map.
+* It should destroy the wall staying in the way.
+* It should move somewhat forward.
+* After reaching its destination it should be able to attack the player.
+* The tank's turrent should rotate towards the player. As soon as it points correctly, it should fire.
+* Projectiles fired by the tank should fly in straight light parallel to the ground.
+* The body of the tank should not rotate.
+* The body of the tank should have proper collider, even after the tank is defeated.
+* It should be possible to destroy the tank. Eny weapon can work to do it, but it may require some time, since it has a lot of health.
+* Initial movement sound should be played.
+* Destruction sound should be played.
+* Turret rotation sound should be played.
+* Shot sound should be played.
+* It shouldn't be possible to leave the map until the tank is destroyed.
+
 Player weapons:
 
 * Shooting should work properly.
@@ -520,6 +591,36 @@ False documents:
 * With each second when the false documents item is active, its remaining amount should decrease.
 * When the false documents item is active, enemies should not be able to see the player. But they still can be alarmed if hit by some projectile or splash damage or by nearby projectile hits.
 * An enemy having state property "alarmuj_okolice" entering such state should cancel player's invisibility - the false documents item should be deactivated and its remaining count should be set to zero. Only dogs and gestapo enemies are able to do that.
+
+Pick-ups:
+
+* Items should be pickable.
+* A picked-up item should disappear.
+* Picking-up an item should increase its amount in the inventory (for ammo and other consumable items).
+* If the maximum amount of an item in the inventory is reached, this item can't be picked-up.
+* Picked-up weapons should also give some ammo (specific for each weapon type).
+* If a weapon is picked-up and the player hasn't such weapon yet, the new (picked-up) weapon should be selected.
+* Items should not be obstacles.
+* Picked-up items should not be automatically activated.
+* Picking-up a health pack should apply its health to the current health level and apply all health from the inventory.
+* Picking-up armor should apply its value to the current armor level and apply all armor from the inventory.
+* Sounds should be played for picked-up items, including unique sounds for health and armor items.
+
+Inventory:
+
+* It should be possible to navigate inventory using next/previous buttons.
+* The currently-selected tool should be shown in HUD.
+* While navigating inventory other available inventory tools should be shown in HUD.
+* The menu sound should be emitted while navigating inventory.
+* It should be possible to activate inventory tools.
+* Activating a weapon should trigger switching to it.
+* Timed tools (night vision, infrared vision, flashlight, acid protection suit, jetpack, false documents) may be activated and deactivated.
+* It should be possible to activate night vision, infrared vision, flashlight, acid protection suit, jetpack tools via dedicated keys.
+* Activating health tool should add it to current player's health.
+* Activating armor tool should add it to current player's armor.
+* Keys should not be shown in inventory.
+* Ammo should not be shown in inventory.
+* Kick should not be shown in inventory.
 
 Music:
 
