@@ -1,0 +1,77 @@
+## PanzerMortyr
+
+*PanzerMortyr* is a reimplementation of the engine of the game [Mortyr 2093-1944](https://en.wikipedia.org/wiki/Mortyr).
+It allows to play the original game on modern operating systems and with modern video/audio quality, assuming data of the original game is provided.
+
+
+### System requirements
+
+*PanzerMortyr* can work on 64-bit Windows 10.
+Older Windows versions may work too, but it wasn't tested.
+GNU/Linux is also supported.
+
+x86_64 CPU is required.
+Intel/Skylake and AMD/Zen processors or newer are supported.
+
+It's recommended to have OpenGL 3.3 support in the system (drivers installed).
+But it's not strictly necessary, since *PanzerMortyr* has also software rendering requiring no OpenGL at all.
+
+800MB free disk space is needed (for both *PanzerMortyr* files and data of the original game).
+At least 256MB of free memory is needed for running.
+
+Keyboard is necessary for controls.
+Mouse/touchpad is supported, but it's not strictly necessary, it's possible to use only keyboard controls.
+Joystics and other controllers are not supported.
+
+
+### Installation
+
+Just download the archive for the latest build and unpack it.
+
+If you already have the original game installed on your system, just copy contents of the archive into Mortyr's installation directory.
+Then run `panzer_mortyr` executable, it should work properly (except music).
+
+The recommended way of installation is to use the `cd_image_extractor` tool provided with *PanzerMortyr*.
+Just put BIN/CUE files containing image of the original CD into the directory where `cd_image_extractor` executable is located and run it.
+It should extract all data necessary, including music.
+An ISO image can work too, but it contains no music.
+If anything goes well, after the extraction the *Data* directory should contain game files (*main.hal* file, videos, music tracks).
+If it's not the case, see the log file for clues what may went wrong.
+After the data of the original game is successfully extracted, `panzer_mortyr` executable can be launched.
+
+
+### Settings
+
+Various menu setting pages are implemented, a lot of stuff can be done with them.
+Some settings aren't exposed in menu, but it's possible to change them by editing *panzer_mortyr.cfg* file directly.
+You can, for example, choose custom windowed resolution using it.
+
+
+### Contributions
+
+*PanzerMortyr* is a personal project of its author, not a community project.
+So, no pull request and other code changes are accepted.
+But bug reports and suggestions are welcome.
+
+
+### Building from sources
+
+See [the corresponding file](docs/Building PanzerMortyr.md).
+
+You may try building it for systems other then x86_64 Windows and GNU/Linux, but it's not guaranteed that it can be built and work properly.
+
+
+### Thirdparty libraries
+
+*PanzerMortyr* uses the following thirdparty libraries:
+
+* [raylib](https://www.raylib.com/) is used, but only for development tools (not shipped in the result archive).
+* [SDL2](https://libsdl.org/) is used for system interaction. It's statically linked.
+* [FFmpeg](https://ffmpeg.org/) is used for cinematics playback. It's dynamically linked, since it's license basically prohibits static linking with non-GPL code.
+
+Their installation isn't required (they are included within *PanzerMortyr* archive), they are just mentioned for legal reasons.
+
+
+### Authors
+
+Copyright © 2025-2026 "Panzerschrek".
