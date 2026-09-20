@@ -4,24 +4,47 @@
 It allows to play the original game on modern operating systems and with modern video/audio quality, assuming data of the original game is provided.
 
 
+### How it's done
+
+Data formats of the original game (archive file, map files, models) have been reverse-engineered and code loading them has been written.
+Original game logic has been observed and reimplemented.
+Many things required no investigation at all, since they are defined by plain text files (like entities and weapons description).
+Other stuff needed (rendering, menu, input, sound) has been written around reimplemented game logic.
+
+*PanzerMortyr* recreates logic of the original game pretty close, including behavior of enemies of other objects, balance, movement physics.
+It's not an ideal copy, but practically close enough.
+Since it's a recreation, it avoids some bugs present in the original game.
+Obviously it improves overall quality - high resolution rendering with uncapped framerate is supported, high quality sound and a lot of other small improvements.
+
+*PanzerMortyr* is written mostly using the [Ü](https://github.com/Panzerschrek/U-00DC-Sprache/) programming language with exception of some thirdparty libraries (described below).
+
+No LLMs have been used in *PanzerMortyr* development.
+All investigations of the original game have been done manually.
+Each line of code is written by hand.
+The overall technical design is a product of human's mind.
+
+
 ### System requirements
 
 *PanzerMortyr* can work on 64-bit Windows 10.
-Older Windows versions may work too, but it wasn't tested.
+Older Windows versions may work too, but it hasn't been tested.
 GNU/Linux is also supported.
 
-x86_64 CPU is required.
+A CPU with architecture x86_64 is required.
 Intel/Skylake and AMD/Zen processors or newer are supported.
-
-It's recommended to have OpenGL 3.3 support in the system (drivers installed).
-But it's not strictly necessary, since *PanzerMortyr* has also software rendering requiring no OpenGL at all.
 
 800MB free disk space is needed (for both *PanzerMortyr* files and data of the original game).
 At least 256MB of free memory is needed for running.
 
+It's recommended to have a graphics card with OpenGL 3.3 support (with necessary drivers installed).
+But it's not strictly necessary, since *PanzerMortyr* has also software rendering requiring no OpenGL at all.
+
+A sound output device is recommended (a sound card, headphones/loudspeakers).
+Stereo sound is supported, but nothing more complex than that.
+
 Keyboard is necessary for controls.
 Mouse/touchpad is supported, but it's not strictly necessary, it's possible to use only keyboard controls.
-Joystics and other controllers are not supported.
+Joysticks and other controllers are (for now) not supported.
 
 
 ### Installation
@@ -67,7 +90,7 @@ You may try building it for systems other then x86_64 Windows and GNU/Linux, but
 
 * [raylib](https://www.raylib.com/) is used, but only for development tools (not shipped in the result archive).
 * [SDL2](https://libsdl.org/) is used for system interaction. It's statically linked.
-* [FFmpeg](https://ffmpeg.org/) is used for cinematics playback. It's dynamically linked, since it's license basically prohibits static linking with non-GPL code.
+* [FFmpeg](https://ffmpeg.org/) is used for cinematics playback. It's dynamically linked, since its license basically prohibits static linking with non-GPL code.
 
 Their installation isn't required (they are included within *PanzerMortyr* archive), they are just mentioned for legal reasons.
 
