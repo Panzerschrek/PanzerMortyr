@@ -40,6 +40,11 @@ Building *FFmpeg* on *Windows* requires *MSYS2*, *make* installed within it (`pa
 
 ### Executing the build
 
+Before performing the build process it's recommended to generate a file containing git revision.
+Run `git rev-parse HEAD > git_revision.txt` in order to do this.
+This file will be used by the build script later.
+This step may be skipped, in that case the result *PanzerMortyr* executable will contain no proper version.
+
 On *GNU/Linux* executing the build is easy.
 It just requires launching the Ü build system (`u.._build_system1 build`) in the root source directory of the project (where the *build.u* file is located).
 A debug build may be performed by providing `--build-configuration debug` option.
