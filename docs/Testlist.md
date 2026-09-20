@@ -622,6 +622,149 @@ Inventory:
 * Ammo should not be shown in inventory.
 * Kick should not be shown in inventory.
 
+Breakable map quads:
+
+* A projectile hitting a breakable map quad (glass, windows) should break it.
+* A projectile explosion should break nearby breakable quads.
+* Glass splinters should be emitted for a broken quad.
+* Glass splinters should fall down and rotate.
+* Glass splinters should disappear with time.
+* Glass splinters should use proper texture and brightness matching the source map quad.
+* Glass breaking sound should be emitted for a broken map quad.
+* Non-breakable glass material (like windows on map 23) should not be breakable.
+
+Damaging flames:
+
+* An enemy, an object or the player hit with a flamethrower projectile should burn.
+* Some additional burning damage should be delivered to burning objects besides initial flame projectile damage.
+* Whole body burning effect should be used for burning enemies. Its intensity should depend on the amount of flamethrower particles which hit this enemy.
+* Enemies with burning effect used should emit some yellow light.
+* Flame sprites attached to the hit point of a flamethrower projectile should be drawn for burning objects.
+* Slight yellow screen tinting should be shown for the burning player.
+* Burning for enemies, objects and the player should stop after some time.
+
+Muzzle lights:
+
+* A muzzle light should be created for a shooting enemy.
+* A muzzle light should be created for the shooting player.
+* Muzzle light should be attached to the position of the weapon's muzzle (roughly).
+* Muzzle light should move together with its parent enemy/player.
+* Muzzle lights should be short-leaving (only a fraction of a second).
+* Color and intensity of muzzle light should depend on weapon properties.
+
+Muzzle flashes:
+
+* A muzzle flash should be created for a shooting enemy.
+* A muzzle flash should be created for the shooting player.
+* Muzzle flash should be attached to the position of the weapon's muzzle (roughly).
+* Muzzle flash should move together with its parent enemy/player.
+* Muzzle flashes should be short-leaving (only a fraction of a second).
+* The exact billboard used for a muzzle flash should depend on weapon properties.
+
+Spark particles:
+
+* Spark particles should be spawned at the hit point for weapons like machinegun or laser pistol.
+* Spark particles should be drawn as small bright billboards.
+* Spark particles should move away from the hit point and be affected by gravity.
+* Spark particles should reduce their brightness with time.
+
+Explosion particles:
+
+* Explosion particles should be spawned at the hit point for weapons like panzerfaust or futuristic machinegun.
+* Explosions should use animated billboards oriented towards camera.
+* The size of the billboard (small/large) should depend on weapon type.
+* Large explosions should be emitted for explosive objects (barrels, bottles).
+
+Explosion flames:
+
+* Explosion flames should be spawned for explosive objects (barrels, bottles).
+* Explosion flames should be drawn as flame billboards.
+* Explosion flames should move away from explosion center.
+* Explosion flames should collide with map geometry and attach to it (stay at first hit point).
+* Explosion flames should disappear with time.
+* NO dynamic light sources should be created for explosion flames.
+
+Flame particles:
+
+* Flame particles should be spawned at hit position of flamethrower projectiles.
+* Flame particles should be drawn as billboards.
+* Flame particles should emit yellow light with some brightness variation over time.
+* Flame particles attached to dynamic clusters should move with them properly.
+* Flame particles should disappear with time.
+
+Smoke particles:
+
+* Smoke particles should be emitted for some entities, like smoke emitter entities, destroyed tanks.
+* Smoke particles should move upwards in spirals.
+* Smoke particles should be drawn as billboards.
+* Smoke particles should disappear with time.
+
+Smoke trail particles:
+
+* Smoke trail particles should be emitted for panzerfaust projectiles, flamethrower projectiles, plasma launcher projectiles.
+* Smoke trail particles should move upwards slowly.
+* Smoke trail particles should use animated billboards depending on smoke trail type (smoke, flames, some magic circles).
+* Smoke particles should disappear with time.
+
+Bubbles:
+
+* Bubbles should be emitted for projectiles moving in liquids.
+* Bubbles should be emitted for player swimming in liquids.
+* Bubbles should move upwards.
+* When a bubble reaches liquid surface, it should disappear.
+* Bubbles should be drawn as billboards.
+* Bubbles should become larger with time.
+* Bubbles particles should disappear with time.
+
+Water splashes:
+
+* Water splashes should be emitted when a projectile hits water surface.
+* Water splash particles should start moving mostly upwards and be affected with gravity.
+* Water splash particles should disappear with time.
+* A Water splash particle should disappear when hitting the water surface again.
+* Water splash particles should be drawn as billboards.
+
+Water surface circles:
+
+* Water surface circles be emitted when a projectile hits water surface.
+* Water surface circles should be drawn as quads with circle texture lying in the plane of water surface.
+* Water surface circles should grow with time.
+* Water surface circles should disappear with time.
+
+Blood particles:
+
+* When a projectile hits an enemy (human, animal or humanoid robot), blood particles should be spawned.
+* Blood particles should start moving roughly in the direction of the projectile which triggered their spawn.
+* Blood particles should be affected by gravity.
+* Blood particles should be drawn as animated billboards.
+* Blood particles should collide with map geometry.
+* A blood decal should be spawned at the point of blood particle collision with map geometry.
+* Blood decals attached to dynamic clusters should move with them properly.
+* Blood particles and decals should not be shown if blood is disabled via settings.
+
+Projectile hit lights:
+
+* At a projectile hit point a light source should be spawned.
+* The color and brightness of a projectile light source should depend on weapon type.
+* Projectile hit lights should disappear with time.
+
+Bullet holes:
+
+* Bullet holes should be spawned at a projectile hit points (unless bullet holes are disabled for the parent weapon).
+* Bullet holes should be drawn as decals.
+* Bullet holes should be cut by map geometry in corners properly.
+* Bullet holes should be applied to map geometry, following it if it's needed.
+* Bullet holes should not be spawned for glass or liquid quads.
+* The total amount of bullet holes should be limited. The oldest ones should disappear if more bullet holes are created.
+
+Footprints:
+
+* The player should leave footprints on some floor materials (like snow).
+* Footprints should be drawn as decals.
+* Footprints should be properly oriented towards player's movement direction.
+* Left and right footprints should be mirror images of each other.
+* The total amount of footprints should be limited. The oldest ones should disappear if more footprints are created.
+
 Music:
 
 * For singleplayer maps single music track should be played in a loop (track number is specified per-map in *ICE.STD* file).
