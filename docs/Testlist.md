@@ -52,7 +52,7 @@ Cinematics:
 * Video playback should be smooth and contain (almost) no delays.
 * Video and sound should remain synchronized.
 * It should be possible to interrupt video playback by pressing escape, enter, space buttons or by closing the game window.
-* If sound is disabled in settings videos should be still played properly (but without sound).
+* If sound is disabled in settings, videos should be still played properly (but without sound).
 
 Menu:
 
@@ -252,7 +252,7 @@ World rendering:
 * Snow and rain should work properly. There should be no snow/rain inside buildings, only outside.
 * Sky should be displayed properly, with colored gradient, with one of two scrolling layers of clouds (when needed), with stars and moon/sun (if needed).
 * Models of entities and other game objects should be drawn properly, including smooth animation.
-* Injured enemies should be draw covered with blood.
+* Injured enemies should be draw covered with blood (unless blood is disabled in settings).
 * Burning effect for models should work - with animated flames covering the entire model.
 * Light shafts should be displayed where needed.
 * Torch billboards and light coronas should be present.
@@ -764,6 +764,54 @@ Footprints:
 * Footprints should be properly oriented towards player's movement direction.
 * Left and right footprints should be mirror images of each other.
 * The total amount of footprints should be limited. The oldest ones should disappear if more footprints are created.
+
+Map transitioning:
+
+* It should be possible to leave a map and enter the next one by reaching the map end area.
+* No extra button press or additional interaction should be necessary for loading the next map.
+* The loading screen should be shown prior to loading the next map.
+* For maps having a leaving condition (a boss to be killed, an item to be collected) it should not be possible to leave a map without satisfying its leave condition.
+* The player should generally preserve its inventory items, ammo, health and armor when going to the next map.
+* Keys should not be transferred to the next map.
+* The current weapon (in hands) should be preserved.
+* Active items should be preserved.
+* When entering the first future map (map 2) all inventory items should be taken away, but health and armor values (but not health and armor in inventory) should be preserved.
+* When the end area on the last map is reached, the game end cinematic should be shown.
+
+Sound:
+
+* High quality (44100Hz) stereo sound should be used.
+* There should be no audible sound artifacts like "cracks" and "steps".
+* It should be possible to change effect sounds volume, ambient sound volume, music volume.
+* It should be possible to flip stereo channels.
+* Effect sounds should be located in 3D space.
+* Volume for left/right channels for a sound source should depend on direction towards it.
+* Overall volume of a sound source should decrease with distance to in increasing.
+* Sounds coming from the player should have constant volume and have equal volume for left/right channels.
+* Player weapon sounds should work properly.
+* Player should emit jump sounds.
+* Player should emit falling sounds when falling from high enough altitude.
+* Player should emit footstep sounds depending on floor surface.
+* Player should emit damage, death, suffocation sounds.
+* Player should emit a sound when entering and leaving liquids.
+* Player speech should work properly (triggered by map triggers).
+* It should be possible to disable player speech.
+* Hitting and bouncing projectiles should emit proper sounds.
+* Enemies with default sounds enabled should emit alarm sounds, injury/death sounds, shooting sounds.
+* Some enemies/objects should emit their unique sounds (like dogs, robots, sirens).
+* Breaking map quads should emit sound.
+* Dynamic clusters (doors, elevators, buttons) should emit proper sounds (specific for each dynamic cluster kind).
+* Explosion sounds should be emitted for explosive projectiles and objects.
+* Birds should emit a sound when alarmed.
+* Player and enemies picking-up an entity should emit corresponding sounds.
+* Navigating menu should emit menu sound.
+* Navigating inventory should emit menu sound.
+* Using armor or health from inventory should emit proper sound.
+* Ambient sounds should work properly.
+* When entering/leaving an area of an ambient sound, its volume should be changed smoothly.
+* When the player is underwater, effect and ambient sounds (but not music) should sound differently (with high frequencies mostly filtered-out).
+* When the game is paused, effect and ambient sounds should be paused. When the game is resumed, sounds should be resumed.
+* Playing effect and ambient sounds should be properly saved in save files. They should continue playing after a game is loaded at the position where they stopped playing.
 
 Music:
 
