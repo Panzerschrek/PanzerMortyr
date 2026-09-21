@@ -730,9 +730,23 @@ fn CollisionTraceAndClip(
 				movement_start_position,
 				movement_vector );
 
-		var Vec3f mut new_movement_start_position=
-			movement_start_position +
-			movement_vector * ust::min( 1.0f, trace_result.clipped_move_distance );
+		var f32 mut clipped_move_distance= trace_result.clipped_move_distance;
+
+		var f32 normal_square_length= trace_result.collision_point_normal.SquareLength();
+		if( normal_square_length > 0.0f )
+		{
+			// Slightly push out from the collision plane.
+			// Perform this push against movement direction.
+			var f32 dot= movement_vector.Dot( trace_result.collision_point_normal );
+			if( dot != 0.0f )
+			{
+				clipped_move_distance+= c_collider_plane_push_eps * ust::sqrt( normal_square_length ) / dot;
+			}
+		}
+
+		clipped_move_distance= ust::max( 0.0f, ust::min( 1.0f, clipped_move_distance ) );
+
+		var Vec3f mut new_movement_start_position= movement_start_position + movement_vector * clipped_move_distance;
 
 		// Apply extra push if has one and only if has no clip by some other plane.
 		if( !trace_result.extra_push.empty() && trace_result.clipped_move_distance > 1.0f )
@@ -742,28 +756,11 @@ fn CollisionTraceAndClip(
 
 		var Vec3f mut new_movement_end_position= new_movement_start_position;
 
-		if( trace_result.clipped_move_distance <= 1.0f )
+		if( clipped_move_distance < 1.0f )
 		{
-			// Slightly push out from the collision plane.
-			// Perform this push against movement direction.
-			var f32 normal_square_length= trace_result.collision_point_normal.SquareLength();
 			if( normal_square_length > 0.0f )
 			{
-				var f32 dot= movement_vector.Dot( trace_result.collision_point_normal );
-				if( dot != 0.0f )
-				{
-					// Do not allow pushing more than back to the original position.
-					var f32 push_fraction= ust::max( -1.0f, ust::min( 0.0f, c_collider_plane_push_eps * ust::sqrt( normal_square_length  ) / dot ) );
-
-					var Vec3f push_vec= movement_vector * push_fraction;
-					new_movement_start_position+= push_vec;
-					new_movement_end_position+= push_vec;
-				}
-			}
-
-			if( normal_square_length > 0.0f )
-			{
-				var f32 remaining_movement_fraction= 1.0f - trace_result.clipped_move_distance;
+				var f32 remaining_movement_fraction= 1.0f - clipped_move_distance;
 				var Vec3f remaining_movement_vector= movement_vector * remaining_movement_fraction;
 
 				var Vec3f mut remaining_movement_vector_clamped=
