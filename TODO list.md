@@ -38,7 +38,6 @@ Gameplay investigation:
 PanzerMortyr general:
 
 * Write a license or borrow some existing one. Some restrictive license allowing only non-commercial usage is necessary.
-* Ship patched game logic files (like ZINF.STD) stored in the *MortyrGameLogicFixes* repository together with PanzerMortyr.
 * Consider performing even more advanced game data search - with more hardcoded paths, Windows registry fetches, etc.
 * Ensure PanzerMortyr works properly on Wayland-based systems.
 * Consider optimizing code performing serialization/deserialization (for game saving) - read/write scalars and arrays of scalars as byte arrays.
