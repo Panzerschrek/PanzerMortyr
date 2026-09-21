@@ -16,7 +16,9 @@ It's not an ideal copy, but practically close enough.
 Since it's a recreation, it avoids some bugs present in the original game.
 Obviously it improves overall quality - high resolution rendering with uncapped framerate is supported, high quality sound and a lot of other small improvements.
 
-*PanzerMortyr* is written mostly using the [Ü](https://github.com/Panzerschrek/U-00DC-Sprache/) programming language with exception of some thirdparty libraries (described below).
+*PanzerMortyr* is written mostly using the [Ü](https://github.com/Panzerschrek/U-00DC-Sprache/) programming language.
+No thirdparty engine is used, anything is written from scratch.
+The only exception are *SDL2* library for basic OS interaction and *FFmpeg* for cinematics playback (see more about it below).
 
 No LLMs have been used in *PanzerMortyr* development.
 All investigations of the original game have been done manually.
@@ -68,6 +70,17 @@ After the data of the original game is successfully extracted, `panzer_mortyr` e
 Various menu setting pages are implemented, a lot of stuff can be done with them.
 Some settings aren't exposed in menu, but it's possible to change them by editing *panzer_mortyr.cfg* file directly.
 You can, for example, choose custom windowed resolution using it.
+
+
+### Gameplay tips
+
+* Game progress is automatically saved only while going to the next level. It's recommended to save manually in other cases.
+* *PanzerMortyr* is difficult to play, much like the original game. It's recommended to use "for kids'n grammas" difficulty, at least first time.
+* Falling damage may hurt a lot. Be careful!
+* Inventory items can be activated and deactivated (when no longer needed).
+* Don't forget, that it's possible to use health and armor from the inventory!
+* Defeating bosses requires nothing special, they can be killed with any weapon, but have a lot of hit-points.
+* Explosive weapons and objects have huge damage radius. Make sure you stay far away from explosives.
 
 
 ### Contributions
