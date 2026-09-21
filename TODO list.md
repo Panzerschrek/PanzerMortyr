@@ -42,7 +42,6 @@ PanzerMortyr general:
 * Consider performing even more advanced game data search - with more hardcoded paths, Windows registry fetches, etc.
 * Ensure PanzerMortyr works properly on Wayland-based systems.
 * Consider optimizing code performing serialization/deserialization (for game saving) - read/write scalars and arrays of scalars as byte arrays.
-* Consider implementing autosaves - create an autosave upon entering a level, upon picking-up a key, etc. Allow loading such saves from the load menu.
 * Allow taking screenshots by pressing some key (like F11 or F12, maybe PrintScreen), so that no external tool is needed for taking screenshots.
 * Consider selecting one of several possible camera positions for the spectator mode (on game startup) randomly, not always only the best position.
 * Consider adding slight camera rotations for the spectator mode.

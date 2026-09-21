@@ -141,6 +141,7 @@ Improvements:
 
 * GNU/Linux is supported.
 * Cinematics playback doesn't require installation of system-wide codecs.
+* Autosaves are done after transitioning to the next level. Loading an autosave is possible via loading menu page.
 
 Fixed bugs:
 
