@@ -70,3 +70,6 @@ You should take the following files and put them into the result archive (zip-fi
 * SDL license file
 * FFmpeg license file
 * FXAA license file
+
+Also it's recommended to pack fixed game logic files from [this](https://github.com/Panzerschrek/MortyrGameLogicFixes) repository.
+Copy all files having *STD* extension and put them into *Data* directory.
