@@ -147,114 +147,7 @@ fn LoadZmapFile( ust::file_readable &mut f, ZvoxData& zvox_data ) : ust::io_resu
 	result.light_shaft_boxes.resize( size_type( header.num_light_shaft_boxes ), ust::make_zeroed</ZmapLightShaftsBox/>() );
 	result_check_or_return( f.read_exact( result.light_shaft_boxes.range().to_byte8_range() ) );
 
-	// HACK!
-	// On map 33 there is a wall blocking player's movement towards the map's exit.
-	// The original game allows passing it, but only in one way.
-	// But in PanzerMortyr physics works differently from the original and thus passing this wall is impossible.
-	// So, detect this wall and correct coordinates of one of its sides.
-	if( result.quads.size() == c_map33_num_quads )
-	{
-		var ZmapQuad &mut quad= result.quads[ 2446s ];
-
-		if( quad.texture_id == 84u16 &&
-			quad.center == ust::make_array( 704i16, -3024i16, -136i16 ) &&
-			quad.bounding_box_half_size == ust::make_array( 340i16, 20i16, 156i16 )  )
-		{
-			var i16 fix_x= -192i16;
-			quad.vertices[0][0]= fix_x;
-			quad.vertices[3][0]= fix_x;
-		}
-	}
-
-	// HACK!
-	// On map 33 there is a secret area accessible via a water passage.
-	// But due to the way how physics in PanzerMortyr works, it's impossible to leave water in this area.
-	// Slightly modify quads of the area around the water pit, so that jumping out of water is possible.
-	if( result.quads.size() == c_map33_num_quads )
-	{
-		{
-			var ZmapQuad &mut quad= result.quads[ 1724s ];
-			if( quad.vertices[0][0] == 60i16 && quad.vertices[3][0] == 64i16 )
-			{
-				quad.vertices[0][0]= 54i16;
-				quad.vertices[3][0]= 58i16;
-			}
-		}
-		{
-			var ZmapQuad &mut quad= result.quads[ 1725s ];
-			if( quad.vertices[0][1] == -96i16 && quad.vertices[1][1] == -96i16 )
-			{
-				quad.vertices[0][1]= -90i16;
-				quad.vertices[1][1]= -90i16;
-			}
-		}
-		{
-			var ZmapQuad &mut quad= result.quads[ 1726s ];
-			if( quad.vertices[1][0] == -84i16 && quad.vertices[2][0] == -92i16 )
-			{
-				quad.vertices[1][0]= -78i16;
-				quad.vertices[2][0]= -86i16;
-			}
-		}
-		{
-			var ZmapQuad &mut quad= result.quads[ 1727s ];
-			if( quad.vertices[2][1] == 44i16 && quad.vertices[3][1] == 56i16 )
-			{
-				quad.vertices[2][1]= 38i16;
-				quad.vertices[3][1]= 50i16;
-			}
-		}
-	}
-
-	// HACK!
-	// Fix coordinates of map end elevator quads belonging to elevator clusters combined to one.
-	if( zvox_data.clusters.size() == c_map29_num_clusters )
-	{
-		var ZvoxCluster& first_elevator_cluster= zvox_data.clusters[ c_map29_first_elevator_cluster_index ];
-
-		for( auto mut q= first_elevator_cluster.c.first_quad_index;
-			q < first_elevator_cluster.c.first_quad_index + u32( first_elevator_cluster.num_quads );
-			++q )
-		{
-			var [ i32, 3 ] mut quad_center= zero_init;
-
-			var ZmapQuad &mut quad= result.quads[ size_type(q) ];
-			{
-				auto& v= quad.vertices;
-
-				var [ i32, 3 ] quad_bbox_min
-				[
-					( ust::min( ust::min( v[0][0], v[1][0] ), ust::min( v[2][0], v[3][0] ) ) ),
-					( ust::min( ust::min( v[0][1], v[1][1] ), ust::min( v[2][1], v[3][1] ) ) ),
-					( ust::min( ust::min( v[0][2], v[1][2] ), ust::min( v[2][2], v[3][2] ) ) ),
-				];
-				var [ i32, 3 ] quad_bbox_max
-				[
-					( ust::max( ust::max( v[0][0], v[1][0] ), ust::max( v[2][0], v[3][0] ) ) ),
-					( ust::max( ust::max( v[0][1], v[1][1] ), ust::max( v[2][1], v[3][1] ) ) ),
-					( ust::max( ust::max( v[0][2], v[1][2] ), ust::max( v[2][2], v[3][2] ) ) ),
-				];
-
-				quad_center[0]= ( quad_bbox_min[0] + quad_bbox_max[0] ) / 2;
-				quad_center[1]= ( quad_bbox_min[1] + quad_bbox_max[1] ) / 2;
-				quad_center[2]= ( quad_bbox_min[2] + quad_bbox_max[2] ) / 2;
-			}
-
-			var [ i32, 3 ] relative_offset
-			[
-				i32( quad.center[0] ) - quad_center[0] - first_elevator_cluster.c.center[0],
-				i32( quad.center[1] ) - quad_center[1] - first_elevator_cluster.c.center[1],
-				i32( quad.center[2] ) - quad_center[2] - first_elevator_cluster.c.center[2],
-			];
-
-			foreach( &mut v : quad.vertices )
-			{
-				v[0]= i16( i32( v[0] ) + relative_offset[0] );
-				v[1]= i16( i32( v[1] ) + relative_offset[1] );
-				v[2]= i16( i32( v[2] ) + relative_offset[2] );
-			}
-		}
-	}
+	ApplyZmapFileHacks( result, zvox_data );
 
 	return result;
 }
@@ -333,117 +226,7 @@ fn LoadZvoxFile( ust::file_readable &mut f ) : ust::io_result</ZvoxData/>
 	result.per_cluster_nums.resize( size_type( header.num_clusters ), 0u );
 	result_check_or_return( f.read_exact( result.per_cluster_nums.range().to_byte8_range() ) );
 
-	// HACK!
-	// There is a cluster on map 29, which is too short and doesn't contact the cluster below it as it should.
-	// This leads to broken visibility calculations in area near it.
-	// So, extend it slightly downwards.
-	if( result.clusters.size() == c_map29_num_clusters )
-	{
-		var ZvoxCluster &mut cluster= result.clusters[ 16s ];
-
-		if( cluster.c.center == ust::make_array( 688, -816, -136 ) &&
-			cluster.c.bounding_box_half_size == ust::make_array( 320, 320, 248 ) )
-		{
-			cluster.c.center[2]+= 32;
-			cluster.c.bounding_box_half_size[2]+= 32;
-		}
-	}
-
-	// HACK!
-	// Combining clusters of the map end elevator together.
-	// Otherwise it works poorly.
-	// They may block each other if the player is located inside.
-	// Sounds are also emitted for each such clusters, which we want to avoid.
-	if( result.clusters.size() == c_map29_num_clusters )
-	{
-		var bool mut has_consecutive_quads= true;
-		var bool mut has_equal_type= true;
-		var bool mut has_equal_move_distance= true;
-
-		{
-			var ZvoxCluster& first_elevator_cluster= result.clusters[ c_map29_first_elevator_cluster_index ];
-
-			var u32 mut last_quad_index= first_elevator_cluster.c.first_quad_index;
-
-			for( auto mut i= c_map29_first_elevator_cluster_index; i <= c_map29_last_elevator_cluster_index; ++i )
-			{
-				var ZvoxCluster& cluster= cast_imut( result.clusters )[i];
-
-				has_consecutive_quads &= cluster.c.first_quad_index == last_quad_index;
-				last_quad_index= cluster.c.first_quad_index + u32( cluster.num_quads );
-
-				has_equal_type &= cluster.cluster_type == first_elevator_cluster.cluster_type;
-				has_equal_move_distance &= cluster.light_sources_begin == first_elevator_cluster.light_sources_begin;
-			}
-		}
-
-		if( has_consecutive_quads && has_equal_type && has_equal_move_distance )
-		{
-			var ZvoxCluster mut first_elevator_cluster= result.clusters[ c_map29_first_elevator_cluster_index ];
-
-			// Calculate combined bbox.
-
-			var [ i32, 3 ]
-				mut bbox_min
-				[
-					first_elevator_cluster.c.center[0] - first_elevator_cluster.c.bounding_box_half_size[0],
-					first_elevator_cluster.c.center[1] - first_elevator_cluster.c.bounding_box_half_size[1],
-					first_elevator_cluster.c.center[2] - first_elevator_cluster.c.bounding_box_half_size[2],
-				],
-				mut bbox_max
-				[
-					first_elevator_cluster.c.center[0] + first_elevator_cluster.c.bounding_box_half_size[0],
-					first_elevator_cluster.c.center[1] + first_elevator_cluster.c.bounding_box_half_size[1],
-					first_elevator_cluster.c.center[2] + first_elevator_cluster.c.bounding_box_half_size[2],
-				];
-
-			for( auto mut i= c_map29_first_elevator_cluster_index; i <= c_map29_last_elevator_cluster_index; ++i )
-			{
-				var ZvoxCluster& cluster= result.clusters[i];
-				ust::min_assign( bbox_min[0], cluster.c.center[0] - cluster.c.bounding_box_half_size[0] );
-				ust::min_assign( bbox_min[1], cluster.c.center[1] - cluster.c.bounding_box_half_size[1] );
-				ust::min_assign( bbox_min[2], cluster.c.center[2] - cluster.c.bounding_box_half_size[2] );
-				ust::max_assign( bbox_max[0], cluster.c.center[0] + cluster.c.bounding_box_half_size[0] );
-				ust::max_assign( bbox_max[1], cluster.c.center[1] + cluster.c.bounding_box_half_size[1] );
-				ust::max_assign( bbox_max[2], cluster.c.center[2] + cluster.c.bounding_box_half_size[2] );
-			}
-
-			var [ i32, 3 ] bbox_center
-			[
-				( ( bbox_min[0] + bbox_max[0] ) >> 1 ),
-				( ( bbox_min[1] + bbox_max[1] ) >> 1 ),
-				( ( bbox_min[2] + bbox_max[2] ) >> 1 ),
-			];
-
-			var [ i32, 3 ] bbox_half_size
-			[
-				ust::max( bbox_center[0] - bbox_min[0], bbox_max[0] - bbox_center[0] ),
-				ust::max( bbox_center[1] - bbox_min[1], bbox_max[1] - bbox_center[1] ),
-				ust::max( bbox_center[2] - bbox_min[2], bbox_max[2] - bbox_center[2] ),
-			];
-
-			first_elevator_cluster.c.center= bbox_center;
-			first_elevator_cluster.c.bounding_box_half_size= bbox_half_size;
-
-			// Combine all quads of elevator clusters into quads of the first elevator cluster.
-
-			var ZvoxCluster last_elevator_cluster= result.clusters[ c_map29_last_elevator_cluster_index ];
-
-			var u32 last_quad= last_elevator_cluster.c.first_quad_index + u32( last_elevator_cluster.num_quads );
-
-			first_elevator_cluster.num_quads= i32( last_quad - first_elevator_cluster.c.first_quad_index );
-
-			result.clusters[ c_map29_first_elevator_cluster_index ]= move( first_elevator_cluster );
-
-			// Turn remaining elevator clusters into regular ones and remove all quads.
-			for( auto mut i= c_map29_first_elevator_cluster_index + 1s; i <= c_map29_last_elevator_cluster_index; ++i )
-			{
-				var ZvoxCluster &mut cluster= result.clusters[i];
-				cluster.num_quads= 0;
-				cluster.cluster_type= ZvoxCluster::c_cluster_type_regular;
-			}
-		}
-	}
+	ApplyZvoxFileHacks( result );
 
 	return result;
 }
@@ -560,21 +343,7 @@ fn LoadZpozFile( ust::file_readable &mut f ) : ust::io_result</ZpozData/>
 		result_check_or_return( f.read_exact( result.cluster_indices.range().to_byte8_range() ) );
 	}
 
-	// HACK!
-	// There is a cluster on map 29, which is too short and doesn't contact the cluster below it as it should.
-	// This leads to broken visibility calculations in area near it.
-	// So, extend it slightly downwards.
-	if( result.clusters.size() == 171s )
-	{
-		var ZpozCluster &mut cluster= result.clusters[ 16s ];
-
-		if( cluster.center == ust::make_array( 688, -816, -136 ) &&
-			cluster.bounding_box_half_size == ust::make_array( 320, 320, 248 ) )
-		{
-			cluster.center[2]+= 32;
-			cluster.bounding_box_half_size[2]+= 32;
-		}
-	}
+	ApplyZpozFileHacks( result );
 
 	return result;
 }
@@ -808,6 +577,252 @@ fn LoadMapaWayFile( ust::file_readable &mut f ) : ust::io_result</MapaWayData/>
 	}
 
 	return result;
+}
+
+fn ApplyZmapFileHacks( ZmapData &mut zmap_data, ZvoxData& zvox_data )
+{
+	// HACK!
+	// On map 33 there is a wall blocking player's movement towards the map's exit.
+	// The original game allows passing it, but only in one way.
+	// But in PanzerMortyr physics works differently from the original and thus passing this wall is impossible.
+	// So, detect this wall and correct coordinates of one of its sides.
+	if( zmap_data.quads.size() == c_map33_num_quads )
+	{
+		var ZmapQuad &mut quad= zmap_data.quads[ 2446s ];
+
+		if( quad.texture_id == 84u16 &&
+			quad.center == ust::make_array( 704i16, -3024i16, -136i16 ) &&
+			quad.bounding_box_half_size == ust::make_array( 340i16, 20i16, 156i16 )  )
+		{
+			var i16 fix_x= -192i16;
+			quad.vertices[0][0]= fix_x;
+			quad.vertices[3][0]= fix_x;
+		}
+	}
+
+	// HACK!
+	// On map 33 there is a secret area accessible via a water passage.
+	// But due to the way how physics in PanzerMortyr works, it's impossible to leave water in this area.
+	// Slightly modify quads of the area around the water pit, so that jumping out of water is possible.
+	if( zmap_data.quads.size() == c_map33_num_quads )
+	{
+		{
+			var ZmapQuad &mut quad= zmap_data.quads[ 1724s ];
+			if( quad.vertices[0][0] == 60i16 && quad.vertices[3][0] == 64i16 )
+			{
+				quad.vertices[0][0]= 54i16;
+				quad.vertices[3][0]= 58i16;
+			}
+		}
+		{
+			var ZmapQuad &mut quad= zmap_data.quads[ 1725s ];
+			if( quad.vertices[0][1] == -96i16 && quad.vertices[1][1] == -96i16 )
+			{
+				quad.vertices[0][1]= -90i16;
+				quad.vertices[1][1]= -90i16;
+			}
+		}
+		{
+			var ZmapQuad &mut quad= zmap_data.quads[ 1726s ];
+			if( quad.vertices[1][0] == -84i16 && quad.vertices[2][0] == -92i16 )
+			{
+				quad.vertices[1][0]= -78i16;
+				quad.vertices[2][0]= -86i16;
+			}
+		}
+		{
+			var ZmapQuad &mut quad= zmap_data.quads[ 1727s ];
+			if( quad.vertices[2][1] == 44i16 && quad.vertices[3][1] == 56i16 )
+			{
+				quad.vertices[2][1]= 38i16;
+				quad.vertices[3][1]= 50i16;
+			}
+		}
+	}
+
+	// HACK!
+	// Fix coordinates of map end elevator quads belonging to elevator clusters combined to one.
+	if( zvox_data.clusters.size() == c_map29_num_clusters )
+	{
+		var ZvoxCluster& first_elevator_cluster= zvox_data.clusters[ c_map29_first_elevator_cluster_index ];
+
+		for( auto mut q= first_elevator_cluster.c.first_quad_index;
+			q < first_elevator_cluster.c.first_quad_index + u32( first_elevator_cluster.num_quads );
+			++q )
+		{
+			var [ i32, 3 ] mut quad_center= zero_init;
+
+			var ZmapQuad &mut quad= zmap_data.quads[ size_type(q) ];
+			{
+				auto& v= quad.vertices;
+
+				var [ i32, 3 ] quad_bbox_min
+				[
+					( ust::min( ust::min( v[0][0], v[1][0] ), ust::min( v[2][0], v[3][0] ) ) ),
+					( ust::min( ust::min( v[0][1], v[1][1] ), ust::min( v[2][1], v[3][1] ) ) ),
+					( ust::min( ust::min( v[0][2], v[1][2] ), ust::min( v[2][2], v[3][2] ) ) ),
+				];
+				var [ i32, 3 ] quad_bbox_max
+				[
+					( ust::max( ust::max( v[0][0], v[1][0] ), ust::max( v[2][0], v[3][0] ) ) ),
+					( ust::max( ust::max( v[0][1], v[1][1] ), ust::max( v[2][1], v[3][1] ) ) ),
+					( ust::max( ust::max( v[0][2], v[1][2] ), ust::max( v[2][2], v[3][2] ) ) ),
+				];
+
+				quad_center[0]= ( quad_bbox_min[0] + quad_bbox_max[0] ) / 2;
+				quad_center[1]= ( quad_bbox_min[1] + quad_bbox_max[1] ) / 2;
+				quad_center[2]= ( quad_bbox_min[2] + quad_bbox_max[2] ) / 2;
+			}
+
+			var [ i32, 3 ] relative_offset
+			[
+				i32( quad.center[0] ) - quad_center[0] - first_elevator_cluster.c.center[0],
+				i32( quad.center[1] ) - quad_center[1] - first_elevator_cluster.c.center[1],
+				i32( quad.center[2] ) - quad_center[2] - first_elevator_cluster.c.center[2],
+			];
+
+			foreach( &mut v : quad.vertices )
+			{
+				v[0]= i16( i32( v[0] ) + relative_offset[0] );
+				v[1]= i16( i32( v[1] ) + relative_offset[1] );
+				v[2]= i16( i32( v[2] ) + relative_offset[2] );
+			}
+		}
+	}
+}
+
+fn ApplyZvoxFileHacks( ZvoxData &mut zvox_data )
+{
+	// HACK!
+	// There is a cluster on map 29, which is too short and doesn't contact the cluster below it as it should.
+	// This leads to broken visibility calculations in area near it.
+	// So, extend it slightly downwards.
+	if( zvox_data.clusters.size() == c_map29_num_clusters )
+	{
+		var ZvoxCluster &mut cluster= zvox_data.clusters[ 16s ];
+
+		if( cluster.c.center == ust::make_array( 688, -816, -136 ) &&
+			cluster.c.bounding_box_half_size == ust::make_array( 320, 320, 248 ) )
+		{
+			cluster.c.center[2]+= 32;
+			cluster.c.bounding_box_half_size[2]+= 32;
+		}
+	}
+
+	// HACK!
+	// Combining clusters of the map end elevator together.
+	// Otherwise it works poorly.
+	// They may block each other if the player is located inside.
+	// Sounds are also emitted for each such clusters, which we want to avoid.
+	if( zvox_data.clusters.size() == c_map29_num_clusters )
+	{
+		var bool mut has_consecutive_quads= true;
+		var bool mut has_equal_type= true;
+		var bool mut has_equal_move_distance= true;
+
+		{
+			var ZvoxCluster& first_elevator_cluster= zvox_data.clusters[ c_map29_first_elevator_cluster_index ];
+
+			var u32 mut last_quad_index= first_elevator_cluster.c.first_quad_index;
+
+			for( auto mut i= c_map29_first_elevator_cluster_index; i <= c_map29_last_elevator_cluster_index; ++i )
+			{
+				var ZvoxCluster& cluster= cast_imut( zvox_data.clusters )[i];
+
+				has_consecutive_quads &= cluster.c.first_quad_index == last_quad_index;
+				last_quad_index= cluster.c.first_quad_index + u32( cluster.num_quads );
+
+				has_equal_type &= cluster.cluster_type == first_elevator_cluster.cluster_type;
+				has_equal_move_distance &= cluster.light_sources_begin == first_elevator_cluster.light_sources_begin;
+			}
+		}
+
+		if( has_consecutive_quads && has_equal_type && has_equal_move_distance )
+		{
+			var ZvoxCluster mut first_elevator_cluster= zvox_data.clusters[ c_map29_first_elevator_cluster_index ];
+
+			// Calculate combined bbox.
+
+			var [ i32, 3 ]
+				mut bbox_min
+				[
+					first_elevator_cluster.c.center[0] - first_elevator_cluster.c.bounding_box_half_size[0],
+					first_elevator_cluster.c.center[1] - first_elevator_cluster.c.bounding_box_half_size[1],
+					first_elevator_cluster.c.center[2] - first_elevator_cluster.c.bounding_box_half_size[2],
+				],
+				mut bbox_max
+				[
+					first_elevator_cluster.c.center[0] + first_elevator_cluster.c.bounding_box_half_size[0],
+					first_elevator_cluster.c.center[1] + first_elevator_cluster.c.bounding_box_half_size[1],
+					first_elevator_cluster.c.center[2] + first_elevator_cluster.c.bounding_box_half_size[2],
+				];
+
+			for( auto mut i= c_map29_first_elevator_cluster_index; i <= c_map29_last_elevator_cluster_index; ++i )
+			{
+				var ZvoxCluster& cluster= zvox_data.clusters[i];
+				ust::min_assign( bbox_min[0], cluster.c.center[0] - cluster.c.bounding_box_half_size[0] );
+				ust::min_assign( bbox_min[1], cluster.c.center[1] - cluster.c.bounding_box_half_size[1] );
+				ust::min_assign( bbox_min[2], cluster.c.center[2] - cluster.c.bounding_box_half_size[2] );
+				ust::max_assign( bbox_max[0], cluster.c.center[0] + cluster.c.bounding_box_half_size[0] );
+				ust::max_assign( bbox_max[1], cluster.c.center[1] + cluster.c.bounding_box_half_size[1] );
+				ust::max_assign( bbox_max[2], cluster.c.center[2] + cluster.c.bounding_box_half_size[2] );
+			}
+
+			var [ i32, 3 ] bbox_center
+			[
+				( ( bbox_min[0] + bbox_max[0] ) >> 1 ),
+				( ( bbox_min[1] + bbox_max[1] ) >> 1 ),
+				( ( bbox_min[2] + bbox_max[2] ) >> 1 ),
+			];
+
+			var [ i32, 3 ] bbox_half_size
+			[
+				ust::max( bbox_center[0] - bbox_min[0], bbox_max[0] - bbox_center[0] ),
+				ust::max( bbox_center[1] - bbox_min[1], bbox_max[1] - bbox_center[1] ),
+				ust::max( bbox_center[2] - bbox_min[2], bbox_max[2] - bbox_center[2] ),
+			];
+
+			first_elevator_cluster.c.center= bbox_center;
+			first_elevator_cluster.c.bounding_box_half_size= bbox_half_size;
+
+			// Combine all quads of elevator clusters into quads of the first elevator cluster.
+
+			var ZvoxCluster last_elevator_cluster= zvox_data.clusters[ c_map29_last_elevator_cluster_index ];
+
+			var u32 last_quad= last_elevator_cluster.c.first_quad_index + u32( last_elevator_cluster.num_quads );
+
+			first_elevator_cluster.num_quads= i32( last_quad - first_elevator_cluster.c.first_quad_index );
+
+			zvox_data.clusters[ c_map29_first_elevator_cluster_index ]= move( first_elevator_cluster );
+
+			// Turn remaining elevator clusters into regular ones and remove all quads.
+			for( auto mut i= c_map29_first_elevator_cluster_index + 1s; i <= c_map29_last_elevator_cluster_index; ++i )
+			{
+				var ZvoxCluster &mut cluster= zvox_data.clusters[i];
+				cluster.num_quads= 0;
+				cluster.cluster_type= ZvoxCluster::c_cluster_type_regular;
+			}
+		}
+	}
+}
+
+fn ApplyZpozFileHacks( ZpozData &mut zpoz_data )
+{
+	// HACK!
+	// There is a cluster on map 29, which is too short and doesn't contact the cluster below it as it should.
+	// This leads to broken visibility calculations in area near it.
+	// So, extend it slightly downwards.
+	if( zpoz_data.clusters.size() == c_map29_num_clusters )
+	{
+		var ZpozCluster &mut cluster= zpoz_data.clusters[ 16s ];
+
+		if( cluster.center == ust::make_array( 688, -816, -136 ) &&
+			cluster.bounding_box_half_size == ust::make_array( 320, 320, 248 ) )
+		{
+			cluster.center[2]+= 32;
+			cluster.bounding_box_half_size[2]+= 32;
+		}
+	}
 }
 
 var size_type constexpr c_map29_num_clusters= 171s;
