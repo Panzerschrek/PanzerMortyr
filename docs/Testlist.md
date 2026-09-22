@@ -778,6 +778,24 @@ Map transitioning:
 * When entering the first future map (map 2) all inventory items should be taken away, but health and armor values (but not health and armor in inventory) should be preserved.
 * When the end area on the last map is reached, the game end cinematic should be shown.
 
+Game saving/loading:
+
+* It should be possible to save a game via menu and to load it.
+* Saved games should persist across game launches (saved on disk).
+* At least 12 save slots should be available.
+* Empty save slots should be marked as "empty", no screenshots for them should be shown.
+* It should be possible to specify a short comment for saved game.
+* Only latin chars, numbers and spaces should be allowed for save comments.
+* A screenshot should be created for a saved game. For each non-empty save slot its screenshot should be shown on save and load menu pages.
+* Save summary should be displayed for each non-empty slot on save and load pages. It should include level name, skill, the total number of enemies and the number of killed ones.
+* All the game state should be saved in saves - enemies, other objects, pick-ups, projectiles, various effect objects, player state (position, inventory, active weapon). This includes each individual state variable for each object, like position, angle, animation frame etc.
+* Camera angles should be saved in saves.
+* Currently-played effect sounds and playback positions of ambient saves should be saved in saves.
+* After loading a game all game state params, camera angles and playing sounds should be restored.
+* An autosave should be done after transitioning to a new map.
+* It should be possible to load the last autosave using load menu page.
+* It shouldn't be possible to save into autosave slot manually.
+
 Sound:
 
 * High quality (44100Hz) stereo sound should be used.
