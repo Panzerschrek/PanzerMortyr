@@ -17,6 +17,14 @@ Command line:
 * *--config* option should allow specifying custom config file. Values from it should be read and written.
 * *--game-directory* option should allow specifying game directory (where data is located) and should have priority over other directories in game data search.
 
+Config:
+
+* By-default *panzer_mortyr.cfg* file should be used for configuration.
+* Setting changes made via menu should be written into the config file.
+* Config file should be human-readable and easy editable.
+* It should be possible to specify custom config file via *--config* command-line option.
+* Deleting the config file should reset all settings to default values.
+
 Logging:
 
 * `panzer_mortyr.log` file should we written on each launch.
