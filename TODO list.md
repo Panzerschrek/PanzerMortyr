@@ -65,6 +65,7 @@ PanzerMortyr game logic:
 * Consider not creating edges in global navigation graph requiring jumping down too deep (to avoid fall damage).
 * Avoid creating global navigation graph nodes located in liquids, but allow them in shallow water (but not acid or lava).
 * Consider implementing some physics or data hack to allow leaving a shallow pit with inclined walls on map 19.
+* Consider implementing some physics or data hack to allow entering the secret area on map 33.
 * Consider making the false document tool better (compared to the original game) - don't treat it as dumb and magic invisibility.
 
 PanzerMortyr multiplayer-specific game logic:
