@@ -12,3 +12,18 @@ copy docs\FXAA_LICENSE.txt build_packed\licenses\FXAA_LICENSE.txt
 mkdir build_packed\Data
 git clone https://github.com/Panzerschrek/MortyrGameLogicFixes
 copy MortyrGameLogicFixes\*.STD build_packed\Data\
+
+:: Also pack 32-bit build.
+
+mkdir build_packed_32
+:: Copy build artifacts
+copy build\i686-pc-windows-msvc\release\panzer_mortyr.exe build_packed_32\panzer_mortyr.exe
+copy build\i686-pc-windows-msvc\release\cd_image_extractor.exe build_packed_32\cd_image_extractor.exe
+:: Copy licenses
+mkdir build_packed_32\licenses
+copy SDL\LICENSE.txt build_packed_32\licenses\SDL_LICENSE.txt
+copy FFmpeg\LICENSE.md build_packed_32\licenses\FFmpeg_LICENSE.md
+copy docs\FXAA_LICENSE.txt build_packed_32\licenses\FXAA_LICENSE.txt
+:: Copy files with game logic fixes
+mkdir build_packed_32\Data
+copy MortyrGameLogicFixes\*.STD build_packed_32\Data\
