@@ -132,3 +132,9 @@ CD image extractor:
 * Consider supporting images in MDF/MDS format.
 * Consider handling more CUE commands (investigate which commands are actually used in Mortyr CUE files).
 * Consider adding more validation for contents of the given ISO file - make sure it's really a Mortyr ISO and not something else.
+
+CI builds:
+
+* Fix building FFmpeg shared library for 32-bit Windows.
+* Consider adding FreeBSD build.
+* Consider adding OS X build.
