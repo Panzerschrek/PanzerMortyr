@@ -20,14 +20,14 @@ Command line:
 Config:
 
 * By-default *panzer_mortyr.cfg* file should be used for configuration.
-* Setting changes made via menu should be written into the config file.
+* Setting changes made via menu or console should be written into the config file.
 * Config file should be human-readable and easy editable.
 * It should be possible to specify custom config file via *--config* command-line option.
 * Deleting the config file should reset all settings to default values.
 
 Logging:
 
-* `panzer_mortyr.log` file should we written on each launch.
+* *panzer_mortyr.log* file should we written on each launch.
 * If there is already such file, it should be overwritten.
 * The log file should contain the same log entries as shown in the terminal (if launched from one) and in the in-game console (with rare exceptions).
 * Fatal errors (causing termination) should be logged properly.
@@ -59,7 +59,7 @@ Cinematics:
 * Outro cinematic should be shown upon finishing the last map of the game.
 * Video playback should be smooth and contain (almost) no delays.
 * Video and sound should remain synchronized.
-* It should be possible to interrupt video playback by pressing escape, enter, space buttons or by closing the game window.
+* It should be possible to interrupt video playback by pressing escape, enter, space keys or by closing the game window.
 * If sound is disabled in settings, videos should be still played properly (but without sound).
 
 Menu:
@@ -101,12 +101,13 @@ Menu:
 * Pressing F7 should activate load page (even if menu isn't active).
 * Pressing F10 should activate quit page (even if menu isn't active).
 * It should not be possible to bind controls to F-keys.
+* When menu or console are active, a small text indicated that it's PanzerMortyr and not the original game should be shown in the right lower screen corner. It also should contain git revision.
 
 Loading screen:
 
 * The loading screen should look like red text "loading" (localization-dependent) on black background.
 * The loading screen should be shown upon game start (before showing startup cinematics).
-* The loading screen should be shown before loading the initial map for he spectator mode.
+* The loading screen should be shown before loading the initial map for the spectator mode.
 * The loading screen should be shown before starting the new game.
 * The loading screen should be shown after intro cinematic and before loading the start level.
 * The loading screen should be shown before loading a game.
@@ -143,7 +144,7 @@ Console:
 * By typing a name of a setting with single argument this setting should be set to the value of this argument.
 * Autocompletion for commands and settings should work by pressing TAB. If there is more than one option, they all should be displayed.
 * If a given string isn't a command or setting name, a message indicating this should be shown.
-* At least some logging messages should be shown in console.
+* Most of logging messages should be shown in console.
 * Entered commands should be added into the console log.
 * Both for commands and settings - and _ symbols should be interchangeable.
 
@@ -167,6 +168,7 @@ Spectator mode:
 * It shouldn't be possible to control the specator camera using regular player controls.
 * It shouldn't be possible to use weapons or items.
 * No HUD should be shown.
+* It shouldn't be possible to save the game in this mode.
 
 Vsync:
 
@@ -280,6 +282,7 @@ World rendering:
 * Semitransparent geometry should be sorted from back to front (their blending order should be correct).
 * Dynamic lights should be applied to the world (except liquids and glass), dynamic clusters, models, decals, but not to billboards, rain/snow, water circles.
 * Mirror floors should work properly - reflect all the world and blend this reflection with their own texture.
+* First-person weapon models should not be seen in mirrors.
 * Dynamic lights should be applied to mirror floors.
 * Global fog on maps where it's enabled should be applied properly to all geometry except sky and first person weapon.
 * Local fog volumes should work properly and use additive blending.
@@ -290,6 +293,8 @@ World rendering:
 * Rejection of invisible map geometry and dynamic objects (models, billboards) located within them should work properly. See *r_show_stats* setting, when such stats are enabled, only a fraction of total map clusters should be drawn in any given moment. Only models located in visible map parts should be drawn.
 * Frustum culling for models should work properly - models displayed behind the back shouldn't be draw at all.
 * World brightness setting should be applied properly and affect equally brightness of all kinds of geometry.
+* The whole world image should be slightly tinted green if camera is located in water.
+* The whole world image should be slightly tinted blue if camera is located in acid.
 
 Graphical settings:
 
@@ -310,7 +315,7 @@ Graphical settings:
 Rendering mode setting:
 
 * OpenGL mode should work properly.
-* Software mode should work properly and be pretty performant.
+* Software mode should work properly and be pretty fast.
 * If initialization of OpenGL mode fails, software mode should be used.
 * Upon first launch one of two rendering modes should be selected randomly with software mode having 25% chance and OpenGL mode having 75% chance.
 * Rendering mode setting should work properly (but require game restart).
@@ -361,7 +366,7 @@ Collision detection and character physics:
 * Gravity in water should be weaker compared to the normal value.
 * Swimming should use acceleration and deceleration.
 * Jumping while staying on the bottom of a pool should be possible.
-* It should be possible to leave a pool with difference between water level and floor level above less than 32 units.
+* It should be possible to leave a pool with difference between water level and floor level 16 units or below, but not with 32 units difference.
 * Player and enemies shouldn'd be able to pass through each other.
 * Player and enemies shouldn't be able to push each other. If one of them is stationary, the other's movement should be blocked by this stationary enemy/player.
 * Enemies shouldn't be able to push decorations.
@@ -369,7 +374,7 @@ Collision detection and character physics:
 * Pushing an pushable decoration should slow-down the player.
 * It shouldn't be possible to push a decoration out of bounds.
 * It shouldn't be possible to push one decoration by pushing another pushable decoration near to it.
-* If player falls down, he should get some damage upon collision with the floor if height difference is high enough. Increasing falling height should increase damage. It should be possible to deal 100 damage or more by falling from large enough height.
+* If player falls down, he should get some damage upon collision with the floor if height difference is high enough. Increasing falling height should increase damage. It should be possible to deal 100 damage or more by falling from large enough height. Falling damage should not be absorbed by armor.
 * While jetpack is active, jumping should be disabled. Instead pressing jump key should accelerate the player up.
 * It should still be possible to get falling damage while jetpack is active.
 * Some forward/backward/side acceleration/deceleration should be available while jetpack is active.
@@ -379,10 +384,10 @@ Dynamic clusters (buttons, doors, elevators):
 
 * Only the player (but not enemies) should be able to activate dynamic clusters.
 * Dynamic clusters should be activated by touching.
-* There should be some delay between touching and activation.
+* There should be some delay between touching and activation, so  that it's possible to press a button and then board an elevator activated by it.
 * Activated dynamic cluster performs movement towards its destination.
 * After reaching the destination, a dynamic cluster should stay there or return back (depending on cluster type).
-* A dynamic cluster staying in its end position can be activated yet again to move it back.
+* A dynamic cluster staying in its end position can be activated yet again to move back.
 * Buttons should activate doors/elevators assigned to them (with some delay). If there is a button for a cluster, it shouldn't be activated by touching.
 * Chains of activation should be possible (like boss doors on map 23).
 * Dynamic clusters should be able to push the player, enemies and other objects.
@@ -392,6 +397,7 @@ Dynamic clusters (buttons, doors, elevators):
 * Collisions of enemies/objects/projectiles with dynamic clusters should work properly regardless of their position or movement phase.
 * Dynamic clusters should play a sound upon activation. The exact sound depends on cluster type.
 * Dynamic clusters should block visibility checks (an enemy staying behind a closed door shouldn't see the player staying at the other side).
+* Dynamic clusters having complex shape (elevator on map 15, spaceship on map 29) should work properly and use per-triangle collisions.
 
 Projectiles:
 
@@ -400,7 +406,7 @@ Projectiles:
 * Projectiles should have finite velocity.
 * Bullet projectiles should fly in straight line.
 * Hand grenades, panzerfaust grenades, flamethrower projectiles should be affected by gravity.
-* Projectiles should die at first hit of something (produce hit effects, explode if needed) with exception of bouncing projectiles.
+* Projectiles should disappear at first hit of something (produce hit effects, explode if needed) with exception of bouncing projectiles.
 * Bouncing projectiles (hand grenades, subatomic assault rifle projectiles, plasma launcher projectiles) should bounce from map geometry.
 * Bouncing projectiles should hit objects/enemies/player (explode if needed).
 * Bouncing projectiles should hit (explode if needed) breakable map quads.
@@ -438,7 +444,7 @@ Entities (general):
 * Enemies and objects should have colliders (with some exceptions).
 * Animations should work properly (idle animations, destruction animations and others).
 * Pick-ups should not have colliders.
-* Some pick-ups shoould be rotated slowly. This is applicable for pick-ups floating in air and not lying on ground.
+* Some pick-ups should be rotated slowly. This is applicable for pick-ups floating in air and not lying on ground.
 * Enemies and objects should have limited health (energy) and die after receiving enough damage.
 * Light effects (sirens, lightnings) should work properly for entities.
 * Explosion effects (explosive barrels) should work properly, including explosion billboards, flame effects, light, splash damage, sound.
@@ -448,21 +454,21 @@ Entities (general):
 Enemies:
 
 * While in calm mode, enemies should move in loops between their patrolling points (except ones who are stationary).
-* An enemy should be able to spot the player if he is located at front of him.
+* An enemy should be able to spot the player if he is located at front of him (in direct sight).
 * Enemies should be alarmed by nearby shots (except shots from melee weapons).
 * Enemies should be alarmed by nearby projectile hits.
 * An enemy transitioning into alarmed state should alarm other enemies nearby.
 * Enemies should move towards the player if he is far away.
-* If right now the player isn't visible from an enemie's point of view, this enemy should go to the position where he has seen the player last time.
+* If right now the player isn't visible from an enemie's point of view, this enemy should go to the position where the player has been seen last time.
 * If an enemy is close the the player, he should move randomly in his proximity, not going far away.
 * Injured enemies should be able to seek for health packs and armor items and be able to pick-up them.
 * Enemies with no ammo should be able to seek for ammo. They should use proper ammo for their weapon type. They should be able to pick-up weapons, including ones dropped by their dead allies.
 * An enemy having no ammo and no ammo nearby to pick-up should be in panic mode and try moving away from the player.
 * An enemy having low health and no health items nearby to pick-up should be in panic mode and try moving away from the player.
 * Enemies should attack the player when he is in sight and there is ammo left.
-* Enemies with mellee attacks (dogs) should attack the player properly.
+* Enemies with melee attacks (dogs) should attack the player properly.
 * Enemies should mostly not shot if there is some obstacle (map geometry, an object or another enemy) on the ray towards the player.
-* Enemies with directional moving mode (dogs, robo-spiders) should go straigt to the player, not navigating the navigation graph.
+* Enemies with directional moving mode (dogs, robo-spiders) should go straight to the player, not navigating the navigation graph.
 * Enemies should be able to navigate the map (find their way) in most cases. They should not stuck or move in short circles.
 * If an enemy can't reach the player (no way is possible at all or it's too long to calculate), he should still move roughly towards the player and not stay stationary if movement animation is shown.
 * Enemies should be able to go around other enemies and objects if they are in the way.
@@ -472,17 +478,17 @@ Enemies:
 * Muzzle flashes should be shown for firing enemies.
 * Muzzle lights should be shown for firing enemies.
 * Shot sounds should be emitted for firing enemies. The weapon's sound should be emitted, except default sounds are disabled for this kind of enemy.
-* A random alarm sound (Halt oder ich schieße!) should be emitted by an enemy seeng the player first time, but not for enemies alarmed in other way.
-* Alarm sounds should not be emitted for enemies with default sounds disabled.
+* A random alarm sound (Halt oder ich schieße!) should be emitted by an enemy seeing the player first time, but not for enemies alarmed in other way.
+* Alarm sounds should not be emitted for enemies with default sounds disabled (dogs, robots).
 * Injury sounds should be emitted for enemies upon taking damage unless default sounds are disabled.
 * Volkssturm enemies should be able to surrender if no ammo is left. They should start seeking for more ammo as soon as the player don't see them.
 * Random animations should be shown for some enemies (depending on enemy kind) in calm mode, like MP-40 guys playing with their weapons of Volkssturm guys smoking.
 * Custom sounds should be emitted for enemies requiring such sounds, like futuristic enemies with idle sounds, custom alarm sounds and shooting sounds.
-* Injured enemies should be covered with blood except enemies which are not alive or not humanoid.
+* Injured enemies should be covered with blood except enemies which are not animals/humans/humanoid robots.
 * Enemies should be flammable (burning effect should be applicable to them).
 * Accuracy of enemies should depend on their weapon (each weapon settings have a parameter for enemies accuracy) and current skill level.
 * Some enemy types (snipers, robo-spiders) have additional accuracy multiplier, so that they are accurate even on skill 0.
-* While shooting the player enemies should take his bounding box into account. If he is crouching, they should target the center of the bounding box in crouching state.
+* While shooting the player, enemies should take his bounding box into account. If he is crouching, they should target the center of the bounding box in crouching state.
 * Each individual enemy type should be tested if it works as expected.
 * Enemies having a spawn trigger should be spawned only if the player touches this trigger. Enemies spawned by a trigger should be alarmed.
 
@@ -492,11 +498,11 @@ The tank boss (on map 24):
 * It should destroy the wall staying in the way.
 * It should move somewhat forward.
 * After reaching its destination it should be able to attack the player.
-* The tank's turrent should rotate towards the player. As soon as it points correctly, it should fire.
+* The tank's turret should rotate towards the player. As soon as it points correctly, it should fire.
 * Projectiles fired by the tank should fly in straight light parallel to the ground.
 * The body of the tank should not rotate.
 * The body of the tank should have proper collider, even after the tank is defeated.
-* It should be possible to destroy the tank. Eny weapon can work to do it, but it may require some time, since it has a lot of health.
+* It should be possible to destroy the tank. Any weapon can work to do it, but it may require some time, since it has a lot of health.
 * Initial movement sound should be played.
 * Destruction sound should be played.
 * Turret rotation sound should be played.
@@ -506,15 +512,16 @@ The tank boss (on map 24):
 Skill-based enemies reduction:
 
 * Enemies should be removed according to skill-based settings.
-* Enemies with "zabron_redukcji" property enabled should be present on each skill level.
+* Enemies with "zabron_redukcji" property enabled (officers, bosses and some others) should be present on each skill level.
 * The total number of enemies for each map and each skill should be identical to this number in the original game.
-* Pick-ups should not be reduces.
+* Pick-ups should not be reduced.
 * Other objects (decorations) should not be reduced.
 
 Player weapons:
 
 * Shooting should work properly.
 * Ammo should be consumed (if a weapon requires ammo).
+* Firing with no ammo left shouldn't be possible.
 * Firing sounds should be emitted.
 * Muzzle flashes should be emitted.
 * Muzzle lights should be emitted.
@@ -522,7 +529,7 @@ Player weapons:
 * Projectiles should use some random spread (depending on weapon settings), like firing a rifle should be precise, but machinegun is way less precise.
 * Weapons firing more than one projectile at single trigger press should not fire more shots than there is ammo available.
 * Weapon-dependent delay between shots should work properly.
-* Recoil should work properly for panzerfaust (the player should be accelerated backwards).
+* Recoil should work properly for panzerfaust (the player should be slightly accelerated backwards).
 * It should not be possible to switch to another weapon if firing is active (firing sequence isn't finished yet).
 * Switching to another weapon should happen with current weapon lowered down and the new one lifted up.
 * Enemies should be alarmed by shots (except for melee weapons).
@@ -534,7 +541,7 @@ Player weapon animations:
 * Idle animations should be played from time to time while walking.
 * Idle animations should be played from time to time while staying.
 * Shot animation should be played properly.
-* Weapon model should be moved slightly with some periodic pattern.
+* Weapon model should be moved slightly (like a couple of pixels) with some periodic pattern.
 
 Melee weapons (kick, knife):
 
@@ -551,22 +558,23 @@ Mind control weapon:
 * Enemies attacked with the mind control weapon should not attack the player.
 * Enemies attacked with the mind control weapon should attack other enemies, except enemies which are also mind-controlled.
 * Non-mind-controlled enemies should respond to fire of mind-controlled enemies.
-* Mind-controll state should be limited in time (like 15 seconds or so).
+* Mind-control state should be limited in time (like 15 seconds or so).
 * As soon as an enemy is no longer mind-controlled, it should start attacking the player.
 * As soon as an enemy is no longer mind-controlled, other enemies targeting them should start attacking the player.
 
 Birds:
 
-* Burds should be placed in designated bird areas.
+* Birds should be placed in designated bird areas.
 * Birds should fill their bird area semirandomly - with regular density and random angles.
+* Non-alarmed birds should not move, rotate. Their animation should be a still frame.
 * Birds should be alarmed by player walking into their placement area.
 * Birds should be alarmed by nearby shots.
 * Birds should be alarmed by nearby projectile hits.
-* Alarmed birds should start flying in random direction mostly up. The flight or each bird should be straight.
+* Alarmed birds should start flying in random direction mostly up. The flight of each bird should be straight.
 * Flying birds should have pseudo-random animation phase (not synchronized with each other).
 * No collisions with map geometry and other objects should be performed for flying birds.
 * After some time flying birds should disappear.
-* Birds sound shoud be emitted once birds in a particular area are alarmed.
+* Birds sound should be emitted once birds in a particular area are alarmed.
 
 Rats:
 
@@ -576,9 +584,18 @@ Rats:
 * Rats should be alarmed by player walking into their placement area.
 * Rats should be alarmed by nearby shots.
 * Rats should be alarmed by nearby projectile hits.
-* Alarmed rats should move fast in random directions, possible leaving their designated area.
+* Alarmed rats should move fast in random directions, possibly leaving their designated area.
 * Alarmed rats should bounce from walls and other obstacles.
 * After some time alarmed rats should disappear.
+
+Player's health and armor:
+
+* Projectile hits should reduce player's health. The amount of lost health points should be equal to weapon damage.
+* Explosive projectiles should reduce player's health. It strength depends on the distance to the explosion.
+* Explosive objects should reduce player's health and armor each game tick by a small amount.
+* Armor should absorb 50% of damage (rounded down), 25% damage (rounded down) should still hurt the player's health, the remaining damage is considered to be reflected.
+* If there is at least 1 unit of armor, it should be decreased by at least 1 unit in any case if there is damage.
+* If there is not enough armor to absorb 50% of incoming damage, as many as possible damage should be absorbed and reflected and the remaining damage should reduce health points directly.
 
 Environmental damage:
 
@@ -587,6 +604,18 @@ Environmental damage:
 * The player should start receiving suffocation damage after spending too much time in water without leaving it, unless the acid protection suit is active.
 * Leaving water should stop suffocation damage.
 * Armor should not absorb acid/suffocation damage.
+
+Player's death:
+
+* When player's health reaches 0, he should die.
+* Player controls of any kind (camera, movement, weapons, inventory) should be disabled for the dead player.
+* Upon death camera should rotate (independent on player camera input). It should be almost full circle azimuth turn or half circle azimuth turn with half circle roll.
+* Enemies should not shoot dead player.
+* Dead player should not be able to pick-up items.
+* Dead player should not be able to trigger map end.
+* Dead player should not be able to activate dynamic clusters (like if killed on an elevator).
+* The remaining world should be properly simulated even if the player is dead - enemies should do their stuff, ambient sounds should remain playing, various effects should be simulated, etc.
+* It should not be possible to save the game if the player is dead.
 
 Acid protection suit:
 
@@ -622,7 +651,7 @@ Jetpack:
 * When the jetpack is active, jumping should not work and instead gradual acceleration upwards should work.
 * When the jetpack is active, it should be possible to accelerate/decelerate while in air.
 * When the jetpack is active, gravity should still work for the player.
-* When the jetpack is active, falling damage should still be applied in player collided with the ground too fast.
+* When the jetpack is active, falling damage should still be applied if player collided with the ground too fast.
 
 False documents:
 
@@ -640,7 +669,7 @@ Pick-ups:
 * Picked-up weapons should also give some ammo (specific for each weapon type).
 * If a weapon is picked-up and the player hasn't such weapon yet, the new (picked-up) weapon should be selected.
 * Items should not be obstacles.
-* Picked-up items should not be automatically activated.
+* Picked-up items should NOT be automatically activated.
 * Picking-up a health pack should apply its health to the current health level and apply all health from the inventory.
 * Picking-up armor should apply its value to the current armor level and apply all armor from the inventory.
 * Sounds should be played for picked-up items, including unique sounds for health and armor items.
@@ -655,11 +684,12 @@ Inventory:
 * Activating a weapon should trigger switching to it.
 * Timed tools (night vision, infrared vision, flashlight, acid protection suit, jetpack, false documents) may be activated and deactivated.
 * It should be possible to activate night vision, infrared vision, flashlight, acid protection suit, jetpack tools via dedicated keys.
-* Activating health tool should add it to current player's health.
-* Activating armor tool should add it to current player's armor.
+* Activating health tool should add it to current player's health and emit corresponding sound.
+* Activating armor tool should add it to current player's armor and emit corresponding sound.
 * Keys should not be shown in inventory.
 * Ammo should not be shown in inventory.
 * Kick should not be shown in inventory.
+* Quantum receptor pieces should not be shown in inventory.
 
 Breakable map quads:
 
@@ -721,7 +751,7 @@ Explosion flames:
 * Explosion flames should move away from explosion center.
 * Explosion flames should collide with map geometry and attach to it (stay at first hit point).
 * Explosion flames should disappear with time.
-* NO dynamic light sources should be created for explosion flames.
+* NO dynamic light sources should be created for explosion flames (since there is too many of them).
 
 Flame particles:
 
@@ -760,12 +790,12 @@ Water splashes:
 * Water splashes should be emitted when a projectile hits water surface.
 * Water splash particles should start moving mostly upwards and be affected with gravity.
 * Water splash particles should disappear with time.
-* A Water splash particle should disappear when hitting the water surface again.
+* Water splash particles should disappear when hitting the water surface again.
 * Water splash particles should be drawn as billboards.
 
 Water surface circles:
 
-* Water surface circles be emitted when a projectile hits water surface.
+* Water surface circles should be emitted when a projectile hits water surface.
 * Water surface circles should be drawn as quads with circle texture lying in the plane of water surface.
 * Water surface circles should grow with time.
 * Water surface circles should disappear with time.
@@ -789,10 +819,10 @@ Projectile hit lights:
 
 Bullet holes:
 
-* Bullet holes should be spawned at a projectile hit points (unless bullet holes are disabled for the parent weapon).
+* Bullet holes should be spawned at projectile hit points (unless bullet holes are disabled for the parent weapon).
 * Bullet holes should be drawn as decals.
 * Bullet holes should be cut by map geometry in corners properly.
-* Bullet holes should be applied to map geometry, following it if it's needed.
+* Bullet holes should be applied to map geometry, following it if it's needed (for dynamic clusters).
 * Bullet holes should not be spawned for glass or liquid quads.
 * The total amount of bullet holes should be limited. The oldest ones should disappear if more bullet holes are created.
 
@@ -801,8 +831,22 @@ Footprints:
 * The player should leave footprints on some floor materials (like snow).
 * Footprints should be drawn as decals.
 * Footprints should be properly oriented towards player's movement direction.
+* Footprints appearing should be synchronized with footstep sounds.
 * Left and right footprints should be mirror images of each other.
 * The total amount of footprints should be limited. The oldest ones should disappear if more footprints are created.
+
+Game logic extrapolation/smoothing:
+
+* Camera rotations should be smooth, even if screen refresh rate is much higher then game update frequency (30Hz).
+* Player movement should be smooth.
+* Enemy movements and rotations should be smooth.
+* Movements of all objects and effects of all kinds (entities, projectiles, dynamic clusters, particles, animals, etc.) should be smooth.
+* Brightness of dynamic light objects should be smooth.
+* Model animations should be smooth.
+* Brightness and sizes of billboards should be smooth.
+* Clouds scrolling should be smooth.
+* Fullscreen blending effects (pain, burning) should be smooth.
+* Smoothness may be tested by setting *g_game_speed* console variable into value much less than 1.
 
 Map transitioning:
 
@@ -816,6 +860,7 @@ Map transitioning:
 * Active items should be preserved.
 * When entering the first future map (map 2) all inventory items should be taken away, but health and armor values (but not health and armor in inventory) should be preserved.
 * When the end area on the last map is reached, the game end cinematic should be shown.
+* It should not be possible to return to previous map.
 
 Game saving/loading:
 
@@ -828,7 +873,7 @@ Game saving/loading:
 * A screenshot should be created for a saved game. For each non-empty save slot its screenshot should be shown on save and load menu pages.
 * Save summary should be displayed for each non-empty slot on save and load pages. It should include level name, skill, the total number of enemies and the number of killed ones.
 * All the game state should be saved in saves - enemies, other objects, pick-ups, projectiles, various effect objects, light sources, player state (position, inventory, active weapon). This includes each individual state variable for each object, like position, angle, animation frame etc.
-* Camera angles should be saved in saves.
+* Camera angles and current zoom fraction should be saved in saves.
 * Currently-played effect sounds and playback positions of ambient saves should be saved in saves.
 * After loading a game all game state params, camera angles and playing sounds should be restored.
 * An autosave should be done after transitioning to a new map.
@@ -849,7 +894,7 @@ Sound:
 * Player should emit jump sounds.
 * Player should emit falling sounds when falling from high enough altitude.
 * Player should emit footstep sounds depending on floor surface.
-* Player should emit damage, death, suffocation sounds.
+* Player should emit injury, death, suffocation sounds.
 * Player should emit a sound when entering and leaving liquids.
 * Player speech should work properly (triggered by map triggers).
 * It should be possible to disable player speech.
@@ -860,7 +905,7 @@ Sound:
 * Dynamic clusters (doors, elevators, buttons) should emit proper sounds (specific for each dynamic cluster kind).
 * Explosion sounds should be emitted for explosive projectiles and objects.
 * Birds should emit a sound when alarmed.
-* Player and enemies picking-up an entity should emit corresponding sounds.
+* Player and enemies picking-up an item should emit corresponding sounds.
 * Navigating menu should emit menu sound.
 * Navigating inventory should emit menu sound.
 * Using armor or health from inventory should emit proper sound.
@@ -883,10 +928,10 @@ CD image extractor:
 
 * When launched with `-h` or `--help` command-line option, `cd_image_extractor` should show a help message.
 * If an ISO file containing an image of the original game CD is specified via command-line, its content should be extracted into `Data` subdirectory of the current directory. It should contain `main.hal` file and cinematic files.
-* If a CUE file containing an image of the original game CD is specified via command-line, the same data as for an ISO file should be extracted. Additionally music tracks (in WAV format) should be extracted into the `Data` subdrirectory.
+* If a CUE file containing an image of the original game CD is specified via command-line, the same data as for an ISO file should be extracted. Additionally music tracks (in WAV format) should be extracted into the `Data` subdirectory.
 * If `cd_image_extractor` is launched with no command-line options and there is an ISO file in the current directory, it should be processed as described above.
 * If `cd_image_extractor` is launched with no command-line options and there is a CUE file in the current directory, it should be processed as described above.
 * If `cd_image_extractor` is launched with no command-line options and there is more than one ISO or CUE file in the current directory, nothing should be extracted.
 * If `Data` directory already exists, extracting should work too. Existing files in it should be overwritten, but other files (if there are some) should be preserved.
 * Original ISO/CUE/BIN files should not be affected in any case.
-* `cd_image_extractor.log` file should be written in any case
+* `cd_image_extractor.log` file should be written in any case.
