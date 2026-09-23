@@ -56,7 +56,6 @@ Support of the Russian game version (published by 1С):
 PanzerMortyr game logic:
 
 * Fix entity effects emitted at zero operation step. For some reason the number of steps from operation start is almost never zero.
-* Perform alarm-based enemy state transition with a delay, where it makes sense.
 * Consider implementing misfire - in the original game enemies sometimes don't shoot, even if shooting animation is playing.
 * Consider disabling all or at least some weapons of the player if weapon shot start position is in water or other liquid. The original game allow shooting in water, but PanzerMortyr probably shouldn't allow this.
 * Consider optimizing global navigation graph calculation even more - to reduce map loading time.
