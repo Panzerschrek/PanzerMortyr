@@ -73,10 +73,14 @@ Menu:
 * The menu sound should be emitted while navigating and selecting menu items (unless sound is disabled).
 * The menu sound should be emitted while changing settings in menu (boolean values, variants, sliders).
 * Skill selected in the new game menu should be applied properly.
+* If there is already an active game, selecting "new game" should show "abort this game" page. Pressing "enter" or Y should allow proceeding to the skill selection page.
 * Load/Save menu pages should contain several slots with user-defined slot names. Empty slots should be marked properly.
 * Load/Save menu pages should contain a small screenshot for the corresponding saved game.
 * Some stats for the selected save slot should be shown on load/save menu pages, including level name, skill, number of kills and the total number of enemies.
 * Saving the game via save page should work properly. Loading it via load page should work too.
+* It should not be allowed to open save page if no active game is running or if the player is dead.
+* Load page should show autosave slot as first one. It should be somewhat separated from other slots.
+* On save page no autosave slot should be displayed and it should not be selectable.
 * Multiplayer page should be a stub.
 * Parental lock/adult mode page should be a stub.
 * It should be possible to change boolean settings on the options pages by pressing enter, left key and right arrow keys, left mouse button.
@@ -89,6 +93,14 @@ Menu:
 * Non-key-binding controls menu should work properly.
 * Advanced options menu should work properly - all options should be editable and have effect.
 * Before quitting a quit message should be shown. The message text should be selected randomly. It should be possible to quit by pressing enter or Y, it should be possible to abort quitting by pressing escape or N.
+* Pressing F1 should activate credits page (even if menu isn't active).
+* Pressing F2 should change HUD position (even if menu isn't active).
+* Pressing F3 should activate video settings page (even if menu isn't active).
+* Pressing F5 should change crosshair shape (even if menu isn't active).
+* Pressing F6 should activate save page (even if menu isn't active), but only if saving is available.
+* Pressing F7 should activate load page (even if menu isn't active).
+* Pressing F10 should activate quit page (even if menu isn't active).
+* It should not be possible to bind controls to F-keys.
 
 Loading screen:
 
@@ -472,6 +484,7 @@ Enemies:
 * Some enemy types (snipers, robo-spiders) have additional accuracy multiplier, so that they are accurate even on skill 0.
 * While shooting the player enemies should take his bounding box into account. If he is crouching, they should target the center of the bounding box in crouching state.
 * Each individual enemy type should be tested if it works as expected.
+* Enemies having a spawn trigger should be spawned only if the player touches this trigger. Enemies spawned by a trigger should be alarmed.
 
 The tank boss (on map 24):
 
@@ -489,6 +502,14 @@ The tank boss (on map 24):
 * Turret rotation sound should be played.
 * Shot sound should be played.
 * It shouldn't be possible to leave the map until the tank is destroyed.
+
+Skill-based enemies reduction:
+
+* Enemies should be removed according to skill-based settings.
+* Enemies with "zabron_redukcji" property enabled should be present on each skill level.
+* The total number of enemies for each map and each skill should be identical to this number in the original game.
+* Pick-ups should not be reduces.
+* Other objects (decorations) should not be reduced.
 
 Player weapons:
 
