@@ -92,7 +92,7 @@ But bug reports and suggestions are welcome.
 
 ### Building from sources
 
-See [the corresponding file](docs/Building PanzerMortyr.md).
+See [the corresponding file](docs/Building_PanzerMortyr.md).
 
 You may try building it for systems other then x86_64 Windows and GNU/Linux, but it's not guaranteed that it can be built and work properly.
 
