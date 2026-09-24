@@ -11,10 +11,11 @@ Original game logic has been observed and reimplemented.
 Many things required no investigation at all, since they are defined by plain text files (like entities and weapons description).
 Other stuff needed (rendering, menu, input, sound) has been written around reimplemented game logic.
 
-*PanzerMortyr* recreates logic of the original game pretty close, including behavior of enemies of other objects, balance, movement physics.
+*PanzerMortyr* recreates logic of the original game pretty close, including behavior of enemies and other objects, balance, movement physics.
 It's not an ideal copy, but practically close enough.
 Since it's a recreation, it avoids some bugs present in the original game.
 Obviously it improves overall quality - high resolution rendering with uncapped framerate is supported, high quality sound and a lot of other small improvements.
+All (almost) changes and improvements are listed [here](docs/PanzerMortyr_improvements_and_changes.md).
 
 *PanzerMortyr* is written mostly using the [Ü](https://github.com/Panzerschrek/U-00DC-Sprache/) programming language.
 No thirdparty engine is used, anything is written from scratch.
@@ -28,7 +29,7 @@ The overall technical design is a product of human's mind.
 
 ### System requirements
 
-*PanzerMortyr* can work on 64-bit Windows 10.
+*PanzerMortyr* can work on 64-bit Windows 10 or newer.
 Older Windows versions may work too, but it hasn't been tested.
 GNU/Linux is also supported.
 
@@ -64,6 +65,9 @@ If anything goes well, after the extraction the *Data* directory should contain 
 If it's not the case, see the log file for clues what may went wrong.
 After the data of the original game is successfully extracted, `panzer_mortyr` executable can be launched.
 
+Installing from actual physical CD isn't supported yet.
+If you have one, make a BIN/CUE image of it and process this image as described above.
+
 
 ### Settings
 
@@ -81,6 +85,15 @@ You can, for example, choose custom windowed resolution using it.
 * Don't forget, that it's possible to use health and armor from the inventory!
 * Defeating bosses requires nothing special, they can be killed with any weapon, but have a lot of hit-points.
 * Explosive weapons and objects have huge damage radius. Make sure you stay far away from explosives.
+
+
+### Missing features
+
+Multiplayer isn't implemented and likely will never be implemented.
+Implementing it requires substantial code redesign and a lot of testing, which doesn't worth it.
+
+Adult mode/parental lock isn't implemented.
+It's not really useless.
 
 
 ### Contributions
