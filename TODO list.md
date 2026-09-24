@@ -57,7 +57,6 @@ PanzerMortyr game logic:
 
 * Fix entity effects emitted at zero operation step. For some reason the number of steps from operation start is almost never zero.
 * Consider implementing misfire - in the original game enemies sometimes don't shoot, even if shooting animation is playing.
-* Consider disabling all or at least some weapons of the player if weapon shot start position is in water or other liquid. The original game allow shooting in water, but PanzerMortyr probably shouldn't allow this.
 * Consider optimizing global navigation graph calculation even more - to reduce map loading time.
 * Consider not creating edges in global navigation graph requiring jumping down too deep (to avoid fall damage).
 * Avoid creating global navigation graph nodes located in liquids, but allow them in shallow water (but not acid or lava).
