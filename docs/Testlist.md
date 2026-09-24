@@ -1,11 +1,24 @@
 This document contains a non-comprehensive list of things needed to be tested prior to a release or major update.
 
+Shipped archive:
+
+* `panzer_mortyr` executable should be present (having `.exe` extension on Windows).
+* `cd_image_extractor` executable should be present (having `.exe` extension on Windows).
+* `panzer_mortyr_ffmpeg` shared library should be present (having `.dll` extension on Windows, `.so` extension on Unix systems).
+* Executable files should have executable bit set (on Unix systems).
+* README file should be present. Any document which it references should be present.
+* *SDL2* license should be present.
+* *FFmpeg* license should be present.
+* *FXAA* license should be present.
+* *Data* directory containing fixed game logic files (*ZINF.STD*-files, *GLOS.STD* file) should be present.
+
 System support:
 
 * The game should start and work properly on Windows 10 and 11 with x86_64 architecture, assuming hardware requirements are satisfied and OpenGL 3.3 (or later) drivers are present.
 * The game should start and work properly on x86_64 GNU/Linux systems with X Window system or Wayland, assuming hardware requirements are satisfied and OpenGL 3.3 (or later) drivers are present.
 * No administrator/root privileges should be necessary.
 * No extra library dependencies should be present except system libraries (like kernel32.dll, libc) and libraries shipped together with *panzer_mortyr* (like *FFmpeg*) .
+* OpenGL library dependency should be resolved dynamically (no OpenGL library should be listed in executable export tables).
 * On Windows the *panzer_mortyr* and *cd_image_extractor* executables should have non-empty icons distinct from each other.
 
 Command line:
@@ -85,7 +98,7 @@ Menu:
 * Parental lock/adult mode page should be a stub.
 * It should be possible to change boolean settings on the options pages by pressing enter, left key and right arrow keys, left mouse button.
 * It should be possible to change numeric and slider values on the options pages using left and right arrow keys. There should be limits for sliders and numeric values.
-* Setting key bindings should work for keyboard keys, mouse buttons and mouse wheel.
+* Setting key bindings should work for keyboard keys, mouse buttons and mouse wheel. For each control it should be possible to bind it to a keyboard key, mouse button or mouse wheel.
 * Pressing escape key when editing of a key binding is active should cancel editing.
 * It shouldn't be possible to use escape key and ~ as key binding.
 * All sound options should be functional.
@@ -169,6 +182,7 @@ Spectator mode:
 * It shouldn't be possible to use weapons or items.
 * No HUD should be shown.
 * It shouldn't be possible to save the game in this mode.
+* Appropriate music track(s) should be played in spectator mode.
 
 Vsync:
 
@@ -274,6 +288,8 @@ World rendering:
 * Snow and rain should work properly. There should be no snow/rain inside buildings, only outside.
 * Sky should be displayed properly, with colored gradient, with one of two scrolling layers of clouds (when needed), with stars and moon/sun (if needed).
 * Models of entities and other game objects should be drawn properly, including smooth animation.
+* First-person weapon models should be drawn atop of other geometry, even if staying very close to a wall having a huge weapon.
+* Static world lighting and dynamic lighting should be applied to models properly.
 * Injured enemies should be draw covered with blood (unless blood is disabled in settings).
 * Burning effect for models should work - with animated flames covering the entire model.
 * Light shafts should be displayed where needed.
@@ -311,6 +327,8 @@ Graphical settings:
 * It should be possible to change textures anisotropy (in OpenGL mode only).
 * It should be possible to turn textures nearest filtration on/off separately for world, menu, HUD (in OpenGL mode only, in software mode it should be always nearest).
 * It should be possible to change antialiasing method.
+* On first launch *PanzerMortyr* should run in fullscreen mode with current screen resolution (used for desktop).
+* Gamma setting should work (except on systems where it doesn't work) and change brightness of the whole image - world, HUD, menu, console.
 
 Rendering mode setting:
 
@@ -353,8 +371,10 @@ Collision detection and character physics:
 * It shouldn't be possible to stuck in map places with sharp corners.
 * It shouldn't be possible to get out of bounds, except there is a hole in map geometry allowing it.
 * Player movement should be accelerated. Acceleration (and deceleration) should depend on surface properties, like with snow surfaces having less acceleration/deceleration compared to stone surfaces.
+* There should be a speed limit for player - he shouldn't be able accelerate beyond certain speed.
 * It should be possible to climb ramps up to certain angle. But it should not be possible to climb almost vertical (but slightly inclined) surfaces.
 * Jumping should be available only if there is ground under the feet. It should instantly increase vertical speed (towards up direction).
+* It should be possible to jump while jammed between two almost vertical walls, like for rails on map 6.
 * If the player is in air (falling), there should be still a possibility to accelerate/decelerate, but with greatly reduced acceleration/deceleration compared to walking.
 * Camera Z position should be somewhat smoothed while climbing a staircase unless full crouching is active.
 * Crouching should work properly and effectively reduce height of the player's bbox and allow passing into tight shafts like on map 9 or into a hatch on map 29.
@@ -375,6 +395,7 @@ Collision detection and character physics:
 * It shouldn't be possible to push a decoration out of bounds.
 * It shouldn't be possible to push one decoration by pushing another pushable decoration near to it.
 * If player falls down, he should get some damage upon collision with the floor if height difference is high enough. Increasing falling height should increase damage. It should be possible to deal 100 damage or more by falling from large enough height. Falling damage should not be absorbed by armor.
+* If falling into liquid, player's velocity should be reduced and thus falling damage should be (mostly) prevented.
 * While jetpack is active, jumping should be disabled. Instead pressing jump key should accelerate the player up.
 * It should still be possible to get falling damage while jetpack is active.
 * Some forward/backward/side acceleration/deceleration should be available while jetpack is active.
@@ -450,6 +471,7 @@ Entities (general):
 * Explosion effects (explosive barrels) should work properly, including explosion billboards, flame effects, light, splash damage, sound.
 * Sounds (sirens, destruction sounds for decorations) should work properly.
 * Smoke emitters should work properly and emit smoke particles periodically.
+* Sky decorations (planes, airship, futuristic aircrafts) should be displayed properly and move (if movement is needed) with smooth turns.
 
 Enemies:
 
@@ -474,7 +496,7 @@ Enemies:
 * Enemies should be able to go around other enemies and objects if they are in the way.
 * Enemies should die if damaged enough.
 * Some enemy types may play injury animations. The chance of such animation is specified individually for each enemy.
-* Enemies should drop pick-ups properly (weapons, ammo, keys). What is dropped is specified for each enemy type individually.
+* Enemies should drop pick-ups properly (weapons, ammo, keys). What is dropped is specified for each enemy type individually. Dropped pick-ups should be spawned at the center of bounding box of the parent enemy.
 * Muzzle flashes should be shown for firing enemies.
 * Muzzle lights should be shown for firing enemies.
 * Shot sounds should be emitted for firing enemies. The weapon's sound should be emitted, except default sounds are disabled for this kind of enemy.
@@ -574,6 +596,8 @@ Birds:
 * Flying birds should have pseudo-random animation phase (not synchronized with each other).
 * No collisions with map geometry and other objects should be performed for flying birds.
 * After some time flying birds should disappear.
+* It shouldn't be possible to kill a bird.
+* Birds should have no colliders.
 * Birds sound should be emitted once birds in a particular area are alarmed.
 
 Rats:
@@ -586,6 +610,8 @@ Rats:
 * Rats should be alarmed by nearby projectile hits.
 * Alarmed rats should move fast in random directions, possibly leaving their designated area.
 * Alarmed rats should bounce from walls and other obstacles.
+* It shouldn't be possible to kill a rat.
+* Rats should have no colliders.
 * After some time alarmed rats should disappear.
 
 Player's health and armor:
@@ -603,7 +629,8 @@ Environmental damage:
 * The player should receive each second acid damage when swimming in lava.
 * The player should start receiving suffocation damage after spending too much time in water without leaving it, unless the acid protection suit is active.
 * Leaving water should stop suffocation damage.
-* Armor should not absorb acid/suffocation damage.
+* Armor should not absorb acid/suffocation damage or other environmental damage.
+* Damage trigger should damage the player (there is single one such trigger on map 2 where laser pistol is located).
 
 Player's death:
 
@@ -700,7 +727,10 @@ Breakable map quads:
 * Glass splinters should disappear with time.
 * Glass splinters should use proper texture and brightness matching the source map quad.
 * Glass breaking sound should be emitted for a broken map quad.
+* Sky should be visible in broken windows, having moon/sun/stars if needed and with proper clouds. But it's sometimes fine to show other parts of the map through broken windows.
 * Non-breakable glass material (like windows on map 23) should not be breakable.
+* Broken glass quads and quads with other materials should pass projectiles through.
+* Broken non-glass quads should NOT pass the player, enemies and other objects through.
 
 Damaging flames:
 
