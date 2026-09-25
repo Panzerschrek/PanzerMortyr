@@ -83,7 +83,6 @@ PanzerMortyr rendering:
 * Consider performing some smoothing while applying ambient light (stored in 4x4x4 grid for each room cluster) to models.
 * Consider drawing blob shadows under models (as some sort of decal?).
 * Consider limiting the number of active dynamic light sources - to avoid huge performance drops.
-* Modify pixels of alpha-tested textures having zero alpha, so that their color is equal to average color of adjacent pixels with non-zero alpha. This is needed to avoid black borders on alpha-tested billboards and decals.
 * Allow switching to a fullscreen mode with refresh rate change.
 * Implement visual effect specific for omni-protection item (multiplayer-only power-up).
 * Consider speeding-up rain and snow particles fetching by cutting the fetch bbox by the view frustum.
