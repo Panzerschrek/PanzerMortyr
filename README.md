@@ -85,6 +85,7 @@ You can, for example, choose custom windowed resolution using it.
 * Don't forget, that it's possible to use health and armor from the inventory!
 * Defeating bosses requires nothing special, they can be killed with any weapon, but have a lot of hit-points.
 * Explosive weapons and objects have huge damage radius. Make sure you stay far away from explosives.
+* Cadent ā latere tuō mīlle et decem mīlia ā dextrīs tuīs, ad tē autem non appropinquābit.
 
 
 ### Missing features
