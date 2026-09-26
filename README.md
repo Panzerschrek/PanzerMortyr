@@ -80,6 +80,7 @@ You can, for example, choose custom windowed resolution using it.
 
 * Game progress is automatically saved only while going to the next level. It's recommended to save manually in other cases.
 * *PanzerMortyr* is difficult to play, much like the original game. It's recommended to use "for kids'n grammas" difficulty, at least first time.
+* Use zooming to shoot distant enemies, it's available with any weapon.
 * Falling damage may hurt a lot. Be careful!
 * Inventory items can be activated and deactivated (when no longer needed).
 * Don't forget, that it's possible to use health and armor from the inventory!
@@ -94,7 +95,7 @@ Multiplayer isn't implemented and likely will never be implemented.
 Implementing it requires substantial code redesign and a lot of testing, which doesn't worth it.
 
 Adult mode/parental lock isn't implemented.
-It's not really useless.
+It's not really useful.
 
 
 ### Contributions
