@@ -601,11 +601,10 @@ fn ProcessGameLogicStep(
 	PerformPlayerWeaponLogic( global_data, map_data, player_input, game_state );
 
 	PerformPlayerInventoryLogic(
-		global_data.sounds_description.deref(),
+		global_data,
 		map_data.entities_description.deref(),
 		player_input.inventory_input,
-		game_state.player,
-		game_state.step_index );
+		game_state );
 
 	UpdatePlayerActiveTools( game_state.player, game_state.step_index );
 
@@ -1523,12 +1522,13 @@ fn PerformFirstPersonWeaponAnimation(
 }
 
 fn PerformPlayerInventoryLogic(
-	SoundsDescription& sounds_description,
+	GameGlobalData& global_data,
 	EntitiesDescription& entities_description,
 	PlayerInventoryInput& player_inventory_input,
-	PlayerState &mut player,
-	u32 current_step )
+	GameState &mut game_state )
 {
+	var PlayerState &mut player= game_state.player;
+
 	if( player.energy == 0u )
 	{
 		// Don't allow changing selected tool and activate tools in dead stae.
@@ -1579,11 +1579,12 @@ fn PerformPlayerInventoryLogic(
 				{
 					if( tool != player.tools_state.selected_tool )
 					{
-						EmitPlayerInventorySelectSound( sounds_description, player.sound_source_slots );
+						EmitPlayerInventorySelectSound(
+							global_data.sounds_description.deref(), player.sound_source_slots );
 					}
 
 					player.tools_state.selected_tool= tool;
-					player.tools_state.last_tool_selection_step= current_step;
+					player.tools_state.last_tool_selection_step= game_state.step_index;
 
 					break;
 				}
@@ -1600,11 +1601,12 @@ fn PerformPlayerInventoryLogic(
 				{
 					if( tool != player.tools_state.selected_tool )
 					{
-						EmitPlayerInventorySelectSound( sounds_description, player.sound_source_slots );
+						EmitPlayerInventorySelectSound(
+							global_data.sounds_description.deref(), player.sound_source_slots );
 					}
 
 					player.tools_state.selected_tool= tool;
-					player.tools_state.last_tool_selection_step= current_step;
+					player.tools_state.last_tool_selection_step= game_state.step_index;
 
 					break;
 				}
@@ -1620,7 +1622,35 @@ fn PerformPlayerInventoryLogic(
 			{
 				if( player.inventory[ size_type( player.tools_state.selected_tool ) ] > 0u )
 				{
-					player.primary_weapon_state.requested_weapon= player.tools_state.selected_tool;
+					var size_type tool_index(
+						entities_description.tool_type_to_index_map[ size_type( player.tools_state.selected_tool ) ] );
+					if( tool_index < entities_description.tools.size() )
+					{
+						var EntitiesDescription::Tool& tool= entities_description.tools[ tool_index ];
+
+						var bool mut has_ammo= true;
+
+						if( tool.ammo_item >= 0 && size_type( tool.ammo_item ) < entities_description.tools.size() )
+						{
+							var EntitiesDescription::Tool& ammo_tool=
+								entities_description.tools[ size_type( tool.ammo_item ) ];
+							has_ammo= player.inventory[ size_type( ammo_tool.tool_type ) ] > 0u;
+						}
+
+						if( has_ammo )
+						{
+							player.primary_weapon_state.requested_weapon= player.tools_state.selected_tool;
+						}
+						else
+						{
+							PushEventNotificaton(
+								game_state.step_index,
+								game_state.event_notifications,
+								ust::make_array</ust::string_view8/>(
+									FetchStringFromTable( global_data.string_table.deref(), StringTableKey::NoAmmoFor ),
+									GetToolName( entities_description, player.tools_state.selected_tool ) ) );
+						}
+					}
 				}
 			},
 			EntitiesDescription::ToolType::HealthPack ->
@@ -1639,7 +1669,7 @@ fn PerformPlayerInventoryLogic(
 					inventory_energy-= energy_transfer;
 
 					// PanzerMortyr addition - play a sound if applying stored health.
-					EmitPlayerHealthUseSound( sounds_description, player.sound_source_slots );
+					EmitPlayerHealthUseSound( global_data.sounds_description.deref(), player.sound_source_slots );
 				}
 			},
 			EntitiesDescription::ToolType::Armor ->
@@ -1658,7 +1688,7 @@ fn PerformPlayerInventoryLogic(
 					inventory_armor-= armor_transfer;
 
 					// PanzerMortyr addition - play a sound if applying stored armor.
-					EmitPlayerArmorUseSound( sounds_description, player.sound_source_slots );
+					EmitPlayerArmorUseSound( global_data.sounds_description.deref(), player.sound_source_slots );
 				}
 			},
 			EntitiesDescription::ToolType::AcidProtectionSuit ->
