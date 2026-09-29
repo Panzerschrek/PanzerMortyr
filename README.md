@@ -66,7 +66,7 @@ If it's not the case, see the log file for clues what may went wrong.
 After the data of the original game is successfully extracted, `panzer_mortyr` executable can be launched.
 
 Installing from actual physical CD isn't supported yet.
-If you have one, make a BIN/CUE image of it and process this image as described above.
+If you have one, make a BIN/CUE image of it (using some thirdparty tool) and process this image as described above.
 
 
 ### Settings
@@ -86,6 +86,7 @@ You can, for example, choose custom windowed resolution using it.
 * Don't forget, that it's possible to use health and armor from the inventory!
 * Defeating bosses requires nothing special, they can be killed with any weapon, but have a lot of hit-points.
 * Explosive weapons and objects have huge damage radius. Make sure you stay far away from explosives.
+* Don't miss in-game notes (usually located on highlighted tables). They contain some plot information.
 * Cadent ā latere tuō mīlle et decem mīlia ā dextrīs tuīs, ad tē autem non appropinquābit.
 
 
@@ -96,6 +97,9 @@ Implementing it requires substantial code redesign and a lot of testing, which d
 
 Adult mode/parental lock isn't implemented.
 It's not really useful.
+
+Playing music directly from the original CD isn't supported.
+You should use the `cd_image_extractor` tool to extract game data together with music tracks in order for music to be played in *PanzerMortyr*.
 
 
 ### Contributions
