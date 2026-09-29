@@ -629,8 +629,8 @@ Environmental damage:
 * The player should receive each second acid damage when swimming in lava.
 * The player should start receiving suffocation damage after spending too much time in water without leaving it, unless the acid protection suit is active.
 * Leaving water should stop suffocation damage.
-* Armor should not absorb acid/suffocation damage or other environmental damage.
-* Damage trigger should damage the player (there is single one such trigger on map 2 where laser pistol is located).
+* Armor should not absorb acid and suffocation damage.
+* Damage trigger should damage the player (there is single one such trigger on map 2 where laser pistol is located). Damage from it should be absorbed by armor.
 
 Player's death:
 
