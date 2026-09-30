@@ -37,7 +37,6 @@ Gameplay investigation:
 
 PanzerMortyr general:
 
-* Write a license or borrow some existing one. Some restrictive license allowing only non-commercial usage is necessary.
 * Consider performing even more advanced game data search - with more hardcoded paths, Windows registry fetches, etc.
 * Ensure PanzerMortyr works properly on Wayland-based systems.
 * Consider optimizing code performing serialization/deserialization (for game saving) - read/write scalars and arrays of scalars as byte arrays.
