@@ -5,6 +5,7 @@ copy build\release\panzer_mortyr_ffmpeg.dll build_packed\panzer_mortyr_ffmpeg.dl
 copy build\release\cd_image_extractor.exe build_packed\cd_image_extractor.exe
 :: Copy licenses
 mkdir build_packed\licenses
+copy LICENSE build_packed\licenses\PanzerMortyr_LICENSE
 copy SDL\LICENSE.txt build_packed\licenses\SDL_LICENSE.txt
 copy FFmpeg\LICENSE.md build_packed\licenses\FFmpeg_LICENSE.md
 copy docs\FXAA_LICENSE.txt build_packed\licenses\FXAA_LICENSE.txt
@@ -27,6 +28,7 @@ copy build\i686-pc-windows-msvc\release\panzer_mortyr.exe build_packed_32\panzer
 copy build\i686-pc-windows-msvc\release\cd_image_extractor.exe build_packed_32\cd_image_extractor.exe
 :: Copy licenses
 mkdir build_packed_32\licenses
+copy LICENSE build_packed_32\licenses\PanzerMortyr_LICENSE
 copy SDL\LICENSE.txt build_packed_32\licenses\SDL_LICENSE.txt
 copy FFmpeg\LICENSE.md build_packed_32\licenses\FFmpeg_LICENSE.md
 copy docs\FXAA_LICENSE.txt build_packed_32\licenses\FXAA_LICENSE.txt

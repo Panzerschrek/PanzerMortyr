@@ -127,6 +127,16 @@ You may try building it for systems other then x86_64 Windows and GNU/Linux, but
 Their installation isn't required (they are included within *PanzerMortyr* archive), they are just mentioned for legal reasons.
 
 
+### License
+
+*PanzerMortyr* is distributed under the conditions of the *BSD 3-Clause License* with additional *Commons Clause*.
+It provides basic freedoms for redistribution and modification, but prohibits selling.
+See [license](LICENSE) file for more details.
+
+Files in directory *ffmpeg_wrapper* (needed for building *FFmpeg* library used in *PanzerMortyr*) are licensed differently.
+They use the LGPL license.
+
+
 ### Authors
 
 Copyright © 2025-2026 "Panzerschrek".
