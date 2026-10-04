@@ -25,6 +25,7 @@ copy MortyrGameLogicFixes\*.STD build_packed\Data\
 mkdir build_packed_32
 :: Copy build artifacts
 copy build\i686-pc-windows-msvc\release\panzer_mortyr.exe build_packed_32\panzer_mortyr.exe
+copy build\i686-pc-windows-msvc\release\panzer_mortyr_ffmpeg.dll build_packed_32\panzer_mortyr_ffmpeg.dll
 copy build\i686-pc-windows-msvc\release\cd_image_extractor.exe build_packed_32\cd_image_extractor.exe
 :: Copy licenses
 mkdir build_packed_32\licenses

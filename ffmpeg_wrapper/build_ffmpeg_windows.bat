@@ -1,9 +1,11 @@
 :: First param (%~1) of this script is expected to be a path to the FFmpeg source directory.
 :: Second param (%~2) of this script is expected to be a path to the build directory.
+:: Third param (%~3) is target machine (x86 or x64).
 @ECHO OFF
 
 set SOURCE_DIR=%~1
 set BUILD_DIR=%~2
+set TARGET_MACHINE=%~3
 
 :: It's needed to inherit all PATH variables.
 set MSYS2_PATH_TYPE=inherit
@@ -18,4 +20,4 @@ cd "%BUILD_DIR%"
 cd ".."
 
 :: Run MSVC linker using cmd, not bash.
-link "%BUILD_DIR%/libavformat/avformat.lib" "%BUILD_DIR%/libavcodec/avcodec.lib" "%BUILD_DIR%/libavutil/avutil.lib" "%BUILD_DIR%/libswscale/swscale.lib" /DEF:"%~dp0/ffmpeg.def" bcrypt.lib /DLL /OUT:panzer_mortyr_ffmpeg.dll /defaultlib:libcmt
+link /MACHINE:%TARGET_MACHINE% "%BUILD_DIR%/libavformat/avformat.lib" "%BUILD_DIR%/libavcodec/avcodec.lib" "%BUILD_DIR%/libavutil/avutil.lib" "%BUILD_DIR%/libswscale/swscale.lib" /DEF:"%~dp0/ffmpeg.def" bcrypt.lib /DLL /OUT:panzer_mortyr_ffmpeg.dll /defaultlib:libcmt

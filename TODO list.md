@@ -129,6 +129,5 @@ CD image extractor:
 
 CI builds:
 
-* Fix building FFmpeg shared library for 32-bit Windows.
 * Consider adding FreeBSD build.
 * Consider adding OS X build.
