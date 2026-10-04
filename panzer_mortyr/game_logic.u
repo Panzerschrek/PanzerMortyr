@@ -849,8 +849,10 @@ fn PerformPlayerWeaponLogic(
 
 		var bool mut out_of_ammo= false;
 
-		foreach( &shot : tool.shot_data )
+		for( auto mut shot_index= 0s; shot_index < tool.shot_data.size(); ++shot_index )
 		{
+			var [ i32, 7 ]& shot= tool.shot_data[ shot_index ];
+
 			if( u32( shot[1] ) == num_active_shooting_steps )
 			{
 				// Perform the shot.
@@ -868,7 +870,8 @@ fn PerformPlayerWeaponLogic(
 				{
 					auto [ position, direction ]=
 						GetPlayerShotStartAndDirection(
-							shot,
+							tool.shot_data,
+							shot_index,
 							player_state.position,
 							player_state.crouching_phase,
 							CameraAngles
@@ -9783,11 +9786,12 @@ fn GetCrosshairPositionAndKind(
 	{
 		var EntitiesDescription::Tool& tool= entities_description.tools[ weapon_tool_index ];
 
-		foreach( &shot : tool.shot_data )
+		for( auto mut shot_index= 0s; shot_index < tool.shot_data.size(); ++shot_index )
 		{
 			auto [ position, direction ]=
 				GetPlayerShotStartAndDirection(
-					shot,
+					tool.shot_data,
+					shot_index,
 					game_state.player.position,
 					game_state.player.crouching_phase,
 					camera_angles );
@@ -9853,19 +9857,59 @@ fn GetCrosshairPositionAndKind(
 }
 
 fn GetPlayerShotStartAndDirection(
-	[ i32, 7 ]& shot,
+	ust::array_view_imut</ [ i32, 7 ] /> shots,
+	size_type shot_index,
 	Vec3f& player_position,
 	f32 crouching_phase,
 	CameraAngles& camera_angles ) : [ Vec3f, 2 ]
 {
+	var [ i32, 7 ]& shot= shots[ shot_index ];
+
+	// The original game uses some sort of recoil system.
+	// On first shot the weapon starts moving up, moves 4 steps or so, then moves down 4 steps.
+	// This recoil movement affects shot extra elevation for consecutive shots.
+	// But it isn't reseted on each new shot, it continues instead up to full cycle.
+	//
+	// We don't calculate proper recoil each frame,
+	// but instead calculate recoil phase based on shots sequence of current weapon and current shot index.
+	//
+	// The original game also applies some rounding, so that there is only 1 possible angle between no recoil and full recoil.
+	// We don't do such rounding and allow more intermediate values.
+
+	var u32 constexpr c_recoil_duration_steps= 8u; // 4 steps up, 4 steps down.
+
+	var u32 mut current_recoil_phase= c_recoil_duration_steps;
+
+	// Process shots prior to this to calculate current recoil phase.
+	var i32 shot_time_point= shot[1];
+	for( auto mut t= 0u; i32(t) < shot_time_point; ++t )
+	{
+		foreach( &other_shot : shots )
+		{
+			var i32 other_shot_time_point= other_shot[1];
+			if( other_shot_time_point == i32(t) )
+			{
+				if( current_recoil_phase >= c_recoil_duration_steps )
+				{
+					current_recoil_phase= 0u;
+				}
+			}
+		}
+
+		++current_recoil_phase;
+	}
+
+	// This formula produces some sort of triangular wave.
+	var f32 recoil_strength=
+		ust::abs( f32( ust::min( current_recoil_phase, c_recoil_duration_steps ) ) - f32( c_recoil_duration_steps ) * 0.5f ) *
+		( 2.0f / f32( c_recoil_duration_steps ) );
+
 	var Mat3f camera_rotation_matrix= camera_angles.CalculateRotationMatrix().TruncateToMat3();
 
 	// Use extra 0.5 scaler in order to match vertical elevation observable in the original game.
 	var f32 shot_elevation= ( 0.5f * c_weapon_angles_scale * c_tau ) * f32( shot[5] );
 
-	// Each odd shot for weapons firing more than one bullet is fired slighly upper.
-	// This behavior is observable in the original game.
-	var f32 extra_elevation= f32( shot[0] & 1 ) * ( -0.25f / 360.0f * c_tau );
+	var f32 extra_elevation= recoil_strength * ( 0.5f / 360.0f * c_tau );
 
 	var Mat3f shot_rotation_matrix= Mat4f::MakeRotationX( shot_elevation + extra_elevation ).TruncateToMat3();
 
