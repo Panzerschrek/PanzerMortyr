@@ -8854,12 +8854,12 @@ fn EntityShoot(
 		return;
 	}
 
-	var Vec3f mut target_position= entity.last_seen_attack_target_position.try_deref();
+	var BBox3f mut target_bbox{ .min= Vec3f::MakeZero(), .max= Vec3f::MakeZero() };
 
 	if( entity.attack_target_entity_index == c_player_entity_index )
 	{
-		// If shooting the player - target the center of its bounding box (taking crouching into account).
-		target_position+= GetPlayerColliderBBox( entities_description, game_state.player.crouching_phase ).GetCenter();
+		// If shooting the player, target his bounding box (taking crouching into account).
+		target_bbox= GetPlayerColliderBBox( entities_description, game_state.player.crouching_phase );
 	}
 	else if( size_type( entity.attack_target_entity_index ) < game_state.entities.size() )
 	{
@@ -8876,16 +8876,37 @@ fn EntityShoot(
 					var EntitiesDescription::OperationAnimationDescription& animation=
 						attack_target_entity_description.operations[ size_type( attack_target_entity.current_operation ) ].animation;
 
-					// If shooting some other entity - target the center of its bounding box.
+					// If shooting some other entity, target its bounding box.
 
-					target_position+=
-						Vec3f(
-							f32( animation.bounding_box_center_x ),
-							f32( animation.bounding_box_center_y ),
-							f32( animation.bounding_box_center_z ) );
+					var Vec3f bbox_center(
+						f32( animation.bounding_box_center_x ),
+						f32( animation.bounding_box_center_y ),
+						f32( animation.bounding_box_center_z ) );
+
+					var Vec3f bbox_half_size(
+						f32( animation.bounding_box_half_size_x ),
+						f32( animation.bounding_box_half_size_y ),
+						f32( animation.bounding_box_half_size_z ) );
+
+					target_bbox= BBox3f{ .min= bbox_center - bbox_half_size, .max= bbox_center + bbox_half_size };
 				}
 			}
 		}
+	}
+
+	var Vec3f mut target_position= entity.last_seen_attack_target_position.try_deref();
+
+	if( weapon_tool.projectile_kind == EntitiesDescription::Tool::c_projectile_kind_grenade ||
+		weapon_tool.projectile_kind == EntitiesDescription::Tool::c_projectile_kind_rocket )
+	{
+		// For weapons with projectiles affected by gravity target upper point of the BBox.
+		// It's needed to compensate slightly for gravity.
+		target_position+= Vec3f( target_bbox.GetCenter().xy(), target_bbox.min.z );
+	}
+	else
+	{
+		// For projectiles travelling in straight line target the center of the bounding box.
+		target_position+= target_bbox.GetCenter();
 	}
 
 	var Mat4f rotation_matrix= Mat4f::MakeRotationZ( entity.azimuth );
