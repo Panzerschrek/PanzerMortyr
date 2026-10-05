@@ -84,6 +84,8 @@ You can, for example, choose custom windowed resolution using it.
 * Falling damage may hurt a lot. Be careful!
 * Inventory items can be activated and deactivated (when no longer needed).
 * Don't forget, that it's possible to use health and armor from the inventory!
+* Enemies aren't shooting while moving. If you see an enemy stopping his movement, take cover, since he is about to shoot you.
+* Enemies throwing grenades are tough, dodge their grenades.
 * Defeating bosses requires nothing special, they can be killed with any weapon, but have a lot of hit-points.
 * Explosive weapons and objects have huge damage radius. Make sure you stay far away from explosives.
 * Don't miss in-game notes (usually located on highlighted tables). They contain some plot information.
