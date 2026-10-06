@@ -99,6 +99,7 @@ Changes:
 * Enemies are more likely to search for health packs when they are injured compared to the original game.
 * Jetpack behavior may slightly differ from the original game.
 * The false documents item may behave slightly differently from the original game. Enemies, for example, aren't alarmed when the player having this item active comes too close.
+* Enemies using weapons with projectiles affected by gravity take it into account while shooting. This makes such enemies (Volkssturm, Robo Ed.) more dangerous in comparison to the original game.
 
 
 ### HUD and menus
