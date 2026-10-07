@@ -1,6 +1,7 @@
 ## PanzerMortyr
 
 *PanzerMortyr* is a reimplementation of the engine of the game [Mortyr 2093-1944](https://en.wikipedia.org/wiki/Mortyr).
+It's basically a drop-in replacement executable.
 It allows to play the original game on modern operating systems and with modern video/audio quality, assuming data of the original game is provided.
 
 
@@ -89,7 +90,7 @@ You can, for example, choose custom windowed resolution using it.
 * Defeating bosses requires nothing special, they can be killed with any weapon, but have a lot of hit-points.
 * Explosive weapons and objects have huge damage radius. Make sure you stay far away from explosives.
 * Don't miss in-game notes (usually located on highlighted tables). They contain some plot information.
-* Cadent ā latere tuō mīlle et decem mīlia ā dextrīs tuīs, ad tē autem non appropinquābit.
+* Cadent ā latere tuō mīlle et decem mīlia ā dextrīs tuīs, ad tē autem nōn appropinquābit.
 
 
 ### Missing features
@@ -102,6 +103,18 @@ It's not really useful.
 
 Playing music directly from the original CD isn't supported.
 You should use the `cd_image_extractor` tool to extract game data together with music tracks in order for music to be played in *PanzerMortyr*.
+
+
+### Known issues
+
+On systems with more than one GPU installed (like integrated one and discrete one) *PanzerMortyr* in OpenGL mode may run using GPU you wish not to use.
+There is no way to select a particular GPU in *PanzerMortyr* settings, so, use functionality of your OS or graphics control panel to select some specific GPU for *PanzerMortyr* executable.
+
+Software rendering may be slow with large screen resolutions (like 4k) and weak CPUs.
+If you have performance issues, switch to OpenGL mode.
+
+On Windows with high DPI displays minimizing the game's window may break rendering in software mode.
+If you face this issue, don't minimize the window or switch to OpenGL mode to avoid it.
 
 
 ### Contributions
