@@ -719,211 +719,199 @@ fn AudioMixer::ApplyUnderwaterEffect( mut this, ust::array_view_mut</SamplePairT
 
 fn AudioMixer::ProcessMessage( mut this, InMessage mut message )
 {
-	// HACK! We can't move a value in "variant_visit", so, process special cases manually.
+	// HACK! We can't move a value in "variant_switch", so, process special cases manually.
+
 	if( message.has</ InMessageAddAudioStream />() )
 	{
-		return AddAudioStream( move( message ).try_move</ InMessageAddAudioStream />() );
+		auto { mut stream, volume } = move( message ).try_move</ InMessageAddAudioStream />();
+
+		foreach( &mut slot : audio_streams_ )
+		{
+			if( slot.empty() )
+			{
+				slot=
+					AudioStreamState
+					{
+						.stream= move(stream),
+						.volume= volume,
+						.sample_counter= 0u,
+						.buffer= zero_init,
+						.buffer_position= 0u,
+						.buffer_size= 0u,
+					};
+
+				return;
+			}
+		}
+
+		// If we have no free slots left for a stream - return it back.
+		// This should actually not happen.
+		var bool pushed= out_messages_queue_write_end_.TryPush( OutMessageAudioStreamFinished{ .stream= move(stream) } );
+		ust::ignore_unused( pushed ); // Can't handle this case.
+
+		return;
 	}
+
 	if( message.has</ InMessageSetMusicStream />() )
 	{
-		return SetMusicStream( move( message ).try_move</ InMessageSetMusicStream />() );
+		auto { mut stream, volume } = move( message ).try_move</ InMessageSetMusicStream />();
+
+		music_stream_=
+			AudioStreamState
+			{
+				.stream= move(stream),
+				.volume= volume,
+				.sample_counter= 0u,
+				.buffer= zero_init,
+				.buffer_position= 0u,
+				.buffer_size= 0u,
+			};
+
+		return;
 	}
 
-	variant_visit( &el : message )
+	variant_switch( message )
 	{
-		return ProcessMessageImpl( el );
-	}
-}
-
-fn AudioMixer::ProcessMessageImpl( mut this, InMessageSetPaused& message )
-{
-	// Store pause request in a separate variable - in order to enable sounds fading in pause transitions.
-	new_paused_= message.paused;
-}
-
-fn AudioMixer::ProcessMessageImpl( mut this, InMessageSetUnderwater& message )
-{
-	// Store underwater effect request in a separate variable - in order to perform smooth transition.
-	new_underwater_effect_active_= message.underwater;
-}
-
-fn AudioMixer::ProcessMessageImpl( mut this, InMessageAddSoundSource& message )
-{
-	// If a slot already uses the same ID, reuse it.
-	// Normally it shouldn't be the case, but may happen in some tricky cases like level transition.
-	// Prefer doing hard reset (without fading) for the old source rather than having two sources with the same ID.
-	foreach( &mut source : sources_ )
-	{
-		if( source.id == message.id )
+		( InMessageSetPaused& message ) ->
 		{
-			AssignNewSoundSourceToSlot( source, frequency_, message );
-			return;
-		}
-	}
-
-	// Search for a free slot.
-	// It's fine to use linear search here, since we have only a small fixed number of slots.
-	foreach( &mut source : sources_ )
-	{
-		if( source.id == c_empty_sound_source_id )
+			// Store pause request in a separate variable - in order to enable sounds fading in pause transitions.
+			new_paused_= message.paused;
+		},
+		( InMessageSetUnderwater& message ) ->
 		{
-			// Found a free slot. Assign it to the new source.
-			AssignNewSoundSourceToSlot( source, frequency_, message );
-			return;
-		}
-	}
-
-	// Run out of free slots.
-	// Just assume we finished playing this soruce instantly
-	// and inform the other thread, that this sound source finished playing.
-
-	var bool pushed= out_messages_queue_write_end_.TryPush(
-		OutMessageSoundSourceFinished{ .id= message.id, .sound_data= message.sound_data } );
-
-	// If the output queue is full, try removing this source next time an update for it is requested.
-	ust::ignore_unused(pushed);
-}
-
-fn AudioMixer::ProcessMessageImpl( mut this, InMessageSetSoundSourceVolume& message )
-{
-	// It's fine to use linear search here, since we have only a small fixed number of slots.
-	foreach( &mut source : sources_ )
-	{
-		if( source.id == message.id )
+			// Store underwater effect request in a separate variable - in order to perform smooth transition.
+			new_underwater_effect_active_= message.underwater;
+		},
+		( InMessageAddSoundSource& message ) ->
 		{
-			// Set new volume in order to gradually change current volume to it and avoid ugly "steps" and "cracks".
-			source.new_volume= message.volume;
-			return;
-		}
-	}
-
-	// If we reached this place, it means, that the other thread doesn't know,
-	// that this sound source is already removed or wasn't added at all.
-	// It may happen, for example, if we run out of free slots.
-	// Inform the other thread, that this sound source finished playing.
-
-	var bool pushed= out_messages_queue_write_end_.TryPush( OutMessageSoundSourceFinished{ .id= message.id } );
-
-	// If the output queue is full, try removing this source next time an update for it is requested.
-	ust::ignore_unused(pushed);
-}
-
-fn AudioMixer::ProcessMessageImpl( mut this, InMessageRemoveSoundSource& message )
-{
-	// It's fine to use linear search here, since we have only a small fixed number of slots.
-	foreach( &mut source : sources_ )
-	{
-		if( source.id == message.id )
-		{
-			// Mark a running source for removal, but not remove it immediately - to fade it nicely to zero.
-			source.is_about_to_be_removed= true;
-			break;
-		}
-	}
-}
-
-fn AudioMixer::ProcessMessageImpl( mut this, InMessageAddAmbientSound& message )
-{
-	// Assume here that the other thread stopped previous ambient sound assigned to this slot.
-	// If it's not the case, we perform hard reset (without nice volume fading).
-
-	var AmbientSound &mut ambient_sound= ambient_sounds_[ message.slot_index ];
-
-	ambient_sound.sound_data= message.sound_data;
-	// If an ambient sound starts playing from zero position, we can start with full volume,
-	// since we assume, that the given sound data starts with silence.
-	// Otherwise start with zero volume to avoid "cracks" and "steps".
-	ambient_sound.current_volume= ( message.time_s == 0.0f ? message.volume : ust::make_array( 0.0f, 0.0f ) );
-	ambient_sound.new_volume= message.volume;
-	ambient_sound.sample_counter= u32( message.time_s * f32( frequency_ ) );
-	ambient_sound.is_about_to_be_removed= false;
-}
-
-fn AudioMixer::ProcessMessageImpl( mut this, InMessageSetAmbientSoundVolume& message )
-{
-	ambient_sounds_[ message.slot_index ].new_volume= message.volume;
-}
-
-fn AudioMixer::ProcessMessageImpl( mut this, InMessageRemoveAmbientSound& message )
-{
-	ambient_sounds_[ message.slot_index ].is_about_to_be_removed= true;
-}
-
-fn AudioMixer::ProcessMessageImpl( mut this, InMessageAddSingleShotSound& message )
-{
-	foreach( &mut slot : single_shot_sounds_ )
-	{
-		if( slot.sound_data.empty() )
-		{
-			slot.sound_data= message.sound_data;
-			slot.volume= message.volume;
-			slot.sample_counter= 0u;
-			return;
-		}
-	}
-
-	// Has no free slots left.
-	// Return sound data back immediately.
-
-	var bool pushed=
-		out_messages_queue_write_end_.TryPush( OutMessageSingleShotSoundFinished{ .sound_data= message.sound_data } );
-
-	ust::ignore_unused( pushed ); // Can't handle here full queue.
-}
-
-fn AudioMixer::ProcessMessageImpl( mut this, InMessageSetMusicStreamVolume& message )
-{
-	if_var( &mut music_stream : music_stream_ )
-	{
-		// Don't bother performing smooth volume change for music.
-		// Its volume is changed only from settings (or console), which happens very rarely.
-		music_stream.volume= message.volume;
-	}
-}
-
-fn AudioMixer::AddAudioStream( mut this, InMessageAddAudioStream mut message )
-{
-	auto { mut stream, volume } = move(message);
-
-	foreach( &mut slot : audio_streams_ )
-	{
-		if( slot.empty() )
-		{
-			slot=
-				AudioStreamState
+			// If a slot already uses the same ID, reuse it.
+			// Normally it shouldn't be the case, but may happen in some tricky cases like level transition.
+			// Prefer doing hard reset (without fading) for the old source rather than having two sources with the same ID.
+			foreach( &mut source : sources_ )
+			{
+				if( source.id == message.id )
 				{
-					.stream= move(stream),
-					.volume= volume,
-					.sample_counter= 0u,
-					.buffer= zero_init,
-					.buffer_position= 0u,
-					.buffer_size= 0u,
-				};
+					AssignNewSoundSourceToSlot( source, frequency_, message );
+					return;
+				}
+			}
 
-			return;
+			// Search for a free slot.
+			// It's fine to use linear search here, since we have only a small fixed number of slots.
+			foreach( &mut source : sources_ )
+			{
+				if( source.id == c_empty_sound_source_id )
+				{
+					// Found a free slot. Assign it to the new source.
+					AssignNewSoundSourceToSlot( source, frequency_, message );
+					return;
+				}
+			}
+
+			// Run out of free slots.
+			// Just assume we finished playing this soruce instantly
+			// and inform the other thread, that this sound source finished playing.
+
+			var bool pushed= out_messages_queue_write_end_.TryPush(
+				OutMessageSoundSourceFinished{ .id= message.id, .sound_data= message.sound_data } );
+
+			// If the output queue is full, try removing this source next time an update for it is requested.
+			ust::ignore_unused(pushed);
+		},
+		( InMessageSetSoundSourceVolume& message ) ->
+		{
+			// It's fine to use linear search here, since we have only a small fixed number of slots.
+			foreach( &mut source : sources_ )
+			{
+				if( source.id == message.id )
+				{
+					// Set new volume in order to gradually change current volume to it and avoid ugly "steps" and "cracks".
+					source.new_volume= message.volume;
+					return;
+				}
+			}
+
+			// If we reached this place, it means, that the other thread doesn't know,
+			// that this sound source is already removed or wasn't added at all.
+			// It may happen, for example, if we run out of free slots.
+			// Inform the other thread, that this sound source finished playing.
+
+			var bool pushed= out_messages_queue_write_end_.TryPush( OutMessageSoundSourceFinished{ .id= message.id } );
+
+			// If the output queue is full, try removing this source next time an update for it is requested.
+			ust::ignore_unused(pushed);
+		},
+		( InMessageRemoveSoundSource& message ) ->
+		{
+			// It's fine to use linear search here, since we have only a small fixed number of slots.
+			foreach( &mut source : sources_ )
+			{
+				if( source.id == message.id )
+				{
+					// Mark a running source for removal, but not remove it immediately - to fade it nicely to zero.
+					source.is_about_to_be_removed= true;
+					break;
+				}
+			}
+		},
+		( InMessageAddAmbientSound& message ) ->
+		{
+			// Assume here that the other thread stopped previous ambient sound assigned to this slot.
+			// If it's not the case, we perform hard reset (without nice volume fading).
+
+			var AmbientSound &mut ambient_sound= ambient_sounds_[ message.slot_index ];
+
+			ambient_sound.sound_data= message.sound_data;
+			// If an ambient sound starts playing from zero position, we can start with full volume,
+			// since we assume, that the given sound data starts with silence.
+			// Otherwise start with zero volume to avoid "cracks" and "steps".
+			ambient_sound.current_volume= ( message.time_s == 0.0f ? message.volume : ust::make_array( 0.0f, 0.0f ) );
+			ambient_sound.new_volume= message.volume;
+			ambient_sound.sample_counter= u32( message.time_s * f32( frequency_ ) );
+			ambient_sound.is_about_to_be_removed= false;
+		},
+		( InMessageSetAmbientSoundVolume& message ) ->
+		{
+			ambient_sounds_[ message.slot_index ].new_volume= message.volume;
+		},
+		( InMessageRemoveAmbientSound& message ) ->
+		{
+			ambient_sounds_[ message.slot_index ].is_about_to_be_removed= true;
+		},
+		( InMessageAddSingleShotSound& message ) ->
+		{
+			foreach( &mut slot : single_shot_sounds_ )
+			{
+				if( slot.sound_data.empty() )
+				{
+					slot.sound_data= message.sound_data;
+					slot.volume= message.volume;
+					slot.sample_counter= 0u;
+					return;
+				}
+			}
+
+			// Has no free slots left.
+			// Return sound data back immediately.
+
+			var bool pushed=
+				out_messages_queue_write_end_.TryPush(
+					OutMessageSingleShotSoundFinished{ .sound_data= message.sound_data } );
+
+			ust::ignore_unused( pushed ); // Can't handle here full queue.
+		},
+		( InMessageAddAudioStream& message ) -> { ust::ignore_unused(message); }, // Just a stub. We can't variant_switch with move.
+		( InMessageSetMusicStream& message ) -> { ust::ignore_unused(message); }, // Just a stub. We can't variant_switch with move.
+		( InMessageSetMusicStreamVolume& message ) ->
+		{
+			if_var( &mut music_stream : music_stream_ )
+			{
+				// Don't bother performing smooth volume change for music.
+				// Its volume is changed only from settings (or console), which happens very rarely.
+				music_stream.volume= message.volume;
+			}
 		}
 	}
-
-	// If we have no free slots left for a stream - return it back.
-	// This should actually not happen.
-	var bool pushed= out_messages_queue_write_end_.TryPush( OutMessageAudioStreamFinished{ .stream= move(stream) } );
-	ust::ignore_unused( pushed ); // Can't handle this case.
-}
-
-fn AudioMixer::SetMusicStream( mut this, InMessageSetMusicStream mut message )
-{
-	auto { mut stream, volume } = move(message);
-
-	music_stream_=
-		AudioStreamState
-		{
-			.stream= move(stream),
-			.volume= volume,
-			.sample_counter= 0u,
-			.buffer= zero_init,
-			.buffer_position= 0u,
-			.buffer_size= 0u,
-		};
 }
 
 fn AudioMixer::AssignNewSoundSourceToSlot( SoundSource &mut source, u32 frequency, InMessageAddSoundSource& message )
