@@ -16,23 +16,24 @@ fn ParseCueFile( Logger &mut logger, ust::string_view8 file_contents ) : ust::op
 
 	var CueFileParsed mut cue_file_parsed;
 
-	var ParsingState mut parsing_state{ .it= ust::wrap_raw_iterator( LinesRawIterator( file_contents ) ) };
-
-	parsing_state.NextLine();
-
-	while( !parsing_state.current_line.empty() )
+	foreach( line : ust::wrap_raw_iterator( LinesRawIterator( file_contents ) ) )
 	{
-		var ust::string_view8 current_line= parsing_state.current_line.try_deref();
+		auto mut words_iterator= ust::wrap_raw_iterator( WordsIterator( line ) );
+		var ust::string_view8 first_word= words_iterator.next().deref_or( ust::string_view8() );
 
-		if( current_line.starts_with( "FILE" ) )
+		if( first_word.empty() )
 		{
-			parsing_state.NextLine();
+			continue; // Skip empty lines.
+		}
+		else if( first_word == "FILE" )
+		{
+			var ust::string_view8 mut file_line= line;
 
-			var ust::string_view8 mut line= current_line.subrange_start( 4s );
+			SkipWhitespaces( file_line ); // Skip spaces before "FILE".
+			file_line= file_line.subrange_start( 4s ); // Skip "FILE".
+			SkipWhitespaces( file_line ); // Skip spaces after "FILE".
 
-			SkipWhitespaces( line );
-
-			auto mut file_name_opt= ParseQuotedString( line );
+			auto mut file_name_opt= ParseQuotedString( file_line );
 			if( file_name_opt.empty() )
 			{
 				logger.LogLine( "Failed to parse file name!" );
@@ -41,128 +42,80 @@ fn ParseCueFile( Logger &mut logger, ust::string_view8 file_contents ) : ust::op
 
 			var ust::string8 mut file_name= file_name_opt.try_take();
 
-			SkipWhitespaces( line );
+			SkipWhitespaces( file_line );
 
-			if( !line.starts_with( "BINARY" ) )
+			if( !file_line.starts_with( "BINARY" ) )
 			{
 				logger.LogLine( "Unexpected file type, only BINARY is supported" );
 				continue;
 			}
 
-			auto mut file_entry_opt= ParseCueFileEntry( logger, move(file_name), parsing_state );
-			if( !file_entry_opt.empty() )
+			cue_file_parsed.files.push_back( CueFileParsed::File{ .name= move(file_name) } );
+		}
+		else if( first_word == "TRACK" )
+		{
+			if( cue_file_parsed.files.empty() )
 			{
-				cue_file_parsed.files.push_back( file_entry_opt.try_take() );
+				logger.LogLine( "TRACK without a prior file!" );
+				continue;
 			}
-		}
-		else
-		{
-			logger.LogLine( ust::concat( "Unknown top-level entry: ", current_line ) );
-			parsing_state.NextLine();
-		}
-	}
 
-	return cue_file_parsed;
-}
+			var CueFileParsed::File &mut current_file= cue_file_parsed.files.back();
 
-struct ParsingState
-{
-	ust::optional</ ust::string_view8 /> @( "a" ) current_line;
-	ust::iterator</ LinesRawIterator /> @( "a" ) it;
+			auto track_number_opt=
+				ParseNumberWithLeadingZeros( words_iterator.next().deref_or( ust::string_view8() ) );
 
-	fn NextLine( mut this )
-	{
-		current_line= it.next();
-	}
-}
-
-fn ParseCueFileEntry(
-	Logger& mut logger,
-	ust::string8 mut file_name,
-	ParsingState &mut parsing_state ) : ust::optional</CueFileParsed::File/>
-{
-	var CueFileParsed::File mut file_entry{ .name= move( file_name ) };
-
-	while( !parsing_state.current_line.empty() )
-	{
-		auto mut words_iterator= ust::wrap_raw_iterator( WordsIterator( parsing_state.current_line.try_deref() ) );
-
-		var ust::string_view8 first_word= words_iterator.next().deref_or( ust::string_view8() );
-
-		if( first_word == "TRACK" )
-		{
-			parsing_state.NextLine();
-
-			auto mut track_opt= ParseCueTrack( logger, words_iterator, parsing_state );
-			if( !track_opt.empty() )
+			if( track_number_opt.empty() )
 			{
-				file_entry.tracks.push_back( track_opt.try_take() );
+				logger.LogLine( "Failed to parse track number!" );
+				continue;
 			}
+
+			auto track_mode_opt= ParseTrackMode( words_iterator.next().deref_or( ust::string_view8() ) );
+			if( track_mode_opt.empty() )
+			{
+				logger.LogLine( "Unsupported track mode!" );
+				continue;
+			}
+
+			current_file.tracks.push_back(
+				CueFileParsed::Track
+				{
+					.number= track_number_opt.try_deref(),
+					.mode= track_mode_opt.try_deref(),
+				} );
 		}
-		else
+		else if( first_word == "INDEX" )
 		{
-			break;
-		}
-	}
+			if( cue_file_parsed.files.empty() )
+			{
+				logger.LogLine( "INDEX without a prior file!" );
+				continue;
+			}
 
-	return file_entry;
-}
+			var CueFileParsed::File &mut current_file= cue_file_parsed.files.back();
 
-fn ParseCueTrack(
-	Logger &mut logger,
-	ust::iterator</ WordsIterator /> &mut track_words_iterator,
-	ParsingState &mut parsing_state ) : ust::optional</CueFileParsed::Track/>
-{
-	auto track_number_opt=
-		ParseNumberWithLeadingZeros( track_words_iterator.next().deref_or( ust::string_view8() ) );
+			if( current_file.tracks.empty() )
+			{
+				logger.LogLine( "INDEX without a prior track!" );
+				continue;
+			}
 
-	if( track_number_opt.empty() )
-	{
-		logger.LogLine( "Failed to parse track number!" );
-		return ust::null_optional;
-	}
-
-	auto track_mode_opt= ParseTrackMode( track_words_iterator.next().deref_or( ust::string_view8() ) );
-	if( track_mode_opt.empty() )
-	{
-		logger.LogLine( "Unsupported track mode!" );
-		return ust::null_optional;
-	}
-
-	var CueFileParsed::Track mut track
-	{
-		.number= track_number_opt.try_deref(),
-		.mode= track_mode_opt.try_deref(),
-	};
-
-	while( !parsing_state.current_line.empty() )
-	{
-		auto mut words_iterator= ust::wrap_raw_iterator( WordsIterator( parsing_state.current_line.try_deref() ) );
-
-		var ust::string_view8 first_word= words_iterator.next().deref_or( ust::string_view8() );
-
-		if( first_word == "INDEX" )
-		{
-			parsing_state.NextLine();
+			var CueFileParsed::Track &mut current_track= current_file.tracks.back();
 
 			auto mut track_index_opt= ParseTrackIndex( logger, words_iterator );
 			if( !track_index_opt.empty() )
 			{
-				track.indices.push_back( track_index_opt.try_take() );
+				current_track.indices.push_back( track_index_opt.try_take() );
 			}
-		}
-		else if( first_word == "ISRC" )
-		{
-			parsing_state.NextLine();
-			// For now ignore this attribute.
 		}
 		else
 		{
-			break;
+			logger.LogLine( ust::concat( "Ignoring unknown top-level CUE command: ", line ) );
 		}
 	}
 
-	return track;
+	return cue_file_parsed;
 }
 
 fn ParseTrackIndex(
